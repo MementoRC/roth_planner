@@ -18,6 +18,8 @@ pytest = ">=8.0.0"
 pytest-cov = ">=6.0.0"
 bandit = ">=1.8.0"
 pre-commit = ">=4.0.0"
+python-build = ">=1.0.0"
+hatchling = ">=1.21.0"
 
 [feature.ci.tasks]
 lint = "ruff check ."
@@ -30,6 +32,7 @@ test = "pytest tests/ --cov=engine --cov=models --cov-report=term-missing"
 security = "bandit -c pyproject.toml -r engine/ models/"
 pre-commit-install = "pre-commit install"
 pre-commit-run = "pre-commit run --all-files"
+build = "python -m build"
 
 [feature.dev.tasks]
 app = "streamlit run app.py"
