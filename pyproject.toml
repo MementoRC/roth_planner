@@ -7,7 +7,7 @@ license = {text = "MIT"}
 
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.backends"
+build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
@@ -45,5 +45,5 @@ exclude_lines = [
 ]
 
 [tool.bandit]
-exclude_dirs = ["/tests"]
+exclude_dirs = ["tests"]
 skips = ["B101"]

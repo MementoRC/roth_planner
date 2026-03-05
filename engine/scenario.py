@@ -5,7 +5,7 @@ IRA balances, brokerage tracking, and net benefit analysis.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from __future__ import annotations
 import copy
 
 from models.household import Household
@@ -77,16 +77,16 @@ class YearResult:
 @dataclass
 class ConversionPlan:
     """User-specified conversion amounts per year."""
-    your_conversions: Dict[int, float] = field(default_factory=dict)   # year -> amount
-    spouse_conversions: Dict[int, float] = field(default_factory=dict)
-    qcds: Dict[int, float] = field(default_factory=dict)              # year -> QCD amount
+    your_conversions: dict[int, float] = field(default_factory=dict)   # year -> amount
+    spouse_conversions: dict[int, float] = field(default_factory=dict)
+    qcds: dict[int, float] = field(default_factory=dict)              # year -> QCD amount
 
 
 @dataclass
 class ScenarioResult:
     """Complete multi-year projection output."""
     name: str
-    years: List[YearResult]
+    years: list[YearResult]
     household: Household
     plan: ConversionPlan
 
@@ -99,7 +99,7 @@ class ScenarioResult:
     total_rmd_tax: float = 0.0     # cumulative tax during RMD years
     total_brok_tax: float = 0.0    # cumulative brokerage capital gains tax
 
-    def years_as_dicts(self) -> List[dict]:
+    def years_as_dicts(self) -> list[dict]:
         """Convert to list of dicts for DataFrame creation."""
         return [yr.__dict__ for yr in self.years]
 

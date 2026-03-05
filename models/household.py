@@ -1,6 +1,6 @@
 """Household data model — single source of truth for all personal inputs."""
 from dataclasses import dataclass, field
-from typing import List, Optional
+from __future__ import annotations
 
 
 @dataclass
@@ -50,7 +50,7 @@ class Household:
     ltcg_rate: float = 0.15
 
     # Stock option grants
-    grants: List[StockGrant] = field(default_factory=lambda: [
+    grants: list[StockGrant] = field(default_factory=lambda: [
         StockGrant(2019, 104.41, 650, 2029),
         StockGrant(2020, 130.52, 763, 2030),
         StockGrant(2021, 169.23, 450, 2031),

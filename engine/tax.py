@@ -1,7 +1,5 @@
 """Federal tax calculations — TCJA/OBBBA permanent brackets, SS taxation."""
 
-from typing import Tuple
-
 # 2025 MFJ brackets (TCJA/OBBBA permanent)
 # (upper_bound_of_taxable_income, marginal_rate)
 BRACKETS_MFJ = [
