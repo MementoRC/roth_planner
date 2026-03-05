@@ -1,4 +1,4 @@
-"""Pytest configuration — ensure project root is on sys.path."""
+"""Pytest configuration for roth_planner test suite."""
 
 import sys
 from pathlib import Path
