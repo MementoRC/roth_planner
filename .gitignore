@@ -35,6 +35,9 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# Serena
+.serena/
+
 # Project-specific
 .claude/
 .mcp.json

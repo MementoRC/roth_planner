@@ -114,11 +114,11 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="IRA Balance ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark",
+
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_ira, width=True)
+    st.plotly_chart(fig_ira, use_container_width=True)
 
     # --- Charts 2 & 3 side by side ---
     col_left, col_right = st.columns(2)
@@ -152,11 +152,11 @@ def render(hh: Household):
             yaxis_title="Tax ($)",
             yaxis_tickformat="$,.0s",
             barmode="group",
-            template="plotly_dark",
+    
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
         )
-        st.plotly_chart(fig_tax, width=True)
+        st.plotly_chart(fig_tax, use_container_width=True)
 
     with col_right:
         # Cumulative tax
@@ -186,11 +186,11 @@ def render(hh: Household):
             xaxis_title="Your Age",
             yaxis_title="Cumulative Tax ($)",
             yaxis_tickformat="$,.0s",
-            template="plotly_dark",
+    
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
         )
-        st.plotly_chart(fig_cum, width=True)
+        st.plotly_chart(fig_cum, use_container_width=True)
 
     # --- Chart 4: Net Benefit Over Time ---
     net_benefit = []
@@ -244,10 +244,10 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Net Benefit ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark",
+
         height=400,
     )
-    st.plotly_chart(fig_net, width=True)
+    st.plotly_chart(fig_net, use_container_width=True)
 
     # --- Summary table ---
     st.markdown("### Key Age Milestones")
@@ -319,7 +319,7 @@ def render(hh: Household):
                         "Room 22%": "${:,.0f}",
                     }
                 ),
-                width=True,
+                use_container_width=True,
                 hide_index=True,
             )
 
@@ -358,6 +358,6 @@ def render(hh: Household):
                         "Tax Saved": "${:,.0f}",
                     }
                 ),
-                width=True,
+                use_container_width=True,
                 hide_index=True,
             )

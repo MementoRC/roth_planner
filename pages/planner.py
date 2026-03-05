@@ -39,7 +39,7 @@ def render(hh: Household):
     )
 
     # --- Auto-fill buttons ---
-    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    col_btn1, col_btn2 = st.columns(2)
 
     if "conv_plan_your" not in st.session_state:
         st.session_state.conv_plan_your = {}
@@ -47,7 +47,7 @@ def render(hh: Household):
         st.session_state.conv_plan_qcd = {}
 
     with col_btn1:
-        if st.button("🎯 Auto-Fill to 12%", width=True):
+        if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
             plan = auto_fill_12(hh)
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
@@ -55,7 +55,7 @@ def render(hh: Household):
             st.rerun()
 
     with col_btn2:
-        if st.button("🗑️ Clear All", width=True):
+        if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.conv_plan_your = {}
             st.session_state.conv_plan_spouse = {}
             st.session_state.conv_plan_qcd = {}
@@ -253,11 +253,11 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Combined IRA ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark",
+
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig, width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- Bracket fill visualization ---
     st.markdown("### Bracket Usage by Year")
@@ -308,8 +308,8 @@ def render(hh: Household):
         xaxis_title="Year",
         yaxis_title="Gross Income ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark",
+
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_br, width=True)
+    st.plotly_chart(fig_br, use_container_width=True)
