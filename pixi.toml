@@ -1,0 +1,45 @@
+[project]
+name = "roth-planner"
+version = "0.1.0"
+description = "Roth IRA Conversion Planner — multi-year projection with tax, IRMAA, ACA, and RMD analysis"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+streamlit = ">=1.30.0"
+plotly = ">=5.18.0"
+pandas = ">=2.0.0"
+
+[feature.ci.dependencies]
+ruff = ">=0.8.4"
+mypy = ">=1.14.0"
+pytest = ">=8.0.0"
+pytest-cov = ">=6.0.0"
+bandit = ">=1.8.0"
+pre-commit = ">=4.0.0"
+python-build = ">=1.0.0"
+hatchling = ">=1.21.0"
+
+[feature.ci.tasks]
+lint = "ruff check ."
+lint-fix = "ruff check --fix ."
+format = "ruff format ."
+format-check = "ruff format --check ."
+type-check = "mypy engine/ models/"
+quality = { depends-on = ["lint", "type-check"] }
+test = "pytest tests/ --cov=engine --cov=models --cov-report=term-missing"
+security = "bandit -c pyproject.toml -r engine/ models/"
+pre-commit-install = "pre-commit install"
+pre-commit-run = "pre-commit run --all-files"
+build = "python -m build"
+
+[feature.dev.tasks]
+app = "streamlit run app.py"
+
+[environments]
+default = { solve-group = "default" }
+dev = { features = ["ci", "dev"], solve-group = "default" }
+ci = { features = ["ci"], solve-group = "default" }
+quality-extended = { features = ["ci"], solve-group = "default" }
+quality-ci = { features = ["ci"], solve-group = "default" }
