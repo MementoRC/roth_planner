@@ -9,7 +9,7 @@ BRACKETS_MFJ = [
     (403_550, 0.24),
     (512_450, 0.32),
     (768_700, 0.35),
-    (float('inf'), 0.37),
+    (float("inf"), 0.37),
 ]
 
 
@@ -59,15 +59,16 @@ def taxable_ss(combined_ss: float, other_income: float) -> float:
     provisional = other_income + 0.5 * combined_ss
     if provisional <= 32_000:
         return 0.0
-    elif provisional <= 44_000:
+    if provisional <= 44_000:
         taxable = 0.5 * (provisional - 32_000)
     else:
         taxable = 0.85 * (provisional - 44_000) + 6_000
     return min(taxable, 0.85 * combined_ss)
 
 
-def deductions(your_age: int, spouse_age: int, std_ded: float = 32_200,
-               senior_extra: float = 1_650) -> float:
+def deductions(
+    your_age: int, spouse_age: int, std_ded: float = 32_200, senior_extra: float = 1_650
+) -> float:
     """Total standard deduction including senior extras."""
     senior = 0
     if your_age >= 65:
@@ -85,8 +86,7 @@ def tax_on_conversion(conversion: float, other_taxable: float) -> float:
     return federal_tax(other_taxable + conversion) - federal_tax(other_taxable)
 
 
-def room_to_bracket(current_gross: float, total_deductions: float,
-                    bracket_ceiling: float) -> float:
+def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceiling: float) -> float:
     """
     How much more gross income fits before hitting the next bracket.
 

@@ -12,16 +12,16 @@ from __future__ import annotations
 # 2025 IRMAA thresholds (MFJ) — approximate, indexed annually
 # (magi_threshold, annual_part_b_surcharge_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
-    (206_000,  244.60 * 12,  13.70 * 12),   # Tier 1
-    (258_000,  349.40 * 12,  35.50 * 12),   # Tier 2
-    (322_000,  454.20 * 12,  57.30 * 12),   # Tier 3
-    (386_000,  559.00 * 12,  79.10 * 12),   # Tier 4
-    (750_000,  594.00 * 12,  85.80 * 12),   # Tier 5
+    (206_000, 244.60 * 12, 13.70 * 12),  # Tier 1
+    (258_000, 349.40 * 12, 35.50 * 12),  # Tier 2
+    (322_000, 454.20 * 12, 57.30 * 12),  # Tier 3
+    (386_000, 559.00 * 12, 79.10 * 12),  # Tier 4
+    (750_000, 594.00 * 12, 85.80 * 12),  # Tier 5
 ]
 
 # Base premiums (no surcharge)
-BASE_PART_B = 174.70 * 12   # annual per person
-BASE_PART_D = 0.0            # base Part D surcharge is $0
+BASE_PART_B = 174.70 * 12  # annual per person
+BASE_PART_D = 0.0  # base Part D surcharge is $0
 
 
 def irmaa_surcharge(magi: float, num_people: int = 2) -> float:
@@ -50,8 +50,9 @@ def irmaa_tier(magi: float) -> int:
     return 5
 
 
-def irmaa_for_year(income_year_magi: float, your_age_income_year: int,
-                   spouse_age_income_year: int) -> tuple[float, int]:
+def irmaa_for_year(
+    income_year_magi: float, your_age_income_year: int, spouse_age_income_year: int
+) -> tuple[float, int]:
     """
     Calculate IRMAA that will be charged 2 years AFTER the income year.
 

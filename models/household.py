@@ -1,15 +1,18 @@
 """Household data model — single source of truth for all personal inputs."""
-from dataclasses import dataclass, field
+
 from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 
 @dataclass
 class StockGrant:
     """Non-qualified stock option grant."""
-    year: int           # grant year (e.g. 2019)
-    strike: float       # strike price per share
-    shares: int         # exercisable shares
-    expiry_year: int    # expiration year
+
+    year: int  # grant year (e.g. 2019)
+    strike: float  # strike price per share
+    shares: int  # exercisable shares
+    expiry_year: int  # expiration year
 
     def spread(self, price: float) -> float:
         return max(price - self.strike, 0) * self.shares
@@ -18,6 +21,7 @@ class StockGrant:
 @dataclass
 class Household:
     """All inputs for the Roth conversion model."""
+
     # Ages (in base_year)
     your_age: int = 61
     spouse_age: int = 55
@@ -28,10 +32,10 @@ class Household:
     spouse_ira: float = 1_700_000
 
     # Social Security (monthly at FRA 67)
-    your_ss_fra: float = 3_800   # $/month at FRA
+    your_ss_fra: float = 3_800  # $/month at FRA
     spouse_ss_fra: float = 3_800
-    ss_start_age: int = 70       # both delay to 70
-    ss_cola: float = 0.025       # 2.5% annual COLA
+    ss_start_age: int = 70  # both delay to 70
+    ss_cola: float = 0.025  # 2.5% annual COLA
 
     # Growth & inflation
     growth_rate: float = 0.07
@@ -41,28 +45,30 @@ class Household:
     living_expenses: float = 30_000
 
     # Tax parameters (2025 TCJA/OBBBA permanent)
-    std_deduction: float = 32_200   # MFJ
-    senior_extra: float = 1_650     # per person 65+
+    std_deduction: float = 32_200  # MFJ
+    senior_extra: float = 1_650  # per person 65+
     filing_status: str = "MFJ"
 
     # Brokerage assumptions
-    brok_turnover: float = 0.30     # 30% annual turnover
+    brok_turnover: float = 0.30  # 30% annual turnover
     ltcg_rate: float = 0.15
 
     # Stock option grants
-    grants: list[StockGrant] = field(default_factory=lambda: [
-        StockGrant(2019, 104.41, 650, 2029),
-        StockGrant(2020, 130.52, 763, 2030),
-        StockGrant(2021, 169.23, 450, 2031),
-    ])
-    txn_price_now: float = 212      # current TXN price
-    txn_price_late: float = 250     # projected price at expiry
+    grants: list[StockGrant] = field(
+        default_factory=lambda: [
+            StockGrant(2019, 104.41, 650, 2029),
+            StockGrant(2020, 130.52, 763, 2030),
+            StockGrant(2021, 169.23, 450, 2031),
+        ]
+    )
+    txn_price_now: float = 212  # current TXN price
+    txn_price_late: float = 250  # projected price at expiry
 
     # RMD
-    rmd_start_age: int = 75         # SECURE 2.0 for born after 1960
+    rmd_start_age: int = 75  # SECURE 2.0 for born after 1960
 
     # QCD
-    qcd_limit: float = 105_000     # 2025 annual limit per person
+    qcd_limit: float = 105_000  # 2025 annual limit per person
 
     @property
     def age_gap(self) -> int:

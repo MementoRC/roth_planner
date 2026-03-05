@@ -10,12 +10,12 @@ FPL_2 = 20_440
 # Enhanced premium cap schedule (% of income)
 # (upper_fpl_multiple, premium_cap_rate)
 ACA_CAP_SCHEDULE = [
-    (1.50, 0.00),    # Below 150% FPL: $0 premium
-    (2.00, 0.02),    # 150-200%: up to 2%
-    (2.50, 0.04),    # 200-250%: up to 4%
-    (3.00, 0.06),    # 250-300%: up to 6%
-    (4.00, 0.075),   # 300-400%: up to 7.5%
-    (float('inf'), 0.085),  # 400%+: 8.5% cap
+    (1.50, 0.00),  # Below 150% FPL: $0 premium
+    (2.00, 0.02),  # 150-200%: up to 2%
+    (2.50, 0.04),  # 200-250%: up to 4%
+    (3.00, 0.06),  # 250-300%: up to 6%
+    (4.00, 0.075),  # 300-400%: up to 7.5%
+    (float("inf"), 0.085),  # 400%+: 8.5% cap
 ]
 
 # Approximate annual benchmark silver plan premium for couple age ~60-64
@@ -41,12 +41,12 @@ def aca_subsidy(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> flo
     """
     cap_rate = aca_premium_cap_rate(magi)
     expected_contribution = magi * cap_rate
-    subsidy = max(benchmark - expected_contribution, 0)
-    return subsidy
+    return max(benchmark - expected_contribution, 0)
 
 
-def aca_subsidy_loss(base_magi: float, new_magi: float,
-                     benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> float:
+def aca_subsidy_loss(
+    base_magi: float, new_magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL
+) -> float:
     """
     How much ACA subsidy is lost due to additional income (e.g., conversion).
     """

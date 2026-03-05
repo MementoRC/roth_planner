@@ -2,15 +2,19 @@
 
 import pytest
 
-from models.household import Household, StockGrant
+from engine.aca import aca_applies, aca_subsidy
+from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
+from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
+from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import (
-    federal_tax, marginal_rate, taxable_ss, deductions,
-    tax_on_conversion, room_to_12, room_to_22,
+    deductions,
+    federal_tax,
+    marginal_rate,
+    room_to_12,
+    room_to_22,
+    taxable_ss,
 )
-from engine.ira import calc_rmd, rmd_divisor, ss_benefit_at_age, ss_with_cola, project_ira
-from engine.irmaa import irmaa_surcharge, irmaa_for_year, irmaa_next_threshold
-from engine.aca import aca_subsidy, aca_applies
-from engine.scenario import run_scenario, run_no_conversion, ConversionPlan, auto_fill_12
+from models.household import Household
 
 
 def approx(expected, tol=1.0):

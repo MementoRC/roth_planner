@@ -33,22 +33,30 @@ page = st.sidebar.radio(
 # Sidebar: shared inputs
 st.sidebar.markdown("### Your Numbers")
 st.session_state.your_ira = st.sidebar.number_input(
-    "Your Trad IRA", value=st.session_state.your_ira, step=50_000, format="%d")
+    "Your Trad IRA", value=st.session_state.your_ira, step=50_000, format="%d"
+)
 st.session_state.spouse_ira = st.sidebar.number_input(
-    "Spouse Trad IRA", value=st.session_state.spouse_ira, step=50_000, format="%d")
+    "Spouse Trad IRA", value=st.session_state.spouse_ira, step=50_000, format="%d"
+)
 st.session_state.growth_rate = st.sidebar.slider(
-    "Growth Rate %", 3.0, 12.0, st.session_state.growth_rate, 0.5)
+    "Growth Rate %", 3.0, 12.0, st.session_state.growth_rate, 0.5
+)
 st.session_state.your_ss_fra = st.sidebar.number_input(
-    "Your SS at FRA 67 ($/mo)", value=st.session_state.your_ss_fra, step=100, format="%d")
+    "Your SS at FRA 67 ($/mo)", value=st.session_state.your_ss_fra, step=100, format="%d"
+)
 st.session_state.spouse_ss_fra = st.sidebar.number_input(
-    "Spouse SS at FRA 67 ($/mo)", value=st.session_state.spouse_ss_fra, step=100, format="%d")
+    "Spouse SS at FRA 67 ($/mo)", value=st.session_state.spouse_ss_fra, step=100, format="%d"
+)
 st.session_state.living_expenses = st.sidebar.number_input(
-    "Annual Living Expenses", value=st.session_state.living_expenses, step=5_000, format="%d")
+    "Annual Living Expenses", value=st.session_state.living_expenses, step=5_000, format="%d"
+)
 st.session_state.txn_price = st.sidebar.number_input(
-    "TXN Current Price", value=st.session_state.txn_price, step=5, format="%d")
+    "TXN Current Price", value=st.session_state.txn_price, step=5, format="%d"
+)
 
 # Build household from session state
-from models.household import Household
+from models.household import Household  # noqa: E402
+
 
 def get_household() -> Household:
     return Household(
@@ -63,10 +71,13 @@ def get_household() -> Household:
         txn_price_now=st.session_state.txn_price,
     )
 
+
 # Route to page
 if page == "📊 Dashboard":
     from pages.dashboard import render
+
     render(get_household())
 elif page == "📋 Conversion Planner":
     from pages.planner import render
+
     render(get_household())
