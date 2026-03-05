@@ -70,7 +70,7 @@ def deductions(
     your_age: int, spouse_age: int, std_ded: float = 32_200, senior_extra: float = 1_650
 ) -> float:
     """Total standard deduction including senior extras."""
-    senior = 0
+    senior: float = 0
     if your_age >= 65:
         senior += senior_extra
     if spouse_age >= 65:

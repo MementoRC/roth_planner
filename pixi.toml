@@ -39,3 +39,4 @@ default = { solve-group = "default" }
 dev = { features = ["ci", "dev"], solve-group = "default" }
 ci = { features = ["ci"], solve-group = "default" }
 quality-extended = { features = ["ci"], solve-group = "default" }
+quality-ci = { features = ["ci"], solve-group = "default" }
