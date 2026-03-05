@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [main, development]
 
-permissions:
-  contents: read
-  pull-requests: read
-  checks: write
-
 jobs:
   ci:
     uses: Claire-s-Monster/ci-framework/.github/workflows/reusable-ci.yml@v2.4.1
