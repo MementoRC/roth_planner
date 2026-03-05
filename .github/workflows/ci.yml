@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   ci:
-    uses: Claire-s-Monster/ci-framework/.github/workflows/reusable-ci.yml@v2.4.1
+    uses: Claire-s-Monster/ci-framework/.github/workflows/reusable-ci.yml@v2.4.2
     with:
       pixi-environment: "ci"
       python-versions: '["3.11", "3.12"]'
