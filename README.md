@@ -56,21 +56,6 @@ roth_planner/
     └── test_engine.py        # 43 tests against verified spreadsheet numbers
 ```
 
-## Your Numbers (Pre-Configured)
-
-| Item | You | Spouse |
-|------|-----|--------|
-| Age (2026) | 61 | 55 |
-| Trad IRA | $1,700,000 | $1,700,000 |
-| SS at FRA 67 | $3,800/mo | $3,800/mo |
-| SS at 70 (delayed) | $56,544/yr | $56,544/yr |
-| RMD starts | Age 75 | Age 75 |
-| Conv window | 14 years (61-74) | 15 years (60-74) |
-
-Growth: 7% · Living expenses: $30,000/yr · Filing: MFJ (Texas, no state tax)
-
-TXN grants: 2019 ($104.41 × 650), 2020 ($130.52 × 763), 2021 ($169.23 × 450)
-
 ## Key Concepts
 
 **The Problem**: Without conversions, your combined IRAs grow to ~$11M by age 75.
