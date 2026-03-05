@@ -3,7 +3,7 @@ name = "roth-planner"
 version = "0.1.0"
 description = "Roth IRA Conversion Planner — multi-year projection with tax, IRMAA, ACA, and RMD analysis"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = {text = "MIT"}
 
 [build-system]
 requires = ["hatchling"]
