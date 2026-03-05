@@ -9,21 +9,18 @@ Shows all 20 years of the spouse's conversion window with:
 - Auto-fill buttons
 """
 
-import streamlit as st
 import plotly.graph_objects as go
-import pandas as pd
+import streamlit as st
 
+from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
 from models.household import Household
-from engine.scenario import run_scenario, ConversionPlan, auto_fill_12
-from engine.tax import room_to_12, room_to_22
-
 
 PHASE_COLORS = {
-    "options": "#7c3aed",   # purple
-    "clean": "#22c55e",     # green
-    "ss_conv": "#3b82f6",   # blue
-    "squeeze": "#ef4444",   # red
-    "rmd": "#6b7280",       # gray
+    "options": "#7c3aed",  # purple
+    "clean": "#22c55e",  # green
+    "ss_conv": "#3b82f6",  # blue
+    "squeeze": "#ef4444",  # red
+    "rmd": "#6b7280",  # gray
 }
 
 PHASE_LABELS = {
@@ -37,7 +34,9 @@ PHASE_LABELS = {
 
 def render(hh: Household):
     st.title("📋 Conversion Planner — 20-Year Grid")
-    st.caption("Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time.")
+    st.caption(
+        "Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time."
+    )
 
     # --- Auto-fill buttons ---
     col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
@@ -74,21 +73,39 @@ def render(hh: Household):
     conv_window = [yr for yr in result.years if yr.your_age <= 80]
 
     # --- Phase legend ---
-    phases_present = set(yr.phase for yr in conv_window)
-    legend = " · ".join(PHASE_LABELS.get(p, p) for p in
-                        ["options", "clean", "ss_conv", "squeeze", "rmd"] if p in phases_present)
+    phases_present = {yr.phase for yr in conv_window}
+    legend = " · ".join(
+        PHASE_LABELS.get(p, p)
+        for p in ["options", "clean", "ss_conv", "squeeze", "rmd"]
+        if p in phases_present
+    )
     st.markdown(f"**Phases:** {legend}")
 
     # --- Interactive grid ---
     st.markdown("### Conversion Grid")
-    st.caption("Enter amounts in the Your Conv / Sp Conv columns. Yellow = editable, gray = blocked.")
+    st.caption(
+        "Enter amounts in the Your Conv / Sp Conv columns. Yellow = editable, gray = blocked."
+    )
 
     # We'll use columns for a compact layout
     # Header row
     hdr_cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1.2, 1.2, 1, 1.2, 1.2])
-    headers = ["Year", "You", "Sp", "Your IRA", "Options", "Your Conv", "Sp Conv",
-               "QCD", "Gross", "Bracket", "Conv Tax", "Room 12%", "Room 22%"]
-    for col, h in zip(hdr_cols, headers):
+    headers = [
+        "Year",
+        "You",
+        "Sp",
+        "Your IRA",
+        "Options",
+        "Your Conv",
+        "Sp Conv",
+        "QCD",
+        "Gross",
+        "Bracket",
+        "Conv Tax",
+        "Room 12%",
+        "Room 22%",
+    ]
+    for col, h in zip(hdr_cols, headers, strict=False):
         col.markdown(f"**{h}**")
 
     # Data rows
@@ -101,8 +118,13 @@ def render(hh: Household):
         cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1.2, 1.2, 1, 1.2, 1.2])
 
         # Phase color indicator
-        phase_emoji = {"options": "🟣", "clean": "🟢", "ss_conv": "🔵",
-                       "squeeze": "🔴", "rmd": "⚪"}.get(yr.phase, "")
+        phase_emoji = {
+            "options": "🟣",
+            "clean": "🟢",
+            "ss_conv": "🔵",
+            "squeeze": "🔴",
+            "rmd": "⚪",
+        }.get(yr.phase, "")
 
         cols[0].markdown(f"{phase_emoji} {yr.year}")
         cols[1].markdown(f"**{ya}**")
@@ -115,23 +137,30 @@ def render(hh: Household):
             yc_key = f"yc_{yr.year}"
             yc_val = st.session_state.conv_plan_your.get(yr.year, 0)
             new_yc = cols[5].number_input(
-                f"yc{yr.year}", value=int(yc_val), step=5000,
-                min_value=0, max_value=int(yr.your_ira_begin),
-                label_visibility="collapsed", key=yc_key,
+                f"yc{yr.year}",
+                value=int(yc_val),
+                step=5000,
+                min_value=0,
+                max_value=int(yr.your_ira_begin),
+                label_visibility="collapsed",
+                key=yc_key,
             )
             if new_yc != yc_val:
                 st.session_state.conv_plan_your[yr.year] = new_yc
         else:
-            cols[5].markdown(f"*RMD era*" if ya >= 75 else "—")
+            cols[5].markdown("*RMD era*" if ya >= 75 else "—")
 
         # Spouse conversion input
         if sp_can_conv:
             sc_key = f"sc_{yr.year}"
             sc_val = st.session_state.conv_plan_spouse.get(yr.year, 0)
             new_sc = cols[6].number_input(
-                f"sc{yr.year}", value=int(sc_val), step=5000,
+                f"sc{yr.year}",
+                value=int(sc_val),
+                step=5000,
                 min_value=0,
-                label_visibility="collapsed", key=sc_key,
+                label_visibility="collapsed",
+                key=sc_key,
             )
             if new_sc != sc_val:
                 st.session_state.conv_plan_spouse[yr.year] = new_sc
@@ -145,9 +174,13 @@ def render(hh: Household):
             qcd_key = f"qcd_{yr.year}"
             qcd_val = st.session_state.conv_plan_qcd.get(yr.year, 0)
             new_qcd = cols[7].number_input(
-                f"qcd{yr.year}", value=int(qcd_val), step=5000,
-                min_value=0, max_value=int(hh.qcd_limit),
-                label_visibility="collapsed", key=qcd_key,
+                f"qcd{yr.year}",
+                value=int(qcd_val),
+                step=5000,
+                min_value=0,
+                max_value=int(hh.qcd_limit),
+                label_visibility="collapsed",
+                key=qcd_key,
             )
             if new_qcd != qcd_val:
                 st.session_state.conv_plan_qcd[yr.year] = new_qcd
@@ -183,36 +216,46 @@ def render(hh: Household):
     tcol1.metric("Your Total Conv", f"${total_yc:,.0f}")
     tcol2.metric("Spouse Total Conv", f"${total_sc:,.0f}")
     tcol3.metric("Combined Conv", f"${total_yc + total_sc:,.0f}")
-    tcol4.metric("Total Conv Tax", f"${total_tax:,.0f}",
-                 f"Avg rate: {total_tax/max(total_yc+total_sc,1)*100:.1f}%")
+    tcol4.metric(
+        "Total Conv Tax",
+        f"${total_tax:,.0f}",
+        f"Avg rate: {total_tax / max(total_yc + total_sc, 1) * 100:.1f}%",
+    )
 
     # --- IRA Trajectory Chart ---
     st.markdown("### IRA Balance Over Time")
 
     from engine.scenario import run_no_conversion
+
     no_conv = run_no_conversion(hh, end_age=95)
 
     fig = go.Figure()
     all_ages = [yr.your_age for yr in result.years]
-    fig.add_trace(go.Scatter(
-        x=all_ages,
-        y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in no_conv.years],
-        name="No Conversion",
-        line=dict(color="#ef4444", width=2, dash="dash"),
-    ))
-    fig.add_trace(go.Scatter(
-        x=all_ages,
-        y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in result.years],
-        name="Your Plan",
-        line=dict(color="#22c55e", width=3),
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=all_ages,
+            y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in no_conv.years],
+            name="No Conversion",
+            line={"color": "#ef4444", "width": 2, "dash": "dash"},
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=all_ages,
+            y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in result.years],
+            name="Your Plan",
+            line={"color": "#22c55e", "width": 3},
+        )
+    )
     fig.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
 
     fig.update_layout(
-        xaxis_title="Your Age", yaxis_title="Combined IRA ($)",
+        xaxis_title="Your Age",
+        yaxis_title="Combined IRA ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark", height=400,
-        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
+        template="plotly_dark",
+        height=400,
+        legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
     st.plotly_chart(fig, width=True)
 
@@ -221,9 +264,7 @@ def render(hh: Household):
     fig_br = go.Figure()
 
     for yr in conv_window:
-        ded = yr.total_deductions
         # Stacked bar: option_income, your_conv, sp_conv, SS, RMD, room_12, room_22
-        base = 0
         segs = []
         if yr.option_income > 0:
             segs.append(("Options", yr.option_income, "#a78bfa"))
@@ -239,25 +280,36 @@ def render(hh: Household):
             segs.append(("Room (12%)", yr.room_12, "#1e293b"))
 
         for name, val, color in segs:
-            fig_br.add_trace(go.Bar(
-                x=[yr.year], y=[val], name=name,
-                marker_color=color, showlegend=(yr == conv_window[0]),
-                hovertemplate=f"{name}: $%{{y:,.0f}}<extra>{yr.year}</extra>",
-            ))
+            fig_br.add_trace(
+                go.Bar(
+                    x=[yr.year],
+                    y=[val],
+                    name=name,
+                    marker_color=color,
+                    showlegend=(yr == conv_window[0]),
+                    hovertemplate=f"{name}: $%{{y:,.0f}}<extra>{yr.year}</extra>",
+                )
+            )
 
     # Add 12% ceiling line
     ceil_12_values = [yr.total_deductions + 100_800 for yr in conv_window]
-    fig_br.add_trace(go.Scatter(
-        x=[yr.year for yr in conv_window], y=ceil_12_values,
-        name="12% Ceiling", line=dict(color="#22c55e", width=2, dash="dash"),
-        mode="lines",
-    ))
+    fig_br.add_trace(
+        go.Scatter(
+            x=[yr.year for yr in conv_window],
+            y=ceil_12_values,
+            name="12% Ceiling",
+            line={"color": "#22c55e", "width": 2, "dash": "dash"},
+            mode="lines",
+        )
+    )
 
     fig_br.update_layout(
         barmode="stack",
-        xaxis_title="Year", yaxis_title="Gross Income ($)",
+        xaxis_title="Year",
+        yaxis_title="Gross Income ($)",
         yaxis_tickformat="$,.0s",
-        template="plotly_dark", height=400,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        template="plotly_dark",
+        height=400,
+        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
     st.plotly_chart(fig_br, width=True)

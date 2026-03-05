@@ -4,23 +4,28 @@ Produces a year-by-year DataFrame with all income sources, taxes, costs,
 IRA balances, brokerage tracking, and net benefit analysis.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-import copy
+from __future__ import annotations
 
-from models.household import Household
+from dataclasses import dataclass, field
+
+from engine.aca import aca_applies, aca_subsidy_loss
+from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
+from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.tax import (
-    federal_tax, marginal_rate, taxable_ss, deductions,
-    tax_on_conversion, room_to_12, room_to_22
+    deductions,
+    federal_tax,
+    marginal_rate,
+    room_to_12,
+    room_to_22,
+    taxable_ss,
 )
-from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola, rmd_divisor
-from engine.irmaa import irmaa_surcharge, irmaa_for_year, irmaa_next_threshold
-from engine.aca import aca_subsidy_loss, aca_applies
+from models.household import Household
 
 
 @dataclass
 class YearResult:
     """All computed values for a single year."""
+
     year: int
     your_age: int
     spouse_age: int
@@ -77,16 +82,18 @@ class YearResult:
 @dataclass
 class ConversionPlan:
     """User-specified conversion amounts per year."""
-    your_conversions: Dict[int, float] = field(default_factory=dict)   # year -> amount
-    spouse_conversions: Dict[int, float] = field(default_factory=dict)
-    qcds: Dict[int, float] = field(default_factory=dict)              # year -> QCD amount
+
+    your_conversions: dict[int, float] = field(default_factory=dict)  # year -> amount
+    spouse_conversions: dict[int, float] = field(default_factory=dict)
+    qcds: dict[int, float] = field(default_factory=dict)  # year -> QCD amount
 
 
 @dataclass
 class ScenarioResult:
     """Complete multi-year projection output."""
+
     name: str
-    years: List[YearResult]
+    years: list[YearResult]
     household: Household
     plan: ConversionPlan
 
@@ -96,18 +103,21 @@ class ScenarioResult:
     total_conv_tax: float = 0.0
     total_irmaa: float = 0.0
     total_aca_loss: float = 0.0
-    total_rmd_tax: float = 0.0     # cumulative tax during RMD years
-    total_brok_tax: float = 0.0    # cumulative brokerage capital gains tax
+    total_rmd_tax: float = 0.0  # cumulative tax during RMD years
+    total_brok_tax: float = 0.0  # cumulative brokerage capital gains tax
 
-    def years_as_dicts(self) -> List[dict]:
+    def years_as_dicts(self) -> list[dict]:
         """Convert to list of dicts for DataFrame creation."""
         return [yr.__dict__ for yr in self.years]
 
 
-def run_scenario(hh: Household, plan: ConversionPlan,
-                 name: str = "Scenario",
-                 end_age: int = 95,
-                 early_exercise: bool = True) -> ScenarioResult:
+def run_scenario(
+    hh: Household,
+    plan: ConversionPlan,
+    name: str = "Scenario",
+    end_age: int = 95,
+    early_exercise: bool = True,
+) -> ScenarioResult:
     """
     Run a full projection from base_year through end_age.
 
@@ -134,7 +144,10 @@ def run_scenario(hh: Household, plan: ConversionPlan,
         yr = YearResult(year=year, your_age=ya, spouse_age=sa, phase="")
 
         # === Phase classification ===
-        if ya <= min(74, hh.base_year + 2 - hh.base_year + hh.your_age) and hh.option_income(year, early_exercise) > 0:
+        if (
+            ya <= min(74, hh.base_year + 2 - hh.base_year + hh.your_age)
+            and hh.option_income(year, early_exercise) > 0
+        ):
             yr.phase = "options"
         elif ya <= 74 and ya < 70:
             yr.phase = "clean"
@@ -168,24 +181,47 @@ def run_scenario(hh: Household, plan: ConversionPlan,
         # === Social Security ===
         your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
         spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
-        yr.your_ss = ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola) if ya >= hh.ss_start_age else 0.0
-        yr.spouse_ss = ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola) if sa >= hh.ss_start_age else 0.0
+        yr.your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        yr.spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
         yr.combined_ss = yr.your_ss + yr.spouse_ss
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
-        yr.magi = (yr.option_income + yr.your_conversion + yr.spouse_conversion +
-                   yr.your_rmd + yr.combined_ss)  # full RMD (before QCD for MAGI? QCD excluded from MAGI)
+        yr.magi = (
+            yr.option_income
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.your_rmd
+            + yr.combined_ss
+        )  # full RMD (before QCD for MAGI? QCD excluded from MAGI)
         # Actually QCD IS excluded from MAGI:
-        yr.magi = (yr.option_income + yr.your_conversion + yr.spouse_conversion +
-                   yr.taxable_rmd + yr.combined_ss)
+        yr.magi = (
+            yr.option_income
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.taxable_rmd
+            + yr.combined_ss
+        )
 
         # === SS taxation ===
         other_inc = yr.option_income + yr.your_conversion + yr.spouse_conversion + yr.taxable_rmd
         yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
 
         # === Combined gross (for tax) ===
-        yr.combined_gross = (yr.option_income + yr.your_conversion + yr.spouse_conversion +
-                             yr.taxable_rmd + yr.taxable_ss_amt)
+        yr.combined_gross = (
+            yr.option_income
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.taxable_rmd
+            + yr.taxable_ss_amt
+        )
 
         # === Deductions ===
         yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
@@ -225,7 +261,6 @@ def run_scenario(hh: Household, plan: ConversionPlan,
         years_from_base = yr_idx
         yr.living_expenses = hh.living_expenses * (1 + hh.expense_inflation) ** years_from_base
 
-        after_tax_ss = yr.combined_ss  # SS is received gross; tax comes from overall return
         after_tax_rmd = yr.your_rmd - yr.qcd  # taxable RMD (net of QCD)
         available_income = after_tax_rmd + yr.combined_ss - yr.federal_tax_amt
         yr.income_needed = max(yr.living_expenses - available_income, 0)
@@ -263,7 +298,7 @@ def run_scenario(hh: Household, plan: ConversionPlan,
 
         results.append(yr)
 
-    result = ScenarioResult(
+    return ScenarioResult(
         name=name,
         years=results,
         household=hh,
@@ -276,11 +311,11 @@ def run_scenario(hh: Household, plan: ConversionPlan,
         total_rmd_tax=cum_rmd_tax,
         total_brok_tax=cum_brok_tax,
     )
-    return result
 
 
-def run_no_conversion(hh: Household, end_age: int = 95,
-                      early_exercise: bool = True) -> ScenarioResult:
+def run_no_conversion(
+    hh: Household, end_age: int = 95, early_exercise: bool = True
+) -> ScenarioResult:
     """Baseline scenario: no conversions at all."""
     return run_scenario(hh, ConversionPlan(), "No Conversion", end_age, early_exercise)
 
@@ -308,8 +343,16 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         # SS
         your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
         spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
-        your_ss = ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola) if ya >= hh.ss_start_age else 0.0
-        spouse_ss = ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola) if sa >= hh.ss_start_age else 0.0
+        your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
         combined_ss = your_ss + spouse_ss
 
         # RMD

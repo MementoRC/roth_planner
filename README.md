@@ -18,19 +18,20 @@ A Streamlit-based tool for planning multi-year Roth IRA conversions with full ta
 ## Quick Start
 
 ```bash
-# 1. Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# 1. Install pixi (if not already installed)
+curl -fsSL https://pixi.sh/install.sh | bash
 
 # 2. Install dependencies
-pip install -r requirements.txt
+pixi install -e dev
 
 # 3. Run the app
-streamlit run app.py
+pixi run -e dev app
 
-# 4. Run tests (validates math against known numbers)
-python tests/test_engine.py
+# 4. Run tests
+pixi run -e dev test
+
+# 5. Run quality checks
+pixi run -e dev quality
 ```
 
 ## Project Structure
@@ -38,7 +39,8 @@ python tests/test_engine.py
 ```
 roth_planner/
 ├── app.py                    # Streamlit entry point
-├── requirements.txt
+├── pixi.toml                 # Pixi project & dependency config
+├── pyproject.toml             # Python tooling config
 ├── models/
 │   └── household.py          # Household data model (ages, IRAs, SS, grants)
 ├── engine/
@@ -53,21 +55,6 @@ roth_planner/
 └── tests/
     └── test_engine.py        # 43 tests against verified spreadsheet numbers
 ```
-
-## Your Numbers (Pre-Configured)
-
-| Item | You | Spouse |
-|------|-----|--------|
-| Age (2026) | 61 | 55 |
-| Trad IRA | $1,700,000 | $1,700,000 |
-| SS at FRA 67 | $3,800/mo | $3,800/mo |
-| SS at 70 (delayed) | $56,544/yr | $56,544/yr |
-| RMD starts | Age 75 | Age 75 |
-| Conv window | 14 years (61-74) | 15 years (60-74) |
-
-Growth: 7% · Living expenses: $30,000/yr · Filing: MFJ (Texas, no state tax)
-
-TXN grants: 2019 ($104.41 × 650), 2020 ($130.52 × 763), 2021 ($169.23 × 450)
 
 ## Key Concepts
 
