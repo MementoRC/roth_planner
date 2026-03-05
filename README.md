@@ -18,19 +18,20 @@ A Streamlit-based tool for planning multi-year Roth IRA conversions with full ta
 ## Quick Start
 
 ```bash
-# 1. Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# 1. Install pixi (if not already installed)
+curl -fsSL https://pixi.sh/install.sh | bash
 
 # 2. Install dependencies
-pip install -r requirements.txt
+pixi install -e dev
 
 # 3. Run the app
-streamlit run app.py
+pixi run -e dev app
 
-# 4. Run tests (validates math against known numbers)
-python tests/test_engine.py
+# 4. Run tests
+pixi run -e dev test
+
+# 5. Run quality checks
+pixi run -e dev quality
 ```
 
 ## Project Structure
@@ -38,7 +39,8 @@ python tests/test_engine.py
 ```
 roth_planner/
 ├── app.py                    # Streamlit entry point
-├── requirements.txt
+├── pixi.toml                 # Pixi project & dependency config
+├── pyproject.toml             # Python tooling config
 ├── models/
 │   └── household.py          # Household data model (ages, IRAs, SS, grants)
 ├── engine/
