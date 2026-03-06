@@ -68,7 +68,7 @@ class Household:
     rmd_start_age: int = 75  # SECURE 2.0 for born after 1960
 
     # QCD
-    qcd_limit: float = 105_000  # 2025 annual limit per person
+    qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)
 
     @property
     def age_gap(self) -> int:

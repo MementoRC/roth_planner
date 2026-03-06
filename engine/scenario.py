@@ -17,6 +17,7 @@ from engine.tax import (
     marginal_rate,
     room_to_12,
     room_to_22,
+    senior_bonus_deduction,
     taxable_ss,
 )
 from models.household import Household
@@ -225,6 +226,7 @@ def run_scenario(
 
         # === Deductions ===
         yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
 
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
@@ -368,6 +370,8 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
 
         # Deductions
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        ded += senior_bonus_deduction(ya, sa, approx_magi)
 
         # Room to 12%
         room = room_to_12(fixed_gross, ded)

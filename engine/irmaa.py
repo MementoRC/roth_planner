@@ -9,18 +9,18 @@ Key facts:
 
 from __future__ import annotations
 
-# 2025 IRMAA thresholds (MFJ) — approximate, indexed annually
-# (magi_threshold, annual_part_b_surcharge_per_person, annual_part_d_surcharge_per_person)
+# 2026 IRMAA thresholds (MFJ) — indexed annually
+# (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
-    (206_000, 244.60 * 12, 13.70 * 12),  # Tier 1
-    (258_000, 349.40 * 12, 35.50 * 12),  # Tier 2
-    (322_000, 454.20 * 12, 57.30 * 12),  # Tier 3
-    (386_000, 559.00 * 12, 79.10 * 12),  # Tier 4
-    (750_000, 594.00 * 12, 85.80 * 12),  # Tier 5
+    (218_000, 284.10 * 12, 14.50 * 12),  # Tier 1
+    (274_000, 405.80 * 12, 37.50 * 12),  # Tier 2
+    (342_000, 527.50 * 12, 60.40 * 12),  # Tier 3
+    (410_000, 649.20 * 12, 83.30 * 12),  # Tier 4
+    (750_000, 689.90 * 12, 91.00 * 12),  # Tier 5
 ]
 
 # Base premiums (no surcharge)
-BASE_PART_B = 174.70 * 12  # annual per person
+BASE_PART_B = 202.90 * 12  # annual per person
 BASE_PART_D = 0.0  # base Part D surcharge is $0
 
 

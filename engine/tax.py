@@ -78,6 +78,27 @@ def deductions(
     return std_ded + senior
 
 
+def senior_bonus_deduction(your_age: int, spouse_age: int, magi: float,
+                           bonus_per_person: float = 6_000,
+                           phaseout_start: float = 150_000,
+                           phaseout_rate: float = 0.06) -> float:
+    """
+    OBBBA Senior Bonus Deduction (2026-2028).
+
+    $6,000 per person age 65+, phases out at $150K MAGI (MFJ).
+    Reduction: $0.06 per $1 of MAGI over threshold.
+    Stacks with standard deduction and $1,650 senior extra.
+    """
+    eligible = sum(1 for age in [your_age, spouse_age] if age >= 65)
+    if eligible == 0:
+        return 0.0
+    total_bonus = bonus_per_person * eligible
+    if magi <= phaseout_start:
+        return total_bonus
+    reduction = (magi - phaseout_start) * phaseout_rate
+    return max(total_bonus - reduction, 0.0)
+
+
 def tax_on_conversion(conversion: float, other_taxable: float) -> float:
     """
     Incremental tax caused by a Roth conversion.
