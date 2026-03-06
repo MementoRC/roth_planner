@@ -84,7 +84,7 @@ def senior_bonus_deduction(your_age: int, spouse_age: int, magi: float,
                            phaseout_rate: float = 0.06) -> float:
     """
     OBBBA Senior Bonus Deduction (2026-2028).
-    
+
     $6,000 per person age 65+, phases out at $150K MAGI (MFJ).
     Reduction: $0.06 per $1 of MAGI over threshold.
     Stacks with standard deduction and $1,650 senior extra.

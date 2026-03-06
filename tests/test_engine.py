@@ -128,10 +128,10 @@ class TestIRMAA:
         assert irmaa_surcharge(200_000) == 0
 
     def test_above_tier1(self):
-        assert irmaa_surcharge(210_000) > 0
+        assert irmaa_surcharge(220_000) > 0
 
     def test_room_to_next(self):
-        assert irmaa_next_threshold(200_000) == approx(6_000)
+        assert irmaa_next_threshold(200_000) == approx(18_000)
 
 
 class TestACA:

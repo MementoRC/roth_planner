@@ -59,13 +59,13 @@ def aca_subsidy(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> flo
 
     Subsidy = benchmark_premium - (income × cap_rate)
     Cannot be negative.
-    
+
     When using pre-ARP schedule, no subsidies above 400% FPL.
     """
     # Check 400% FPL cliff for pre-ARP schedule
     if not ENHANCED_SUBSIDIES_ACTIVE and magi > 4.0 * FPL_2:
         return 0.0
-    
+
     cap_rate = aca_premium_cap_rate(magi)
     expected_contribution = magi * cap_rate
     return max(benchmark - expected_contribution, 0)
