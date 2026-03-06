@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from engine.aca import aca_applies, aca_subsidy_loss
 from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
+from engine.niit import niit
 from engine.tax import (
     deductions,
     federal_tax,
@@ -60,6 +61,7 @@ class YearResult:
     conversion_tax: float = 0.0
     irmaa_cost: float = 0.0
     aca_loss: float = 0.0
+    niit_cost: float = 0.0
     all_in_cost: float = 0.0
 
     # Bracket room
@@ -104,6 +106,7 @@ class ScenarioResult:
     total_conv_tax: float = 0.0
     total_irmaa: float = 0.0
     total_aca_loss: float = 0.0
+    total_niit: float = 0.0
     total_rmd_tax: float = 0.0  # cumulative tax during RMD years
     total_brok_tax: float = 0.0  # cumulative brokerage capital gains tax
 
@@ -132,6 +135,7 @@ def run_scenario(
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
     cum_aca = 0.0
+    cum_niit = 0.0
     cum_rmd_tax = 0.0
     cum_brok_tax = 0.0
 
@@ -257,8 +261,14 @@ def run_scenario(
         else:
             yr.aca_loss = 0.0
 
+        # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
+        # Net investment income = brokerage growth (realized gains)
+        # Computed on prior year's brokerage since current year hasn't grown yet
+        net_investment_income = brokerage * hh.growth_rate * hh.brok_turnover
+        yr.niit_cost = niit(yr.magi, net_investment_income)
+
         # === All-in cost of conversions ===
-        yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss
+        yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost
 
         # === Bracket room ===
         yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions)
@@ -299,6 +309,7 @@ def run_scenario(
         cum_conv_tax += yr.conversion_tax
         cum_irmaa += yr.irmaa_cost
         cum_aca += yr.aca_loss
+        cum_niit += yr.niit_cost
         if ya >= hh.rmd_start_age:
             cum_rmd_tax += yr.federal_tax_amt
         cum_brok_tax += yr.brokerage_gain_tax
@@ -315,6 +326,7 @@ def run_scenario(
         total_conv_tax=cum_conv_tax,
         total_irmaa=cum_irmaa,
         total_aca_loss=cum_aca,
+        total_niit=cum_niit,
         total_rmd_tax=cum_rmd_tax,
         total_brok_tax=cum_brok_tax,
     )

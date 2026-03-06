@@ -27,6 +27,7 @@ from engine.irmaa import (
     irmaa_surcharge,
     irmaa_tier,
 )
+from engine.niit import NIIT_THRESHOLD_MFJ, niit
 from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
 from models.household import Household
 
@@ -66,6 +67,13 @@ def render(hh: Household):
             format="%d",
             help="Income before any Roth conversion (options, SS, RMD, etc.)",
         )
+        net_inv_income = st.number_input(
+            "Net investment income ($/yr)",
+            value=0,
+            step=5_000,
+            format="%d",
+            help="Capital gains + dividends + interest. NIIT = 3.8% when MAGI > $250K",
+        )
 
     # --- Generate cost curves ---
     magi_points = list(range(magi_range[0], magi_range[1] + 1, 1_000))
@@ -75,6 +83,7 @@ def render(hh: Household):
     aca_loss_vals = []
     irmaa_vals = []
     irmaa_tier_vals = []
+    niit_vals = []
     fed_tax_vals = []
     marginal_vals = []
     total_hidden_cost = []
@@ -98,15 +107,23 @@ def render(hh: Household):
         irmaa_vals.append(surcharge)
         irmaa_tier_vals.append(irmaa_tier(magi))
 
+        # NIIT
+        niit_vals.append(niit(magi, net_inv_income))
+
         # Tax
         bonus_ded = senior_bonus_deduction(hh.your_age, hh.spouse_age, magi)
         taxable = max(magi - ded - bonus_ded, 0)
         fed_tax_vals.append(federal_tax(taxable))
         marginal_vals.append(marginal_rate(taxable))
 
-        # Combined hidden cost (ACA loss + IRMAA beyond base)
+        # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
         base_irmaa = irmaa_surcharge(base_magi, num_people=2)
-        hidden = aca_subsidy_loss(base_magi, magi) + max(surcharge - base_irmaa, 0)
+        base_niit = niit(base_magi, net_inv_income)
+        hidden = (
+            aca_subsidy_loss(base_magi, magi)
+            + max(surcharge - base_irmaa, 0)
+            + max(niit(magi, net_inv_income) - base_niit, 0)
+        )
         total_hidden_cost.append(hidden)
 
     # --- Chart 1: ACA Subsidy & Net Premium ---
@@ -211,15 +228,17 @@ def render(hh: Household):
     # --- Chart 3: Combined Hidden Cost ---
     st.markdown("### Total Hidden Cost of Conversion Income")
     st.caption(
-        f"Base MAGI: ${base_magi:,.0f} — shows ACA subsidy loss + IRMAA increase "
-        "as you add conversion income above your base"
+        f"Base MAGI: ${base_magi:,.0f} · Net investment income: ${net_inv_income:,.0f} — "
+        "shows ACA subsidy loss + IRMAA increase + NIIT as you add conversion income"
     )
 
     fig_hidden = go.Figure()
 
-    # Stacked area: ACA loss + IRMAA increase
+    # Stacked area: ACA loss + IRMAA increase + NIIT increase
     base_irmaa = irmaa_surcharge(base_magi, num_people=2)
+    base_niit = niit(base_magi, net_inv_income)
     irmaa_increase = [max(v - base_irmaa, 0) for v in irmaa_vals]
+    niit_increase = [max(v - base_niit, 0) for v in niit_vals]
 
     fig_hidden.add_trace(
         go.Scatter(
@@ -243,6 +262,17 @@ def render(hh: Household):
             hovertemplate="MAGI: $%{x:,.0f}<br>IRMAA: $%{y:,.0f}<extra></extra>",
         )
     )
+    fig_hidden.add_trace(
+        go.Scatter(
+            x=magi_points,
+            y=niit_increase,
+            name="NIIT (3.8%)",
+            stackgroup="cost",
+            line={"color": "#8b5cf6"},
+            fillcolor="rgba(139,92,246,0.3)",
+            hovertemplate="MAGI: $%{x:,.0f}<br>NIIT: $%{y:,.0f}<extra></extra>",
+        )
+    )
 
     # Overlay marginal tax rate as secondary axis
     fig_hidden.add_trace(
@@ -264,7 +294,7 @@ def render(hh: Household):
     )
 
     fig_hidden.update_layout(
-        title="Hidden Costs Above Base MAGI (ACA Loss + IRMAA Increase)",
+        title="Hidden Costs Above Base MAGI (ACA Loss + IRMAA + NIIT)",
         xaxis_title="MAGI ($)",
         xaxis_tickformat="$,.0s",
         yaxis_title="Hidden Cost ($/yr)",
@@ -377,3 +407,12 @@ def render(hh: Household):
             f"FPL (family of 2): ${FPL_2:,.0f} · "
             f"Benchmark silver plan: ${BENCHMARK_PREMIUM_ANNUAL:,.0f}/yr"
         )
+
+    st.markdown("---")
+    st.markdown("### NIIT — Net Investment Income Tax")
+    st.markdown(
+        f"**3.8% surtax** on the lesser of net investment income or MAGI above "
+        f"**${NIIT_THRESHOLD_MFJ:,}** (MFJ). Applies to capital gains, dividends, "
+        "interest, and rental income. Roth conversions are *not* investment income, "
+        "but they raise MAGI, which can expose more investment income to the tax."
+    )
