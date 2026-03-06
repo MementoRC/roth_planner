@@ -325,13 +325,13 @@ def render(hh: Household):
             "You": ya,
             "Spouse": sa,
             "System": system,
-            "IRMAA Tier": irmaa_tier(base_magi) if medicare_count > 0 else "—",
-            "IRMAA Room": irmaa_room if irmaa_room is not None else "—",
+            "IRMAA Tier": str(irmaa_tier(base_magi)) if medicare_count > 0 else "—",
+            "IRMAA Room": f"${irmaa_room:,.0f}" if irmaa_room is not None else "—",
         }
 
         if you_on_aca or sp_on_aca:
-            row["ACA Subsidy"] = aca_subsidy(base_magi)
-            row["ACA You Pay"] = aca_net_cost(base_magi)
+            row["ACA Subsidy"] = f"${aca_subsidy(base_magi):,.0f}"
+            row["ACA You Pay"] = f"${aca_net_cost(base_magi):,.0f}"
         else:
             row["ACA Subsidy"] = "—"
             row["ACA You Pay"] = "—"
