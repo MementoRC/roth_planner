@@ -11,8 +11,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.aca import aca_applies, aca_subsidy_loss
-from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_for_year
 from engine.ira import ss_benefit_at_age, ss_with_cola
+from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_for_year
 from engine.niit import NIIT_THRESHOLD_MFJ, niit
 from engine.tax import (
     BRACKETS_MFJ,
@@ -115,10 +115,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float,
         aca_applies(ya, hh.your_aca_enrolled)
         or aca_applies(sa, hh.spouse_aca_enrolled)
     )
-    if anyone_on_aca:
-        aca_loss = aca_subsidy_loss(base["base_magi"], magi)
-    else:
-        aca_loss = 0.0
+    aca_loss = aca_subsidy_loss(base["base_magi"], magi) if anyone_on_aca else 0.0
 
     # NIIT
     niit_with = niit(magi, net_inv_income)
