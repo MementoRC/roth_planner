@@ -87,6 +87,6 @@ def aca_net_cost(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> fl
     return max(benchmark - aca_subsidy(magi, benchmark), 0)
 
 
-def aca_applies(your_age: int) -> bool:
-    """ACA marketplace only relevant if under 65 (pre-Medicare)."""
-    return your_age < 65
+def aca_applies(your_age: int, enrolled: bool = True) -> bool:
+    """ACA marketplace only relevant if under 65 AND enrolled."""
+    return your_age < 65 and enrolled

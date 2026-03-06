@@ -67,6 +67,10 @@ class Household:
     # RMD
     rmd_start_age: int = 75  # SECURE 2.0 for born after 1960
 
+    # Healthcare coverage
+    your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
+    spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
+
     # QCD
     qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)
 

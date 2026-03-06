@@ -2,7 +2,7 @@
 
 Key facts:
 - 2-year lookback: income in year X determines IRMAA in year X+2
-- Applies to Medicare Part B and Part D premiums
+- Applies to both Medicare Part B AND Part D premiums
 - Thresholds are for MAGI (includes Roth conversions, option income, etc.)
 - Both spouses pay surcharge based on joint MAGI
 """

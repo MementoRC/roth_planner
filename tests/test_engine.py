@@ -5,6 +5,7 @@ import pytest
 from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
+from engine.niit import niit, niit_from_conversion
 from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import (
     deductions,
@@ -132,6 +133,31 @@ class TestIRMAA:
 
     def test_room_to_next(self):
         assert irmaa_next_threshold(200_000) == approx(18_000)
+
+
+class TestNIIT:
+    def test_below_threshold(self):
+        assert niit(200_000, 50_000) == 0
+
+    def test_above_threshold(self):
+        # MAGI $300K, NII $50K → excess = $50K, min(50K, 50K) = $50K × 3.8%
+        assert niit(300_000, 50_000) == approx(50_000 * 0.038)
+
+    def test_nii_less_than_excess(self):
+        # MAGI $400K, NII $20K → excess = $150K, min(20K, 150K) = $20K × 3.8%
+        assert niit(400_000, 20_000) == approx(20_000 * 0.038)
+
+    def test_excess_less_than_nii(self):
+        # MAGI $260K, NII $50K → excess = $10K, min(50K, 10K) = $10K × 3.8%
+        assert niit(260_000, 50_000) == approx(10_000 * 0.038)
+
+    def test_zero_investment_income(self):
+        assert niit(500_000, 0) == 0
+
+    def test_conversion_increases_niit(self):
+        # Base MAGI $200K (below threshold), $100K conversion pushes to $300K
+        incremental = niit_from_conversion(200_000, 100_000, 30_000)
+        assert incremental == approx(30_000 * 0.038)
 
 
 class TestACA:
