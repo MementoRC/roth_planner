@@ -74,10 +74,10 @@ def get_household() -> Household:
 
 # Route to page
 if page == "📊 Dashboard":
-    from pages.dashboard import render
+    from views.dashboard import render
 
     render(get_household())
 elif page == "📋 Conversion Planner":
-    from pages.planner import render
+    from views.planner import render
 
     render(get_household())
