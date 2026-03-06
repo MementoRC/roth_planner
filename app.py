@@ -28,7 +28,7 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["📊 Dashboard", "📋 Conversion Planner", "🏥 ACA + IRMAA Explorer"],
+    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "🏥 ACA + IRMAA Explorer"],
     label_visibility="collapsed",
 )
 
@@ -93,6 +93,10 @@ if page == "📊 Dashboard":
     render(get_household())
 elif page == "📋 Conversion Planner":
     from views.planner import render
+
+    render(get_household())
+elif page == "🎯 Sweet Spot Finder":
+    from views.sweet_spot import render
 
     render(get_household())
 elif page == "🏥 ACA + IRMAA Explorer":
