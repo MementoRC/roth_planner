@@ -33,9 +33,14 @@ from models.household import Household
 
 def render(hh: Household):
     st.title("🏥 ACA + IRMAA Explorer")
+    anyone_on_aca = (
+        aca_applies(hh.your_age, hh.your_aca_enrolled)
+        or aca_applies(hh.spouse_age, hh.spouse_aca_enrolled)
+    )
+    aca_status = "Enrolled" if anyone_on_aca else "Not enrolled"
     st.caption(
         f"You {hh.your_age} / Spouse {hh.spouse_age} · "
-        f"ACA applies: ages 61-64 · IRMAA lookback: 2 years · "
+        f"ACA: {aca_status} · IRMAA lookback: 2 years · "
         f"Enhanced subsidies: {'Active' if ENHANCED_SUBSIDIES_ACTIVE else 'Expired (pre-ARP rules)'}"
     )
 
@@ -77,11 +82,16 @@ def render(hh: Household):
     ded = deductions(hh.your_age, hh.spouse_age, hh.std_deduction, hh.senior_extra)
 
     for magi in magi_points:
-        # ACA (only meaningful pre-65)
-        sub = aca_subsidy(magi)
-        aca_subsidy_vals.append(sub)
-        aca_net_cost_vals.append(aca_net_cost(magi))
-        aca_loss_vals.append(aca_subsidy_loss(base_magi, magi))
+        # ACA (only meaningful if enrolled and pre-65)
+        if anyone_on_aca:
+            sub = aca_subsidy(magi)
+            aca_subsidy_vals.append(sub)
+            aca_net_cost_vals.append(aca_net_cost(magi))
+            aca_loss_vals.append(aca_subsidy_loss(base_magi, magi))
+        else:
+            aca_subsidy_vals.append(0)
+            aca_net_cost_vals.append(0)
+            aca_loss_vals.append(0)
 
         # IRMAA
         surcharge = irmaa_surcharge(magi, num_people=2)
@@ -105,7 +115,7 @@ def render(hh: Household):
 
     with col_aca:
         st.markdown("### ACA Marketplace (Ages 61-64)")
-        if aca_applies(hh.your_age):
+        if anyone_on_aca:
             fig_aca = go.Figure()
             fig_aca.add_trace(
                 go.Scatter(
@@ -153,10 +163,15 @@ def render(hh: Household):
             )
             st.plotly_chart(fig_aca, width="stretch")
         else:
-            st.info(
-                f"You are {hh.your_age} — ACA marketplace no longer applies. "
-                "You are on Medicare. See IRMAA section."
-            )
+            if hh.your_age >= 65:
+                st.info(
+                    f"You are {hh.your_age} — on Medicare. See IRMAA section."
+                )
+            else:
+                st.info(
+                    "ACA not enrolled. Toggle 'You/Spouse on ACA Marketplace' "
+                    "in the sidebar to model ACA subsidies."
+                )
 
     # --- Chart 2: IRMAA Tiers ---
     with col_irmaa:
@@ -279,20 +294,29 @@ def render(hh: Household):
         ya = hh.your_age_in(year)
         sa = hh.spouse_age_in(year)
 
-        on_aca = aca_applies(ya)
+        you_on_aca = aca_applies(ya, hh.your_aca_enrolled)
+        sp_on_aca = aca_applies(sa, hh.spouse_aca_enrolled)
         on_medicare_you = ya >= 65
         on_medicare_sp = sa >= 65
         medicare_count = sum(1 for a in [ya, sa] if a >= 65)
 
-        # Determine system
-        if on_aca and not on_medicare_you:
-            system = "ACA"
-        elif on_medicare_you and not on_medicare_sp:
-            system = "ACA (sp) + Medicare (you)"
-        elif on_medicare_you and on_medicare_sp:
-            system = "Medicare (both)"
+        # Determine system per person
+        parts = []
+        if you_on_aca:
+            parts.append("ACA (you)")
+        elif on_medicare_you:
+            parts.append("Medicare (you)")
         else:
-            system = "—"
+            parts.append("Employer (you)")
+        if sp_on_aca:
+            parts.append("ACA (sp)")
+        elif on_medicare_sp:
+            parts.append("Medicare (sp)")
+        elif hh.spouse_aca_enrolled:
+            parts.append("ACA (sp)")
+        else:
+            parts.append("Uninsured/Other (sp)")
+        system = " + ".join(parts)
 
         irmaa_room = irmaa_next_threshold(base_magi) if medicare_count > 0 else None
 
@@ -305,7 +329,7 @@ def render(hh: Household):
             "IRMAA Room": irmaa_room if irmaa_room is not None else "—",
         }
 
-        if on_aca:
+        if you_on_aca or sp_on_aca:
             row["ACA Subsidy"] = aca_subsidy(base_magi)
             row["ACA You Pay"] = aca_net_cost(base_magi)
         else:

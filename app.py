@@ -20,6 +20,8 @@ if "your_ira" not in st.session_state:
     st.session_state.growth_rate = 7.0
     st.session_state.living_expenses = 30_000
     st.session_state.txn_price = 212
+    st.session_state.your_aca = False
+    st.session_state.spouse_aca = False
 
 st.sidebar.title("🎯 Roth Planner")
 st.sidebar.markdown("---")
@@ -54,6 +56,16 @@ st.session_state.txn_price = st.sidebar.number_input(
     "TXN Current Price", value=st.session_state.txn_price, step=5, format="%d"
 )
 
+st.sidebar.markdown("### Healthcare")
+st.session_state.your_aca = st.sidebar.checkbox(
+    "You on ACA Marketplace", value=st.session_state.your_aca,
+    help="Check if you are enrolled in ACA marketplace (not employer plan)",
+)
+st.session_state.spouse_aca = st.sidebar.checkbox(
+    "Spouse on ACA Marketplace", value=st.session_state.spouse_aca,
+    help="Check if spouse is enrolled in ACA marketplace",
+)
+
 # Build household from session state
 from models.household import Household  # noqa: E402
 
@@ -69,6 +81,8 @@ def get_household() -> Household:
         growth_rate=st.session_state.growth_rate / 100,
         living_expenses=st.session_state.living_expenses,
         txn_price_now=st.session_state.txn_price,
+        your_aca_enrolled=st.session_state.your_aca,
+        spouse_aca_enrolled=st.session_state.spouse_aca,
     )
 
 

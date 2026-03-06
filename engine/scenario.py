@@ -246,7 +246,12 @@ def run_scenario(
         yr.irmaa_room = irmaa_next_threshold(yr.magi)
 
         # === ACA subsidy loss ===
-        if aca_applies(ya):
+        # ACA applies if anyone in household is enrolled and pre-Medicare
+        anyone_on_aca = (
+            aca_applies(ya, hh.your_aca_enrolled)
+            or aca_applies(sa, hh.spouse_aca_enrolled)
+        )
+        if anyone_on_aca:
             base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
             yr.aca_loss = aca_subsidy_loss(base_magi, yr.magi)
         else:
