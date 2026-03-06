@@ -6,7 +6,7 @@ from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit, niit_from_conversion
-from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
+from engine.scenario import auto_fill_12, auto_fill_22, auto_fill_irmaa_safe, run_no_conversion, run_scenario
 from engine.tax import (
     deductions,
     federal_tax,
@@ -222,6 +222,31 @@ class TestScenarios:
         result = run_scenario(hh, plan, "Fill 12%", end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
         assert yr75.your_ira_begin < 4_000_000
+
+    def test_22pct_fill_more_aggressive(self):
+        hh = Household()
+        plan_12 = auto_fill_12(hh)
+        plan_22 = auto_fill_22(hh)
+        total_12 = sum(plan_12.your_conversions.values()) + sum(plan_12.spouse_conversions.values())
+        total_22 = sum(plan_22.your_conversions.values()) + sum(plan_22.spouse_conversions.values())
+        assert total_22 > total_12
+
+    def test_22pct_fill_reduces_ira_more(self):
+        hh = Household()
+        r12 = run_scenario(hh, auto_fill_12(hh), "12%", end_age=95)
+        r22 = run_scenario(hh, auto_fill_22(hh), "22%", end_age=95)
+        yr75_12 = next(yr for yr in r12.years if yr.your_age == 75)
+        yr75_22 = next(yr for yr in r22.years if yr.your_age == 75)
+        assert yr75_22.your_ira_begin < yr75_12.your_ira_begin
+
+    def test_irmaa_safe_stays_under_threshold(self):
+        hh = Household()
+        plan = auto_fill_irmaa_safe(hh)
+        result = run_scenario(hh, plan, "IRMAA-Safe", end_age=95)
+        # During conversion years (pre-75), MAGI should stay under $218K
+        for yr in result.years:
+            if yr.your_age <= 74 and yr.your_conversion > 0:
+                assert yr.magi <= 220_000  # small tolerance for SS taxation effects
 
 
 class TestSweetSpot:

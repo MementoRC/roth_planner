@@ -415,3 +415,148 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
 
     return plan
+
+
+def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+    """
+    Generate a ConversionPlan that fills to the 22% bracket ceiling each year.
+    More aggressive than fill_12 — converts more but at higher marginal rates.
+    """
+    plan = ConversionPlan()
+    your_ira = hh.your_ira
+    spouse_ira = hh.spouse_ira
+
+    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
+        year = hh.base_year + yr_idx
+        ya = hh.your_age + yr_idx
+        sa = hh.spouse_age + yr_idx
+
+        if ya > 80:
+            break
+
+        opt = hh.option_income(year, early_exercise)
+
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
+        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
+        your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
+        combined_ss = your_ss + spouse_ss
+
+        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
+        taxable_rmd = rmd
+
+        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        tss = taxable_ss(combined_ss, other_fixed)
+        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        ded += senior_bonus_deduction(ya, sa, approx_magi)
+
+        room = room_to_22(fixed_gross, ded)
+
+        if ya <= 74 and room > 0:
+            yc = min(room, your_ira)
+            plan.your_conversions[year] = yc
+            room -= yc
+        else:
+            yc = 0
+
+        if 60 <= sa <= 74 and room > 0:
+            sc = min(room, spouse_ira)
+            plan.spouse_conversions[year] = sc
+        else:
+            sc = 0
+
+        your_withdrawal = yc + rmd
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+
+        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+
+    return plan
+
+
+def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+    """
+    Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
+    Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
+    """
+    from engine.irmaa import IRMAA_TIERS_MFJ
+
+    irmaa_threshold = IRMAA_TIERS_MFJ[0][0]
+
+    plan = ConversionPlan()
+    your_ira = hh.your_ira
+    spouse_ira = hh.spouse_ira
+
+    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
+        year = hh.base_year + yr_idx
+        ya = hh.your_age + yr_idx
+        sa = hh.spouse_age + yr_idx
+
+        if ya > 80:
+            break
+
+        opt = hh.option_income(year, early_exercise)
+
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
+        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
+        your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
+        combined_ss = your_ss + spouse_ss
+
+        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
+        taxable_rmd = rmd
+
+        # MAGI without conversion
+        base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+
+        # Room to IRMAA threshold
+        room = max(irmaa_threshold - base_magi, 0)
+
+        # Also cap at bracket room (use 22% ceiling as upper bound)
+        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        tss = taxable_ss(combined_ss, other_fixed)
+        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        ded += senior_bonus_deduction(ya, sa, base_magi)
+        bracket_room = room_to_22(fixed_gross, ded)
+        room = min(room, bracket_room)
+
+        if ya <= 74 and room > 0:
+            yc = min(room, your_ira)
+            plan.your_conversions[year] = yc
+            room -= yc
+        else:
+            yc = 0
+
+        if 60 <= sa <= 74 and room > 0:
+            sc = min(room, spouse_ira)
+            plan.spouse_conversions[year] = sc
+        else:
+            sc = 0
+
+        your_withdrawal = yc + rmd
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+
+        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+
+    return plan
