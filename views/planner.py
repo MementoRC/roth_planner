@@ -112,7 +112,7 @@ def render(hh: Household):
     for yr in conv_window:
         ya, sa = yr.your_age, yr.spouse_age
         you_can_conv = ya <= 74
-        sp_can_conv = 60 <= sa <= 74
+        sp_can_conv = sa <= 74
         qcd_ok = ya >= 71
 
         cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1.2, 1.2, 1, 1.2, 1.2])
@@ -164,8 +164,6 @@ def render(hh: Household):
             )
             if new_sc != sc_val:
                 st.session_state.conv_plan_spouse[yr.year] = new_sc
-        elif sa < 60:
-            cols[6].markdown(f"*Sp {sa}<60*")
         else:
             cols[6].markdown("—")
 

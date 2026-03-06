@@ -175,8 +175,8 @@ def run_scenario(
         if ya > 74:
             yr.your_conversion = 0.0  # can't convert after 74
         yr.spouse_conversion = plan.spouse_conversions.get(year, 0.0)
-        if sa < 60 or sa > 74:
-            yr.spouse_conversion = 0.0  # penalty protection / past window
+        if sa > 74:
+            yr.spouse_conversion = 0.0  # past conversion window (RMDs begin)
 
         # === RMD ===
         yr.your_rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
@@ -401,7 +401,7 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         else:
             yc = 0
 
-        if 60 <= sa <= 74 and room > 0:
+        if sa <= 74 and room > 0:
             sc = min(room, spouse_ira)
             plan.spouse_conversions[year] = sc
         else:
@@ -470,7 +470,7 @@ def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         else:
             yc = 0
 
-        if 60 <= sa <= 74 and room > 0:
+        if sa <= 74 and room > 0:
             sc = min(room, spouse_ira)
             plan.spouse_conversions[year] = sc
         else:
@@ -547,7 +547,7 @@ def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> Conversi
         else:
             yc = 0
 
-        if 60 <= sa <= 74 and room > 0:
+        if sa <= 74 and room > 0:
             sc = min(room, spouse_ira)
             plan.spouse_conversions[year] = sc
         else:
