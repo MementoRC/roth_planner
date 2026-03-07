@@ -49,6 +49,8 @@ class YearResult:
     combined_ss: float = 0.0
     taxable_ss_amt: float = 0.0
 
+    extra_withdrawal: float = 0.0  # voluntary excess withdrawal (post-RMD bracket fill)
+
     # Aggregates
     combined_gross: float = 0.0
     total_deductions: float = 0.0
@@ -89,6 +91,7 @@ class ConversionPlan:
     your_conversions: dict[int, float] = field(default_factory=dict)  # year -> amount
     spouse_conversions: dict[int, float] = field(default_factory=dict)
     qcds: dict[int, float] = field(default_factory=dict)  # year -> QCD amount
+    extra_withdrawals: dict[int, float] = field(default_factory=dict)  # year -> voluntary excess
 
 
 @dataclass
@@ -175,13 +178,16 @@ def run_scenario(
         if ya > 74:
             yr.your_conversion = 0.0  # can't convert after 74
         yr.spouse_conversion = plan.spouse_conversions.get(year, 0.0)
-        if sa < 60 or sa > 74:
-            yr.spouse_conversion = 0.0  # penalty protection / past window
+        if sa > 74:
+            yr.spouse_conversion = 0.0  # past conversion window (RMDs begin)
 
         # === RMD ===
         yr.your_rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
         yr.qcd = min(plan.qcds.get(year, 0.0), yr.your_rmd, hh.qcd_limit)
         yr.taxable_rmd = max(yr.your_rmd - yr.qcd, 0)
+
+        # === Extra voluntary withdrawal (bracket fill post-RMD) ===
+        yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
 
         # === Social Security ===
         your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
@@ -212,11 +218,15 @@ def run_scenario(
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
+            + yr.extra_withdrawal
             + yr.combined_ss
         )
 
         # === SS taxation ===
-        other_inc = yr.option_income + yr.your_conversion + yr.spouse_conversion + yr.taxable_rmd
+        other_inc = (
+            yr.option_income + yr.your_conversion + yr.spouse_conversion
+            + yr.taxable_rmd + yr.extra_withdrawal
+        )
         yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
 
         # === Combined gross (for tax) ===
@@ -225,6 +235,7 @@ def run_scenario(
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
+            + yr.extra_withdrawal
             + yr.taxable_ss_amt
         )
 
@@ -279,7 +290,7 @@ def run_scenario(
         yr.living_expenses = hh.living_expenses * (1 + hh.expense_inflation) ** years_from_base
 
         after_tax_rmd = yr.your_rmd - yr.qcd  # taxable RMD (net of QCD)
-        available_income = after_tax_rmd + yr.combined_ss - yr.federal_tax_amt
+        available_income = after_tax_rmd + yr.extra_withdrawal + yr.combined_ss - yr.federal_tax_amt
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
@@ -292,7 +303,7 @@ def run_scenario(
         brokerage = brokerage + yr.brokerage_growth - yr.brokerage_gain_tax + yr.excess_rmd
 
         # === IRA end of year ===
-        your_withdrawal = yr.your_conversion + yr.your_rmd
+        your_withdrawal = yr.your_conversion + yr.your_rmd + yr.extra_withdrawal
         spouse_withdrawal = yr.spouse_conversion
         # Spouse RMD (if spouse hits 75)
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
@@ -401,7 +412,7 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         else:
             yc = 0
 
-        if 60 <= sa <= 74 and room > 0:
+        if sa <= 74 and room > 0:
             sc = min(room, spouse_ira)
             plan.spouse_conversions[year] = sc
         else:
@@ -413,5 +424,204 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
 
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
         spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+
+    return plan
+
+
+def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+    """
+    Generate a ConversionPlan that fills to the 22% bracket ceiling each year.
+    More aggressive than fill_12 — converts more but at higher marginal rates.
+    """
+    plan = ConversionPlan()
+    your_ira = hh.your_ira
+    spouse_ira = hh.spouse_ira
+
+    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
+        year = hh.base_year + yr_idx
+        ya = hh.your_age + yr_idx
+        sa = hh.spouse_age + yr_idx
+
+        if ya > 80:
+            break
+
+        opt = hh.option_income(year, early_exercise)
+
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
+        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
+        your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
+        combined_ss = your_ss + spouse_ss
+
+        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
+        taxable_rmd = rmd
+
+        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        tss = taxable_ss(combined_ss, other_fixed)
+        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        ded += senior_bonus_deduction(ya, sa, approx_magi)
+
+        room = room_to_22(fixed_gross, ded)
+
+        if ya <= 74 and room > 0:
+            yc = min(room, your_ira)
+            plan.your_conversions[year] = yc
+            room -= yc
+        else:
+            yc = 0
+
+        if sa <= 74 and room > 0:
+            sc = min(room, spouse_ira)
+            plan.spouse_conversions[year] = sc
+        else:
+            sc = 0
+
+        your_withdrawal = yc + rmd
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+
+        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+
+    return plan
+
+
+def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+    """
+    Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
+    Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
+    """
+    from engine.irmaa import IRMAA_TIERS_MFJ
+
+    irmaa_threshold = IRMAA_TIERS_MFJ[0][0]
+
+    plan = ConversionPlan()
+    your_ira = hh.your_ira
+    spouse_ira = hh.spouse_ira
+
+    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
+        year = hh.base_year + yr_idx
+        ya = hh.your_age + yr_idx
+        sa = hh.spouse_age + yr_idx
+
+        if ya > 80:
+            break
+
+        opt = hh.option_income(year, early_exercise)
+
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
+        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
+        your_ss = (
+            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
+            if ya >= hh.ss_start_age
+            else 0.0
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
+            if sa >= hh.ss_start_age
+            else 0.0
+        )
+        combined_ss = your_ss + spouse_ss
+
+        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
+        taxable_rmd = rmd
+
+        # MAGI without conversion
+        base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+
+        # Room to IRMAA threshold
+        room = max(irmaa_threshold - base_magi, 0)
+
+        # Also cap at bracket room (use 22% ceiling as upper bound)
+        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        tss = taxable_ss(combined_ss, other_fixed)
+        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+        ded += senior_bonus_deduction(ya, sa, base_magi)
+        bracket_room = room_to_22(fixed_gross, ded)
+        room = min(room, bracket_room)
+
+        if ya <= 74 and room > 0:
+            yc = min(room, your_ira)
+            plan.your_conversions[year] = yc
+            room -= yc
+        else:
+            yc = 0
+
+        if sa <= 74 and room > 0:
+            sc = min(room, spouse_ira)
+            plan.spouse_conversions[year] = sc
+        else:
+            sc = 0
+
+        your_withdrawal = yc + rmd
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+
+        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+
+    return plan
+
+
+def add_bracket_fill_withdrawals(
+    hh: Household,
+    base_plan: ConversionPlan,
+    target_bracket: float = 0.22,
+    early_exercise: bool = True,
+) -> ConversionPlan:
+    """
+    Add voluntary excess withdrawals post-RMD to fill the target bracket.
+
+    Takes an existing plan and adds extra_withdrawals for years where
+    RMD + SS don't fill the bracket, withdrawing more to top it off.
+    This depletes the IRA faster, reducing future RMD pressure.
+    The after-tax proceeds flow to brokerage (not Roth).
+
+    Args:
+        hh: Household parameters
+        base_plan: Existing conversion plan to augment
+        target_bracket: Fill up to this bracket (default 22%)
+    """
+    from engine.tax import BRACKETS_MFJ
+
+    # Run the base scenario first to get IRA balances and bracket room
+    result = run_scenario(hh, base_plan, "temp", end_age=95, early_exercise=early_exercise)
+
+    # Find the bracket ceiling for the target rate
+    bracket_ceiling = 0.0
+    for ceil, rate in BRACKETS_MFJ:
+        if rate <= target_bracket:
+            bracket_ceiling = ceil
+        else:
+            break
+
+    plan = ConversionPlan(
+        your_conversions=dict(base_plan.your_conversions),
+        spouse_conversions=dict(base_plan.spouse_conversions),
+        qcds=dict(base_plan.qcds),
+    )
+
+    for yr in result.years:
+        if yr.your_age < hh.rmd_start_age:
+            continue  # only post-RMD
+
+        # Room to fill the target bracket
+        room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
+        if room > 0 and yr.your_ira_begin > yr.your_rmd:
+            # Don't withdraw more than available (after RMD + conversion)
+            available = yr.your_ira_begin - yr.your_rmd - yr.your_conversion
+            extra = min(room, max(available, 0))
+            if extra > 1000:  # only if meaningful
+                plan.extra_withdrawals[yr.year] = extra
 
     return plan
