@@ -318,6 +318,87 @@ def render(hh: Household):
             if conv_rows:
                 st.dataframe(pd.DataFrame(conv_rows), hide_index=True, width="stretch")
 
+    # --- Surviving Spouse Analysis ---
+    st.markdown("---")
+    st.markdown("### Surviving Spouse Analysis")
+    st.caption(
+        "What happens if you die early? Your spouse inherits your IRA (rolls into hers), "
+        "files Single (tighter brackets), and keeps the higher of two SS benefits."
+    )
+
+    from engine.ira import calc_rmd
+    from engine.tax import (
+        STD_DEDUCTION_SINGLE,
+        SENIOR_EXTRA_SINGLE,
+        federal_tax_single,
+        marginal_rate_single,
+        taxable_ss,
+    )
+
+    death_ages = [70, 75, 80, 85]
+
+    # For each scenario, compute survivor impact at each death age
+    survivor_rows = []
+    for death_age in death_ages:
+        row = {"Your Death Age": str(death_age), "Spouse Age": str(death_age - hh.age_gap)}
+
+        for s in scenarios:
+            # Find the year of death
+            yr_death = next((y for y in s.years if y.your_age == death_age), None)
+            if not yr_death:
+                row[f"{s.name} Inherited IRA"] = "---"
+                row[f"{s.name} Survivor Tax"] = "---"
+                row[f"{s.name} Bracket"] = "---"
+                continue
+
+            # Spouse inherits both IRAs
+            inherited_ira = yr_death.your_ira_begin + yr_death.spouse_ira_begin
+
+            # Survivor gets higher of two SS (with COLA applied)
+            survivor_ss = max(yr_death.your_ss, yr_death.spouse_ss)
+
+            # Project 5 years out — what does year death+5 look like for survivor?
+            proj_years = 5
+            survivor_age = (death_age - hh.age_gap) + proj_years
+            ira_grown = inherited_ira * (1 + hh.growth_rate) ** proj_years
+
+            # RMD on combined IRA (survivor's RMD age)
+            rmd = calc_rmd(ira_grown, survivor_age, hh.rmd_start_age)
+
+            # SS with COLA
+            from engine.ira import ss_with_cola
+            ss_at_proj = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0
+
+            # Single filer tax
+            other_inc = rmd
+            tss = taxable_ss(ss_at_proj, other_inc)  # SS taxation uses Single thresholds too but formula is same
+            gross = rmd + tss
+            ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
+            taxable = max(gross - ded, 0)
+            tax = federal_tax_single(taxable)
+            bracket = marginal_rate_single(taxable)
+
+            row[f"{s.name} Inherited IRA"] = f"${inherited_ira / 1e6:.2f}M"
+            row[f"{s.name} Survivor Tax"] = f"${tax:,.0f}/yr"
+            row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
+
+        survivor_rows.append(row)
+
+    st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
+
+    st.markdown("""
+**Why this matters**: When you die, your spouse:
+- Files **Single** — 12% bracket tops at $50K taxable (vs $101K for MFJ)
+- Inherits your IRA — combined with hers, RMDs are massive
+- Gets only the **higher** of two SS benefits (not both)
+- Result: unconverted IRAs create an even worse squeeze for the survivor
+
+**Inheritance for non-spouse**: IRA/Roth can go to anyone. Non-spouse beneficiaries must
+empty inherited accounts within **10 years** (SECURE Act). Inherited Roth is tax-free;
+inherited traditional IRA is fully taxable — making pre-death Roth conversion especially
+valuable if you plan to leave assets to non-family.
+""")
+
     # --- Strategy guidance ---
     st.markdown("---")
     st.markdown("### Strategy Guide")

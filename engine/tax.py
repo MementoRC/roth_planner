@@ -12,6 +12,21 @@ BRACKETS_MFJ = [
     (float("inf"), 0.37),
 ]
 
+# 2025 Single brackets (for surviving spouse analysis)
+BRACKETS_SINGLE = [
+    (12_400, 0.10),
+    (50_400, 0.12),
+    (105_700, 0.22),
+    (201_750, 0.24),
+    (256_200, 0.32),
+    (384_350, 0.35),
+    (float("inf"), 0.37),
+]
+
+# Standard deduction — Single
+STD_DEDUCTION_SINGLE = 16_100
+SENIOR_EXTRA_SINGLE = 1_850  # single filer 65+
+
 
 def federal_tax(taxable_income: float) -> float:
     """Compute federal income tax on taxable income (MFJ)."""
@@ -130,3 +145,28 @@ def effective_rate(taxable_income: float) -> float:
     if taxable_income <= 0:
         return 0.0
     return federal_tax(taxable_income) / taxable_income
+
+
+def federal_tax_single(taxable_income: float) -> float:
+    """Compute federal income tax on taxable income (Single filer)."""
+    if taxable_income <= 0:
+        return 0.0
+    tax = 0.0
+    prev = 0.0
+    for ceil, rate in BRACKETS_SINGLE:
+        chunk = min(taxable_income, ceil) - prev
+        if chunk <= 0:
+            break
+        tax += chunk * rate
+        prev = ceil
+    return tax
+
+
+def marginal_rate_single(taxable_income: float) -> float:
+    """Return the marginal bracket rate for Single filer."""
+    if taxable_income <= 0:
+        return 0.0
+    for ceil, rate in BRACKETS_SINGLE:
+        if taxable_income <= ceil:
+            return rate
+    return 0.37
