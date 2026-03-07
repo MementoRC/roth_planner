@@ -13,6 +13,7 @@ import streamlit as st
 from engine.scenario import (
     ConversionPlan,
     ScenarioResult,
+    add_bracket_fill_withdrawals,
     auto_fill_12,
     auto_fill_22,
     auto_fill_irmaa_safe,
@@ -25,6 +26,7 @@ COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
     "No Conversion": "no_conv",
     "Fill to 12%": "fill_12",
+    "Fill 12% + Bracket Fill": "fill_12_bf",
     "Fill to 22%": "fill_22",
     "IRMAA-Safe Max": "irmaa_safe",
     "Custom (from Planner)": "custom",
@@ -37,6 +39,10 @@ def _build_scenario(hh: Household, key: str) -> ScenarioResult:
         return run_no_conversion(hh, end_age=95)
     elif key == "fill_12":
         return run_scenario(hh, auto_fill_12(hh), "Fill to 12%", end_age=95)
+    elif key == "fill_12_bf":
+        base = auto_fill_12(hh)
+        plan = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
+        return run_scenario(hh, plan, "Fill 12% + Bracket Fill", end_age=95)
     elif key == "fill_22":
         return run_scenario(hh, auto_fill_22(hh), "Fill to 22%", end_age=95)
     elif key == "irmaa_safe":
@@ -59,7 +65,7 @@ def render(hh: Household):
     st.markdown("### Select Scenarios to Compare")
 
     preset_names = list(SCENARIO_PRESETS.keys())
-    default_selected = ["No Conversion", "Fill to 12%", "Fill to 22%"]
+    default_selected = ["No Conversion", "Fill to 12%", "Fill 12% + Bracket Fill"]
 
     selected = st.multiselect(
         "Choose up to 5 strategies",
@@ -318,6 +324,7 @@ def render(hh: Household):
     st.markdown("""
 - **No Conversion**: Baseline — lets IRA grow tax-deferred, faces full RMD squeeze
 - **Fill to 12%**: Conservative — converts only within the lowest useful bracket, minimizes current tax
+- **Fill 12% + Bracket Fill**: Same as Fill 12%, plus voluntary excess withdrawals post-75 to fill the 22% bracket. Depletes IRA faster to reduce future RMD pressure. After-tax proceeds go to brokerage (not Roth).
 - **Fill to 22%**: Aggressive — converts more now at 22%, but dramatically reduces future RMDs
 - **IRMAA-Safe Max**: Balanced — converts as much as possible without triggering Medicare surcharges
 - **Custom**: Your plan from the Conversion Planner page

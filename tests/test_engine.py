@@ -6,7 +6,7 @@ from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit, niit_from_conversion
-from engine.scenario import auto_fill_12, auto_fill_22, auto_fill_irmaa_safe, run_no_conversion, run_scenario
+from engine.scenario import add_bracket_fill_withdrawals, auto_fill_12, auto_fill_22, auto_fill_irmaa_safe, run_no_conversion, run_scenario
 from engine.tax import (
     deductions,
     federal_tax,
@@ -247,6 +247,25 @@ class TestScenarios:
         for yr in result.years:
             if yr.your_age <= 74 and yr.your_conversion > 0:
                 assert yr.magi <= 220_000  # small tolerance for SS taxation effects
+
+    def test_bracket_fill_reduces_late_ira(self):
+        hh = Household()
+        base = auto_fill_12(hh)
+        plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
+        r12 = run_scenario(hh, base, "12%", end_age=95)
+        r_bf = run_scenario(hh, plan_bf, "BF", end_age=95)
+        yr90_12 = next(yr for yr in r12.years if yr.your_age == 90)
+        yr90_bf = next(yr for yr in r_bf.years if yr.your_age == 90)
+        assert yr90_bf.your_ira_begin < yr90_12.your_ira_begin
+
+    def test_bracket_fill_has_extra_withdrawals(self):
+        hh = Household()
+        base = auto_fill_12(hh)
+        plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
+        assert len(plan_bf.extra_withdrawals) > 0
+        # Extra withdrawals should only be post-RMD (age 75+)
+        for year in plan_bf.extra_withdrawals:
+            assert hh.your_age_in(year) >= 75
 
 
 class TestSweetSpot:
