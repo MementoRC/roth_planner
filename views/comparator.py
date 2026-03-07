@@ -37,17 +37,17 @@ def _build_scenario(hh: Household, key: str) -> ScenarioResult:
     """Build a scenario from a preset key."""
     if key == "no_conv":
         return run_no_conversion(hh, end_age=95)
-    elif key == "fill_12":
+    if key == "fill_12":
         return run_scenario(hh, auto_fill_12(hh), "Fill to 12%", end_age=95)
-    elif key == "fill_12_bf":
+    if key == "fill_12_bf":
         base = auto_fill_12(hh)
         plan = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
         return run_scenario(hh, plan, "Fill 12% + Bracket Fill", end_age=95)
-    elif key == "fill_22":
+    if key == "fill_22":
         return run_scenario(hh, auto_fill_22(hh), "Fill to 22%", end_age=95)
-    elif key == "irmaa_safe":
+    if key == "irmaa_safe":
         return run_scenario(hh, auto_fill_irmaa_safe(hh), "IRMAA-Safe Max", end_age=95)
-    elif key == "custom":
+    if key == "custom":
         plan = ConversionPlan(
             your_conversions=dict(st.session_state.get("conv_plan_your", {})),
             spouse_conversions=dict(st.session_state.get("conv_plan_spouse", {})),
@@ -326,10 +326,10 @@ def render(hh: Household):
         "files Single (tighter brackets), and keeps the higher of two SS benefits."
     )
 
-    from engine.ira import calc_rmd
-    from engine.tax import (
-        STD_DEDUCTION_SINGLE,
+    from engine.ira import calc_rmd  # noqa: E402
+    from engine.tax import (  # noqa: E402
         SENIOR_EXTRA_SINGLE,
+        STD_DEDUCTION_SINGLE,
         federal_tax_single,
         marginal_rate_single,
         taxable_ss,

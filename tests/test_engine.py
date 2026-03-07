@@ -6,7 +6,14 @@ from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit, niit_from_conversion
-from engine.scenario import add_bracket_fill_withdrawals, auto_fill_12, auto_fill_22, auto_fill_irmaa_safe, run_no_conversion, run_scenario
+from engine.scenario import (
+    add_bracket_fill_withdrawals,
+    auto_fill_12,
+    auto_fill_22,
+    auto_fill_irmaa_safe,
+    run_no_conversion,
+    run_scenario,
+)
 from engine.tax import (
     deductions,
     federal_tax,
