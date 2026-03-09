@@ -28,7 +28,7 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "🔗 Portfolio"],
+    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "✅ Roth Eligibility", "🔗 Portfolio"],
     label_visibility="collapsed",
 )
 
@@ -167,6 +167,10 @@ elif page == "🏥 ACA + IRMAA Explorer":
     render(get_household())
 elif page == "📦 Asset Location":
     from views.asset_location import render
+
+    render(get_household())
+elif page == "✅ Roth Eligibility":
+    from views.roth_eligibility import render
 
     render(get_household())
 elif page == "🔗 Portfolio":
