@@ -18,26 +18,52 @@ import requests
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
 TOKEN = os.environ.get("FINEXTRACT_TOKEN", "")
 
-# Asset classification: symbol -> "equity" or "bond"
-ASSET_CLASS = {
-    # Vanguard ETFs
+# Asset classification: symbol -> asset class
+# "equity", "bond", "cash", "crypto", "target_date" (blended)
+ASSET_CLASS: dict[str, str] = {
+    # --- iShares ETFs (Fidelity) ---
+    "ITOT": "equity",   # Core S&P Total US Stock Market
+    "AGG": "bond",      # Core US Aggregate Bond
+    "IXUS": "equity",   # Core MSCI Total Intl
+    "SHV": "cash",      # 0-1 Year Treasury (cash equivalent)
+    "IVV": "equity",    # Core S&P 500
+    "IDEV": "equity",   # Core MSCI Intl Developed
+    # --- Fidelity crypto ---
+    "FBTC": "crypto",   # Wise Origin Bitcoin
+    "FETH": "crypto",   # Ethereum Fund
+    # --- Fidelity funds ---
+    "FFIZX": "target_date",  # Freedom Index 2040
+    "FLRG": "equity",   # US Multifactor
+    "FIGB": "bond",     # Investment Grade Bond
+    "FDEV": "equity",   # Intl Multifactor
+    # --- Vanguard target-date ---
+    "VTTHX": "target_date",  # Target Ret 2035
+    "VTHRX": "target_date",  # Target Ret 2030
+    # --- Vanguard active/value ---
+    "DFFVX": "equity",  # DFA US Target Value
+    "VDIGX": "equity",  # Dividend Growth
+    "HLMIX": "equity",  # Harding Loevner Intl Eq
+    # --- Vanguard ETFs ---
     "VTI": "equity",    # Total Stock Market
     "VXUS": "equity",   # Total Intl Stock
     "BND": "bond",      # Total Bond Market
     "BNDX": "bond",     # Total Intl Bond
-    # Vanguard Admiral/Investor funds
+    # --- Vanguard Admiral/Investor ---
     "VEMAX": "equity",  # Emerging Markets
     "VIMAX": "equity",  # Mid Cap
     "VPADX": "equity",  # Pacific Stock
     "VWESX": "bond",    # Long-Term Investment Grade
-    # Company stock
+    # --- Company stock ---
     "TXN": "equity",
 }
 
 # Expected long-term returns by asset class
-EXPECTED_RETURNS = {
+EXPECTED_RETURNS: dict[str, float] = {
     "equity": 0.09,
     "bond": 0.04,
+    "cash": 0.045,      # money market / short-term treasury
+    "crypto": 0.00,     # too volatile to project — use 0 for planning
+    "target_date": 0.07,  # blended (typically ~60/40 glide path)
 }
 
 
@@ -50,7 +76,7 @@ class Holding:
     quantity: float
     market_value: float
     account_name: str
-    asset_class: str  # "equity" or "bond"
+    asset_class: str  # "equity", "bond", "cash", "crypto", "target_date"
     total_gain_loss: float | None = None
     total_gain_loss_pct: float | None = None
 
@@ -59,11 +85,15 @@ class Holding:
 class AccountSummary:
     """Aggregated view of one account."""
 
-    account_type: str  # "brokerage", "roth_ira", "trad_ira"
+    account_type: str  # "brokerage", "roth_ira", "trad_ira", "403b", "hsa"
     owner: str  # "you" or "spouse"
+    account_name: str = ""  # raw account name from scraper
     total_value: float = 0.0
     equity_value: float = 0.0
     bond_value: float = 0.0
+    cash_value: float = 0.0
+    crypto_value: float = 0.0
+    target_date_value: float = 0.0
     holdings: list[Holding] = field(default_factory=list)
 
     @property
@@ -75,9 +105,15 @@ class AccountSummary:
         """Expected return based on current allocation."""
         if self.total_value <= 0:
             return 0.0
-        eq_ret = self.equity_value * EXPECTED_RETURNS["equity"]
-        bd_ret = self.bond_value * EXPECTED_RETURNS["bond"]
-        return (eq_ret + bd_ret) / self.total_value
+        total = 0.0
+        for cls, ret in EXPECTED_RETURNS.items():
+            total += getattr(self, f"{cls}_value", 0.0) * ret
+        return total / self.total_value
+
+    @property
+    def is_pretax(self) -> bool:
+        """True if this is a pre-tax retirement account (IRA, 403b)."""
+        return self.account_type in ("trad_ira", "403b")
 
 
 @dataclass
@@ -107,6 +143,28 @@ class PortfolioSnapshot:
         """Find first account matching type."""
         return next((a for a in self.accounts if a.account_type == acct_type), None)
 
+    def accounts_by_type(self, acct_type: str) -> list[AccountSummary]:
+        """Find all accounts matching type."""
+        return [a for a in self.accounts if a.account_type == acct_type]
+
+    @property
+    def pretax_accounts(self) -> list[AccountSummary]:
+        """All pre-tax retirement accounts (IRA + 403b)."""
+        return [a for a in self.accounts if a.is_pretax]
+
+    @property
+    def pretax_total(self) -> float:
+        """Total value of all pre-tax retirement accounts."""
+        return sum(a.total_value for a in self.pretax_accounts)
+
+    @property
+    def pretax_weighted_return(self) -> float:
+        """Weighted return across all pre-tax accounts."""
+        total = self.pretax_total
+        if total <= 0:
+            return 0.0
+        return sum(a.total_value * a.weighted_return for a in self.pretax_accounts) / total
+
     @property
     def total_portfolio_value(self) -> float:
         return sum(a.total_value for a in self.accounts) + self.txn_shares_value
@@ -122,29 +180,54 @@ def _headers() -> dict[str, str]:
 def _classify_account(account_name: str) -> tuple[str, str]:
     """Determine account type and owner from account name string.
 
-    Returns (account_type, owner) where:
-        account_type: "brokerage", "roth_ira", or "trad_ira"
-        owner: "you" or "spouse"
+    Handles Vanguard ("Claude R. Cirba — Roth IRA Brokerage Account — ..."),
+    Fidelity ("Rollover IRA233813501"), and 403b/HSA patterns.
+
+    Returns (account_type, owner).
     """
     name_lower = account_name.lower()
 
-    if "roth ira" in name_lower:
+    if "roth ira" in name_lower or "roth" in name_lower:
         acct_type = "roth_ira"
-    elif "ira" in name_lower and "roth" not in name_lower:
+    elif "403b" in name_lower or "403(b)" in name_lower:
+        acct_type = "403b"
+    elif "health savings" in name_lower or "hsa" in name_lower:
+        acct_type = "hsa"
+    elif "ira" in name_lower:
+        # "Rollover IRA", "Traditional IRA", just "IRA"
         acct_type = "trad_ira"
     else:
         acct_type = "brokerage"
 
-    # For now, all Vanguard accounts belong to "you"
-    # Spouse accounts would be detected by name or separate institution
+    # All accounts are "you" for now — spouse detection would need
+    # separate institution or name matching
     owner = "you"
 
     return acct_type, owner
 
 
 def _classify_symbol(symbol: str) -> str:
-    """Classify a symbol as equity or bond. Unknown defaults to equity."""
+    """Classify a symbol as an asset class.
+
+    Cash holdings from Fidelity have symbol like "Cash HELD IN MONEY MARKET"
+    or "Cash FDIC-INSURED DEPOSIT SWEEP".
+    """
+    if symbol.lower().startswith("cash"):
+        return "cash"
     return ASSET_CLASS.get(symbol, "equity")
+
+
+def _parse_quantity(raw: Any) -> float:
+    """Parse quantity which may be a string with commas or a number."""
+    if raw is None:
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    # String like "2,182.861"
+    try:
+        return float(str(raw).replace(",", ""))
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def fetch_holdings() -> list[dict[str, Any]]:
@@ -219,10 +302,16 @@ def fetch_portfolio() -> PortfolioSnapshot:
         asset_class = _classify_symbol(symbol)
         mv = row.get("market_value", 0) or 0
 
+        # For cash rows, description may be embedded in symbol
+        description = row.get("description", "")
+        if not description and symbol.lower().startswith("cash"):
+            description = symbol
+            symbol = "CASH"
+
         h = Holding(
             symbol=symbol,
-            description=row.get("description", ""),
-            quantity=row.get("quantity", 0),
+            description=description,
+            quantity=_parse_quantity(row.get("quantity")),
             market_value=mv,
             account_name=acct_name,
             asset_class=asset_class,
@@ -230,16 +319,21 @@ def fetch_portfolio() -> PortfolioSnapshot:
             total_gain_loss_pct=row.get("total_gain_loss_pct"),
         )
 
-        key = f"{acct_type}:{owner}"
+        key = f"{acct_type}:{owner}:{acct_name}"
         if key not in accounts_map:
-            accounts_map[key] = AccountSummary(account_type=acct_type, owner=owner)
+            accounts_map[key] = AccountSummary(
+                account_type=acct_type, owner=owner, account_name=acct_name,
+            )
         acct = accounts_map[key]
         acct.holdings.append(h)
         acct.total_value += mv
-        if asset_class == "equity":
-            acct.equity_value += mv
+
+        # Accumulate by asset class
+        attr = f"{asset_class}_value"
+        if hasattr(acct, attr):
+            setattr(acct, attr, getattr(acct, attr) + mv)
         else:
-            acct.bond_value += mv
+            acct.equity_value += mv  # fallback
 
     snap.accounts = list(accounts_map.values())
 

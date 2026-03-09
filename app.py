@@ -107,19 +107,21 @@ def get_household() -> Household:
         spouse_aca_enrolled=st.session_state.spouse_aca,
     )
 
-    # If portfolio was synced, derive per-account growth from allocation
+    # If portfolio was synced, derive per-account growth and balances
     snap = st.session_state.get("portfolio_snapshot")
     if snap and snap.server_available:
+        # Your pre-tax accounts (Rollover IRA + 403b) → your_ira balance & growth
+        pretax = snap.pretax_total
+        if pretax > 0:
+            hh.your_ira = pretax
+            hh.your_ira_growth = GrowthProfile(
+                default_rate=snap.pretax_weighted_return,
+            )
+
         # Brokerage weighted return
         brok = snap.account_by_type("brokerage")
         if brok and brok.total_value > 0:
             hh.brokerage_growth = GrowthProfile(default_rate=brok.weighted_return)
-
-        # Roth IRA weighted return (informational, not used in scenario engine yet)
-        roth = snap.account_by_type("roth_ira")
-        if roth and roth.total_value > 0:
-            # Store on session for portfolio page, but no Household field for Roth growth
-            st.session_state.roth_weighted_return = roth.weighted_return
 
     return hh
 

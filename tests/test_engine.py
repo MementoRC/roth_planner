@@ -367,6 +367,24 @@ class TestPortfolioSync:
         acct_type, _ = _classify_account("Some Person — Traditional IRA — 12345678*")
         assert acct_type == "trad_ira"
 
+    def test_classify_rollover_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Rollover IRA233813501")
+        assert acct_type == "trad_ira"
+
+    def test_classify_403b(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("VANDERBILT 403B59208")
+        assert acct_type == "403b"
+
+    def test_classify_hsa(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Health Savings Account178734462")
+        assert acct_type == "hsa"
+
     def test_classify_symbols(self):
         from engine.portfolio_sync import _classify_symbol
 
@@ -374,9 +392,22 @@ class TestPortfolioSync:
         assert _classify_symbol("VXUS") == "equity"
         assert _classify_symbol("BND") == "bond"
         assert _classify_symbol("BNDX") == "bond"
-        assert _classify_symbol("VEMAX") == "equity"
-        assert _classify_symbol("VWESX") == "bond"
+        assert _classify_symbol("ITOT") == "equity"
+        assert _classify_symbol("AGG") == "bond"
+        assert _classify_symbol("FBTC") == "crypto"
+        assert _classify_symbol("SHV") == "cash"
+        assert _classify_symbol("Cash HELD IN MONEY MARKET") == "cash"
+        assert _classify_symbol("VTTHX") == "target_date"
         assert _classify_symbol("UNKNOWN") == "equity"  # default
+
+    def test_parse_quantity(self):
+        from engine.portfolio_sync import _parse_quantity
+
+        assert _parse_quantity(100) == 100.0
+        assert _parse_quantity(3.14) == 3.14
+        assert _parse_quantity("2,182.861") == approx(2182.861, tol=0.001)
+        assert _parse_quantity(None) == 0.0
+        assert _parse_quantity("") == 0.0
 
     def test_account_summary_weighted_return(self):
         from engine.portfolio_sync import AccountSummary
@@ -392,17 +423,21 @@ class TestPortfolioSync:
         assert acct.weighted_return == approx(0.07, tol=0.001)
         assert acct.equity_pct == approx(0.60, tol=0.001)
 
-    def test_account_summary_all_equity(self):
+    def test_account_summary_with_crypto_and_cash(self):
         from engine.portfolio_sync import AccountSummary
 
         acct = AccountSummary(
-            account_type="roth_ira",
+            account_type="trad_ira",
             owner="you",
-            total_value=50_000,
-            equity_value=50_000,
-            bond_value=0,
+            total_value=200_000,
+            equity_value=80_000,
+            bond_value=40_000,
+            cash_value=40_000,
+            crypto_value=40_000,
         )
-        assert acct.weighted_return == approx(0.09, tol=0.001)
+        # 80k*9% + 40k*4% + 40k*4.5% + 40k*0% = 7200+1600+1800+0 = 10600
+        # 10600/200000 = 5.3%
+        assert acct.weighted_return == approx(0.053, tol=0.001)
 
     def test_account_summary_empty(self):
         from engine.portfolio_sync import AccountSummary
@@ -410,6 +445,24 @@ class TestPortfolioSync:
         acct = AccountSummary(account_type="brokerage", owner="you")
         assert acct.weighted_return == 0.0
         assert acct.equity_pct == 0.0
+
+    def test_pretax_accounts(self):
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+        snap = PortfolioSnapshot(
+            accounts=[
+                AccountSummary(account_type="trad_ira", owner="you", total_value=1_500_000,
+                               equity_value=500_000, bond_value=500_000, cash_value=500_000),
+                AccountSummary(account_type="403b", owner="you", total_value=140_000,
+                               equity_value=100_000, bond_value=40_000),
+                AccountSummary(account_type="hsa", owner="you", total_value=60_000),
+                AccountSummary(account_type="brokerage", owner="you", total_value=100_000),
+            ],
+            server_available=True,
+        )
+        assert len(snap.pretax_accounts) == 2
+        assert snap.pretax_total == approx(1_640_000)
+        assert snap.pretax_weighted_return > 0
 
 
 class TestAssetLocation:
