@@ -61,13 +61,26 @@ st.session_state.txn_price = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("### Portfolio Sync")
+
+# Load cached snapshot on first run
+if "portfolio_snapshot" not in st.session_state:
+    from engine.portfolio_sync import load_snapshot
+
+    _cached = load_snapshot()
+    if _cached is not None:
+        st.session_state.portfolio_snapshot = _cached
+        pretax = _cached.pretax_total
+        if pretax > 0:
+            st.session_state.your_ira = int(pretax)
+
 _sync = st.sidebar.button("Sync from FinExtract", help="Pull live holdings from ingestion server")
 if _sync:
-    from engine.portfolio_sync import fetch_portfolio
+    from engine.portfolio_sync import fetch_portfolio, save_snapshot
 
     snap = fetch_portfolio()
     if snap.server_available:
         st.session_state.portfolio_snapshot = snap
+        save_snapshot(snap)
         # Push synced balance into sidebar state
         pretax = snap.pretax_total
         if pretax > 0:

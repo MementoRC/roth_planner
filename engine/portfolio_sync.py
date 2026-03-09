@@ -9,8 +9,10 @@ Bearer token authentication via FINEXTRACT_TOKEN env var.
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -355,4 +357,37 @@ def fetch_portfolio() -> PortfolioSnapshot:
     snap.txn_shares_held = sum(r.get("shares_available", 0) for r in shares_raw)
     snap.txn_shares_value = sum(r.get("available_value", 0) for r in shares_raw)
 
+    return snap
+
+
+# --- Persistence ---
+
+_CACHE_PATH = Path(__file__).resolve().parent.parent / ".portfolio_cache.json"
+
+
+def save_snapshot(snap: PortfolioSnapshot) -> None:
+    """Save portfolio snapshot to disk as JSON."""
+    _CACHE_PATH.write_text(json.dumps(asdict(snap), indent=2))
+
+
+def load_snapshot() -> PortfolioSnapshot | None:
+    """Load cached portfolio snapshot from disk, or None if not available."""
+    if not _CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    snap = PortfolioSnapshot(
+        txn_shares_held=data.get("txn_shares_held", 0),
+        txn_shares_value=data.get("txn_shares_value", 0.0),
+        server_available=data.get("server_available", False),
+        error=data.get("error"),
+    )
+    for a in data.get("accounts", []):
+        holdings = [Holding(**h) for h in a.pop("holdings", [])]
+        snap.accounts.append(AccountSummary(**a, holdings=holdings))
+    for g in data.get("equity_grants", []):
+        snap.equity_grants.append(EquityGrant(**g))
     return snap
