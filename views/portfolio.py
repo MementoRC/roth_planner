@@ -8,30 +8,25 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.portfolio_sync import EXPECTED_RETURNS, fetch_portfolio
+from engine.portfolio_sync import EXPECTED_RETURNS
 from models.household import Household
 
 
 def render(hh: Household):
     st.title("Portfolio Sync")
     st.caption(
-        "Live data from FinExtract ingestion server. "
+        "Cached data from FinExtract ingestion server. "
         "Click 'Sync from FinExtract' in the sidebar to refresh."
     )
 
     snap = st.session_state.get("portfolio_snapshot")
 
     if not snap or not snap.server_available:
-        # Try fetching now
-        snap = fetch_portfolio()
-        if snap.server_available:
-            st.session_state.portfolio_snapshot = snap
-        else:
-            st.warning(
-                f"FinExtract server not available. {snap.error or ''}\n\n"
-                "Start the ingestion server and click 'Sync from FinExtract' in the sidebar."
-            )
-            return
+        st.info(
+            "No portfolio data cached yet.\n\n"
+            "Click **Sync from FinExtract** in the sidebar to pull live holdings."
+        )
+        return
 
     # --- Account Overview ---
     st.markdown("### Account Overview")

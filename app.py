@@ -34,8 +34,12 @@ page = st.sidebar.radio(
 
 # Sidebar: shared inputs
 st.sidebar.markdown("### Your Numbers")
+_synced = st.session_state.get("portfolio_snapshot") is not None
 st.session_state.your_ira = st.sidebar.number_input(
-    "Your Trad IRA", value=st.session_state.your_ira, step=50_000, format="%d"
+    "Your Trad IRA" + (" (synced)" if _synced else ""),
+    value=st.session_state.your_ira, step=50_000, format="%d",
+    disabled=_synced,
+    help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
 )
 st.session_state.spouse_ira = st.sidebar.number_input(
     "Spouse Trad IRA", value=st.session_state.spouse_ira, step=50_000, format="%d"
@@ -64,13 +68,10 @@ if _sync:
     snap = fetch_portfolio()
     if snap.server_available:
         st.session_state.portfolio_snapshot = snap
-        # Update TXN price from live data if grants have value
-        if snap.equity_grants:
-            g = snap.equity_grants[0]
-            if g.outstanding > 0 and g.current_value > 0:
-                implied_price = g.current_value / g.outstanding
-                # current_value is the *spread* value, not stock price
-                # We keep sidebar TXN price as the manual override
+        # Push synced balance into sidebar state
+        pretax = snap.pretax_total
+        if pretax > 0:
+            st.session_state.your_ira = int(pretax)
         st.sidebar.success(
             f"Synced: {len(snap.accounts)} accounts, "
             f"{len(snap.equity_grants)} active grants"
