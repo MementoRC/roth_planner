@@ -275,7 +275,8 @@ def run_scenario(
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
         # Net investment income = brokerage growth (realized gains)
         # Computed on prior year's brokerage since current year hasn't grown yet
-        net_investment_income = brokerage * hh.growth_rate * hh.brok_turnover
+        brok_rate = hh.brokerage_rate(year)
+        net_investment_income = brokerage * brok_rate * hh.brok_turnover
         yr.niit_cost = niit(yr.magi, net_investment_income)
 
         # === All-in cost of conversions ===
@@ -296,7 +297,7 @@ def run_scenario(
 
         # Brokerage: accumulates excess, grows, pays cap gains
         yr.brokerage_balance = brokerage
-        yr.brokerage_growth = brokerage * hh.growth_rate
+        yr.brokerage_growth = brokerage * brok_rate
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         yr.brokerage_gain_tax = realized_gains * hh.ltcg_rate
 
@@ -309,8 +310,8 @@ def run_scenario(
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
         spouse_withdrawal += spouse_rmd
 
-        yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
-        yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.growth_rate)
+        yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
+        yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.spouse_ira_rate(year))
 
         # Carry forward
         your_ira = yr.your_ira_end
@@ -420,10 +421,10 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
 
         # Update IRAs for next year
         your_withdrawal = yc + rmd
-        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
 
     return plan
 
@@ -488,10 +489,10 @@ def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
             sc = 0
 
         your_withdrawal = yc + rmd
-        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
 
     return plan
 
@@ -565,10 +566,10 @@ def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> Conversi
             sc = 0
 
         your_withdrawal = yc + rmd
-        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.growth_rate)
+        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
         spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.growth_rate)
+        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
 
     return plan
 

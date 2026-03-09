@@ -22,7 +22,7 @@ from engine.tax import (
     room_to_22,
     taxable_ss,
 )
-from models.household import Household
+from models.household import GrowthProfile, Household
 
 
 def approx(expected, tol=1.0):
@@ -273,6 +273,196 @@ class TestScenarios:
         # Extra withdrawals should only be post-RMD (age 75+)
         for year in plan_bf.extra_withdrawals:
             assert hh.your_age_in(year) >= 75
+
+
+class TestPerAccountGrowth:
+    """Test per-account growth rate profiles."""
+
+    def test_growth_profile_default(self):
+        gp = GrowthProfile(default_rate=0.08)
+        assert gp.rate_for(2026) == 0.08
+        assert gp.rate_for(2030) == 0.08
+
+    def test_growth_profile_yearly_override(self):
+        gp = GrowthProfile(default_rate=0.07, yearly_overrides={2026: 0.10, 2027: -0.05})
+        assert gp.rate_for(2026) == 0.10
+        assert gp.rate_for(2027) == -0.05
+        assert gp.rate_for(2028) == 0.07  # falls back to default
+
+    def test_household_falls_back_to_growth_rate(self):
+        hh = Household(growth_rate=0.06)
+        assert hh.your_ira_rate(2026) == 0.06
+        assert hh.spouse_ira_rate(2026) == 0.06
+        assert hh.brokerage_rate(2026) == 0.06
+
+    def test_household_per_account_overrides(self):
+        hh = Household(
+            growth_rate=0.07,
+            your_ira_growth=GrowthProfile(default_rate=0.09),
+            spouse_ira_growth=GrowthProfile(default_rate=0.05),
+            brokerage_growth=GrowthProfile(default_rate=0.06),
+        )
+        assert hh.your_ira_rate(2026) == 0.09
+        assert hh.spouse_ira_rate(2026) == 0.05
+        assert hh.brokerage_rate(2026) == 0.06
+
+    def test_different_growth_rates_affect_scenario(self):
+        """Higher your_ira growth should produce larger IRA at end."""
+        hh_high = Household(your_ira_growth=GrowthProfile(default_rate=0.10))
+        hh_low = Household(your_ira_growth=GrowthProfile(default_rate=0.04))
+        r_high = run_no_conversion(hh_high, end_age=80)
+        r_low = run_no_conversion(hh_low, end_age=80)
+        # Your IRA should be larger with higher growth
+        yr_high = next(y for y in r_high.years if y.your_age == 80)
+        yr_low = next(y for y in r_low.years if y.your_age == 80)
+        assert yr_high.your_ira_end > yr_low.your_ira_end
+
+    def test_spouse_independent_growth(self):
+        """Spouse IRA grows independently from yours."""
+        hh = Household(
+            your_ira_growth=GrowthProfile(default_rate=0.10),
+            spouse_ira_growth=GrowthProfile(default_rate=0.03),
+        )
+        r = run_no_conversion(hh, end_age=80)
+        yr = next(y for y in r.years if y.your_age == 80)
+        # Your IRA grows at 10%, spouse at 3% — yours should be much larger
+        # (starting balances are equal at $1.7M)
+        assert yr.your_ira_end > yr.spouse_ira_end * 1.5
+
+    def test_yearly_override_applies(self):
+        """A bad year override should reduce the IRA compared to flat growth."""
+        hh_flat = Household(growth_rate=0.07)
+        hh_crash = Household(
+            your_ira_growth=GrowthProfile(
+                default_rate=0.07,
+                yearly_overrides={2027: -0.20},  # 20% crash in year 2
+            ),
+        )
+        r_flat = run_no_conversion(hh_flat, end_age=70)
+        r_crash = run_no_conversion(hh_crash, end_age=70)
+        yr_flat = next(y for y in r_flat.years if y.your_age == 70)
+        yr_crash = next(y for y in r_crash.years if y.your_age == 70)
+        assert yr_crash.your_ira_end < yr_flat.your_ira_end
+
+
+class TestPortfolioSync:
+    """Test portfolio sync parsing and classification logic."""
+
+    def test_classify_brokerage_account(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, owner = _classify_account("Claude R. Cirba — Brokerage Account — 39119320*")
+        assert acct_type == "brokerage"
+        assert owner == "you"
+
+    def test_classify_roth_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Claude R. Cirba — Roth IRA Brokerage Account — 61037368*")
+        assert acct_type == "roth_ira"
+
+    def test_classify_trad_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Some Person — Traditional IRA — 12345678*")
+        assert acct_type == "trad_ira"
+
+    def test_classify_rollover_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Rollover IRA233813501")
+        assert acct_type == "trad_ira"
+
+    def test_classify_403b(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("VANDERBILT 403B59208")
+        assert acct_type == "403b"
+
+    def test_classify_hsa(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Health Savings Account178734462")
+        assert acct_type == "hsa"
+
+    def test_classify_symbols(self):
+        from engine.portfolio_sync import _classify_symbol
+
+        assert _classify_symbol("VTI") == "equity"
+        assert _classify_symbol("VXUS") == "equity"
+        assert _classify_symbol("BND") == "bond"
+        assert _classify_symbol("BNDX") == "bond"
+        assert _classify_symbol("ITOT") == "equity"
+        assert _classify_symbol("AGG") == "bond"
+        assert _classify_symbol("FBTC") == "crypto"
+        assert _classify_symbol("SHV") == "cash"
+        assert _classify_symbol("Cash HELD IN MONEY MARKET") == "cash"
+        assert _classify_symbol("VTTHX") == "target_date"
+        assert _classify_symbol("UNKNOWN") == "equity"  # default
+
+    def test_parse_quantity(self):
+        from engine.portfolio_sync import _parse_quantity
+
+        assert _parse_quantity(100) == 100.0
+        assert _parse_quantity(3.14) == 3.14
+        assert _parse_quantity("2,182.861") == approx(2182.861, tol=0.001)
+        assert _parse_quantity(None) == 0.0
+        assert _parse_quantity("") == 0.0
+
+    def test_account_summary_weighted_return(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="brokerage",
+            owner="you",
+            total_value=100_000,
+            equity_value=60_000,
+            bond_value=40_000,
+        )
+        # 60% * 9% + 40% * 4% = 5.4% + 1.6% = 7.0%
+        assert acct.weighted_return == approx(0.07, tol=0.001)
+        assert acct.equity_pct == approx(0.60, tol=0.001)
+
+    def test_account_summary_with_crypto_and_cash(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="trad_ira",
+            owner="you",
+            total_value=200_000,
+            equity_value=80_000,
+            bond_value=40_000,
+            cash_value=40_000,
+            crypto_value=40_000,
+        )
+        # 80k*9% + 40k*4% + 40k*4.5% + 40k*0% = 7200+1600+1800+0 = 10600
+        # 10600/200000 = 5.3%
+        assert acct.weighted_return == approx(0.053, tol=0.001)
+
+    def test_account_summary_empty(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(account_type="brokerage", owner="you")
+        assert acct.weighted_return == 0.0
+        assert acct.equity_pct == 0.0
+
+    def test_pretax_accounts(self):
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+        snap = PortfolioSnapshot(
+            accounts=[
+                AccountSummary(account_type="trad_ira", owner="you", total_value=1_500_000,
+                               equity_value=500_000, bond_value=500_000, cash_value=500_000),
+                AccountSummary(account_type="403b", owner="you", total_value=140_000,
+                               equity_value=100_000, bond_value=40_000),
+                AccountSummary(account_type="hsa", owner="you", total_value=60_000),
+                AccountSummary(account_type="brokerage", owner="you", total_value=100_000),
+            ],
+            server_available=True,
+        )
+        assert len(snap.pretax_accounts) == 2
+        assert snap.pretax_total == approx(1_640_000)
+        assert snap.pretax_weighted_return > 0
 
 
 class TestAssetLocation:

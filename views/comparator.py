@@ -360,7 +360,10 @@ def render(hh: Household):
             # Project 5 years out — what does year death+5 look like for survivor?
             proj_years = 5
             survivor_age = (death_age - hh.age_gap) + proj_years
-            ira_grown = inherited_ira * (1 + hh.growth_rate) ** proj_years
+            # Use spouse's growth rate since she inherits into her IRA
+            death_year = hh.base_year + (death_age - hh.your_age)
+            surv_rate = hh.spouse_ira_rate(death_year + proj_years)
+            ira_grown = inherited_ira * (1 + surv_rate) ** proj_years
 
             # RMD on combined IRA (survivor's RMD age)
             rmd = calc_rmd(ira_grown, survivor_age, hh.rmd_start_age)
