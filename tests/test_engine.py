@@ -345,6 +345,73 @@ class TestPerAccountGrowth:
         assert yr_crash.your_ira_end < yr_flat.your_ira_end
 
 
+class TestPortfolioSync:
+    """Test portfolio sync parsing and classification logic."""
+
+    def test_classify_brokerage_account(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, owner = _classify_account("Claude R. Cirba — Brokerage Account — 39119320*")
+        assert acct_type == "brokerage"
+        assert owner == "you"
+
+    def test_classify_roth_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Claude R. Cirba — Roth IRA Brokerage Account — 61037368*")
+        assert acct_type == "roth_ira"
+
+    def test_classify_trad_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Some Person — Traditional IRA — 12345678*")
+        assert acct_type == "trad_ira"
+
+    def test_classify_symbols(self):
+        from engine.portfolio_sync import _classify_symbol
+
+        assert _classify_symbol("VTI") == "equity"
+        assert _classify_symbol("VXUS") == "equity"
+        assert _classify_symbol("BND") == "bond"
+        assert _classify_symbol("BNDX") == "bond"
+        assert _classify_symbol("VEMAX") == "equity"
+        assert _classify_symbol("VWESX") == "bond"
+        assert _classify_symbol("UNKNOWN") == "equity"  # default
+
+    def test_account_summary_weighted_return(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="brokerage",
+            owner="you",
+            total_value=100_000,
+            equity_value=60_000,
+            bond_value=40_000,
+        )
+        # 60% * 9% + 40% * 4% = 5.4% + 1.6% = 7.0%
+        assert acct.weighted_return == approx(0.07, tol=0.001)
+        assert acct.equity_pct == approx(0.60, tol=0.001)
+
+    def test_account_summary_all_equity(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="roth_ira",
+            owner="you",
+            total_value=50_000,
+            equity_value=50_000,
+            bond_value=0,
+        )
+        assert acct.weighted_return == approx(0.09, tol=0.001)
+
+    def test_account_summary_empty(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(account_type="brokerage", owner="you")
+        assert acct.weighted_return == 0.0
+        assert acct.equity_pct == 0.0
+
+
 class TestAssetLocation:
     """Test asset location engine — equity-first vs proportional vs bond-first."""
 

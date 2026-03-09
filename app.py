@@ -28,7 +28,7 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location"],
+    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "🔗 Portfolio"],
     label_visibility="collapsed",
 )
 
@@ -56,6 +56,28 @@ st.session_state.txn_price = st.sidebar.number_input(
     "TXN Current Price", value=st.session_state.txn_price, step=5, format="%d"
 )
 
+st.sidebar.markdown("### Portfolio Sync")
+_sync = st.sidebar.button("Sync from FinExtract", help="Pull live holdings from ingestion server")
+if _sync:
+    from engine.portfolio_sync import fetch_portfolio
+
+    snap = fetch_portfolio()
+    if snap.server_available:
+        st.session_state.portfolio_snapshot = snap
+        # Update TXN price from live data if grants have value
+        if snap.equity_grants:
+            g = snap.equity_grants[0]
+            if g.outstanding > 0 and g.current_value > 0:
+                implied_price = g.current_value / g.outstanding
+                # current_value is the *spread* value, not stock price
+                # We keep sidebar TXN price as the manual override
+        st.sidebar.success(
+            f"Synced: {len(snap.accounts)} accounts, "
+            f"{len(snap.equity_grants)} active grants"
+        )
+    else:
+        st.sidebar.error(f"Server unavailable: {snap.error}")
+
 st.sidebar.markdown("### Healthcare")
 st.session_state.your_aca = st.sidebar.checkbox(
     "You on ACA Marketplace", value=st.session_state.your_aca,
@@ -67,11 +89,11 @@ st.session_state.spouse_aca = st.sidebar.checkbox(
 )
 
 # Build household from session state
-from models.household import Household  # noqa: E402
+from models.household import GrowthProfile, Household  # noqa: E402
 
 
 def get_household() -> Household:
-    return Household(
+    hh = Household(
         your_age=st.session_state.your_age,
         spouse_age=st.session_state.spouse_age,
         your_ira=st.session_state.your_ira,
@@ -84,6 +106,22 @@ def get_household() -> Household:
         your_aca_enrolled=st.session_state.your_aca,
         spouse_aca_enrolled=st.session_state.spouse_aca,
     )
+
+    # If portfolio was synced, derive per-account growth from allocation
+    snap = st.session_state.get("portfolio_snapshot")
+    if snap and snap.server_available:
+        # Brokerage weighted return
+        brok = snap.account_by_type("brokerage")
+        if brok and brok.total_value > 0:
+            hh.brokerage_growth = GrowthProfile(default_rate=brok.weighted_return)
+
+        # Roth IRA weighted return (informational, not used in scenario engine yet)
+        roth = snap.account_by_type("roth_ira")
+        if roth and roth.total_value > 0:
+            # Store on session for portfolio page, but no Household field for Roth growth
+            st.session_state.roth_weighted_return = roth.weighted_return
+
+    return hh
 
 
 # Route to page
@@ -113,5 +151,9 @@ elif page == "🏥 ACA + IRMAA Explorer":
     render(get_household())
 elif page == "📦 Asset Location":
     from views.asset_location import render
+
+    render(get_household())
+elif page == "🔗 Portfolio":
+    from views.portfolio import render
 
     render(get_household())
