@@ -22,6 +22,7 @@ from engine.tax import (
     taxable_ss,
 )
 from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 
 @dataclass
@@ -50,6 +51,15 @@ class YearResult:
     taxable_ss_amt: float = 0.0
 
     extra_withdrawal: float = 0.0  # voluntary excess withdrawal (post-RMD bracket fill)
+
+    # YTD actuals (base year only, when ytd snapshot provided)
+    ytd_wages: float = 0.0
+    ytd_ltcg: float = 0.0
+    ytd_stcg: float = 0.0
+    ytd_dividends: float = 0.0
+    ytd_interest: float = 0.0
+    ytd_conversions_done: float = 0.0
+    ytd_ltcg_tax: float = 0.0  # LTCG tax computed separately
 
     # Aggregates
     combined_gross: float = 0.0
@@ -124,6 +134,7 @@ def run_scenario(
     name: str = "Scenario",
     end_age: int = 95,
     early_exercise: bool = True,
+    ytd: YTDSnapshot | None = None,
 ) -> ScenarioResult:
     """
     Run a full projection from base_year through end_age.
@@ -173,6 +184,18 @@ def run_scenario(
         # === Option income ===
         yr.option_income = hh.option_income(year, early_exercise)
 
+        # === YTD injection (base year only) ===
+        # Resolve to a concrete YTDSnapshot for the base year, or None.
+        # This avoids repeated `ytd is not None` narrowing for mypy.
+        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
+        if ytd_year is not None:
+            yr.ytd_wages = ytd_year.wages_ytd
+            yr.ytd_ltcg = ytd_year.ltcg_ytd
+            yr.ytd_stcg = ytd_year.stcg_ytd
+            yr.ytd_dividends = ytd_year.dividends_ytd
+            yr.ytd_interest = ytd_year.interest_ytd
+            yr.ytd_conversions_done = ytd_year.ira_conversions_ytd
+
         # === Conversions ===
         yr.your_conversion = plan.your_conversions.get(year, 0.0)
         if ya > 74:
@@ -180,6 +203,11 @@ def run_scenario(
         yr.spouse_conversion = plan.spouse_conversions.get(year, 0.0)
         if sa > 74:
             yr.spouse_conversion = 0.0  # past conversion window (RMDs begin)
+
+        # Subtract conversions already done YTD from planned amount
+        if ytd_year is not None and ytd_year.ira_conversions_ytd > 0:
+            remaining = max(yr.your_conversion - ytd_year.ira_conversions_ytd, 0.0)
+            yr.your_conversion = remaining
 
         # === RMD ===
         yr.your_rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
@@ -205,14 +233,7 @@ def run_scenario(
         yr.combined_ss = yr.your_ss + yr.spouse_ss
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
-        yr.magi = (
-            yr.option_income
-            + yr.your_conversion
-            + yr.spouse_conversion
-            + yr.your_rmd
-            + yr.combined_ss
-        )  # full RMD (before QCD for MAGI? QCD excluded from MAGI)
-        # Actually QCD IS excluded from MAGI:
+        # QCD IS excluded from MAGI, so use taxable_rmd
         yr.magi = (
             yr.option_income
             + yr.your_conversion
@@ -221,15 +242,28 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.combined_ss
         )
+        # YTD: add wages, LTCG, STCG, dividends, interest to MAGI
+        if ytd_year is not None:
+            yr.magi += (
+                ytd_year.wages_ytd
+                + ytd_year.ltcg_ytd
+                + ytd_year.stcg_ytd
+                + ytd_year.dividends_ytd
+                + ytd_year.interest_ytd
+            )
 
         # === SS taxation ===
         other_inc = (
             yr.option_income + yr.your_conversion + yr.spouse_conversion
             + yr.taxable_rmd + yr.extra_withdrawal
         )
+        # YTD ordinary income affects SS taxation
+        if ytd_year is not None:
+            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd
         yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
 
         # === Combined gross (for tax) ===
+        # Includes ordinary income only — LTCG taxed separately at preferential rate
         yr.combined_gross = (
             yr.option_income
             + yr.your_conversion
@@ -238,6 +272,9 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.taxable_ss_amt
         )
+        # YTD: add wages + STCG to gross (ordinary), but NOT LTCG
+        if ytd_year is not None:
+            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
 
         # === Deductions ===
         yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
@@ -272,11 +309,18 @@ def run_scenario(
         else:
             yr.aca_loss = 0.0
 
+        # === LTCG tax (computed separately at preferential rate) ===
+        if ytd_year is not None and ytd_year.ltcg_ytd > 0:
+            yr.ytd_ltcg_tax = ytd_year.ltcg_ytd * hh.ltcg_rate
+
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
         # Net investment income = brokerage growth (realized gains)
         # Computed on prior year's brokerage since current year hasn't grown yet
         brok_rate = hh.brokerage_rate(year)
         net_investment_income = brokerage * brok_rate * hh.brok_turnover
+        # YTD: add realized gains, dividends, interest to investment income
+        if ytd_year is not None:
+            net_investment_income += ytd_year.total_investment_income
         yr.niit_cost = niit(yr.magi, net_investment_income)
 
         # === All-in cost of conversions ===
@@ -351,7 +395,9 @@ def run_no_conversion(
     return run_scenario(hh, ConversionPlan(), "No Conversion", end_age, early_exercise)
 
 
-def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+def auto_fill_12(
+    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
     """
     Generate a ConversionPlan that fills to the 12% bracket ceiling each year.
     Runs iteratively since each year's conversion affects the next year's IRA balance.
@@ -364,6 +410,7 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
         if ya > 80:
             break
@@ -392,14 +439,21 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
 
         # Taxable SS (need to estimate with current other income)
         other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        # YTD ordinary income affects SS taxation
+        if ytd_year is not None:
+            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
         tss = taxable_ss(combined_ss, other_fixed)
 
-        # Fixed gross
+        # Fixed gross (ordinary income — no LTCG)
         fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        if ytd_year is not None:
+            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
 
         # Deductions
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
         approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            approx_magi += ytd_year.magi_ytd
         ded += senior_bonus_deduction(ya, sa, approx_magi)
 
         # Room to 12%
@@ -429,7 +483,9 @@ def auto_fill_12(hh: Household, early_exercise: bool = True) -> ConversionPlan:
     return plan
 
 
-def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+def auto_fill_22(
+    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
     """
     Generate a ConversionPlan that fills to the 22% bracket ceiling each year.
     More aggressive than fill_12 — converts more but at higher marginal rates.
@@ -442,6 +498,7 @@ def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
         if ya > 80:
             break
@@ -466,11 +523,17 @@ def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
         taxable_rmd = rmd
 
         other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
         tss = taxable_ss(combined_ss, other_fixed)
         fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        if ytd_year is not None:
+            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
 
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
         approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            approx_magi += ytd_year.magi_ytd
         ded += senior_bonus_deduction(ya, sa, approx_magi)
 
         room = room_to_22(fixed_gross, ded)
@@ -497,7 +560,9 @@ def auto_fill_22(hh: Household, early_exercise: bool = True) -> ConversionPlan:
     return plan
 
 
-def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> ConversionPlan:
+def auto_fill_irmaa_safe(
+    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
     """
     Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
@@ -514,6 +579,7 @@ def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> Conversi
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
         if ya > 80:
             break
@@ -537,16 +603,22 @@ def auto_fill_irmaa_safe(hh: Household, early_exercise: bool = True) -> Conversi
         rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
         taxable_rmd = rmd
 
-        # MAGI without conversion
+        # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
         base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            base_magi += ytd_year.magi_ytd
 
         # Room to IRMAA threshold
         room = max(irmaa_threshold - base_magi, 0)
 
         # Also cap at bracket room (use 22% ceiling as upper bound)
         other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
         tss = taxable_ss(combined_ss, other_fixed)
         fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        if ytd_year is not None:
+            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
         ded += senior_bonus_deduction(ya, sa, base_magi)
         bracket_room = room_to_22(fixed_gross, ded)

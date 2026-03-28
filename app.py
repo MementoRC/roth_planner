@@ -28,7 +28,7 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["📊 Dashboard", "📋 Conversion Planner", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "✅ Roth Eligibility", "🔗 Portfolio"],
+    ["📊 Dashboard", "📋 Conversion Planner", "💰 YTD Income", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "✅ Roth Eligibility", "🔗 Portfolio"],
     label_visibility="collapsed",
 )
 
@@ -62,7 +62,7 @@ st.session_state.txn_price = st.sidebar.number_input(
 
 st.sidebar.markdown("### Portfolio Sync")
 
-# Load cached snapshot on first run
+# Load cached snapshots on first run
 if "portfolio_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_snapshot
 
@@ -73,9 +73,30 @@ if "portfolio_snapshot" not in st.session_state:
         if pretax > 0:
             st.session_state.your_ira = int(pretax)
 
+if "tax_return_snapshot" not in st.session_state:
+    from engine.portfolio_sync import load_tax_snapshot
+
+    _cached_tax = load_tax_snapshot()
+    if _cached_tax is not None:
+        st.session_state.tax_return_snapshot = _cached_tax
+
+if "ytd_snapshot" not in st.session_state:
+    from engine.portfolio_sync import load_ytd_snapshot
+
+    _cached_ytd = load_ytd_snapshot()
+    if _cached_ytd is not None:
+        st.session_state.ytd_snapshot = _cached_ytd
+
 _sync = st.sidebar.button("Sync from FinExtract", help="Pull live holdings from ingestion server")
 if _sync:
-    from engine.portfolio_sync import fetch_portfolio, save_snapshot
+    from engine.portfolio_sync import (
+        fetch_portfolio,
+        fetch_tax_return,
+        fetch_ytd_snapshot,
+        save_snapshot,
+        save_tax_snapshot,
+        save_ytd_snapshot,
+    )
 
     snap = fetch_portfolio()
     if snap.server_available:
@@ -85,9 +106,21 @@ if _sync:
         pretax = snap.pretax_total
         if pretax > 0:
             st.session_state.your_ira = int(pretax)
+        # Also sync tax return data
+        tax_snap = fetch_tax_return()
+        if tax_snap.server_available:
+            st.session_state.tax_return_snapshot = tax_snap
+            save_tax_snapshot(tax_snap)
+        # Also sync YTD income data
+        ytd_snap = fetch_ytd_snapshot()
+        if ytd_snap.snapshot_date:
+            st.session_state.ytd_snapshot = ytd_snap
+            save_ytd_snapshot(ytd_snap)
         st.sidebar.success(
             f"Synced: {len(snap.accounts)} accounts, "
             f"{len(snap.equity_grants)} active grants"
+            + (", tax return data" if tax_snap.server_available else "")
+            + (", YTD income" if ytd_snap.snapshot_date else "")
         )
     else:
         st.sidebar.error(f"Server unavailable: {snap.error}")
@@ -147,6 +180,10 @@ if page == "📊 Dashboard":
     render(get_household())
 elif page == "📋 Conversion Planner":
     from views.planner import render
+
+    render(get_household())
+elif page == "💰 YTD Income":
+    from views.ytd_income import render
 
     render(get_household())
 elif page == "🎯 Sweet Spot Finder":

@@ -17,6 +17,8 @@ from typing import Any
 
 import requests
 
+from models.ytd_income import RealizedGainEvent, YTDSnapshot
+
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
 TOKEN = os.environ.get("FINEXTRACT_TOKEN", "")
 
@@ -278,6 +280,328 @@ def fetch_shares() -> list[dict[str, Any]]:
         return data.get("rows", [])
     except (requests.RequestException, ValueError):
         return []
+
+
+@dataclass
+class TaxReturnSnapshot:
+    """Parsed TurboTax income and deduction data from FinExtract."""
+
+    tax_year: str = "current"  # "current" or "prior"
+    wages: float = 0.0  # W-2 wages
+    nec_income: float = 0.0  # 1099-NEC (self-employment/contract)
+    investment_income: float = 0.0  # Investments and savings (1099-B/DIV/INT)
+    ira_distributions: float = 0.0  # 1099-R IRA/401k/pension withdrawals
+    hsa_distributions: float = 0.0  # 1099-SA HSA/MSA
+    misc_income: float = 0.0  # 1099-MISC, 1099-A, 1099-C
+    hsa_contributions: float = 0.0  # Form 5498 HSA
+    ira_contributions: float = 0.0  # Form 5498 IRA (Traditional + Roth combined)
+    sales_tax: float = 0.0
+    foreign_tax_credit: float = 0.0
+    server_available: bool = False
+    error: str | None = None
+
+    @property
+    def total_income(self) -> float:
+        """Sum of all income sources (rough AGI proxy)."""
+        return (
+            self.wages + self.nec_income + self.investment_income
+            + self.ira_distributions + self.hsa_distributions + self.misc_income
+        )
+
+    @property
+    def estimated_magi(self) -> float:
+        """Rough MAGI estimate: total income minus above-the-line deductions.
+
+        For Roth eligibility, MAGI ≈ AGI + foreign income exclusion.
+        HSA contributions are above-the-line. Half SE tax on 1099-NEC is too.
+        This is approximate — TurboTax shows the real number.
+        """
+        se_deduction = self.nec_income * 0.0765  # half SE tax
+        return self.total_income - self.hsa_contributions - se_deduction
+
+
+def _parse_tax_rows(
+    rows: list[dict[str, Any]], year_key: str,
+) -> dict[str, float]:
+    """Extract amounts from tax return rows for current or prior year."""
+    result: dict[str, float] = {}
+    for row in rows:
+        label = row.get("form_label", "")
+        amount = row.get(year_key) or 0
+        if not amount:
+            continue
+        label_lower = label.lower()
+        if "wages" in label_lower or "w-2" in label_lower:
+            result["wages"] = result.get("wages", 0) + amount
+        elif "1099-nec" in label_lower:
+            result["nec_income"] = result.get("nec_income", 0) + amount
+        elif "investment" in label_lower or "savings" in label_lower:
+            result["investment_income"] = result.get("investment_income", 0) + amount
+        elif "1099-r" in label_lower or "pension" in label_lower:
+            result["ira_distributions"] = result.get("ira_distributions", 0) + amount
+        elif "1099-sa" in label_lower or "hsa" in label_lower and "contribution" not in label_lower:
+            result["hsa_distributions"] = result.get("hsa_distributions", 0) + amount
+        elif "miscellaneous" in label_lower or "1099-a" in label_lower or "1099-c" in label_lower:
+            result["misc_income"] = result.get("misc_income", 0) + amount
+        # Deduction rows
+        elif "hsa" in label_lower and "contribution" in label_lower:
+            result["hsa_contributions"] = result.get("hsa_contributions", 0) + amount
+        elif "ira contribution" in label_lower:
+            result["ira_contributions"] = result.get("ira_contributions", 0) + amount
+        elif "sales tax" in label_lower:
+            result["sales_tax"] = result.get("sales_tax", 0) + amount
+        elif "foreign tax" in label_lower:
+            result["foreign_tax_credit"] = result.get("foreign_tax_credit", 0) + amount
+    return result
+
+
+def fetch_tax_return() -> TaxReturnSnapshot:
+    """Fetch TurboTax income and deduction data from FinExtract."""
+    snap = TaxReturnSnapshot()
+
+    try:
+        resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
+        resp.raise_for_status()
+        snap.server_available = True
+    except requests.RequestException as e:
+        snap.error = str(e)
+        return snap
+
+    # Fetch income rows
+    income_rows: list[dict[str, Any]] = []
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/tax_return",
+            params={"data_type": "income"},
+            headers=_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        income_rows = resp.json().get("rows", [])
+    except (requests.RequestException, ValueError):
+        pass
+
+    # Fetch deduction rows
+    deduction_rows: list[dict[str, Any]] = []
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/tax_return",
+            params={"data_type": "deductions"},
+            headers=_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        deduction_rows = resp.json().get("rows", [])
+    except (requests.RequestException, ValueError):
+        pass
+
+    # Parse current year amounts from both income and deduction rows
+    all_rows = income_rows + deduction_rows
+    parsed = _parse_tax_rows(all_rows, "amount_current")
+
+    snap.wages = parsed.get("wages", 0)
+    snap.nec_income = parsed.get("nec_income", 0)
+    snap.investment_income = parsed.get("investment_income", 0)
+    snap.ira_distributions = parsed.get("ira_distributions", 0)
+    snap.hsa_distributions = parsed.get("hsa_distributions", 0)
+    snap.misc_income = parsed.get("misc_income", 0)
+    snap.hsa_contributions = parsed.get("hsa_contributions", 0)
+    snap.ira_contributions = parsed.get("ira_contributions", 0)
+    snap.sales_tax = parsed.get("sales_tax", 0)
+    snap.foreign_tax_credit = parsed.get("foreign_tax_credit", 0)
+
+    return snap
+
+
+_TAX_CACHE_PATH = Path(__file__).resolve().parent.parent / ".tax_return_cache.json"
+
+
+def save_tax_snapshot(snap: TaxReturnSnapshot) -> None:
+    """Save tax return snapshot to disk as JSON."""
+    _TAX_CACHE_PATH.write_text(json.dumps(asdict(snap), indent=2))
+
+
+def load_tax_snapshot() -> TaxReturnSnapshot | None:
+    """Load cached tax return snapshot from disk, or None if not available."""
+    if not _TAX_CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_TAX_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return TaxReturnSnapshot(**data)
+
+
+def fetch_ytd_snapshot() -> YTDSnapshot:
+    """Fetch year-to-date income data from FinExtract.
+
+    Queries the brokerage realized_gains endpoint and tax_return ytd_income
+    endpoint.  Returns an empty snapshot if FinExtract is unavailable (the UI
+    then falls back to manual entry).
+    """
+    ytd = YTDSnapshot()
+
+    # Check server
+    try:
+        resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return ytd
+
+    ytd.manually_entered = False
+
+    # Realized gains
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/brokerage",
+            params={"data_type": "realized_gains"},
+            headers=_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        institution = data.get("institution", "")
+        captured_at = data.get("captured_at", "")
+        # Extract date portion from ISO timestamp (e.g. "2026-03-17T16:47:58.063Z" → "2026-03-17")
+        captured_date = captured_at[:10] if captured_at else ""
+        rows = data.get("rows", [])
+        for row in rows:
+            if "long_term_gain" in row or "short_term_gain" in row:
+                # Schwab aggregated summary format (schwab-realized-gains-v2)
+                ltcg = row.get("long_term_gain", 0.0) or 0.0
+                stcg = row.get("short_term_gain", 0.0) or 0.0
+                ytd.ltcg_ytd += ltcg
+                ytd.stcg_ytd += stcg
+                if ltcg:
+                    ytd.gain_events.append(RealizedGainEvent(
+                        date=captured_date,
+                        description=f"{institution.title()} realized gains (YTD)",
+                        proceeds=0.0, cost_basis=0.0,
+                        holding_period="long", account_name=institution.title(),
+                    ))
+                if stcg:
+                    ytd.gain_events.append(RealizedGainEvent(
+                        date=captured_date,
+                        description=f"{institution.title()} realized gains (YTD)",
+                        proceeds=0.0, cost_basis=0.0,
+                        holding_period="short", account_name=institution.title(),
+                    ))
+            else:
+                # Per-event format (date, description, proceeds, cost_basis)
+                event = RealizedGainEvent(
+                    date=row.get("date", ""),
+                    description=row.get("description", ""),
+                    proceeds=row.get("proceeds", 0.0),
+                    cost_basis=row.get("cost_basis", 0.0),
+                    holding_period=row.get("holding_period", "long"),
+                    account_name=row.get("account", ""),
+                )
+                ytd.gain_events.append(event)
+                if event.is_ltcg:
+                    ytd.ltcg_ytd += event.gain_loss
+                else:
+                    ytd.stcg_ytd += event.gain_loss
+    except (requests.RequestException, ValueError):
+        pass
+
+    # Investment income (dividends + interest from brokerage)
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/brokerage",
+            params={"data_type": "investment_income"},
+            headers=_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("rows", [])
+        for row in rows:
+            ytd.dividends_ytd += row.get("received_dividends", 0.0) or 0.0
+            ytd.interest_ytd += row.get("received_interest", 0.0) or 0.0
+    except (requests.RequestException, ValueError):
+        pass
+
+    # YTD income summary (tax return endpoint — wages, conversions, etc.)
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/tax_return",
+            params={"data_type": "ytd_income"},
+            headers=_headers(),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("rows", [])
+        parsed = _parse_ytd_income_rows(rows)
+        ytd.wages_ytd = parsed.get("wages", 0.0)
+        ytd.nec_income_ytd = parsed.get("nec_income", 0.0)
+        ytd.dividends_ytd += parsed.get("dividends", 0.0)  # additive with brokerage
+        ytd.interest_ytd += parsed.get("interest", 0.0)
+        ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
+        ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
+    except (requests.RequestException, ValueError):
+        pass
+
+    ytd.with_snapshot_date()
+    return ytd
+
+
+def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Parse partial-year income rows from FinExtract."""
+    result: dict[str, float] = {}
+    for row in rows:
+        label = row.get("label", "").lower()
+        amount = row.get("amount", 0) or 0
+        if not amount:
+            continue
+        if "wage" in label or "w-2" in label:
+            result["wages"] = result.get("wages", 0) + amount
+        elif "dividend" in label:
+            result["dividends"] = result.get("dividends", 0) + amount
+        elif "interest" in label:
+            result["interest"] = result.get("interest", 0) + amount
+        elif "conversion" in label:
+            result["ira_conversions"] = result.get("ira_conversions", 0) + amount
+        elif "distribution" in label or "1099-r" in label:
+            result["ira_distributions"] = result.get("ira_distributions", 0) + amount
+        elif "nec" in label or "self-employment" in label:
+            result["nec_income"] = result.get("nec_income", 0) + amount
+    return result
+
+
+# --- YTD Persistence ---
+
+_YTD_CACHE_PATH = Path(__file__).resolve().parent.parent / ".ytd_cache.json"
+
+
+def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
+    """Save YTD snapshot to disk as JSON."""
+    data = {
+        "tax_year": ytd.tax_year,
+        "snapshot_date": ytd.snapshot_date,
+        "wages_ytd": ytd.wages_ytd,
+        "nec_income_ytd": ytd.nec_income_ytd,
+        "ira_conversions_ytd": ytd.ira_conversions_ytd,
+        "ira_distributions_ytd": ytd.ira_distributions_ytd,
+        "ltcg_ytd": ytd.ltcg_ytd,
+        "stcg_ytd": ytd.stcg_ytd,
+        "dividends_ytd": ytd.dividends_ytd,
+        "interest_ytd": ytd.interest_ytd,
+        "gain_events": [asdict(e) for e in ytd.gain_events],
+        "manually_entered": ytd.manually_entered,
+    }
+    _YTD_CACHE_PATH.write_text(json.dumps(data, indent=2))
+
+
+def load_ytd_snapshot() -> YTDSnapshot | None:
+    """Load cached YTD snapshot from disk, or None if not available."""
+    if not _YTD_CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_YTD_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    events = [RealizedGainEvent(**e) for e in data.pop("gain_events", [])]
+    return YTDSnapshot(**data, gain_events=events)
 
 
 def fetch_portfolio() -> PortfolioSnapshot:
