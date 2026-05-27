@@ -1049,7 +1049,7 @@ class TestScenarioDividendProjection:
         r_default = run_scenario(hh_default, ConversionPlan(), "default", end_age=80)
         r_explicit = run_scenario(hh_explicit, ConversionPlan(), "explicit", end_age=80)
 
-        for yr_d, yr_e in zip(r_default.years, r_explicit.years):
+        for yr_d, yr_e in zip(r_default.years, r_explicit.years, strict=True):
             assert yr_d.magi == pytest.approx(yr_e.magi, abs=1.0)
             assert yr_d.combined_gross == pytest.approx(yr_e.combined_gross, abs=1.0)
             assert yr_d.brokerage_balance == pytest.approx(yr_e.brokerage_balance, abs=1.0)
