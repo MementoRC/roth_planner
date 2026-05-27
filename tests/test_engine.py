@@ -906,3 +906,199 @@ class TestTaxReturnParsing:
         assert loaded.investment_income == 50_000
         assert loaded.hsa_contributions == 5_000
         assert loaded.server_available is True
+
+
+class TestGrowthProfileYield:
+    """Tests for the yield/qualified split on GrowthProfile."""
+
+    def test_default_yield_is_zero(self):
+        """Backward compat — default GrowthProfile has zero yield."""
+        gp = GrowthProfile(default_rate=0.07)
+        assert gp.yield_for(2026) == 0.0
+        assert gp.appreciation_for(2026) == 0.07
+        assert gp.qualified_div_for(2026, 100_000) == 0.0
+        assert gp.ordinary_div_for(2026, 100_000) == 0.0
+
+    def test_yield_split_fully_qualified(self):
+        gp = GrowthProfile(default_rate=0.07, yield_rate=0.02, qualified_fraction=1.0)
+        assert gp.appreciation_for(2026) == pytest.approx(0.05)
+        assert gp.qualified_div_for(2026, 100_000) == pytest.approx(2000.0)
+        assert gp.ordinary_div_for(2026, 100_000) == pytest.approx(0.0)
+
+    def test_yield_split_mixed(self):
+        gp = GrowthProfile(default_rate=0.06, yield_rate=0.03, qualified_fraction=0.7)
+        assert gp.qualified_div_for(2026, 100_000) == pytest.approx(2100.0)
+        assert gp.ordinary_div_for(2026, 100_000) == pytest.approx(900.0)
+
+    def test_yield_overrides(self):
+        gp = GrowthProfile(
+            default_rate=0.07,
+            yield_rate=0.02,
+            yield_overrides={2027: 0.05},
+        )
+        assert gp.yield_for(2026) == 0.02
+        assert gp.yield_for(2027) == 0.05
+
+
+class TestDividendForecast:
+    """Tests for engine.dividend_forecast."""
+
+    def test_empty_portfolio_returns_zero(self):
+        from engine.dividend_forecast import forecast_portfolio
+
+        fcst = forecast_portfolio([], total_balance=0.0)
+        assert fcst.yield_rate == 0.0
+        assert fcst.qualified_fraction == 1.0
+
+    def test_ttm_strategy(self):
+        """TTM derivation: per-position dividends history → yield."""
+        from engine.dividend_forecast import Position, forecast_portfolio
+
+        positions = [
+            Position(ticker="TXN", shares=1000, balance=200_000, ttm_dividends=5400),
+        ]
+        fcst = forecast_portfolio(positions, total_balance=200_000)
+        # ttm_per_share = 5400/1000 = 5.4; annual_income = 1000 * 5.4 = 5400
+        # yield_rate = 5400 / 200_000 = 0.027; TXN is equity → qualified_fraction = 1.0
+        assert fcst.yield_rate == pytest.approx(0.027)
+        assert fcst.qualified_fraction == pytest.approx(1.0)
+        assert fcst.source_counts["ttm"] == 1
+
+    def test_mixed_qualified_classifications(self):
+        """REIT contributes ordinary; equity contributes qualified."""
+        from engine.dividend_forecast import Position, forecast_portfolio
+
+        positions = [
+            Position(ticker="TXN", shares=500, balance=100_000, ttm_dividends=2700),  # 2.7% qual
+            Position(ticker="VNQ", shares=100, balance=10_000, ttm_dividends=400),    # 4% ord (REIT)
+        ]
+        fcst = forecast_portfolio(positions, total_balance=110_000)
+        # TXN: annual_income=2700, qual_frac=1.0 → qualified=2700, ordinary=0
+        # VNQ: annual_income=400, qual_frac=0.0 → qualified=0, ordinary=400
+        # total=3100, yield=3100/110_000, qual_frac=2700/3100
+        assert fcst.yield_rate == pytest.approx(3100 / 110_000)
+        assert fcst.qualified_fraction == pytest.approx(2700 / 3100)
+
+    def test_no_history_uses_none_strategy(self):
+        """No TTM data, no override, no yfinance → none."""
+        from engine.dividend_forecast import Position, forecast_portfolio
+
+        positions = [
+            Position(ticker="NEWSTOCK", shares=100, balance=10_000, ttm_dividends=0.0),
+        ]
+        fcst = forecast_portfolio(positions, total_balance=10_000)
+        assert fcst.yield_rate == 0.0
+        assert fcst.source_counts["none"] == 1
+
+
+class TestYTDDividendSplit:
+    """Tests for the qualified/ordinary YTD dividend split."""
+
+    def test_backward_compat_property(self):
+        from models.ytd_income import YTDSnapshot
+
+        snap = YTDSnapshot(
+            qualified_dividends_ytd=500.0,
+            ordinary_dividends_ytd=300.0,
+        )
+        assert snap.dividends_ytd == 800.0
+
+    def test_zero_split(self):
+        from models.ytd_income import YTDSnapshot
+
+        snap = YTDSnapshot()
+        assert snap.dividends_ytd == 0.0
+        assert snap.qualified_dividends_ytd == 0.0
+        assert snap.ordinary_dividends_ytd == 0.0
+
+    def test_niit_includes_both_dividend_types(self):
+        from models.ytd_income import YTDSnapshot
+
+        snap = YTDSnapshot(
+            qualified_dividends_ytd=500.0,
+            ordinary_dividends_ytd=300.0,
+            ltcg_ytd=1000.0,
+            interest_ytd=200.0,
+        )
+        # total_investment_income = ltcg + stcg + dividends (qual + ord) + interest
+        # = 1000 + 0 + 800 + 200 = 2000
+        assert snap.total_investment_income == pytest.approx(2000.0)
+
+
+class TestScenarioDividendProjection:
+    """Tests for brokerage dividend projection in scenario engine."""
+
+    def _rmd_household(self, **kwargs) -> Household:
+        """Household at RMD age so excess RMD seeds brokerage in year 1."""
+        return Household(
+            your_age=75,
+            spouse_age=69,
+            base_year=2026,
+            your_ira=4_000_000,
+            spouse_ira=1_000_000,
+            growth_rate=0.07,
+            **kwargs,
+        )
+
+    def test_zero_yield_is_backward_compatible(self):
+        """GrowthProfile with yield_rate=0 → identical outputs to no GrowthProfile."""
+        hh_default = self._rmd_household()
+        hh_explicit = self._rmd_household(
+            brokerage_growth=GrowthProfile(default_rate=0.07, yield_rate=0.0),
+        )
+        r_default = run_scenario(hh_default, ConversionPlan(), "default", end_age=80)
+        r_explicit = run_scenario(hh_explicit, ConversionPlan(), "explicit", end_age=80)
+
+        for yr_d, yr_e in zip(r_default.years, r_explicit.years):
+            assert yr_d.magi == pytest.approx(yr_e.magi, abs=1.0)
+            assert yr_d.combined_gross == pytest.approx(yr_e.combined_gross, abs=1.0)
+            assert yr_d.brokerage_balance == pytest.approx(yr_e.brokerage_balance, abs=1.0)
+
+    def test_yield_pushes_qualified_to_magi(self):
+        """qualified_fraction=1.0 → qualified dividends increment MAGI but not combined_gross."""
+        # Use brokerage_growth with yield but all-qualified; run two years so brokerage is seeded.
+        hh_no_yield = self._rmd_household(
+            brokerage_growth=GrowthProfile(default_rate=0.07, yield_rate=0.0),
+        )
+        hh_yield = self._rmd_household(
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07, yield_rate=0.03, qualified_fraction=1.0
+            ),
+        )
+        r_no = run_scenario(hh_no_yield, ConversionPlan(), "no_yield", end_age=80)
+        r_yes = run_scenario(hh_yield, ConversionPlan(), "with_yield", end_age=80)
+
+        # Find a year where brokerage has accumulated (age 77, 2 years of excess)
+        yr_no = next(yr for yr in r_no.years if yr.your_age == 77)
+        yr_yes = next(yr for yr in r_yes.years if yr.your_age == 77)
+
+        # With qualified dividends: MAGI should be higher
+        assert yr_yes.magi > yr_no.magi
+        # combined_gross should be equal (qualified divs don't stack into ordinary brackets)
+        assert yr_yes.combined_gross == pytest.approx(yr_no.combined_gross, abs=1.0)
+        # Qualified div field should be nonzero in yield scenario
+        assert yr_yes.brokerage_qual_div > 0.0
+        assert yr_yes.brokerage_ord_div == pytest.approx(0.0)
+
+    def test_yield_pushes_ordinary_to_combined_gross(self):
+        """qualified_fraction=0.0 → ordinary dividends increment both MAGI and combined_gross."""
+        hh_no_yield = self._rmd_household(
+            brokerage_growth=GrowthProfile(default_rate=0.07, yield_rate=0.0),
+        )
+        hh_ord = self._rmd_household(
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07, yield_rate=0.03, qualified_fraction=0.0
+            ),
+        )
+        r_no = run_scenario(hh_no_yield, ConversionPlan(), "no_yield", end_age=80)
+        r_ord = run_scenario(hh_ord, ConversionPlan(), "ord_yield", end_age=80)
+
+        yr_no = next(yr for yr in r_no.years if yr.your_age == 77)
+        yr_ord = next(yr for yr in r_ord.years if yr.your_age == 77)
+
+        # With ordinary dividends: both MAGI and combined_gross should be higher
+        assert yr_ord.magi > yr_no.magi
+        assert yr_ord.combined_gross > yr_no.combined_gross
+        # Ordinary div field should be nonzero; qualified should be zero
+        assert yr_ord.brokerage_ord_div > 0.0
+        assert yr_ord.brokerage_qual_div == pytest.approx(0.0)
