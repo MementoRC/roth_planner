@@ -71,7 +71,8 @@ def _load_overrides(path: Path) -> Mapping[str, Mapping[str, float]]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data: Mapping[str, Mapping[str, float]] = json.loads(path.read_text())
+        return data
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -79,7 +80,7 @@ def _load_overrides(path: Path) -> Mapping[str, Mapping[str, float]]:
 def _yfinance_rate(ticker: str) -> float | None:
     """Optional fallback for new positions with no payment history."""
     try:
-        import yfinance  # type: ignore[import-untyped]
+        import yfinance  # type: ignore[import-not-found,import-untyped]
     except ImportError:
         return None
     try:
