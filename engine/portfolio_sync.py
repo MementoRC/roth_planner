@@ -269,7 +269,7 @@ def fetch_holdings() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
+        data: dict[str, list[dict[str, Any]]] = resp.json()
         return data.get("rows", [])
     except (requests.RequestException, ValueError):
         return []
@@ -285,7 +285,7 @@ def fetch_equity_awards() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
+        data: dict[str, list[dict[str, Any]]] = resp.json()
         return data.get("rows", [])
     except (requests.RequestException, ValueError):
         return []
@@ -301,7 +301,7 @@ def fetch_shares() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
+        data: dict[str, list[dict[str, Any]]] = resp.json()
         return data.get("rows", [])
     except (requests.RequestException, ValueError):
         return []
