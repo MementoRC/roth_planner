@@ -54,7 +54,8 @@ class YTDSnapshot:
     # Investment income components
     ltcg_ytd: float = 0.0  # long-term capital gains (stop-loss triggers)
     stcg_ytd: float = 0.0  # short-term capital gains
-    dividends_ytd: float = 0.0
+    qualified_dividends_ytd: float = 0.0
+    ordinary_dividends_ytd: float = 0.0
     interest_ytd: float = 0.0
 
     # Drill-down events
@@ -62,6 +63,11 @@ class YTDSnapshot:
 
     # Metadata
     manually_entered: bool = True
+
+    @property
+    def dividends_ytd(self) -> float:
+        """Total YTD dividends (qualified + ordinary). Backward-compat."""
+        return self.qualified_dividends_ytd + self.ordinary_dividends_ytd
 
     @property
     def total_ordinary_income(self) -> float:

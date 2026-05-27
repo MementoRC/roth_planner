@@ -619,7 +619,7 @@ class TestYTDSnapshot:
 
         ytd = YTDSnapshot(
             wages_ytd=100_000, ltcg_ytd=200_000, stcg_ytd=10_000,
-            dividends_ytd=5_000, interest_ytd=3_000,
+            ordinary_dividends_ytd=5_000, interest_ytd=3_000,
             ira_conversions_ytd=20_000,
         )
         expected = 100_000 + 200_000 + 10_000 + 5_000 + 3_000 + 20_000
@@ -629,7 +629,7 @@ class TestYTDSnapshot:
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(
-            ltcg_ytd=150_000, stcg_ytd=20_000, dividends_ytd=10_000,
+            ltcg_ytd=150_000, stcg_ytd=20_000, ordinary_dividends_ytd=10_000,
             interest_ytd=5_000, wages_ytd=80_000,
         )
         # Investment income: LTCG + STCG + dividends + interest (no wages)
@@ -800,7 +800,7 @@ class TestScenarioWithYTD:
 
         ytd = YTDSnapshot(
             tax_year=2026, wages_ytd=50_000, ltcg_ytd=200_000,
-            stcg_ytd=10_000, dividends_ytd=5_000, interest_ytd=3_000,
+            stcg_ytd=10_000, ordinary_dividends_ytd=5_000, interest_ytd=3_000,
             ira_conversions_ytd=20_000, snapshot_date="2026-06-15",
             gain_events=[
                 RealizedGainEvent(
