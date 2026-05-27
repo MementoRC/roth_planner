@@ -7,17 +7,35 @@ from dataclasses import dataclass, field
 
 @dataclass
 class GrowthProfile:
-    """Per-account growth rate with optional year-by-year overrides.
+    """Per-account growth rate with optional yield/appreciation split.
 
-    default_rate: baseline annual return (e.g. 0.07 for 7%)
-    yearly_overrides: {year: rate} for years with known/historical returns
+    default_rate: TOTAL annual return (yield + appreciation), e.g. 0.07 for 7%
+    yearly_overrides: {year: total_rate} for years with known/historical returns
+    yield_rate: dividend yield component (taxable brokerage only; 0.0 for IRAs)
+    qualified_fraction: share of yield_rate that is qualified dividends (LTCG-rate)
+    yield_overrides: {year: yield_rate} for known-yield years
     """
 
     default_rate: float = 0.07
     yearly_overrides: dict[int, float] = field(default_factory=dict)
+    yield_rate: float = 0.0
+    qualified_fraction: float = 1.0
+    yield_overrides: dict[int, float] = field(default_factory=dict)
 
     def rate_for(self, year: int) -> float:
         return self.yearly_overrides.get(year, self.default_rate)
+
+    def yield_for(self, year: int) -> float:
+        return self.yield_overrides.get(year, self.yield_rate)
+
+    def appreciation_for(self, year: int) -> float:
+        return self.rate_for(year) - self.yield_for(year)
+
+    def qualified_div_for(self, year: int, balance: float) -> float:
+        return balance * self.yield_for(year) * self.qualified_fraction
+
+    def ordinary_div_for(self, year: int, balance: float) -> float:
+        return balance * self.yield_for(year) * (1.0 - self.qualified_fraction)
 
 
 @dataclass

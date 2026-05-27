@@ -99,7 +99,7 @@ def render(hh: Household):
             wages_ytd=float(wages),
             ltcg_ytd=float(ltcg),
             stcg_ytd=float(stcg),
-            dividends_ytd=float(dividends),
+            ordinary_dividends_ytd=float(dividends),  # TODO(step 4): split qualified vs ordinary in UI
             interest_ytd=float(interest),
             ira_conversions_ytd=float(conversions_done),
             gain_events=ytd.gain_events,

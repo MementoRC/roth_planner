@@ -174,6 +174,31 @@ class PortfolioSnapshot:
         return sum(a.total_value for a in self.accounts) + self.txn_shares_value
 
 
+def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
+    """Convert brokerage holdings into Position records for dividend forecast.
+
+    Args:
+        brok_snapshot: an AccountSummary for a brokerage account (from
+            PortfolioSnapshot.account_by_type("brokerage")).
+
+    Returns a list of engine.dividend_forecast.Position, one per Holding.
+    Positions with zero market_value are skipped.
+    """
+    from engine.dividend_forecast import Position
+
+    positions = []
+    for h in brok_snapshot.holdings:
+        if h.market_value <= 0:
+            continue
+        positions.append(Position(
+            ticker=h.symbol,
+            shares=h.quantity,
+            balance=h.market_value,
+            ttm_dividends=0.0,  # Holding has no dividend history field; TTM unknown
+        ))
+    return positions
+
+
 def _headers() -> dict[str, str]:
     h = {"Accept": "application/json"}
     if TOKEN:
@@ -515,7 +540,7 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         resp.raise_for_status()
         rows = resp.json().get("rows", [])
         for row in rows:
-            ytd.dividends_ytd += row.get("received_dividends", 0.0) or 0.0
+            ytd.ordinary_dividends_ytd += row.get("received_dividends", 0.0) or 0.0
             ytd.interest_ytd += row.get("received_interest", 0.0) or 0.0
     except (requests.RequestException, ValueError):
         pass
@@ -533,7 +558,11 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         parsed = _parse_ytd_income_rows(rows)
         ytd.wages_ytd = parsed.get("wages", 0.0)
         ytd.nec_income_ytd = parsed.get("nec_income", 0.0)
-        ytd.dividends_ytd += parsed.get("dividends", 0.0)  # additive with brokerage
+        # Split 1099-DIV: box 1a (total) minus box 1b (qualified) = non-qualified residual
+        _total_div = parsed.get("total_dividends", 0.0)
+        _qual_div = parsed.get("qualified_dividends", 0.0)
+        ytd.qualified_dividends_ytd += _qual_div
+        ytd.ordinary_dividends_ytd += max(_total_div - _qual_div, 0.0)
         ytd.interest_ytd += parsed.get("interest", 0.0)
         ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
         ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
@@ -554,8 +583,12 @@ def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
             continue
         if "wage" in label or "w-2" in label:
             result["wages"] = result.get("wages", 0) + amount
-        elif "dividend" in label:
-            result["dividends"] = result.get("dividends", 0) + amount
+        elif "qualified" in label and "dividend" in label:
+            # 1099-DIV box 1b — qualified dividends (subset of total ordinary)
+            result["qualified_dividends"] = result.get("qualified_dividends", 0) + amount
+        elif "dividend" in label or "1099-div" in label:
+            # 1099-DIV box 1a — total ordinary dividends (includes qualified)
+            result["total_dividends"] = result.get("total_dividends", 0) + amount
         elif "interest" in label:
             result["interest"] = result.get("interest", 0) + amount
         elif "conversion" in label:
@@ -583,7 +616,8 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "ira_distributions_ytd": ytd.ira_distributions_ytd,
         "ltcg_ytd": ytd.ltcg_ytd,
         "stcg_ytd": ytd.stcg_ytd,
-        "dividends_ytd": ytd.dividends_ytd,
+        "qualified_dividends_ytd": ytd.qualified_dividends_ytd,
+        "ordinary_dividends_ytd": ytd.ordinary_dividends_ytd,
         "interest_ytd": ytd.interest_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "manually_entered": ytd.manually_entered,
@@ -601,6 +635,11 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
         return None
 
     events = [RealizedGainEvent(**e) for e in data.pop("gain_events", [])]
+    # Migrate old cache files that stored a single dividends_ytd key.
+    if "dividends_ytd" in data and "ordinary_dividends_ytd" not in data:
+        data["ordinary_dividends_ytd"] = data.pop("dividends_ytd")
+    else:
+        data.pop("dividends_ytd", None)
     return YTDSnapshot(**data, gain_events=events)
 
 

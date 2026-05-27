@@ -136,6 +136,8 @@ st.session_state.spouse_aca = st.sidebar.checkbox(
 )
 
 # Build household from session state
+from engine.dividend_forecast import forecast_portfolio  # noqa: E402
+from engine.portfolio_sync import positions_for_forecast  # noqa: E402
 from models.household import GrowthProfile, Household  # noqa: E402
 
 
@@ -165,10 +167,18 @@ def get_household() -> Household:
                 default_rate=snap.pretax_weighted_return,
             )
 
-        # Brokerage weighted return
+        # Brokerage weighted return + dividend forecast
         brok = snap.account_by_type("brokerage")
         if brok and brok.total_value > 0:
-            hh.brokerage_growth = GrowthProfile(default_rate=brok.weighted_return)
+            _fcst = forecast_portfolio(
+                positions_for_forecast(brok),
+                total_balance=brok.total_value,
+            )
+            hh.brokerage_growth = GrowthProfile(
+                default_rate=brok.weighted_return,
+                yield_rate=_fcst.yield_rate,
+                qualified_fraction=_fcst.qualified_fraction,
+            )
 
     return hh
 

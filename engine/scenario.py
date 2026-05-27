@@ -88,6 +88,8 @@ class YearResult:
     brokerage_balance: float = 0.0
     brokerage_growth: float = 0.0
     brokerage_gain_tax: float = 0.0
+    brokerage_qual_div: float = 0.0  # qualified dividends (MAGI-only / LTCG rate)
+    brokerage_ord_div: float = 0.0  # ordinary dividends (ordinary income stack)
 
     # IRA end of year
     your_ira_end: float = 0.0
@@ -184,6 +186,19 @@ def run_scenario(
         # === Option income ===
         yr.option_income = hh.option_income(year, early_exercise)
 
+        # === Brokerage dividend forecast ===
+        # Skip in base year if YTD actuals are provided (they already carry real dividends).
+        # yield_rate defaults to 0.0 on GrowthProfile, so this is zero-cost when not configured.
+        use_forecast_divs = (ytd is None or year != hh.base_year)
+        if use_forecast_divs and hh.brokerage_growth is not None:
+            qual_div_this_year = hh.brokerage_growth.qualified_div_for(year, brokerage)
+            ord_div_this_year = hh.brokerage_growth.ordinary_div_for(year, brokerage)
+        else:
+            qual_div_this_year = 0.0
+            ord_div_this_year = 0.0
+        yr.brokerage_qual_div = qual_div_this_year
+        yr.brokerage_ord_div = ord_div_this_year
+
         # === YTD injection (base year only) ===
         # Resolve to a concrete YTDSnapshot for the base year, or None.
         # This avoids repeated `ytd is not None` narrowing for mypy.
@@ -251,6 +266,8 @@ def run_scenario(
                 + ytd_year.dividends_ytd
                 + ytd_year.interest_ytd
             )
+        # Forecast brokerage dividends: both qual and ord affect MAGI
+        yr.magi += qual_div_this_year + ord_div_this_year
 
         # === SS taxation ===
         other_inc = (
@@ -275,6 +292,8 @@ def run_scenario(
         # YTD: add wages + STCG to gross (ordinary), but NOT LTCG
         if ytd_year is not None:
             yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
+        # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
+        yr.combined_gross += ord_div_this_year
 
         # === Deductions ===
         yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
@@ -314,10 +333,18 @@ def run_scenario(
             yr.ytd_ltcg_tax = ytd_year.ltcg_ytd * hh.ltcg_rate
 
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
-        # Net investment income = brokerage growth (realized gains)
-        # Computed on prior year's brokerage since current year hasn't grown yet
+        # Net investment income = realized appreciation gains + all dividends (qual + ord)
+        # Computed on beginning brokerage balance (carry-forward from prior year)
         brok_rate = hh.brokerage_rate(year)
-        net_investment_income = brokerage * brok_rate * hh.brok_turnover
+        if hh.brokerage_growth is not None:
+            brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
+        else:
+            brok_appreciation_rate = brok_rate
+        net_investment_income = (
+            brokerage * brok_appreciation_rate * hh.brok_turnover
+            + qual_div_this_year
+            + ord_div_this_year
+        )
         # YTD: add realized gains, dividends, interest to investment income
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income
@@ -339,13 +366,20 @@ def run_scenario(
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
-        # Brokerage: accumulates excess, grows, pays cap gains
+        # Brokerage: accumulates excess, grows (appreciation), dividends reinvest, pays cap gains
         yr.brokerage_balance = brokerage
-        yr.brokerage_growth = brokerage * brok_rate
+        yr.brokerage_growth = brokerage * brok_appreciation_rate
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         yr.brokerage_gain_tax = realized_gains * hh.ltcg_rate
+        total_div = qual_div_this_year + ord_div_this_year
 
-        brokerage = brokerage + yr.brokerage_growth - yr.brokerage_gain_tax + yr.excess_rmd
+        brokerage = (
+            brokerage
+            + yr.brokerage_growth
+            - yr.brokerage_gain_tax
+            + total_div  # dividends reinvested (taxable event already captured in income stacks)
+            + yr.excess_rmd
+        )
 
         # === IRA end of year ===
         your_withdrawal = yr.your_conversion + yr.your_rmd + yr.extra_withdrawal
