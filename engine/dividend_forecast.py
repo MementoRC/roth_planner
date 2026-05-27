@@ -15,9 +15,9 @@ no result. Results are deterministic for a given input snapshot.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterable, Mapping
 
 # Per-security-type qualified-dividend defaults. Override per ticker via
 # .dividend_rates.json. Conservative defaults — REITs/MLPs/bond funds are
