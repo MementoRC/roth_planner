@@ -7,6 +7,7 @@ from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit, niit_from_conversion
 from engine.scenario import (
+    ConversionPlan,
     add_bracket_fill_withdrawals,
     auto_fill_12,
     auto_fill_22,
@@ -22,7 +23,7 @@ from engine.tax import (
     room_to_22,
     taxable_ss,
 )
-from models.household import Household
+from models.household import GrowthProfile, Household
 
 
 def approx(expected, tol=1.0):
@@ -275,6 +276,196 @@ class TestScenarios:
             assert hh.your_age_in(year) >= 75
 
 
+class TestPerAccountGrowth:
+    """Test per-account growth rate profiles."""
+
+    def test_growth_profile_default(self):
+        gp = GrowthProfile(default_rate=0.08)
+        assert gp.rate_for(2026) == 0.08
+        assert gp.rate_for(2030) == 0.08
+
+    def test_growth_profile_yearly_override(self):
+        gp = GrowthProfile(default_rate=0.07, yearly_overrides={2026: 0.10, 2027: -0.05})
+        assert gp.rate_for(2026) == 0.10
+        assert gp.rate_for(2027) == -0.05
+        assert gp.rate_for(2028) == 0.07  # falls back to default
+
+    def test_household_falls_back_to_growth_rate(self):
+        hh = Household(growth_rate=0.06)
+        assert hh.your_ira_rate(2026) == 0.06
+        assert hh.spouse_ira_rate(2026) == 0.06
+        assert hh.brokerage_rate(2026) == 0.06
+
+    def test_household_per_account_overrides(self):
+        hh = Household(
+            growth_rate=0.07,
+            your_ira_growth=GrowthProfile(default_rate=0.09),
+            spouse_ira_growth=GrowthProfile(default_rate=0.05),
+            brokerage_growth=GrowthProfile(default_rate=0.06),
+        )
+        assert hh.your_ira_rate(2026) == 0.09
+        assert hh.spouse_ira_rate(2026) == 0.05
+        assert hh.brokerage_rate(2026) == 0.06
+
+    def test_different_growth_rates_affect_scenario(self):
+        """Higher your_ira growth should produce larger IRA at end."""
+        hh_high = Household(your_ira_growth=GrowthProfile(default_rate=0.10))
+        hh_low = Household(your_ira_growth=GrowthProfile(default_rate=0.04))
+        r_high = run_no_conversion(hh_high, end_age=80)
+        r_low = run_no_conversion(hh_low, end_age=80)
+        # Your IRA should be larger with higher growth
+        yr_high = next(y for y in r_high.years if y.your_age == 80)
+        yr_low = next(y for y in r_low.years if y.your_age == 80)
+        assert yr_high.your_ira_end > yr_low.your_ira_end
+
+    def test_spouse_independent_growth(self):
+        """Spouse IRA grows independently from yours."""
+        hh = Household(
+            your_ira_growth=GrowthProfile(default_rate=0.10),
+            spouse_ira_growth=GrowthProfile(default_rate=0.03),
+        )
+        r = run_no_conversion(hh, end_age=80)
+        yr = next(y for y in r.years if y.your_age == 80)
+        # Your IRA grows at 10%, spouse at 3% — yours should be much larger
+        # (starting balances are equal at $1.7M)
+        assert yr.your_ira_end > yr.spouse_ira_end * 1.5
+
+    def test_yearly_override_applies(self):
+        """A bad year override should reduce the IRA compared to flat growth."""
+        hh_flat = Household(growth_rate=0.07)
+        hh_crash = Household(
+            your_ira_growth=GrowthProfile(
+                default_rate=0.07,
+                yearly_overrides={2027: -0.20},  # 20% crash in year 2
+            ),
+        )
+        r_flat = run_no_conversion(hh_flat, end_age=70)
+        r_crash = run_no_conversion(hh_crash, end_age=70)
+        yr_flat = next(y for y in r_flat.years if y.your_age == 70)
+        yr_crash = next(y for y in r_crash.years if y.your_age == 70)
+        assert yr_crash.your_ira_end < yr_flat.your_ira_end
+
+
+class TestPortfolioSync:
+    """Test portfolio sync parsing and classification logic."""
+
+    def test_classify_brokerage_account(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, owner = _classify_account("Claude R. Cirba — Brokerage Account — 39119320*")
+        assert acct_type == "brokerage"
+        assert owner == "you"
+
+    def test_classify_roth_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Claude R. Cirba — Roth IRA Brokerage Account — 61037368*")
+        assert acct_type == "roth_ira"
+
+    def test_classify_trad_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Some Person — Traditional IRA — 12345678*")
+        assert acct_type == "trad_ira"
+
+    def test_classify_rollover_ira(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Rollover IRA233813501")
+        assert acct_type == "trad_ira"
+
+    def test_classify_403b(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("VANDERBILT 403B59208")
+        assert acct_type == "403b"
+
+    def test_classify_hsa(self):
+        from engine.portfolio_sync import _classify_account
+
+        acct_type, _ = _classify_account("Health Savings Account178734462")
+        assert acct_type == "hsa"
+
+    def test_classify_symbols(self):
+        from engine.portfolio_sync import _classify_symbol
+
+        assert _classify_symbol("VTI") == "equity"
+        assert _classify_symbol("VXUS") == "equity"
+        assert _classify_symbol("BND") == "bond"
+        assert _classify_symbol("BNDX") == "bond"
+        assert _classify_symbol("ITOT") == "equity"
+        assert _classify_symbol("AGG") == "bond"
+        assert _classify_symbol("FBTC") == "crypto"
+        assert _classify_symbol("SHV") == "cash"
+        assert _classify_symbol("Cash HELD IN MONEY MARKET") == "cash"
+        assert _classify_symbol("VTTHX") == "target_date"
+        assert _classify_symbol("UNKNOWN") == "equity"  # default
+
+    def test_parse_quantity(self):
+        from engine.portfolio_sync import _parse_quantity
+
+        assert _parse_quantity(100) == 100.0
+        assert _parse_quantity(3.14) == 3.14
+        assert _parse_quantity("2,182.861") == approx(2182.861, tol=0.001)
+        assert _parse_quantity(None) == 0.0
+        assert _parse_quantity("") == 0.0
+
+    def test_account_summary_weighted_return(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="brokerage",
+            owner="you",
+            total_value=100_000,
+            equity_value=60_000,
+            bond_value=40_000,
+        )
+        # 60% * 9% + 40% * 4% = 5.4% + 1.6% = 7.0%
+        assert acct.weighted_return == approx(0.07, tol=0.001)
+        assert acct.equity_pct == approx(0.60, tol=0.001)
+
+    def test_account_summary_with_crypto_and_cash(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(
+            account_type="trad_ira",
+            owner="you",
+            total_value=200_000,
+            equity_value=80_000,
+            bond_value=40_000,
+            cash_value=40_000,
+            crypto_value=40_000,
+        )
+        # 80k*9% + 40k*4% + 40k*4.5% + 40k*0% = 7200+1600+1800+0 = 10600
+        # 10600/200000 = 5.3%
+        assert acct.weighted_return == approx(0.053, tol=0.001)
+
+    def test_account_summary_empty(self):
+        from engine.portfolio_sync import AccountSummary
+
+        acct = AccountSummary(account_type="brokerage", owner="you")
+        assert acct.weighted_return == 0.0
+        assert acct.equity_pct == 0.0
+
+    def test_pretax_accounts(self):
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+        snap = PortfolioSnapshot(
+            accounts=[
+                AccountSummary(account_type="trad_ira", owner="you", total_value=1_500_000,
+                               equity_value=500_000, bond_value=500_000, cash_value=500_000),
+                AccountSummary(account_type="403b", owner="you", total_value=140_000,
+                               equity_value=100_000, bond_value=40_000),
+                AccountSummary(account_type="hsa", owner="you", total_value=60_000),
+                AccountSummary(account_type="brokerage", owner="you", total_value=100_000),
+            ],
+            server_available=True,
+        )
+        assert len(snap.pretax_accounts) == 2
+        assert snap.pretax_total == approx(1_640_000)
+        assert snap.pretax_weighted_return > 0
+
+
 class TestAssetLocation:
     """Test asset location engine — equity-first vs proportional vs bond-first."""
 
@@ -394,3 +585,324 @@ class TestSweetSpot:
             r_below = _all_in_at_conversion(hh, base, below, 0)
             r_above = _all_in_at_conversion(hh, base, above, 0)
             assert r_above["irmaa_delta"] > r_below["irmaa_delta"]
+
+
+# ============================================================
+#  Tax Return Sync (TurboTax via FinExtract)
+# ============================================================
+
+# ============================================================
+#  YTD Income Tracker & Headroom
+# ============================================================
+
+
+class TestYTDSnapshot:
+    """Test YTD income data model properties."""
+
+    def test_ltcg_not_in_ordinary(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(ltcg_ytd=200_000, stcg_ytd=10_000, wages_ytd=50_000)
+        # LTCG should NOT be in ordinary income
+        assert ytd.total_ordinary_income == approx(60_000)  # wages + stcg only
+        # But should be in MAGI
+        assert ytd.magi_ytd == approx(260_000)
+
+    def test_stcg_in_ordinary(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(stcg_ytd=30_000)
+        assert ytd.total_ordinary_income == approx(30_000)
+
+    def test_magi_includes_all(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(
+            wages_ytd=100_000, ltcg_ytd=200_000, stcg_ytd=10_000,
+            dividends_ytd=5_000, interest_ytd=3_000,
+            ira_conversions_ytd=20_000,
+        )
+        expected = 100_000 + 200_000 + 10_000 + 5_000 + 3_000 + 20_000
+        assert ytd.magi_ytd == approx(expected)
+
+    def test_investment_income_for_niit(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(
+            ltcg_ytd=150_000, stcg_ytd=20_000, dividends_ytd=10_000,
+            interest_ytd=5_000, wages_ytd=80_000,
+        )
+        # Investment income: LTCG + STCG + dividends + interest (no wages)
+        assert ytd.total_investment_income == approx(185_000)
+
+    def test_gain_event_properties(self):
+        from models.ytd_income import RealizedGainEvent
+
+        event = RealizedGainEvent(
+            date="2026-03-15", description="TXN stop-loss",
+            proceeds=250_000, cost_basis=150_000,
+            holding_period="long", account_name="Schwab Brokerage",
+        )
+        assert event.gain_loss == approx(100_000)
+        assert event.is_ltcg is True
+
+        short_event = RealizedGainEvent(
+            date="2026-03-15", description="AAPL sale",
+            proceeds=50_000, cost_basis=45_000,
+            holding_period="short",
+        )
+        assert short_event.gain_loss == approx(5_000)
+        assert short_event.is_ltcg is False
+
+
+class TestHeadroom:
+    """Test conversion headroom calculations."""
+
+    def test_ltcg_consumes_irmaa_not_brackets(self):
+        """The critical test: $200K LTCG eats IRMAA room but not bracket room."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        # No LTCG — full bracket and IRMAA room
+        ytd_none = YTDSnapshot(tax_year=2026)
+        hr_none = compute_headroom(hh, ytd_none)
+
+        # $200K LTCG — should consume IRMAA but not brackets
+        ytd_ltcg = YTDSnapshot(tax_year=2026, ltcg_ytd=200_000)
+        hr_ltcg = compute_headroom(hh, ytd_ltcg)
+
+        # Bracket room should be identical (LTCG doesn't stack into brackets)
+        assert hr_ltcg.room_to_12pct == approx(hr_none.room_to_12pct)
+        assert hr_ltcg.room_to_22pct == approx(hr_none.room_to_22pct)
+
+        # IRMAA room should be much less (LTCG DOES affect MAGI)
+        assert hr_ltcg.room_to_irmaa_t1 < hr_none.room_to_irmaa_t1
+
+    def test_stcg_consumes_both(self):
+        """STCG is ordinary income — consumes both bracket and IRMAA room."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd_none = YTDSnapshot(tax_year=2026)
+        hr_none = compute_headroom(hh, ytd_none)
+
+        ytd_stcg = YTDSnapshot(tax_year=2026, stcg_ytd=50_000)
+        hr_stcg = compute_headroom(hh, ytd_stcg)
+
+        # Both bracket AND IRMAA room should decrease
+        assert hr_stcg.room_to_12pct < hr_none.room_to_12pct
+        assert hr_stcg.room_to_irmaa_t1 < hr_none.room_to_irmaa_t1
+
+    def test_irmaa_not_relevant_at_61(self):
+        """At age 61, IRMAA doesn't apply (Medicare starts at 65, 2-year lookback)."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()  # age 61
+        ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=200_000)
+        hr = compute_headroom(hh, ytd)
+        # MAGI is over $218K but IRMAA is NOT relevant — not on Medicare until 65
+        assert hr.irmaa_relevant is False
+        assert hr.irmaa_already_triggered is False
+        assert hr.irmaa_first_relevant_year == 2028  # age 63 → Medicare at 65
+
+    def test_irmaa_triggered_at_63(self):
+        """At age 63, IRMAA is relevant (income year + 2 = age 65 = Medicare)."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(your_age=63, base_year=2028)
+        # $220K LTCG pushes locked MAGI over $218K threshold
+        ytd = YTDSnapshot(tax_year=2028, ltcg_ytd=220_000)
+        hr = compute_headroom(hh, ytd)
+        assert hr.irmaa_relevant is True
+        assert hr.irmaa_tier_current >= 1
+
+    def test_niit_room(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=100_000)
+        hr = compute_headroom(hh, ytd)
+        # NIIT threshold is $250K, option income ~$70K + $100K LTCG = ~$170K MAGI
+        assert hr.room_to_niit > 0
+
+    def test_conversions_done_tracked(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, ira_conversions_ytd=50_000)
+        hr = compute_headroom(hh, ytd)
+        assert hr.conversions_done == approx(50_000)
+
+
+class TestScenarioWithYTD:
+    """Test scenario engine with YTD injection."""
+
+    def test_ltcg_in_magi_not_gross(self):
+        """LTCG appears in base-year MAGI but NOT in combined_gross."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=200_000)
+        plan = ConversionPlan(your_conversions={2026: 50_000})
+        result = run_scenario(hh, plan, "test", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        # MAGI should include LTCG
+        assert yr2026.magi > 200_000
+
+        # combined_gross should NOT include LTCG
+        # (only option income + conversion + taxable SS)
+        assert yr2026.combined_gross < 200_000
+
+    def test_ytd_does_not_affect_future_years(self):
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=200_000, wages_ytd=100_000)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, "test", end_age=70, ytd=ytd)
+
+        yr2026 = next(yr for yr in result.years if yr.year == 2026)
+        yr2027 = next(yr for yr in result.years if yr.year == 2027)
+
+        # 2026 should have YTD fields populated
+        assert yr2026.ytd_ltcg == approx(200_000)
+        assert yr2026.ytd_wages == approx(100_000)
+
+        # 2027 should have zero YTD fields
+        assert yr2027.ytd_ltcg == 0
+        assert yr2027.ytd_wages == 0
+
+    def test_conversions_done_subtracted(self):
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, ira_conversions_ytd=30_000)
+        plan = ConversionPlan(your_conversions={2026: 100_000})
+        result = run_scenario(hh, plan, "test", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        # Planned $100K minus $30K already done = $70K
+        assert yr2026.your_conversion == approx(70_000)
+
+    def test_ytd_save_load_roundtrip(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import RealizedGainEvent, YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026, wages_ytd=50_000, ltcg_ytd=200_000,
+            stcg_ytd=10_000, dividends_ytd=5_000, interest_ytd=3_000,
+            ira_conversions_ytd=20_000, snapshot_date="2026-06-15",
+            gain_events=[
+                RealizedGainEvent(
+                    date="2026-03-15", description="TXN stop-loss",
+                    proceeds=250_000, cost_basis=50_000,
+                    holding_period="long", account_name="Schwab",
+                ),
+            ],
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.wages_ytd == 50_000
+        assert loaded.ltcg_ytd == 200_000
+        assert loaded.stcg_ytd == 10_000
+        assert loaded.dividends_ytd == 5_000
+        assert loaded.interest_ytd == 3_000
+        assert loaded.ira_conversions_ytd == 20_000
+        assert len(loaded.gain_events) == 1
+        assert loaded.gain_events[0].gain_loss == approx(200_000)
+
+
+class TestTaxReturnParsing:
+    """Test parsing of TurboTax income/deduction rows from FinExtract."""
+
+    def test_parse_income_rows(self):
+        from engine.portfolio_sync import _parse_tax_rows
+
+        rows = [
+            {"form_label": "Wages and Salaries (W-2)", "amount_current": 102225, "amount_prior": 118161},
+            {"form_label": "Form 1099-NEC", "amount_current": 4150, "amount_prior": None},
+            {"form_label": "Investments and Savings", "amount_current": 92429, "amount_prior": 165861},
+            {"form_label": "IRA, 401(k), Pension Plan Withdrawals (1099-R)", "amount_current": 7397, "amount_prior": None},
+            {"form_label": "1099-SA, HSA, MSA", "amount_current": 895, "amount_prior": 583},
+            {"form_label": "Miscellaneous Income, 1099-A, 1099-C", "amount_current": None, "amount_prior": 48401},
+        ]
+        parsed = _parse_tax_rows(rows, "amount_current")
+        assert parsed["wages"] == 102225
+        assert parsed["nec_income"] == 4150
+        assert parsed["investment_income"] == 92429
+        assert parsed["ira_distributions"] == 7397
+        assert parsed["hsa_distributions"] == 895
+        assert "misc_income" not in parsed  # amount_current is None
+
+    def test_parse_deduction_rows(self):
+        from engine.portfolio_sync import _parse_tax_rows
+
+        rows = [
+            {"form_label": "HSA, MSA Contributions", "amount_current": 5300, "amount_prior": 5150},
+            {"form_label": "Traditional and Roth IRA Contributions", "amount_current": 8000, "amount_prior": 16000},
+            {"form_label": "Sales Tax", "amount_current": 1686, "amount_prior": 1881},
+            {"form_label": "Foreign Tax Credit", "amount_current": 365, "amount_prior": 355},
+        ]
+        parsed = _parse_tax_rows(rows, "amount_current")
+        assert parsed["hsa_contributions"] == 5300
+        assert parsed["ira_contributions"] == 8000
+        assert parsed["sales_tax"] == 1686
+        assert parsed["foreign_tax_credit"] == 365
+
+    def test_parse_prior_year(self):
+        from engine.portfolio_sync import _parse_tax_rows
+
+        rows = [
+            {"form_label": "Wages and Salaries (W-2)", "amount_current": 102225, "amount_prior": 118161},
+            {"form_label": "Investments and Savings", "amount_current": 92429, "amount_prior": 165861},
+        ]
+        parsed = _parse_tax_rows(rows, "amount_prior")
+        assert parsed["wages"] == 118161
+        assert parsed["investment_income"] == 165861
+
+    def test_tax_snapshot_estimated_magi(self):
+        from engine.portfolio_sync import TaxReturnSnapshot
+
+        snap = TaxReturnSnapshot(
+            wages=102225,
+            nec_income=4150,
+            investment_income=92429,
+            ira_distributions=7397,
+            hsa_distributions=895,
+            hsa_contributions=5300,
+        )
+        # total_income = 102225 + 4150 + 92429 + 7397 + 895 = 207096
+        assert snap.total_income == 207096
+        # estimated_magi = total - hsa_contributions - (nec * 0.0765)
+        se_ded = 4150 * 0.0765
+        expected = 207096 - 5300 - se_ded
+        assert snap.estimated_magi == pytest.approx(expected, abs=1)
+
+    def test_tax_snapshot_save_load_roundtrip(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import TaxReturnSnapshot, load_tax_snapshot, save_tax_snapshot
+
+        monkeypatch.setattr(portfolio_sync, "_TAX_CACHE_PATH", tmp_path / "tax.json")
+
+        snap = TaxReturnSnapshot(
+            wages=100_000, investment_income=50_000,
+            hsa_contributions=5_000, server_available=True,
+        )
+        save_tax_snapshot(snap)
+        loaded = load_tax_snapshot()
+        assert loaded is not None
+        assert loaded.wages == 100_000
+        assert loaded.investment_income == 50_000
+        assert loaded.hsa_contributions == 5_000
+        assert loaded.server_available is True

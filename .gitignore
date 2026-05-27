@@ -39,6 +39,9 @@ Thumbs.db
 .serena/
 
 # Project-specific
+.portfolio_cache.json
+.tax_return_cache.json
+.ytd_cache.json
 .claude/
 .mcp.json
 .locks/

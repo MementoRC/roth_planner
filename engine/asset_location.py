@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from engine.ira import calc_rmd
@@ -55,7 +56,7 @@ class AssetLocationResult:
 
 def project_asset_location(
     hh: Household,
-    annual_conversions: dict[int, float],
+    annual_conversions: Mapping[int, float],
     equity_pct: float = 0.60,
     equity_return: float = 0.09,
     bond_return: float = 0.04,

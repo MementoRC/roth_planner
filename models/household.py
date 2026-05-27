@@ -6,6 +6,21 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class GrowthProfile:
+    """Per-account growth rate with optional year-by-year overrides.
+
+    default_rate: baseline annual return (e.g. 0.07 for 7%)
+    yearly_overrides: {year: rate} for years with known/historical returns
+    """
+
+    default_rate: float = 0.07
+    yearly_overrides: dict[int, float] = field(default_factory=dict)
+
+    def rate_for(self, year: int) -> float:
+        return self.yearly_overrides.get(year, self.default_rate)
+
+
+@dataclass
 class StockGrant:
     """Non-qualified stock option grant."""
 
@@ -38,8 +53,13 @@ class Household:
     ss_cola: float = 0.025  # 2.5% annual COLA
 
     # Growth & inflation
-    growth_rate: float = 0.07
+    growth_rate: float = 0.07  # legacy flat rate (used as default for all accounts)
     expense_inflation: float = 0.03
+
+    # Per-account growth profiles (None = use growth_rate as default)
+    your_ira_growth: GrowthProfile | None = None
+    spouse_ira_growth: GrowthProfile | None = None
+    brokerage_growth: GrowthProfile | None = None
 
     # Living expenses (annual, today's dollars)
     living_expenses: float = 30_000
@@ -104,6 +124,24 @@ class Household:
         delay_years = self.ss_start_age - 67
         factor = 1 + delay_years * 0.08
         return self.spouse_ss_fra * factor * 12
+
+    def your_ira_rate(self, year: int) -> float:
+        """Growth rate for your IRA in a given year."""
+        if self.your_ira_growth is not None:
+            return self.your_ira_growth.rate_for(year)
+        return self.growth_rate
+
+    def spouse_ira_rate(self, year: int) -> float:
+        """Growth rate for spouse's IRA in a given year."""
+        if self.spouse_ira_growth is not None:
+            return self.spouse_ira_growth.rate_for(year)
+        return self.growth_rate
+
+    def brokerage_rate(self, year: int) -> float:
+        """Growth rate for brokerage in a given year."""
+        if self.brokerage_growth is not None:
+            return self.brokerage_growth.rate_for(year)
+        return self.growth_rate
 
     def option_income(self, year: int, early: bool = True) -> float:
         """Ordinary income from exercising the grant expiring ~this year."""
