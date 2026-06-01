@@ -51,22 +51,30 @@ class StockGrant:
         return max(price - self.strike, 0) * self.shares
 
 
+# Import after StockGrant is defined to avoid circular import:
+# config.defaults imports StockGrant; placing this import here ensures
+# StockGrant is already registered in sys.modules when config.defaults loads.
+from config.loader import load_defaults  # noqa: E402
+
+_D = load_defaults()
+
+
 @dataclass
 class Household:
     """All inputs for the Roth conversion model."""
 
     # Ages (in base_year)
-    your_age: int = 61
-    spouse_age: int = 55
+    your_age: int = _D["your_age"]
+    spouse_age: int = _D["spouse_age"]
     base_year: int = 2026
 
     # IRA balances (beginning of base_year)
-    your_ira: float = 1_700_000
-    spouse_ira: float = 1_700_000
+    your_ira: float = _D["your_ira"]
+    spouse_ira: float = _D["spouse_ira"]
 
     # Social Security (monthly at FRA 67)
-    your_ss_fra: float = 3_800  # $/month at FRA
-    spouse_ss_fra: float = 3_800
+    your_ss_fra: float = _D["your_ss_fra"]  # $/month at FRA
+    spouse_ss_fra: float = _D["spouse_ss_fra"]
     ss_start_age: int = 70  # both delay to 70
     ss_cola: float = 0.025  # 2.5% annual COLA
 
@@ -80,7 +88,7 @@ class Household:
     brokerage_growth: GrowthProfile | None = None
 
     # Living expenses (annual, today's dollars)
-    living_expenses: float = 30_000
+    living_expenses: float = _D["living_expenses"]
 
     # Tax parameters (2025 TCJA/OBBBA permanent)
     std_deduction: float = 32_200  # MFJ
@@ -93,14 +101,10 @@ class Household:
 
     # Stock option grants
     grants: list[StockGrant] = field(
-        default_factory=lambda: [
-            StockGrant(2019, 104.41, 650, 2029),
-            StockGrant(2020, 130.52, 763, 2030),
-            StockGrant(2021, 169.23, 450, 2031),
-        ]
+        default_factory=lambda: list(_D["grants"])
     )
-    txn_price_now: float = 212  # current TXN price
-    txn_price_late: float = 250  # projected price at expiry
+    txn_price_now: float = _D["stock_price_now"]  # current stock price
+    txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
 
     # RMD
     rmd_start_age: int = 75  # SECURE 2.0 for born after 1960
