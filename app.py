@@ -9,19 +9,40 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
+from config.loader import load_defaults  # noqa: E402
+
+
+def _seed_session_state() -> None:
+    """Seed session state from synthetic defaults (or user overrides)."""
+    if st.session_state.get("_seeded"):
+        return
+    defaults = load_defaults()
+    # Map config keys to session_state keys (most are 1:1)
+    session_keys = {
+        "your_age": "your_age",
+        "spouse_age": "spouse_age",
+        "your_ira": "your_ira",
+        "spouse_ira": "spouse_ira",
+        "your_ss_fra": "your_ss_fra",
+        "spouse_ss_fra": "spouse_ss_fra",
+        "living_expenses": "living_expenses",
+        "stock_price_now": "txn_price",  # session uses 'txn_price' even after gate
+    }
+    for cfg_key, sess_key in session_keys.items():
+        if cfg_key in defaults:
+            st.session_state.setdefault(sess_key, defaults[cfg_key])
+    # Non-config keys: set fixed defaults
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("your_aca", False)
+    st.session_state.setdefault("spouse_aca", False)
+    # Cache ticker for sidebar label (avoids re-importing config on every render)
+    st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
+    st.session_state.setdefault("_seeded", True)
+
+
 # Shared state: household parameters
-if "your_ira" not in st.session_state:
-    st.session_state.your_ira = 1_700_000
-    st.session_state.spouse_ira = 1_700_000
-    st.session_state.your_age = 61
-    st.session_state.spouse_age = 55
-    st.session_state.your_ss_fra = 3_800
-    st.session_state.spouse_ss_fra = 3_800
-    st.session_state.growth_rate = 7.0
-    st.session_state.living_expenses = 30_000
-    st.session_state.txn_price = 212
-    st.session_state.your_aca = False
-    st.session_state.spouse_aca = False
+_seed_session_state()
 
 st.sidebar.title("🎯 Roth Planner")
 st.sidebar.markdown("---")
@@ -57,7 +78,8 @@ st.session_state.living_expenses = st.sidebar.number_input(
     "Annual Living Expenses", value=st.session_state.living_expenses, step=5_000, format="%d"
 )
 st.session_state.txn_price = st.sidebar.number_input(
-    "TXN Current Price", value=st.session_state.txn_price, step=5, format="%d"
+    f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
+    value=st.session_state.txn_price, step=5, format="%d",
 )
 
 st.sidebar.markdown("### Portfolio Sync")

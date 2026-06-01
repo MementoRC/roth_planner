@@ -2,6 +2,7 @@
 
 import pytest
 
+from config.defaults import DEFAULTS
 from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
@@ -115,20 +116,23 @@ class TestSSBenefit:
 class TestGrants:
     def test_grant_spreads(self):
         hh = Household()
-        assert hh.grants[0].spread(212) == approx((212 - 104.41) * 650)
-        assert hh.grants[1].spread(212) == approx((212 - 130.52) * 763)
-        assert hh.grants[2].spread(212) == approx((212 - 169.23) * 450)
+        price = DEFAULTS["stock_price_now"]
+        for i, g in enumerate(hh.grants):
+            expected = DEFAULTS["grants"][i]
+            assert g.spread(price) == approx(expected.spread(price))
 
     def test_total_spread(self):
         hh = Household()
-        total = sum(g.spread(212) for g in hh.grants)
-        assert total == approx(151_349, tol=10)
+        price = DEFAULTS["stock_price_now"]
+        total = sum(g.spread(price) for g in hh.grants)
+        expected = sum(g.spread(price) for g in DEFAULTS["grants"])
+        assert total == approx(expected, tol=10)
 
     def test_option_income_by_year(self):
         hh = Household()
-        assert hh.option_income(2026, True) == approx(hh.grants[0].spread(212))
-        assert hh.option_income(2027, True) == approx(hh.grants[1].spread(212))
-        assert hh.option_income(2028, True) == approx(hh.grants[2].spread(212))
+        assert hh.option_income(2026, True) == approx(hh.grants[0].spread(hh.txn_price_now))
+        assert hh.option_income(2027, True) == approx(hh.grants[1].spread(hh.txn_price_now))
+        assert hh.option_income(2028, True) == approx(hh.grants[2].spread(hh.txn_price_now))
         assert hh.option_income(2029, True) == 0
 
 
@@ -184,16 +188,19 @@ class TestACA:
 class TestHouseholdProperties:
     def test_age_gap(self):
         hh = Household()
-        assert hh.age_gap == 6
+        assert hh.age_gap == DEFAULTS["your_age"] - DEFAULTS["spouse_age"]
 
     def test_conv_window(self):
         hh = Household()
-        assert hh.your_conv_window == 14
+        expected = max(75 - 1 - DEFAULTS["your_age"] + 1, 0)
+        assert hh.your_conv_window == expected
 
     def test_ss_at_70(self):
         hh = Household()
-        assert hh.your_ss_at_70() == approx(56_544)
-        assert hh.spouse_ss_at_70() == approx(56_544)
+        expected_annual = DEFAULTS["your_ss_fra"] * 1.24 * 12
+        assert hh.your_ss_at_70() == approx(expected_annual)
+        expected_spouse = DEFAULTS["spouse_ss_fra"] * 1.24 * 12
+        assert hh.spouse_ss_at_70() == approx(expected_spouse)
 
 
 class TestScenarios:
@@ -201,28 +208,36 @@ class TestScenarios:
         hh = Household()
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
-        assert yr75.your_ira_begin == approx(4_383_508, tol=500)
+        years_to_75 = 75 - DEFAULTS["your_age"]
+        expected_ira = project_ira(DEFAULTS["your_ira"], 0.07, years_to_75)
+        assert yr75.your_ira_begin == approx(expected_ira, tol=500)
 
     def test_no_conversion_rmd_at_75(self):
         hh = Household()
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
-        assert yr75.your_rmd == approx(4_383_508 / 24.6, tol=100)
+        years_to_75 = 75 - DEFAULTS["your_age"]
+        expected_ira = project_ira(DEFAULTS["your_ira"], 0.07, years_to_75)
+        assert yr75.your_rmd == approx(expected_ira / 24.6, tol=100)
 
     def test_no_conversion_ss_at_75(self):
         hh = Household()
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
-        ss75 = 56_544 * 1.025**5
+        ss_at_70 = DEFAULTS["your_ss_fra"] * 1.24 * 12
+        years_cola = 75 - 70
+        ss75 = ss_at_70 * 1.025**years_cola
         assert yr75.your_ss == approx(ss75, tol=100)
 
     def test_no_conversion_spouse_ss_starts_at_70(self):
         hh = Household()
         result = run_no_conversion(hh, end_age=95)
-        yr75 = next(yr for yr in result.years if yr.your_age == 75)
-        yr76 = next(yr for yr in result.years if yr.your_age == 76)
-        assert yr75.spouse_ss == 0
-        assert yr76.spouse_ss > 0
+        # Spouse reaches 70 when you are (your_age + (70 - spouse_age)) years old
+        your_age_when_spouse_70 = DEFAULTS["your_age"] + (70 - DEFAULTS["spouse_age"])
+        yr_before = next(yr for yr in result.years if yr.your_age == your_age_when_spouse_70 - 1)
+        yr_start = next(yr for yr in result.years if yr.your_age == your_age_when_spouse_70)
+        assert yr_before.spouse_ss == 0
+        assert yr_start.spouse_ss > 0
 
     def test_12pct_fill_reduces_ira(self):
         hh = Household()
@@ -232,7 +247,7 @@ class TestScenarios:
         assert yr75.your_ira_begin < 4_000_000
 
     def test_22pct_fill_more_aggressive(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         plan_12 = auto_fill_12(hh)
         plan_22 = auto_fill_22(hh)
         total_12 = sum(plan_12.your_conversions.values()) + sum(plan_12.spouse_conversions.values())
@@ -240,7 +255,7 @@ class TestScenarios:
         assert total_22 > total_12
 
     def test_22pct_fill_reduces_ira_more(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         r12 = run_scenario(hh, auto_fill_12(hh), "12%", end_age=95)
         r22 = run_scenario(hh, auto_fill_22(hh), "22%", end_age=95)
         yr75_12 = next(yr for yr in r12.years if yr.your_age == 75)
@@ -257,7 +272,7 @@ class TestScenarios:
                 assert yr.magi <= 220_000  # small tolerance for SS taxation effects
 
     def test_bracket_fill_reduces_late_ira(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = auto_fill_12(hh)
         plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
         r12 = run_scenario(hh, base, "12%", end_age=95)
@@ -267,7 +282,7 @@ class TestScenarios:
         assert yr90_bf.your_ira_begin < yr90_12.your_ira_begin
 
     def test_bracket_fill_has_extra_withdrawals(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = auto_fill_12(hh)
         plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
         assert len(plan_bf.extra_withdrawals) > 0
@@ -327,7 +342,7 @@ class TestPerAccountGrowth:
         r = run_no_conversion(hh, end_age=80)
         yr = next(y for y in r.years if y.your_age == 80)
         # Your IRA grows at 10%, spouse at 3% — yours should be much larger
-        # (starting balances are equal at $1.7M)
+        # (starting balances are equal per DEFAULTS["your_ira"] / DEFAULTS["spouse_ira"])
         assert yr.your_ira_end > yr.spouse_ira_end * 1.5
 
     def test_yearly_override_applies(self):
@@ -544,7 +559,7 @@ class TestSweetSpot:
 
         hh = Household()
         base = _base_income_for_year(hh, 2026)
-        assert base["ya"] == 61
+        assert base["ya"] == DEFAULTS["your_age"]
         assert base["combined_ss"] == 0  # SS starts at 70
 
     def test_base_income_has_options(self):
@@ -552,7 +567,7 @@ class TestSweetSpot:
 
         hh = Household()
         base = _base_income_for_year(hh, 2026)
-        assert base["opt"] == approx(hh.grants[0].spread(212))
+        assert base["opt"] == approx(hh.grants[0].spread(hh.txn_price_now))
 
     def test_all_in_zero_conversion(self):
         from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
@@ -576,7 +591,7 @@ class TestSweetSpot:
     def test_irmaa_triggers_at_threshold(self):
         from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
 
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = _base_income_for_year(hh, 2029)  # age 64, no options
         # Find conversion just below and above IRMAA tier 1
         below = max(218_000 - base["base_magi"] - 1_000, 0)
@@ -695,18 +710,20 @@ class TestHeadroom:
         assert hr_stcg.room_to_12pct < hr_none.room_to_12pct
         assert hr_stcg.room_to_irmaa_t1 < hr_none.room_to_irmaa_t1
 
-    def test_irmaa_not_relevant_at_61(self):
-        """At age 61, IRMAA doesn't apply (Medicare starts at 65, 2-year lookback)."""
+    def test_irmaa_not_relevant_before_63(self):
+        """Below age 63, IRMAA doesn't apply (Medicare starts at 65, 2-year lookback)."""
         from engine.headroom import compute_headroom
         from models.ytd_income import YTDSnapshot
 
-        hh = Household()  # age 61
+        hh = Household()  # age from DEFAULTS["your_age"]
         ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=200_000)
         hr = compute_headroom(hh, ytd)
-        # MAGI is over $218K but IRMAA is NOT relevant — not on Medicare until 65
+        # IRMAA is NOT relevant if current age < 63
         assert hr.irmaa_relevant is False
         assert hr.irmaa_already_triggered is False
-        assert hr.irmaa_first_relevant_year == 2028  # age 63 → Medicare at 65
+        # First relevant year: base_year + (63 - your_age)
+        expected_first_year = 2026 + (63 - DEFAULTS["your_age"])
+        assert hr.irmaa_first_relevant_year == expected_first_year
 
     def test_irmaa_triggered_at_63(self):
         """At age 63, IRMAA is relevant (income year + 2 = age 65 = Medicare)."""
