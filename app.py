@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 
-from config.loader import load_defaults
+from config.loader import load_defaults  # noqa: E402
 
 
 def _seed_session_state() -> None:

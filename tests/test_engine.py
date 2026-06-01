@@ -247,7 +247,7 @@ class TestScenarios:
         assert yr75.your_ira_begin < 4_000_000
 
     def test_22pct_fill_more_aggressive(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         plan_12 = auto_fill_12(hh)
         plan_22 = auto_fill_22(hh)
         total_12 = sum(plan_12.your_conversions.values()) + sum(plan_12.spouse_conversions.values())
@@ -255,7 +255,7 @@ class TestScenarios:
         assert total_22 > total_12
 
     def test_22pct_fill_reduces_ira_more(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         r12 = run_scenario(hh, auto_fill_12(hh), "12%", end_age=95)
         r22 = run_scenario(hh, auto_fill_22(hh), "22%", end_age=95)
         yr75_12 = next(yr for yr in r12.years if yr.your_age == 75)
@@ -272,7 +272,7 @@ class TestScenarios:
                 assert yr.magi <= 220_000  # small tolerance for SS taxation effects
 
     def test_bracket_fill_reduces_late_ira(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = auto_fill_12(hh)
         plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
         r12 = run_scenario(hh, base, "12%", end_age=95)
@@ -282,7 +282,7 @@ class TestScenarios:
         assert yr90_bf.your_ira_begin < yr90_12.your_ira_begin
 
     def test_bracket_fill_has_extra_withdrawals(self):
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = auto_fill_12(hh)
         plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
         assert len(plan_bf.extra_withdrawals) > 0
@@ -591,7 +591,7 @@ class TestSweetSpot:
     def test_irmaa_triggers_at_threshold(self):
         from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
 
-        hh = Household()
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         base = _base_income_for_year(hh, 2029)  # age 64, no options
         # Find conversion just below and above IRMAA tier 1
         below = max(218_000 - base["base_magi"] - 1_000, 0)
