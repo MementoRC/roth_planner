@@ -1,11 +1,6 @@
 """Tests for the synthetic-defaults gate."""
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
 from config.defaults import DEFAULTS
 from config.loader import load_defaults
 
@@ -27,7 +22,6 @@ class TestSyntheticDefaults:
         """The synthetic defaults must not leak household-specific values."""
         # Sentinel values that would indicate personal data leaked into the repo
         forbidden_ira = {1_700_000, 1_700_000.0}
-        forbidden_ages = {61, 55}  # 55 is OK for synthetic 'your_age', 61 is the personal one
         forbidden_employer = {"TXN", "Texas Instruments"}
         forbidden_ss = {3_800, 3_800.0}
 
