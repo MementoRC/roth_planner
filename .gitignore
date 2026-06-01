@@ -39,9 +39,12 @@ Thumbs.db
 .serena/
 
 # Project-specific
+# Personal household data (never commit)
+.user_defaults.py
 .portfolio_cache.json
 .tax_return_cache.json
 .ytd_cache.json
+.dividend_rates.json
 .claude/
 .mcp.json
 .locks/
