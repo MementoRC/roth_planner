@@ -12,17 +12,17 @@ DEFAULTS: dict = {
     # Demographics — generic mid-career couple
     "your_age": 55,
     "spouse_age": 53,
-    "your_ira": 500_000.0,
-    "spouse_ira": 500_000.0,
-    "your_ss_fra": 2_500.0,
-    "spouse_ss_fra": 2_500.0,
-    "living_expenses": 60_000.0,
+    "your_ira": 500_000,
+    "spouse_ira": 500_000,
+    "your_ss_fra": 2_500,
+    "spouse_ss_fra": 2_500,
+    "living_expenses": 60_000,
 
     # Employer / equity comp — fictional Acme Corp
     "employer_name": "Acme Corp",
     "stock_ticker": "ACME",
-    "stock_price_now": 100.0,
-    "stock_price_late": 120.0,
+    "stock_price_now": 100,
+    "stock_price_late": 120,
     "grants": [
         StockGrant(2020, 50.0, 1000, 2030),
         StockGrant(2021, 60.0, 500, 2031),
