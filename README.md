@@ -1,5 +1,7 @@
 # 🎯 Roth Conversion Planner
 
+🚀 **[Try the live demo](https://mementorc.github.io/roth_planner/)** — runs entirely in your browser, no install needed.
+
 A Streamlit-based tool for planning multi-year Roth IRA conversions with full tax modeling.
 
 ## Features
