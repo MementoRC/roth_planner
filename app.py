@@ -10,13 +10,13 @@ st.set_page_config(
 )
 
 
+from config.loader import load_defaults
+
+
 def _seed_session_state() -> None:
     """Seed session state from synthetic defaults (or user overrides)."""
     if st.session_state.get("_seeded"):
         return
-    import models.household  # noqa: F401 — must load before config.loader (circular import order)
-    from config.loader import load_defaults
-
     defaults = load_defaults()
     # Map config keys to session_state keys (most are 1:1)
     session_keys = {

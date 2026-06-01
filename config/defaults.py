@@ -6,7 +6,7 @@ Personal overrides live in `.user_defaults.py` (gitignored) — see
 Do NOT add household-specific values here. Keep this file safe to
 make public.
 """
-from models.household import StockGrant
+from models.grants import StockGrant
 
 DEFAULTS: dict = {
     # Demographics — generic mid-career couple

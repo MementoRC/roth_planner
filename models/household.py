@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from config.loader import load_defaults
+from models.grants import StockGrant
+
+_D = load_defaults()
+
 
 @dataclass
 class GrowthProfile:
@@ -36,27 +41,6 @@ class GrowthProfile:
 
     def ordinary_div_for(self, year: int, balance: float) -> float:
         return balance * self.yield_for(year) * (1.0 - self.qualified_fraction)
-
-
-@dataclass
-class StockGrant:
-    """Non-qualified stock option grant."""
-
-    year: int  # grant year (e.g. 2019)
-    strike: float  # strike price per share
-    shares: int  # exercisable shares
-    expiry_year: int  # expiration year
-
-    def spread(self, price: float) -> float:
-        return max(price - self.strike, 0) * self.shares
-
-
-# Import after StockGrant is defined to avoid circular import:
-# config.defaults imports StockGrant; placing this import here ensures
-# StockGrant is already registered in sys.modules when config.defaults loads.
-from config.loader import load_defaults  # noqa: E402
-
-_D = load_defaults()
 
 
 @dataclass
