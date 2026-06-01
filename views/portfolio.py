@@ -8,11 +8,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from config.loader import load_defaults
 from engine.portfolio_sync import EXPECTED_RETURNS
 from models.household import Household
 
 
 def render(hh: Household):
+    _cfg = load_defaults()
+    ticker = _cfg["stock_ticker"]
     st.title("Portfolio Sync")
     st.caption(
         "Cached data from FinExtract ingestion server. "
@@ -54,7 +57,7 @@ def render(hh: Household):
 
     if snap.txn_shares_value > 0:
         acct_rows.append({
-            "Account": "TXN Shares (ESPP/RSU)",
+            "Account": f"{ticker} Shares (ESPP/RSU)",
             "Owner": "You",
             "Total Value": f"${snap.txn_shares_value:,.0f}",
             "Equity": f"${snap.txn_shares_value:,.0f}",
@@ -138,7 +141,7 @@ def render(hh: Household):
                 colors.append(color_map.get(attr.replace("_value", ""), "#6b7280"))
 
     if snap.txn_shares_value > 0:
-        labels.append("TXN Shares")
+        labels.append(f"{ticker} Shares")
         values.append(snap.txn_shares_value)
         colors.append("#ef4444")
 
@@ -193,7 +196,7 @@ def render(hh: Household):
 
     # --- TXN Shares ---
     if snap.txn_shares_held > 0:
-        st.markdown("### TXN Shares Held (ESPP + RSU)")
+        st.markdown(f"### {ticker} Shares Held (ESPP + RSU)")
         c1, c2 = st.columns(2)
         c1.metric("Shares", f"{snap.txn_shares_held:,}")
         c2.metric("Value", f"${snap.txn_shares_value:,.0f}")
