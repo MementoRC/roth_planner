@@ -1,0 +1,31 @@
+"""Generic synthetic defaults for public/demo use.
+
+Personal overrides live in `.user_defaults.py` (gitignored) — see
+`config.loader.load_defaults` for the resolution order.
+
+Do NOT add household-specific values here. Keep this file safe to
+make public.
+"""
+from models.household import StockGrant
+
+DEFAULTS: dict = {
+    # Demographics — generic mid-career couple
+    "your_age": 55,
+    "spouse_age": 53,
+    "your_ira": 500_000.0,
+    "spouse_ira": 500_000.0,
+    "your_ss_fra": 2_500.0,
+    "spouse_ss_fra": 2_500.0,
+    "living_expenses": 60_000.0,
+
+    # Employer / equity comp — fictional Acme Corp
+    "employer_name": "Acme Corp",
+    "stock_ticker": "ACME",
+    "stock_price_now": 100.0,
+    "stock_price_late": 120.0,
+    "grants": [
+        StockGrant(2020, 50.0, 1000, 2030),
+        StockGrant(2021, 60.0, 500, 2031),
+        StockGrant(2022, 75.0, 500, 2032),
+    ],
+}
