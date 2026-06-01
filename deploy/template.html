@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roth Planner — Live Demo</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/mountable@__STLITE_VERSION__/build/stlite.css" />
+  <style>
+    html, body, #root { margin: 0; padding: 0; height: 100%; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; flex-direction: column; gap: 1rem;
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #0e1117; color: #fafafa; z-index: 9999;
+    }
+    #loading .spinner {
+      width: 36px; height: 36px; border: 3px solid #444;
+      border-top-color: #ff4b4b; border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    #loading .note { font-size: 0.85rem; color: #888; max-width: 24rem; text-align: center; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Loading Roth Planner…</div>
+    <div class="note">
+      First load takes ~10-30s while Python and dependencies download to your browser.
+      Subsequent loads are cached and near-instant. All computation runs locally — no data leaves your device.
+    </div>
+  </div>
+  <div id="root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@stlite/mountable@__STLITE_VERSION__/build/stlite.js"></script>
+  <script>
+    const FILES = __FILE_MAP_JSON__;
+    const REQUIREMENTS = __REQUIREMENTS_JSON__;
+    stlite.mount(
+      {
+        entrypoint: "app.py",
+        requirements: REQUIREMENTS,
+        files: FILES,
+      },
+      document.getElementById("root"),
+    );
+    // Hide loader once Streamlit renders (poll for the iframe/canvas)
+    const hideLoader = () => {
+      const loader = document.getElementById("loading");
+      if (loader && document.querySelector("#root iframe, #root .stApp")) {
+        loader.style.display = "none";
+        return true;
+      }
+      return false;
+    };
+    const interval = setInterval(() => { if (hideLoader()) clearInterval(interval); }, 500);
+    setTimeout(() => clearInterval(interval), 60000); // give up after 60s
+  </script>
+</body>
+</html>
