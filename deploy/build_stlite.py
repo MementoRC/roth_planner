@@ -24,7 +24,7 @@ INCLUDE_ROOT_FILES = ["app.py"]
 # Pyodide-installable runtime requirements
 REQUIREMENTS = ["streamlit", "plotly", "pandas", "requests"]
 # Default stlite version (overridable via --stlite-version)
-DEFAULT_STLITE_VERSION = "0.76.0"
+DEFAULT_STLITE_VERSION = "0.75.0"
 
 
 def _collect_files(repo_root: Path) -> dict[str, str]:
