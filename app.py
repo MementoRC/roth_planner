@@ -202,6 +202,37 @@ def get_household() -> Household:
                 qualified_fraction=_fcst.qualified_fraction,
             )
 
+        # Auto-derive current stock price from TXN shares value/count
+        if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
+            hh.txn_price_now = snap.txn_shares_value / snap.txn_shares_held
+
+    # Merge FinExtract equity grants with user-supplied strike prices.
+    # FinExtract is the source of truth for which grants exist + outstanding
+    # shares; the user JSON only supplies strike per grant year.
+    if snap and snap.server_available and snap.equity_grants:
+        from models.grants import StockGrant
+
+        strikes = (
+            st.session_state.get("_user_grant_strikes")
+            or load_defaults().get("grant_strikes", {})
+        )
+        merged_grants = []
+        for g in snap.equity_grants:
+            year = int(g.grant_date.split("-")[0]) if g.grant_date else 0
+            strike = float(strikes.get(str(year), 0.0))
+            if strike <= 0 or g.outstanding <= 0:
+                continue  # skip grants without a known strike or fully exercised
+            # NQO typically expires 10 years from grant date
+            expires = year + 10
+            merged_grants.append(StockGrant(
+                year=year,
+                strike=strike,
+                shares=g.outstanding,
+                expiry_year=expires,
+            ))
+        if merged_grants:
+            hh.grants = merged_grants
+
     return hh
 
 
