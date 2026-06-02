@@ -153,7 +153,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_w, width="stretch")
+    st.plotly_chart(fig_w, use_container_width=True)
 
     # --- Chart 2: Bracket Comparison ---
     st.markdown("### Marginal Bracket: No Conversion vs With Conversion")
@@ -183,7 +183,7 @@ def render(hh: Household):
         height=350,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_br, width="stretch")
+    st.plotly_chart(fig_br, use_container_width=True)
 
     # --- Chart 3: Annual Tax + IRMAA + Brokerage Tax ---
     st.markdown("### All-In Annual Cost: Tax + IRMAA + Brokerage Drag")
@@ -216,7 +216,7 @@ def render(hh: Household):
             yaxis_tickformat="$,.0s",
             height=350,
         )
-        st.plotly_chart(fig_nc, width="stretch")
+        st.plotly_chart(fig_nc, use_container_width=True)
 
     with col_r:
         st.markdown("#### With Conversion (Fill 12%)")
@@ -244,7 +244,7 @@ def render(hh: Household):
             yaxis_tickformat="$,.0s",
             height=350,
         )
-        st.plotly_chart(fig_wc, width="stretch")
+        st.plotly_chart(fig_wc, use_container_width=True)
 
     # --- Chart 4: Brokerage Overflow ---
     st.markdown("### Brokerage Overflow — Excess RMD Accumulation")
@@ -279,7 +279,7 @@ def render(hh: Household):
         height=350,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_brok, width="stretch")
+    st.plotly_chart(fig_brok, use_container_width=True)
 
     # --- Chart 5: QCD impact (if toggled) ---
     if no_conv_qcd and rmd_nc_qcd:
@@ -310,7 +310,7 @@ def render(hh: Household):
             height=400,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
         )
-        st.plotly_chart(fig_qcd, width="stretch")
+        st.plotly_chart(fig_qcd, use_container_width=True)
 
     # --- Detail table ---
     st.markdown("### Year-by-Year RMD Detail")
@@ -337,7 +337,7 @@ def render(hh: Household):
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, width="stretch")
+    st.dataframe(df, hide_index=True, use_container_width=True)
 
     # --- RMD divisor reference ---
     with st.expander("📖 RMD Divisor Table (Uniform Lifetime)"):
