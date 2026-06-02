@@ -178,7 +178,7 @@ def render(hh: Household):
                 height=400,
                 legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
             )
-            st.plotly_chart(fig_aca, width="stretch")
+            st.plotly_chart(fig_aca, use_container_width=True)
         else:
             if hh.your_age >= 65:
                 st.info(
@@ -223,7 +223,7 @@ def render(hh: Household):
             yaxis_tickformat="$,.0s",
             height=400,
         )
-        st.plotly_chart(fig_irmaa, width="stretch")
+        st.plotly_chart(fig_irmaa, use_container_width=True)
 
     # --- Chart 3: Combined Hidden Cost ---
     st.markdown("### Total Hidden Cost of Conversion Income")
@@ -309,7 +309,7 @@ def render(hh: Household):
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_hidden, width="stretch")
+    st.plotly_chart(fig_hidden, use_container_width=True)
 
     # --- Year-by-Year Timeline ---
     st.markdown("---")
@@ -369,7 +369,7 @@ def render(hh: Household):
         timeline.append(row)
 
     df = pd.DataFrame(timeline)
-    st.dataframe(df, width="stretch", hide_index=True)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
     # --- Reference Tables ---
     st.markdown("---")
@@ -387,7 +387,7 @@ def render(hh: Household):
                 "Part D/mo": f"${part_d / 12:,.2f}",
                 "Surcharge/yr (×2)": f"${surcharge_pp * 2:,.0f}",
             })
-        st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(irmaa_data), use_container_width=True, hide_index=True)
 
     with col_ref2:
         st.markdown(
@@ -401,7 +401,7 @@ def render(hh: Household):
                 "MAGI ≤": f"${upper_fpl * FPL_2:,.0f}" if upper_fpl != float("inf") else "No limit",
                 "Premium Cap": f"{cap_rate:.1%} of income",
             })
-        st.dataframe(pd.DataFrame(aca_data), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(aca_data), use_container_width=True, hide_index=True)
 
         st.caption(
             f"FPL (family of 2): ${FPL_2:,.0f} · "

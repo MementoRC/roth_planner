@@ -47,7 +47,7 @@ def render(hh: Household):
         st.session_state.conv_plan_qcd = {}
 
     with col_btn1:
-        if st.button("🎯 Auto-Fill to 12%", width="stretch"):
+        if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
             plan = auto_fill_12(hh)
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
@@ -55,7 +55,7 @@ def render(hh: Household):
             st.rerun()
 
     with col_btn2:
-        if st.button("🗑️ Clear All", width="stretch"):
+        if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.conv_plan_your = {}
             st.session_state.conv_plan_spouse = {}
             st.session_state.conv_plan_qcd = {}
@@ -255,7 +255,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- Bracket fill visualization ---
     st.markdown("### Bracket Usage by Year")
@@ -310,4 +310,4 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_br, width="stretch")
+    st.plotly_chart(fig_br, use_container_width=True)
