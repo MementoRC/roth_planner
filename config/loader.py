@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from importlib import util
 from pathlib import Path
-from typing import Mapping
 
 from .defaults import DEFAULTS
 
