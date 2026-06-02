@@ -1,5 +1,7 @@
 """Roth Conversion Planner — Streamlit Application."""
 
+import json
+
 import streamlit as st
 
 st.set_page_config(
@@ -157,6 +159,117 @@ st.session_state.spouse_aca = st.sidebar.checkbox(
     help="Check if spouse is enrolled in ACA marketplace",
 )
 
+# ---------------------------------------------------------------------------
+# Personal-data upload widget (for the deployed / stlite demo)
+# ---------------------------------------------------------------------------
+
+def _apply_user_defaults_to_session(data: dict) -> None:
+    """Write JSON user-defaults keys into st.session_state."""
+    scalar_keys = [
+        "your_age", "spouse_age",
+        "your_ira", "spouse_ira",
+        "your_ss_fra", "spouse_ss_fra",
+        "living_expenses",
+        "stock_price_now",
+    ]
+    for k in scalar_keys:
+        if k in data:
+            sess_key = "txn_price" if k == "stock_price_now" else k
+            st.session_state[sess_key] = data[k]
+    # Stash grant_strikes for get_household() to pick up on next rerun.
+    # config.loader.load_defaults() reads from disk — in deployed mode we
+    # need a session_state pathway. get_household() checks this first.
+    if "grant_strikes" in data:
+        st.session_state["_user_grant_strikes"] = data["grant_strikes"]
+
+
+def _portfolio_snapshot_from_dict(data: dict) -> object:
+    """Reconstruct a PortfolioSnapshot from its asdict() JSON form."""
+    from engine.portfolio_sync import (
+        AccountSummary,
+        EquityGrant,
+        Holding,
+        PortfolioSnapshot,
+    )
+
+    accounts = []
+    for acc_d in data.get("accounts", []):
+        holdings = [Holding(**h) for h in acc_d.get("holdings", [])]
+        acc_d_clean = {k: v for k, v in acc_d.items() if k != "holdings"}
+        accounts.append(AccountSummary(holdings=holdings, **acc_d_clean))
+    grants = [EquityGrant(**g) for g in data.get("equity_grants", [])]
+    return PortfolioSnapshot(
+        accounts=accounts,
+        equity_grants=grants,
+        txn_shares_held=data.get("txn_shares_held", 0),
+        txn_shares_value=data.get("txn_shares_value", 0.0),
+        server_available=data.get("server_available", False),
+        error=data.get("error"),
+    )
+
+
+def _clear_personal_session_state() -> None:
+    """Reset personal-mode session state to demo defaults."""
+    keys_to_clear = [
+        "portfolio_snapshot", "_user_grant_strikes",
+        "your_age", "spouse_age",
+        "your_ira", "spouse_ira",
+        "your_ss_fra", "spouse_ss_fra",
+        "living_expenses", "txn_price",
+    ]
+    for k in keys_to_clear:
+        st.session_state.pop(k, None)
+    st.session_state.pop("_seeded", None)  # force re-seed from synthetic
+
+
+def _handle_personal_uploads() -> None:
+    """Sidebar widget to inject personal defaults + portfolio snapshot
+    from JSON uploads. For use in the deployed (stlite) demo where the
+    visitor cannot put files next to the app. Local users can ignore
+    this and just keep .user_defaults.json + .portfolio_cache.json in cwd.
+    """
+    with st.sidebar.expander("\U0001f513 Use my real data (this session)"):
+        st.caption(
+            "Upload your local files for a personalized session. "
+            "Values stay in this browser only; refresh = back to demo."
+        )
+        ud_file = st.file_uploader(
+            ".user_defaults.json (ages, SS, grant strikes)",
+            type=["json"], key="ud_upload",
+        )
+        pc_file = st.file_uploader(
+            ".portfolio_cache.json (FinExtract holdings + grants)",
+            type=["json"], key="pc_upload",
+        )
+        col_a, col_b = st.columns(2)
+        if col_a.button("Apply", key="apply_uploads", use_container_width=True):
+            applied = []
+            if ud_file is not None:
+                try:
+                    data = json.loads(ud_file.read().decode("utf-8"))
+                    _apply_user_defaults_to_session(data)
+                    applied.append(".user_defaults.json")
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    st.error(f"Invalid .user_defaults.json: {e}")
+            if pc_file is not None:
+                try:
+                    data = json.loads(pc_file.read().decode("utf-8"))
+                    snap = _portfolio_snapshot_from_dict(data)
+                    st.session_state["portfolio_snapshot"] = snap
+                    applied.append(".portfolio_cache.json")
+                except (json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
+                    st.error(f"Invalid .portfolio_cache.json: {e}")
+            if applied:
+                st.success(f"Applied: {', '.join(applied)}. Rerunning…")
+                st.rerun()
+        if col_b.button("Reset to demo", key="reset_demo", use_container_width=True):
+            _clear_personal_session_state()
+            st.success("Reset to demo defaults.")
+            st.rerun()
+
+
+_handle_personal_uploads()
+
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
 from engine.portfolio_sync import positions_for_forecast  # noqa: E402
@@ -201,6 +314,37 @@ def get_household() -> Household:
                 yield_rate=_fcst.yield_rate,
                 qualified_fraction=_fcst.qualified_fraction,
             )
+
+        # Auto-derive current stock price from TXN shares value/count
+        if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
+            hh.txn_price_now = snap.txn_shares_value / snap.txn_shares_held
+
+    # Merge FinExtract equity grants with user-supplied strike prices.
+    # FinExtract is the source of truth for which grants exist + outstanding
+    # shares; the user JSON only supplies strike per grant year.
+    if snap and snap.server_available and snap.equity_grants:
+        from models.grants import StockGrant
+
+        strikes = (
+            st.session_state.get("_user_grant_strikes")
+            or load_defaults().get("grant_strikes", {})
+        )
+        merged_grants = []
+        for g in snap.equity_grants:
+            year = int(g.grant_date.split("-")[0]) if g.grant_date else 0
+            strike = float(strikes.get(str(year), 0.0))
+            if strike <= 0 or g.outstanding <= 0:
+                continue  # skip grants without a known strike or fully exercised
+            # NQO typically expires 10 years from grant date
+            expires = year + 10
+            merged_grants.append(StockGrant(
+                year=year,
+                strike=strike,
+                shares=g.outstanding,
+                expiry_year=expires,
+            ))
+        if merged_grants:
+            hh.grants = merged_grants
 
     return hh
 

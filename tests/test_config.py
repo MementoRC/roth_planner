@@ -1,5 +1,10 @@
-"""Tests for the synthetic-defaults gate."""
+"""Tests for the synthetic-defaults gate and JSON loader."""
 from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
 
 from config.defaults import DEFAULTS
 from config.loader import load_defaults
@@ -81,3 +86,70 @@ class TestOverrideLoader:
         (tmp_path / ".user_defaults.py").write_text("# empty\n")
         result = load_defaults()
         assert result == DEFAULTS
+
+
+class TestJsonOverrideLoader:
+    """load_defaults picks up .user_defaults.json and merges correctly."""
+
+    def test_json_file_overrides_scalar(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        (tmp_path / ".user_defaults.json").write_text(
+            json.dumps({"your_age": 63, "spouse_age": 57})
+        )
+        result = load_defaults()
+        assert result["your_age"] == 63
+        assert result["spouse_age"] == 57
+        # Non-overridden keys still come from DEFAULTS
+        assert result["your_ira"] == DEFAULTS["your_ira"]
+
+    def test_grant_strikes_passed_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        strikes = {"2019": 104.41, "2020": 130.52, "2021": 169.23}
+        (tmp_path / ".user_defaults.json").write_text(
+            json.dumps({"grant_strikes": strikes})
+        )
+        result = load_defaults()
+        assert result["grant_strikes"] == strikes
+        # Full grants list from DEFAULTS still present
+        assert "grants" in result
+
+    def test_env_var_pointing_at_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        json_file = tmp_path / "my_overrides.json"
+        json_file.write_text(json.dumps({"your_age": 70, "living_expenses": 80_000}))
+        monkeypatch.setenv("ROTH_PLANNER_DEFAULTS", str(json_file))
+        result = load_defaults()
+        assert result["your_age"] == 70
+        assert result["living_expenses"] == 80_000
+
+    def test_json_preferred_over_py(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When both .user_defaults.json and .user_defaults.py exist, JSON wins."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        (tmp_path / ".user_defaults.json").write_text(json.dumps({"your_age": 99}))
+        (tmp_path / ".user_defaults.py").write_text("OVERRIDES = {'your_age': 1}\n")
+        result = load_defaults()
+        assert result["your_age"] == 99
+
+    def test_invalid_json_falls_through_to_defaults(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        (tmp_path / ".user_defaults.json").write_text("not valid json{{")
+        result = load_defaults()
+        assert result["your_age"] == DEFAULTS["your_age"]
+
+
+class TestSyntheticGrantStrikes:
+    """DEFAULTS exposes grant_strikes mirroring the synthetic grants."""
+
+    def test_grant_strikes_present_in_defaults(self) -> None:
+        assert "grant_strikes" in DEFAULTS
+
+    def test_grant_strikes_mirror_synthetic_grants(self) -> None:
+        strikes = DEFAULTS["grant_strikes"]
+        for grant in DEFAULTS["grants"]:
+            year_str = str(grant.year)
+            assert year_str in strikes, f"Missing strike for year {grant.year}"
+            assert strikes[year_str] == grant.strike

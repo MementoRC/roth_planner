@@ -28,4 +28,12 @@ DEFAULTS: dict = {
         StockGrant(2021, 60.0, 500, 2031),
         StockGrant(2022, 75.0, 500, 2032),
     ],
+    # Strike prices keyed by grant year (string).  Used by the JSON override
+    # path and the FinExtract grant JOIN in app.py.  Mirrors the synthetic
+    # grants above so the two paths stay in sync for demo use.
+    "grant_strikes": {
+        "2020": 50.0,
+        "2021": 60.0,
+        "2022": 75.0,
+    },
 }
