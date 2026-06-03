@@ -295,7 +295,7 @@ def _handle_personal_exports() -> None:
     """Sidebar widget to download local data files for use on the public site."""
     with st.sidebar.expander("📦 Export my data", expanded=False):
         st.caption(
-            "Download your local data to share with the public site for third-party analysis."
+            "Saves to your browser's default downloads folder. Share with the public site for third-party analysis."
         )
         defaults = _user_defaults_from_session()
         if defaults:
