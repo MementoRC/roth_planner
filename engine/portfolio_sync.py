@@ -4,7 +4,8 @@ Fetches brokerage holdings and equity compensation data, then maps
 them into Household parameters and GrowthProfile overrides.
 
 The ingestion server runs at http://127.0.0.1:7890 and requires
-Bearer token authentication via FINEXTRACT_TOKEN env var.
+Bearer token authentication. Token is resolved per-call from
+FINEXTRACT_TOKEN env, FINEXT_TOKEN env, or ~/.finextract/auth-token.
 """
 
 from __future__ import annotations
@@ -20,7 +21,24 @@ import requests  # type: ignore[import-untyped]
 from models.ytd_income import RealizedGainEvent, YTDSnapshot
 
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
-TOKEN = os.environ.get("FINEXTRACT_TOKEN", "")
+
+
+def _load_token() -> str:
+    """Resolve FinExtract bearer token.
+
+    Order: FINEXTRACT_TOKEN env, FINEXT_TOKEN env, ~/.finextract/auth-token file.
+    Re-evaluated on every call so a token written after Streamlit launch is picked up.
+    """
+    tok = os.environ.get("FINEXTRACT_TOKEN") or os.environ.get("FINEXT_TOKEN")
+    if tok:
+        return tok.strip()
+    p = Path.home() / ".finextract" / "auth-token"
+    if p.is_file():
+        try:
+            return p.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    return ""
 
 # Asset classification: symbol -> asset class
 # "equity", "bond", "cash", "crypto", "target_date" (blended)
@@ -197,8 +215,9 @@ def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
 
 def _headers() -> dict[str, str]:
     h = {"Accept": "application/json"}
-    if TOKEN:
-        h["Authorization"] = f"Bearer {TOKEN}"
+    tok = _load_token()
+    if tok:
+        h["Authorization"] = f"Bearer {tok}"
     return h
 
 
