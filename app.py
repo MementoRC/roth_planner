@@ -1,6 +1,7 @@
 """Roth Conversion Planner — Streamlit Application."""
 
 import json
+from pathlib import Path
 
 import streamlit as st
 
@@ -183,6 +184,28 @@ def _apply_user_defaults_to_session(data: dict) -> None:
         st.session_state["_user_grant_strikes"] = data["grant_strikes"]
 
 
+def _user_defaults_from_session() -> dict:
+    """Inverse of _apply_user_defaults_to_session: read session_state → JSON dict."""
+    # Mirror of _apply_user_defaults_to_session scalar_keys
+    scalar_keys = [
+        "your_age", "spouse_age",
+        "your_ira", "spouse_ira",
+        "your_ss_fra", "spouse_ss_fra",
+        "living_expenses",
+        "stock_price_now",
+    ]
+    payload: dict = {}
+    for k in scalar_keys:
+        # Reverse the alias: session stores txn_price, JSON schema expects stock_price_now
+        sess_key = "txn_price" if k == "stock_price_now" else k
+        if sess_key in st.session_state:
+            payload[k] = st.session_state[sess_key]
+    strikes = st.session_state.get("_user_grant_strikes")
+    if strikes:
+        payload["grant_strikes"] = strikes
+    return payload
+
+
 def _portfolio_snapshot_from_dict(data: dict) -> object:
     """Reconstruct a PortfolioSnapshot from its asdict() JSON form."""
     from engine.portfolio_sync import (
@@ -268,7 +291,38 @@ def _handle_personal_uploads() -> None:
             st.rerun()
 
 
+def _handle_personal_exports() -> None:
+    """Sidebar widget to download local data files for use on the public site."""
+    with st.sidebar.expander("📦 Export my data", expanded=False):
+        st.caption(
+            "Download your local data to share with the public site for third-party analysis."
+        )
+        defaults = _user_defaults_from_session()
+        if defaults:
+            st.download_button(
+                label="⬇️ .user_defaults.json",
+                data=json.dumps(defaults, indent=2, default=str),
+                file_name=".user_defaults.json",
+                mime="application/json",
+                key="export_user_defaults",
+            )
+        else:
+            st.caption("(Enter your numbers first to enable export.)")
+        cache_path = Path(__file__).resolve().parent / ".portfolio_cache.json"
+        if cache_path.exists():
+            st.download_button(
+                label="⬇️ .portfolio_cache.json",
+                data=cache_path.read_bytes(),
+                file_name=".portfolio_cache.json",
+                mime="application/json",
+                key="export_portfolio_cache",
+            )
+        else:
+            st.caption("(Run Portfolio Sync first to enable cache export.)")
+
+
 _handle_personal_uploads()
+_handle_personal_exports()
 
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
