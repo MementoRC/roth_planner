@@ -1073,6 +1073,25 @@ class TestYTDDividendSplit:
         # = 1000 + 0 + 800 + 200 = 2000
         assert snap.total_investment_income == pytest.approx(2000.0)
 
+    def test_scenario_year_dividend_split_fields_and_compat(self):
+        """YearResult carries split fields; ytd_dividends is backward-compat aggregate."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            qualified_dividends_ytd=1_000,
+            ordinary_dividends_ytd=500,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, "test", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        assert yr2026.ytd_qualified_dividends == approx(1_000)
+        assert yr2026.ytd_ordinary_dividends == approx(500)
+        # backward-compat aggregate
+        assert yr2026.ytd_dividends == approx(1_500)
+
 
 class TestScenarioDividendProjection:
     """Tests for brokerage dividend projection in scenario engine."""

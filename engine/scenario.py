@@ -56,7 +56,9 @@ class YearResult:
     ytd_wages: float = 0.0
     ytd_ltcg: float = 0.0
     ytd_stcg: float = 0.0
-    ytd_dividends: float = 0.0
+    ytd_dividends: float = 0.0  # aggregate (qualified + ordinary); backward compat
+    ytd_qualified_dividends: float = 0.0
+    ytd_ordinary_dividends: float = 0.0
     ytd_interest: float = 0.0
     ytd_conversions_done: float = 0.0
     ytd_ltcg_tax: float = 0.0  # LTCG tax computed separately
@@ -207,7 +209,9 @@ def run_scenario(
             yr.ytd_wages = ytd_year.wages_ytd
             yr.ytd_ltcg = ytd_year.ltcg_ytd
             yr.ytd_stcg = ytd_year.stcg_ytd
-            yr.ytd_dividends = ytd_year.dividends_ytd
+            yr.ytd_qualified_dividends = ytd_year.qualified_dividends_ytd
+            yr.ytd_ordinary_dividends = ytd_year.ordinary_dividends_ytd
+            yr.ytd_dividends = ytd_year.dividends_ytd  # aggregate; backward compat
             yr.ytd_interest = ytd_year.interest_ytd
             yr.ytd_conversions_done = ytd_year.ira_conversions_ytd
 
