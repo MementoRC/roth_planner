@@ -53,11 +53,6 @@ def marginal_rate(taxable_income: float) -> float:
     return 0.37
 
 
-def bracket_label(taxable_income: float) -> str:
-    """Human-readable bracket label."""
-    return f"{marginal_rate(taxable_income) * 100:.0f}%"
-
-
 def taxable_ss(combined_ss: float, other_income: float) -> float:
     """
     Compute taxable portion of Social Security (MFJ).
@@ -138,13 +133,6 @@ def room_to_12(current_gross: float, total_deductions: float) -> float:
 
 def room_to_22(current_gross: float, total_deductions: float) -> float:
     return room_to_bracket(current_gross, total_deductions, 211_400)
-
-
-def effective_rate(taxable_income: float) -> float:
-    """Average effective tax rate."""
-    if taxable_income <= 0:
-        return 0.0
-    return federal_tax(taxable_income) / taxable_income
 
 
 def federal_tax_single(taxable_income: float) -> float:

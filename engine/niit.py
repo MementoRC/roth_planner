@@ -34,15 +34,3 @@ def niit(magi: float, net_investment_income: float) -> float:
     return taxable_nii * NIIT_RATE
 
 
-def niit_from_conversion(
-    base_magi: float, conversion: float, net_investment_income: float
-) -> float:
-    """
-    Incremental NIIT caused by a Roth conversion.
-
-    The conversion itself is not investment income, but it raises MAGI,
-    which can expose more investment income to the 3.8% tax.
-    """
-    return niit(base_magi + conversion, net_investment_income) - niit(
-        base_magi, net_investment_income
-    )

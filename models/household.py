@@ -109,11 +109,6 @@ class Household:
         """Years you can convert (age now through 74)."""
         return max(self.rmd_start_age - 1 - self.your_age + 1, 0)
 
-    @property
-    def spouse_conv_window(self) -> int:
-        """Years spouse can convert (current age through 74)."""
-        return max(self.rmd_start_age - 1 - self.spouse_age + 1, 0)
-
     def your_age_in(self, year: int) -> int:
         return self.your_age + (year - self.base_year)
 

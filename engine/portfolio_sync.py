@@ -147,10 +147,6 @@ class PortfolioSnapshot:
         """Find first account matching type."""
         return next((a for a in self.accounts if a.account_type == acct_type), None)
 
-    def accounts_by_type(self, acct_type: str) -> list[AccountSummary]:
-        """Find all accounts matching type."""
-        return [a for a in self.accounts if a.account_type == acct_type]
-
     @property
     def pretax_accounts(self) -> list[AccountSummary]:
         """All pre-tax retirement accounts (IRA + 403b)."""
