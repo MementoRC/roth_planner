@@ -276,7 +276,7 @@ def run_scenario(
         )
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
-            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
         yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
 
         # === Combined gross (for tax) ===
@@ -289,9 +289,9 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.taxable_ss_amt
         )
-        # YTD: add wages + STCG to gross (ordinary), but NOT LTCG
+        # YTD: add wages + STCG + ordinary dividends to gross (ordinary), but NOT LTCG/qualified dividends
         if ytd_year is not None:
-            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
 
