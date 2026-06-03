@@ -81,9 +81,21 @@ def render(hh: Household):
             stcg = st.number_input(
                 "Short-Term Capital Gains YTD", value=int(ytd.stcg_ytd), step=5_000, format="%d",
             )
-            dividends = st.number_input(
-                "Dividends YTD", value=int(ytd.dividends_ytd), step=1_000, format="%d",
-            )
+            div_col1, div_col2 = st.columns(2)
+            with div_col1:
+                qualified_dividends = st.number_input(
+                    "Qualified dividends YTD",
+                    value=int(ytd.qualified_dividends_ytd),
+                    step=500, format="%d",
+                    help="Taxed at LTCG rates (15%/20%); counts toward MAGI but not ordinary brackets.",
+                )
+            with div_col2:
+                ordinary_dividends = st.number_input(
+                    "Ordinary dividends YTD",
+                    value=int(ytd.ordinary_dividends_ytd),
+                    step=500, format="%d",
+                    help="Taxed as ordinary income; stacks into brackets and SS taxation.",
+                )
         with col3:
             interest = st.number_input(
                 "Interest YTD", value=int(ytd.interest_ytd), step=1_000, format="%d",
@@ -99,7 +111,8 @@ def render(hh: Household):
             wages_ytd=float(wages),
             ltcg_ytd=float(ltcg),
             stcg_ytd=float(stcg),
-            ordinary_dividends_ytd=float(dividends),  # TODO(step 4): split qualified vs ordinary in UI
+            qualified_dividends_ytd=float(qualified_dividends),
+            ordinary_dividends_ytd=float(ordinary_dividends),
             interest_ytd=float(interest),
             ira_conversions_ytd=float(conversions_done),
             gain_events=ytd.gain_events,

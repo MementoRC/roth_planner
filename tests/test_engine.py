@@ -669,6 +669,20 @@ class TestYTDSnapshot:
         assert short_event.gain_loss == approx(5_000)
         assert short_event.is_ltcg is False
 
+    def test_total_ordinary_income_includes_ordinary_dividends_not_qualified(self):
+        """Ordinary dividends are taxed as ordinary income; qualified are LTCG-rate only."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(
+            wages_ytd=50_000,
+            ordinary_dividends_ytd=3_000,
+            qualified_dividends_ytd=2_000,
+        )
+        # ordinary income = wages + ordinary_dividends; qualified excluded
+        assert ytd.total_ordinary_income == approx(53_000)
+        # sum property still works
+        assert ytd.dividends_ytd == approx(5_000)
+
 
 class TestHeadroom:
     """Test conversion headroom calculations."""
@@ -776,6 +790,24 @@ class TestScenarioWithYTD:
         # combined_gross should NOT include LTCG
         # (only option income + conversion + taxable SS)
         assert yr2026.combined_gross < 200_000
+
+    def test_scenario_combined_gross_includes_ytd_ordinary_dividends(self):
+        """Ordinary dividends in YTD snapshot must stack into combined_gross (ordinary income)."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd_no_div = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_with_div = YTDSnapshot(tax_year=2026, wages_ytd=50_000, ordinary_dividends_ytd=4_000)
+        plan = ConversionPlan()
+
+        result_no_div = run_scenario(hh, plan, "no_div", end_age=65, ytd=ytd_no_div)
+        result_with_div = run_scenario(hh, plan, "with_div", end_age=65, ytd=ytd_with_div)
+
+        yr_no_div = result_no_div.years[0]
+        yr_with_div = result_with_div.years[0]
+
+        # combined_gross in the dividend scenario should be exactly 4_000 higher
+        assert yr_with_div.combined_gross - yr_no_div.combined_gross == approx(4_000)
 
     def test_ytd_does_not_affect_future_years(self):
         from models.ytd_income import YTDSnapshot
@@ -1040,6 +1072,25 @@ class TestYTDDividendSplit:
         # total_investment_income = ltcg + stcg + dividends (qual + ord) + interest
         # = 1000 + 0 + 800 + 200 = 2000
         assert snap.total_investment_income == pytest.approx(2000.0)
+
+    def test_scenario_year_dividend_split_fields_and_compat(self):
+        """YearResult carries split fields; ytd_dividends is backward-compat aggregate."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            qualified_dividends_ytd=1_000,
+            ordinary_dividends_ytd=500,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, "test", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        assert yr2026.ytd_qualified_dividends == approx(1_000)
+        assert yr2026.ytd_ordinary_dividends == approx(500)
+        # backward-compat aggregate
+        assert yr2026.ytd_dividends == approx(1_500)
 
 
 class TestScenarioDividendProjection:

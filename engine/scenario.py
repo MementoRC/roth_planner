@@ -56,7 +56,9 @@ class YearResult:
     ytd_wages: float = 0.0
     ytd_ltcg: float = 0.0
     ytd_stcg: float = 0.0
-    ytd_dividends: float = 0.0
+    ytd_dividends: float = 0.0  # aggregate (qualified + ordinary); backward compat
+    ytd_qualified_dividends: float = 0.0
+    ytd_ordinary_dividends: float = 0.0
     ytd_interest: float = 0.0
     ytd_conversions_done: float = 0.0
     ytd_ltcg_tax: float = 0.0  # LTCG tax computed separately
@@ -207,7 +209,9 @@ def run_scenario(
             yr.ytd_wages = ytd_year.wages_ytd
             yr.ytd_ltcg = ytd_year.ltcg_ytd
             yr.ytd_stcg = ytd_year.stcg_ytd
-            yr.ytd_dividends = ytd_year.dividends_ytd
+            yr.ytd_qualified_dividends = ytd_year.qualified_dividends_ytd
+            yr.ytd_ordinary_dividends = ytd_year.ordinary_dividends_ytd
+            yr.ytd_dividends = ytd_year.dividends_ytd  # aggregate; backward compat
             yr.ytd_interest = ytd_year.interest_ytd
             yr.ytd_conversions_done = ytd_year.ira_conversions_ytd
 
@@ -276,7 +280,7 @@ def run_scenario(
         )
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
-            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
         yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
 
         # === Combined gross (for tax) ===
@@ -289,9 +293,9 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.taxable_ss_amt
         )
-        # YTD: add wages + STCG to gross (ordinary), but NOT LTCG
+        # YTD: add wages + STCG + ordinary dividends to gross (ordinary), but NOT LTCG/qualified dividends
         if ytd_year is not None:
-            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
 
