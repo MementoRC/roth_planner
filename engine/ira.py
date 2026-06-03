@@ -62,30 +62,6 @@ def project_ira(
     return balance
 
 
-def project_ira_with_schedule(
-    starting_balance: float, growth_rate: float, withdrawals: list
-) -> list:
-    """
-    Project IRA year by year with variable withdrawals.
-
-    Args:
-        starting_balance: IRA at beginning of first year
-        growth_rate: annual growth
-        withdrawals: list of annual withdrawal amounts
-
-    Returns:
-        list of (beginning_balance, withdrawal, ending_balance) per year
-    """
-    results = []
-    balance = starting_balance
-    for w in withdrawals:
-        begin = balance
-        actual_w = min(w, balance)  # can't withdraw more than balance
-        balance = max(balance - actual_w, 0) * (1 + growth_rate)
-        results.append((begin, actual_w, balance))
-    return results
-
-
 def ss_benefit_at_age(monthly_fra: float, claim_age: int, fra_age: int = 67) -> float:
     """
     Compute annual SS benefit at a given claim age.
