@@ -143,6 +143,10 @@ class PortfolioSnapshot:
     server_available: bool = False
     error: str | None = None
 
+    def account_by_type(self, acct_type: str) -> AccountSummary | None:
+        """Find first account matching type."""
+        return next((a for a in self.accounts if a.account_type == acct_type), None)
+
     @property
     def pretax_accounts(self) -> list[AccountSummary]:
         """All pre-tax retirement accounts (IRA + 403b)."""
