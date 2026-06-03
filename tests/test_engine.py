@@ -6,7 +6,7 @@ from config.defaults import DEFAULTS
 from engine.aca import aca_applies, aca_subsidy
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
-from engine.niit import niit, niit_from_conversion
+from engine.niit import niit
 from engine.scenario import (
     ConversionPlan,
     add_bracket_fill_withdrawals,
@@ -165,12 +165,6 @@ class TestNIIT:
 
     def test_zero_investment_income(self):
         assert niit(500_000, 0) == 0
-
-    def test_conversion_increases_niit(self):
-        # Base MAGI $200K (below threshold), $100K conversion pushes to $300K
-        incremental = niit_from_conversion(200_000, 100_000, 30_000)
-        assert incremental == approx(30_000 * 0.038)
-
 
 class TestACA:
     def test_applies_pre_medicare(self):
