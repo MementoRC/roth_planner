@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
+from engine.tax import BRACKETS_MFJ
 from models.household import Household
 
 PHASE_COLORS = {
@@ -290,7 +291,7 @@ def render(hh: Household):
             )
 
     # Add 12% ceiling line
-    ceil_12_values = [yr.total_deductions + 100_800 for yr in conv_window]
+    ceil_12_values = [yr.total_deductions + BRACKETS_MFJ[1][0] for yr in conv_window]
     fig_br.add_trace(
         go.Scatter(
             x=[yr.year for yr in conv_window],
