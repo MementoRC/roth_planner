@@ -67,3 +67,30 @@ def generate_keypair() -> tuple[bytes, bytes]:
     """
     priv = PrivateKey.generate()
     return bytes(priv.public_key), bytes(priv)
+
+
+def derive_pubkey(privkey: bytes) -> bytes:
+    """Derive the X25519 public key from a raw private key (32 bytes)."""
+    return bytes(PrivateKey(privkey).public_key)
+
+
+def open_uploaded_payload(file_bytes: bytes, privkey: bytes | None) -> bytes:
+    """Return plaintext bytes from an uploaded payload.
+
+    If ``file_bytes`` lacks the V2 magic prefix, it is returned unchanged
+    (V1 plaintext upload). If the magic is present, the payload is
+    decrypted using ``privkey``.
+
+    Raises:
+        ValueError: magic-prefixed payload uploaded without a private key.
+        DecryptionFailedError: re-raised from :func:`unseal` on wrong key
+            or tampered ciphertext.
+    """
+    if not has_magic(file_bytes):
+        return file_bytes
+    if privkey is None:
+        raise ValueError(
+            "Encrypted upload (V2 .json.enc) but no private key is configured. "
+            "Paste your private key in the '\U0001f511 V2 private key' sidebar widget first."
+        )
+    return unseal(file_bytes, privkey)
