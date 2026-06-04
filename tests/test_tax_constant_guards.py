@@ -76,6 +76,14 @@ class TestImportEquality:
             "views/aca_irmaa.py must import NIIT_RATE from engine.niit"
         )
 
+    def test_views_ytd_income_uses_canonical_ltcg_rates(self):
+        """views/ytd_income.py must import LTCG_RATES_MFJ from engine.tax."""
+        import views.ytd_income as ytd_income
+
+        assert "LTCG_RATES_MFJ" in dir(ytd_income), (
+            "views/ytd_income.py must import LTCG_RATES_MFJ from engine.tax"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Part B — AST/source guard: literal bracket values must not appear in source
@@ -125,4 +133,18 @@ class TestNoLiteralBracketCeilings:
         )
         assert "**3.8% surtax**" not in text, (
             "views/aca_irmaa.py — use NIIT_RATE interpolation in the explanatory text"
+        )
+
+
+class TestNoLiteralLTCGRatesInViews:
+    """G3 source-level guard: LTCG rate literals must not appear in views/ytd_income.py."""
+
+    def test_no_literal_ltcg_rates_in_ytd_income(self):
+        """views/ytd_income.py must not contain hardcoded LTCG rate strings."""
+        text = _file_text("views/ytd_income.py")
+        assert "15%/20%" not in text, (
+            "views/ytd_income.py contains '15%/20%' — interpolate from LTCG_RATES_MFJ instead"
+        )
+        assert "(15%)" not in text, (
+            "views/ytd_income.py contains '(15%)' — interpolate from LTCG_RATES_MFJ instead"
         )
