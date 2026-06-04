@@ -72,7 +72,18 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["📊 Dashboard", "📋 Conversion Planner", "💰 YTD Income", "🎯 Sweet Spot Finder", "📉 RMD Squeeze", "⚖️ Comparator", "🏥 ACA + IRMAA Explorer", "📦 Asset Location", "✅ Roth Eligibility", "🔗 Portfolio"],
+    [
+        "📊 Dashboard",
+        "📋 Conversion Planner",
+        "💰 YTD Income",
+        "🎯 Sweet Spot Finder",
+        "📉 RMD Squeeze",
+        "⚖️ Comparator",
+        "🏥 ACA + IRMAA Explorer",
+        "📦 Asset Location",
+        "✅ Roth Eligibility",
+        "🔗 Portfolio",
+    ],
     label_visibility="collapsed",
 )
 
@@ -81,7 +92,9 @@ st.sidebar.markdown("### Your Numbers")
 _synced = st.session_state.get("portfolio_snapshot") is not None
 st.session_state.your_ira = st.sidebar.number_input(
     "Your Trad IRA" + (" (synced)" if _synced else ""),
-    value=st.session_state.your_ira, step=50_000, format="%d",
+    value=st.session_state.your_ira,
+    step=50_000,
+    format="%d",
     disabled=_synced,
     help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
 )
@@ -102,7 +115,9 @@ st.session_state.living_expenses = st.sidebar.number_input(
 )
 st.session_state.txn_price = st.sidebar.number_input(
     f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
-    value=st.session_state.txn_price, step=5, format="%d",
+    value=st.session_state.txn_price,
+    step=5,
+    format="%d",
 )
 
 st.sidebar.markdown("### Portfolio Sync")
@@ -114,9 +129,13 @@ if "portfolio_snapshot" not in st.session_state:
     _cached = load_snapshot()
     if _cached is not None:
         st.session_state.portfolio_snapshot = _cached
-        pretax = _cached.pretax_total
-        if pretax > 0:
-            st.session_state.your_ira = int(pretax)
+        from engine.upload_merge import derive_ira_balances as _derive_ira
+
+        _your_ira, _spouse_ira = _derive_ira(_cached)
+        if _your_ira > 0:
+            st.session_state.your_ira = int(_your_ira)
+        if _spouse_ira > 0:
+            st.session_state.spouse_ira = int(_spouse_ira)
 
 if "tax_return_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_tax_snapshot
@@ -148,9 +167,13 @@ if _sync:
         st.session_state.portfolio_snapshot = snap
         save_snapshot(snap)
         # Push synced balance into sidebar state
-        pretax = snap.pretax_total
-        if pretax > 0:
-            st.session_state.your_ira = int(pretax)
+        from engine.upload_merge import derive_ira_balances as _derive_ira
+
+        _your_ira, _spouse_ira = _derive_ira(snap)
+        if _your_ira > 0:
+            st.session_state.your_ira = int(_your_ira)
+        if _spouse_ira > 0:
+            st.session_state.spouse_ira = int(_spouse_ira)
         # Also sync tax return data
         tax_snap = fetch_tax_return()
         if tax_snap.server_available:
@@ -172,17 +195,20 @@ if _sync:
 
 st.sidebar.markdown("### Healthcare")
 st.session_state.your_aca = st.sidebar.checkbox(
-    "You on ACA Marketplace", value=st.session_state.your_aca,
+    "You on ACA Marketplace",
+    value=st.session_state.your_aca,
     help="Check if you are enrolled in ACA marketplace (not employer plan)",
 )
 st.session_state.spouse_aca = st.sidebar.checkbox(
-    "Spouse on ACA Marketplace", value=st.session_state.spouse_aca,
+    "Spouse on ACA Marketplace",
+    value=st.session_state.spouse_aca,
     help="Check if spouse is enrolled in ACA marketplace",
 )
 
 # ---------------------------------------------------------------------------
 # Personal-data upload widget (for the deployed / stlite demo)
 # ---------------------------------------------------------------------------
+
 
 def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     """Compute session_state updates from a .user_defaults.json payload.
@@ -213,9 +239,12 @@ def _user_defaults_from_session() -> dict:
     """Inverse of _apply_user_defaults_to_session: read session_state → JSON dict."""
     # Mirror of _apply_user_defaults_to_session scalar_keys
     scalar_keys = [
-        "your_age", "spouse_age",
-        "your_ira", "spouse_ira",
-        "your_ss_fra", "spouse_ss_fra",
+        "your_age",
+        "spouse_age",
+        "your_ira",
+        "spouse_ira",
+        "your_ss_fra",
+        "spouse_ss_fra",
         "living_expenses",
         "stock_price_now",
     ]
@@ -270,11 +299,16 @@ def _apply_portfolio_snapshot(incoming: object, *, as_spouse: bool) -> None:
 def _clear_personal_session_state() -> None:
     """Reset personal-mode session state to demo defaults."""
     keys_to_clear = [
-        "portfolio_snapshot", "_user_grant_strikes",
-        "your_age", "spouse_age",
-        "your_ira", "spouse_ira",
-        "your_ss_fra", "spouse_ss_fra",
-        "living_expenses", "txn_price",
+        "portfolio_snapshot",
+        "_user_grant_strikes",
+        "your_age",
+        "spouse_age",
+        "your_ira",
+        "spouse_ira",
+        "your_ss_fra",
+        "spouse_ss_fra",
+        "living_expenses",
+        "txn_price",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -387,7 +421,7 @@ def _handle_personal_uploads() -> None:
             "Upload your local files for a personalized session. "
             "Values stay in this browser only; refresh = back to demo. "
             "V2 `.json.enc` files require the private key configured above. "
-            "Use the \"Whose data?\" toggle when uploading your spouse's planner export."
+            'Use the "Whose data?" toggle when uploading your spouse\'s planner export.'
         )
         ud_role = st.radio(
             "Whose .user_defaults.json?",
@@ -397,7 +431,8 @@ def _handle_personal_uploads() -> None:
         )
         ud_file = st.file_uploader(
             ".user_defaults.json[.enc] (ages, SS, grant strikes)",
-            type=["json", "enc"], key="ud_upload",
+            type=["json", "enc"],
+            key="ud_upload",
         )
         pc_role = st.radio(
             "Whose .portfolio_cache.json?",
@@ -407,7 +442,8 @@ def _handle_personal_uploads() -> None:
         )
         pc_file = st.file_uploader(
             ".portfolio_cache.json[.enc] (FinExtract holdings + grants)",
-            type=["json", "enc"], key="pc_upload",
+            type=["json", "enc"],
+            key="pc_upload",
         )
         col_a, col_b = st.columns(2)
         if col_a.button("Apply", key="apply_uploads", use_container_width=True):
@@ -465,9 +501,7 @@ def _handle_personal_exports() -> None:
         cache_path = Path(__file__).resolve().parent / ".portfolio_cache.json"
 
         if pubkey is not None:
-            st.caption(
-                "🔐 V2 encrypted export active — files are sealed for your private key."
-            )
+            st.caption("🔐 V2 encrypted export active — files are sealed for your private key.")
             if defaults:
                 payload = json.dumps(defaults, indent=2, default=str).encode("utf-8")
                 st.download_button(
@@ -559,12 +593,16 @@ def get_household() -> Household:
     snap = st.session_state.get("portfolio_snapshot")
     if snap and snap.server_available:
         # Your pre-tax accounts (Rollover IRA + 403b) → your_ira balance & growth
-        pretax = snap.pretax_total
-        if pretax > 0:
-            hh.your_ira = pretax
+        from engine.upload_merge import derive_ira_balances as _derive_ira
+
+        _your_pretax, _spouse_pretax = _derive_ira(snap)
+        if _your_pretax > 0:
+            hh.your_ira = _your_pretax
             hh.your_ira_growth = GrowthProfile(
                 default_rate=snap.pretax_weighted_return,
             )
+        if _spouse_pretax > 0:
+            hh.spouse_ira = _spouse_pretax
 
         # Brokerage weighted return + dividend forecast
         brok = snap.account_by_type("brokerage")
@@ -589,9 +627,8 @@ def get_household() -> Household:
     if snap and snap.server_available and snap.equity_grants:
         from models.grants import StockGrant
 
-        strikes = (
-            st.session_state.get("_user_grant_strikes")
-            or load_defaults().get("grant_strikes", {})
+        strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
+            "grant_strikes", {}
         )
         merged_grants = []
         for g in snap.equity_grants:
@@ -601,12 +638,14 @@ def get_household() -> Household:
                 continue  # skip grants without a known strike or fully exercised
             # NQO typically expires 10 years from grant date
             expires = year + 10
-            merged_grants.append(StockGrant(
-                year=year,
-                strike=strike,
-                shares=g.outstanding,
-                expiry_year=expires,
-            ))
+            merged_grants.append(
+                StockGrant(
+                    year=year,
+                    strike=strike,
+                    shares=g.outstanding,
+                    expiry_year=expires,
+                )
+            )
         if merged_grants:
             hh.grants = merged_grants
 
