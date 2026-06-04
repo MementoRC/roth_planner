@@ -60,3 +60,36 @@ files. Values stay in your browser session; refresh = back to demo.
 All keys optional. Balances, outstanding grants, and TXN current price
 come from `.portfolio_cache.json` or FinExtract sync — don't duplicate
 them in `.user_defaults.json`.
+
+## V2 data bridge keypair
+
+The V2 data bridge encrypts every payload that crosses the air-gap between
+your local FinExtract host and the public Streamlit site. Crypto is
+`crypto_box_seal` (X25519 + XChaCha20-Poly1305-Ietf, via PyNaCl), and the
+file format is the 4-byte magic `FX1\0` followed by the sealed-box
+ciphertext.
+
+### One-time setup on your primary host
+
+```bash
+pixi run gen-data-bridge-keypair
+```
+
+Writes `~/.finextract/data-bridge.pub` (0644, distributable) and
+`~/.finextract/data-bridge.priv` (0600, keep secret).
+
+### Adding an encrypt-only host
+
+Copy only the public key over:
+
+```bash
+scp ~/.finextract/data-bridge.pub other-host:~/.finextract/
+```
+
+That host can now encrypt exports to you but cannot decrypt anything.
+
+### Browser side
+
+The public Streamlit site will (in a future PR) prompt for the private key
+on first use and cache it in `localStorage` under the key
+`roth_planner.data_bridge.priv_b64`. Clear browser storage to invalidate.
