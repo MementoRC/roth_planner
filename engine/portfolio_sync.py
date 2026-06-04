@@ -188,6 +188,75 @@ class PortfolioSnapshot:
         return sum(a.total_value for a in self.accounts) + self.txn_shares_value
 
 
+def merge_snapshots(
+    existing: PortfolioSnapshot | None,
+    incoming: PortfolioSnapshot,
+    *,
+    as_spouse: bool,
+) -> PortfolioSnapshot:
+    """Merge ``incoming`` into ``existing``, preserving the other party's data.
+
+    Pure function — no I/O, no session state. Used by the upload widget when a
+    spouse uploads their own planner export into the receiver's session.
+
+    Args:
+        existing: The receiver's current snapshot (``None`` means an empty
+            starting state).
+        incoming: The freshly-parsed snapshot from the uploaded file.
+        as_spouse: When ``True``, ``incoming`` represents the SPOUSE's data
+            (their FinExtract export from their own perspective). All incoming
+            accounts have their ``owner`` rewritten from ``"you"`` to
+            ``"spouse"``, the existing your-owned accounts and grants are
+            preserved, and incoming ``equity_grants`` / ``txn_shares_*`` are
+            DROPPED (spouse has no grants in this household model).
+            When ``False``, ``incoming`` represents the receiver's own data;
+            existing spouse-owned accounts are preserved while the receiver's
+            own accounts + grants + TXN are replaced.
+
+    Returns:
+        A new ``PortfolioSnapshot`` with the merged accounts and metadata.
+    """
+    if as_spouse:
+        # Rewrite incoming account ownership; ignore incoming grants/TXN.
+        for acc in incoming.accounts:
+            acc.owner = "spouse"
+        spouse_accounts = incoming.accounts
+        if existing is not None:
+            your_accounts = [a for a in existing.accounts if a.owner == "you"]
+            grants = existing.equity_grants
+            txn_held = existing.txn_shares_held
+            txn_val = existing.txn_shares_value
+            server_available = existing.server_available
+            error = existing.error
+        else:
+            your_accounts = []
+            grants = []
+            txn_held = 0
+            txn_val = 0.0
+            server_available = False
+            error = None
+    else:
+        # Receiver's own data — replace your-accounts + grants + TXN; keep spouse accounts.
+        your_accounts = incoming.accounts
+        grants = incoming.equity_grants
+        txn_held = incoming.txn_shares_held
+        txn_val = incoming.txn_shares_value
+        server_available = incoming.server_available
+        error = incoming.error
+        if existing is not None:
+            spouse_accounts = [a for a in existing.accounts if a.owner == "spouse"]
+        else:
+            spouse_accounts = []
+    return PortfolioSnapshot(
+        accounts=list(your_accounts) + list(spouse_accounts),
+        equity_grants=grants,
+        txn_shares_held=txn_held,
+        txn_shares_value=txn_val,
+        server_available=server_available,
+        error=error,
+    )
+
+
 def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
     """Convert brokerage holdings into Position records for dividend forecast.
 
