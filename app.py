@@ -32,6 +32,8 @@ from engine.data_bridge_keys import (  # noqa: E402
     load_privkey,
     load_pubkey,
 )
+from engine.portfolio_sync import merge_snapshots  # noqa: E402
+from engine.upload_merge import build_user_defaults_session_updates  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -182,24 +184,29 @@ st.session_state.spouse_aca = st.sidebar.checkbox(
 # Personal-data upload widget (for the deployed / stlite demo)
 # ---------------------------------------------------------------------------
 
-def _apply_user_defaults_to_session(data: dict) -> None:
-    """Write JSON user-defaults keys into st.session_state."""
-    scalar_keys = [
-        "your_age", "spouse_age",
-        "your_ira", "spouse_ira",
-        "your_ss_fra", "spouse_ss_fra",
-        "living_expenses",
-        "stock_price_now",
-    ]
-    for k in scalar_keys:
-        if k in data:
-            sess_key = "txn_price" if k == "stock_price_now" else k
-            st.session_state[sess_key] = data[k]
-    # Stash grant_strikes for get_household() to pick up on next rerun.
-    # config.loader.load_defaults() reads from disk — in deployed mode we
-    # need a session_state pathway. get_household() checks this first.
-    if "grant_strikes" in data:
-        st.session_state["_user_grant_strikes"] = data["grant_strikes"]
+def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
+    """Compute session_state updates from a .user_defaults.json payload.
+
+    Thin wrapper around :func:`engine.upload_merge.build_user_defaults_session_updates`.
+    Pure function — returns a ``{session_key: value}`` dict without writing to state.
+    See the engine module for full mapping rules.
+    """
+    return build_user_defaults_session_updates(data, as_spouse=as_spouse)
+
+
+def _apply_user_defaults_to_session(data: dict, *, as_spouse: bool = False) -> None:
+    """Write JSON user-defaults keys into st.session_state.
+
+    When ``as_spouse=True``, cross-maps the file's ``your_*`` fields to the
+    receiver's ``spouse_*`` slots and ignores joint / grant fields.
+    See :func:`_build_user_defaults_session_updates` for the mapping rules.
+
+    Note for the spouse path: ``get_household()`` reads grant_strikes via
+    ``_user_grant_strikes`` from session_state; ``as_spouse=True`` deliberately
+    skips that key so the receiver's own grants stay authoritative.
+    """
+    for key, val in _build_user_defaults_session_updates(data, as_spouse=as_spouse).items():
+        st.session_state[key] = val
 
 
 def _user_defaults_from_session() -> dict:
@@ -247,6 +254,17 @@ def _portfolio_snapshot_from_dict(data: dict) -> object:
         server_available=data.get("server_available", False),
         error=data.get("error"),
     )
+
+
+def _apply_portfolio_snapshot(incoming: object, *, as_spouse: bool) -> None:
+    """Merge a freshly-parsed portfolio snapshot into the session.
+
+    Thin wrapper around :func:`engine.portfolio_sync.merge_snapshots` that
+    reads / writes ``st.session_state['portfolio_snapshot']``.
+    """
+    existing = st.session_state.get("portfolio_snapshot")
+    merged = merge_snapshots(existing, incoming, as_spouse=as_spouse)  # type: ignore[arg-type]
+    st.session_state["portfolio_snapshot"] = merged
 
 
 def _clear_personal_session_state() -> None:
@@ -356,16 +374,36 @@ def _handle_personal_uploads() -> None:
     Accepts both V1 plaintext ``.json`` and V2 sealed ``.json.enc`` files.
     Encrypted uploads require the V2 private key configured in the
     "\U0001f511 V2 private key" sidebar widget (or available on disk).
+
+    Each uploader has a per-file "Whose data?" toggle. "Me" applies the
+    payload to the receiver's own slots (current behavior). "Spouse" treats
+    the payload as the spouse's planner export from their own perspective,
+    cross-maps ``your_*`` fields to the receiver's ``spouse_*`` slots, and
+    merges portfolio accounts with ``owner="spouse"`` while preserving the
+    receiver's own accounts, grants, and TXN holdings.
     """
     with st.sidebar.expander("\U0001f513 Use my real data (this session)"):
         st.caption(
             "Upload your local files for a personalized session. "
             "Values stay in this browser only; refresh = back to demo. "
-            "V2 `.json.enc` files require the private key configured above."
+            "V2 `.json.enc` files require the private key configured above. "
+            "Use the \"Whose data?\" toggle when uploading your spouse's planner export."
+        )
+        ud_role = st.radio(
+            "Whose .user_defaults.json?",
+            ["Me", "Spouse"],
+            horizontal=True,
+            key="ud_role",
         )
         ud_file = st.file_uploader(
             ".user_defaults.json[.enc] (ages, SS, grant strikes)",
             type=["json", "enc"], key="ud_upload",
+        )
+        pc_role = st.radio(
+            "Whose .portfolio_cache.json?",
+            ["Me", "Spouse"],
+            horizontal=True,
+            key="pc_role",
         )
         pc_file = st.file_uploader(
             ".portfolio_cache.json[.enc] (FinExtract holdings + grants)",
@@ -380,8 +418,8 @@ def _handle_personal_uploads() -> None:
                     raw = ud_file.read()
                     plaintext = open_uploaded_payload(raw, privkey)
                     data = json.loads(plaintext.decode("utf-8"))
-                    _apply_user_defaults_to_session(data)
-                    applied.append(ud_file.name)
+                    _apply_user_defaults_to_session(data, as_spouse=(ud_role == "Spouse"))
+                    applied.append(f"{ud_file.name} ({ud_role.lower()})")
                 except (
                     json.JSONDecodeError,
                     ValueError,
@@ -395,8 +433,8 @@ def _handle_personal_uploads() -> None:
                     plaintext = open_uploaded_payload(raw, privkey)
                     data = json.loads(plaintext.decode("utf-8"))
                     snap = _portfolio_snapshot_from_dict(data)
-                    st.session_state["portfolio_snapshot"] = snap
-                    applied.append(pc_file.name)
+                    _apply_portfolio_snapshot(snap, as_spouse=(pc_role == "Spouse"))
+                    applied.append(f"{pc_file.name} ({pc_role.lower()})")
                 except (
                     json.JSONDecodeError,
                     ValueError,
