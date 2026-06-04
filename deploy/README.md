@@ -88,6 +88,14 @@ scp ~/.finextract/data-bridge.pub other-host:~/.finextract/
 
 That host can now encrypt exports to you but cannot decrypt anything.
 
+### Auto-activation in the sidebar export
+
+When `~/.finextract/data-bridge.pub` (or the `ROTH_PLANNER_DATA_BRIDGE_PUBKEY`
+env var) is present, the sidebar "📦 Export my data" expander auto-switches
+to V2: download buttons emit `.user_defaults.json.enc` and
+`.portfolio_cache.json.enc`, sealed for your private key. Delete the public
+key file to fall back to V1 plaintext export (with a deprecation warning).
+
 ### Browser side
 
 The public Streamlit site will (in a future PR) prompt for the private key

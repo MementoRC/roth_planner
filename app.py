@@ -14,6 +14,8 @@ st.set_page_config(
 
 
 from config.loader import load_defaults  # noqa: E402
+from engine.data_bridge_crypto import seal  # noqa: E402
+from engine.data_bridge_keys import load_pubkey  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -292,12 +294,52 @@ def _handle_personal_uploads() -> None:
 
 
 def _handle_personal_exports() -> None:
-    """Sidebar widget to download local data files for use on the public site."""
+    """Sidebar widget to download local data files for use on the public site.
+
+    When a V2 data-bridge public key is configured (see ``deploy/README.md``),
+    exports are sealed with ``crypto_box_seal`` and emitted as ``.json.enc``.
+    Otherwise the V1 plaintext export is shown with a deprecation warning.
+    """
     with st.sidebar.expander("📦 Export my data", expanded=False):
+        pubkey = load_pubkey()
+        defaults = _user_defaults_from_session()
+        cache_path = Path(__file__).resolve().parent / ".portfolio_cache.json"
+
+        if pubkey is not None:
+            st.caption(
+                "🔐 V2 encrypted export active — files are sealed for your private key."
+            )
+            if defaults:
+                payload = json.dumps(defaults, indent=2, default=str).encode("utf-8")
+                st.download_button(
+                    label="⬇️ .user_defaults.json.enc",
+                    data=seal(payload, pubkey),
+                    file_name=".user_defaults.json.enc",
+                    mime="application/octet-stream",
+                    key="export_user_defaults_enc",
+                )
+            else:
+                st.caption("(Enter your numbers first to enable export.)")
+            if cache_path.exists():
+                st.download_button(
+                    label="⬇️ .portfolio_cache.json.enc",
+                    data=seal(cache_path.read_bytes(), pubkey),
+                    file_name=".portfolio_cache.json.enc",
+                    mime="application/octet-stream",
+                    key="export_portfolio_cache_enc",
+                )
+            else:
+                st.caption("(Run Portfolio Sync first to enable cache export.)")
+            return
+
+        # V1 plaintext fallback — deprecated, removed in a future release.
         st.caption(
             "Saves to your browser's default downloads folder. Share with the public site for third-party analysis."
         )
-        defaults = _user_defaults_from_session()
+        st.warning(
+            "⚠️ Plaintext export is deprecated and will be removed in a future release. "
+            "Run `pixi run gen-data-bridge-keypair` to enable encrypted export."
+        )
         if defaults:
             st.download_button(
                 label="⬇️ .user_defaults.json",
@@ -308,7 +350,6 @@ def _handle_personal_exports() -> None:
             )
         else:
             st.caption("(Enter your numbers first to enable export.)")
-        cache_path = Path(__file__).resolve().parent / ".portfolio_cache.json"
         if cache_path.exists():
             st.download_button(
                 label="⬇️ .portfolio_cache.json",
