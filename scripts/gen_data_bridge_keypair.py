@@ -10,9 +10,14 @@ rotate (the keypair has no rotation story yet).
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from engine.data_bridge_crypto import generate_keypair
-from engine.data_bridge_keys import PRIVKEY_PATH, PUBKEY_PATH, write_keypair
+# Make the project root importable when invoked directly via the pixi task.
+# Mirrors the pattern used in tests/conftest.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from engine.data_bridge_crypto import generate_keypair  # noqa: E402
+from engine.data_bridge_keys import PRIVKEY_PATH, PUBKEY_PATH, write_keypair  # noqa: E402
 
 
 def main() -> int:
