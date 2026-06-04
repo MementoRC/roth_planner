@@ -262,8 +262,6 @@ def _apply_portfolio_snapshot(incoming: object, *, as_spouse: bool) -> None:
     Thin wrapper around :func:`engine.portfolio_sync.merge_snapshots` that
     reads / writes ``st.session_state['portfolio_snapshot']``.
     """
-    from engine.portfolio_sync import PortfolioSnapshot
-
     existing = st.session_state.get("portfolio_snapshot")
     merged = merge_snapshots(existing, incoming, as_spouse=as_spouse)  # type: ignore[arg-type]
     st.session_state["portfolio_snapshot"] = merged
