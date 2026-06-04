@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from engine.portfolio_sync import (
     AccountSummary,
     EquityGrant,
+    Holding,
     PortfolioSnapshot,
     merge_snapshots,
+    positions_for_forecast_multi,
 )
 from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
 
@@ -253,3 +257,164 @@ class TestDeriveIraBalances:
         your_ira, spouse_ira = derive_ira_balances(snap)
         assert your_ira == 1_700_000.0
         assert spouse_ira == 0.0
+
+
+# ---------------------------------------------------------------------------
+# brokerage aggregation helpers (engine.portfolio_sync)
+#
+# Bug context (PR #39 + app.py:570): account_by_type("brokerage") returns the
+# FIRST matching account regardless of owner. After a spouse upload, the spouse's
+# brokerage is silently dropped from the dividend forecast — the engine only sees
+# the receiver's own account. Because Household has a single brokerage_growth slot
+# (not a per-owner pair like IRAs), the fix is to AGGREGATE across all owners:
+# joint MAGI drives Roth conversion headroom, so spouse's brokerage dividends
+# close part of that window too.
+#
+# Pre-existing latent bug: multiple brokerage accounts under the same owner are
+# also dropped by account_by_type — these new helpers fix that case too.
+#
+# Desired contract (to be implemented as a follow-up — these tests FAIL now):
+#   snap.brokerage_accounts          — all type=="brokerage" accounts, all owners
+#   snap.brokerage_total             — sum of total_value across all
+#   snap.brokerage_weighted_return   — balance-weighted average weighted_return
+#   positions_for_forecast_multi(accounts) — flat Position list from multiple accounts
+# ---------------------------------------------------------------------------
+
+
+def _make_holding(symbol: str, market_value: float, account_name: str = "acct") -> Holding:
+    return Holding(
+        symbol=symbol,
+        description=symbol,
+        quantity=1.0,
+        market_value=market_value,
+        account_name=account_name,
+        asset_class="equity",
+    )
+
+
+def _make_mixed_brokerage_snapshot() -> PortfolioSnapshot:
+    """Snapshot with one you-brokerage ($1M equity), one spouse-brokerage ($500K bond),
+    and one you-pretax IRA ($800K) to confirm it's filtered OUT of brokerage helpers.
+
+    Allocations are chosen so weighted_return values differ:
+      - you brokerage: 100% equity → weighted_return == EXPECTED_RETURNS["equity"] (0.09)
+      - spouse brokerage: 100% bond → weighted_return == EXPECTED_RETURNS["bond"] (0.04)
+    """
+    return PortfolioSnapshot(
+        accounts=[
+            AccountSummary(
+                account_type="brokerage",
+                owner="you",
+                account_name="Your Brokerage",
+                total_value=1_000_000.0,
+                equity_value=1_000_000.0,
+            ),
+            AccountSummary(
+                account_type="brokerage",
+                owner="spouse",
+                account_name="Spouse Brokerage",
+                total_value=500_000.0,
+                bond_value=500_000.0,
+            ),
+            AccountSummary(
+                account_type="trad_ira",
+                owner="you",
+                account_name="Your IRA",
+                total_value=800_000.0,
+                equity_value=800_000.0,
+            ),
+        ],
+    )
+
+
+class TestBrokerageAggregation:
+    def test_brokerage_accounts_returns_both_owners(self):
+        """brokerage_accounts must include all type=='brokerage' accounts from all owners,
+        and must exclude pretax IRA accounts.
+        """
+        snap = _make_mixed_brokerage_snapshot()
+        accounts = snap.brokerage_accounts
+        assert len(accounts) == 2
+        types = {a.account_type for a in accounts}
+        assert types == {"brokerage"}
+
+    def test_brokerage_total_sums_both_owners(self):
+        """brokerage_total must sum total_value across all owners' brokerage accounts."""
+        snap = _make_mixed_brokerage_snapshot()
+        assert snap.brokerage_total == 1_500_000.0
+
+    def test_brokerage_weighted_return_is_balance_weighted(self):
+        """brokerage_weighted_return must be a balance-weighted average of each
+        account's weighted_return (mirrors pretax_weighted_return formula).
+
+        Fixture: you=$1M all-equity (0.09), spouse=$500K all-bond (0.04).
+        Expected: (1_000_000 * 0.09 + 500_000 * 0.04) / 1_500_000 ≈ 0.07333...
+        """
+        snap = _make_mixed_brokerage_snapshot()
+        brok_accts = snap.brokerage_accounts
+        total = sum(a.total_value for a in brok_accts)
+        expected = sum(a.total_value * a.weighted_return for a in brok_accts) / total
+        assert snap.brokerage_weighted_return == pytest.approx(expected)
+
+    def test_positions_for_forecast_multi_concatenates(self):
+        """positions_for_forecast_multi must return a flat Position list combining
+        holdings from ALL supplied accounts, preserving per-account symbol identity.
+        """
+        brok1 = AccountSummary(
+            account_type="brokerage",
+            owner="you",
+            account_name="Yours",
+            total_value=100_000.0,
+            equity_value=100_000.0,
+            holdings=[
+                _make_holding("VTI", 60_000.0, "Yours"),
+                _make_holding("VXUS", 40_000.0, "Yours"),
+            ],
+        )
+        brok2 = AccountSummary(
+            account_type="brokerage",
+            owner="spouse",
+            account_name="Spouses",
+            total_value=80_000.0,
+            equity_value=80_000.0,
+            holdings=[
+                _make_holding("VOO", 80_000.0, "Spouses"),
+            ],
+        )
+        positions = positions_for_forecast_multi([brok1, brok2])
+        assert len(positions) == 3
+        tickers = {p.ticker for p in positions}
+        assert tickers == {"VTI", "VXUS", "VOO"}
+
+    def test_multi_brokerage_single_owner(self):
+        """Two brokerage accounts owned by 'you' must both appear in brokerage_accounts.
+
+        This also validates the pre-existing latent bug: account_by_type() only
+        returns the FIRST match, silently dropping any additional accounts of the
+        same type. brokerage_accounts must return ALL of them regardless of owner.
+        """
+        snap = PortfolioSnapshot(
+            accounts=[
+                _make_account("you", "Brokerage-A", 600_000.0, acct_type="brokerage"),
+                _make_account("you", "Brokerage-B", 400_000.0, acct_type="brokerage"),
+            ],
+        )
+        assert len(snap.brokerage_accounts) == 2
+        assert snap.brokerage_total == 1_000_000.0
+
+    def test_brokerage_helpers_empty(self):
+        """With no brokerage accounts, brokerage_total must be 0.0, brokerage_accounts
+        must be [], and brokerage_weighted_return must be 0.0.
+
+        Empty-case mirrors pretax_weighted_return: when total <= 0 return 0.0
+        (see PortfolioSnapshot.pretax_weighted_return L179-184).
+        """
+        snap = PortfolioSnapshot(
+            accounts=[
+                _make_account("you", "Your IRA", 1_000_000.0, acct_type="trad_ira"),
+            ],
+        )
+        assert snap.brokerage_accounts == []
+        assert snap.brokerage_total == 0.0
+        # Mirror pretax_weighted_return: 0.0 when no accounts (total <= 0)
+        assert snap.brokerage_weighted_return == 0.0
