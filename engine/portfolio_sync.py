@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,24 +41,25 @@ def _load_token() -> str:
             return ""
     return ""
 
+
 # Asset classification: symbol -> asset class
 # "equity", "bond", "cash", "crypto", "target_date" (blended)
 ASSET_CLASS: dict[str, str] = {
     # --- iShares ETFs (Fidelity) ---
-    "ITOT": "equity",   # Core S&P Total US Stock Market
-    "AGG": "bond",      # Core US Aggregate Bond
-    "IXUS": "equity",   # Core MSCI Total Intl
-    "SHV": "cash",      # 0-1 Year Treasury (cash equivalent)
-    "IVV": "equity",    # Core S&P 500
-    "IDEV": "equity",   # Core MSCI Intl Developed
+    "ITOT": "equity",  # Core S&P Total US Stock Market
+    "AGG": "bond",  # Core US Aggregate Bond
+    "IXUS": "equity",  # Core MSCI Total Intl
+    "SHV": "cash",  # 0-1 Year Treasury (cash equivalent)
+    "IVV": "equity",  # Core S&P 500
+    "IDEV": "equity",  # Core MSCI Intl Developed
     # --- Fidelity crypto ---
-    "FBTC": "crypto",   # Wise Origin Bitcoin
-    "FETH": "crypto",   # Ethereum Fund
+    "FBTC": "crypto",  # Wise Origin Bitcoin
+    "FETH": "crypto",  # Ethereum Fund
     # --- Fidelity funds ---
     "FFIZX": "target_date",  # Freedom Index 2040
-    "FLRG": "equity",   # US Multifactor
-    "FIGB": "bond",     # Investment Grade Bond
-    "FDEV": "equity",   # Intl Multifactor
+    "FLRG": "equity",  # US Multifactor
+    "FIGB": "bond",  # Investment Grade Bond
+    "FDEV": "equity",  # Intl Multifactor
     # --- Vanguard target-date ---
     "VTTHX": "target_date",  # Target Ret 2035
     "VTHRX": "target_date",  # Target Ret 2030
@@ -66,15 +68,15 @@ ASSET_CLASS: dict[str, str] = {
     "VDIGX": "equity",  # Dividend Growth
     "HLMIX": "equity",  # Harding Loevner Intl Eq
     # --- Vanguard ETFs ---
-    "VTI": "equity",    # Total Stock Market
-    "VXUS": "equity",   # Total Intl Stock
-    "BND": "bond",      # Total Bond Market
-    "BNDX": "bond",     # Total Intl Bond
+    "VTI": "equity",  # Total Stock Market
+    "VXUS": "equity",  # Total Intl Stock
+    "BND": "bond",  # Total Bond Market
+    "BNDX": "bond",  # Total Intl Bond
     # --- Vanguard Admiral/Investor ---
     "VEMAX": "equity",  # Emerging Markets
     "VIMAX": "equity",  # Mid Cap
     "VPADX": "equity",  # Pacific Stock
-    "VWESX": "bond",    # Long-Term Investment Grade
+    "VWESX": "bond",  # Long-Term Investment Grade
     # --- Company stock ---
     "TXN": "equity",
 }
@@ -83,8 +85,8 @@ ASSET_CLASS: dict[str, str] = {
 EXPECTED_RETURNS: dict[str, float] = {
     "equity": 0.09,
     "bond": 0.04,
-    "cash": 0.045,      # money market / short-term treasury
-    "crypto": 0.00,     # too volatile to project — use 0 for planning
+    "cash": 0.045,  # money market / short-term treasury
+    "crypto": 0.00,  # too volatile to project — use 0 for planning
     "target_date": 0.07,  # blended (typically ~60/40 glide path)
 }
 
@@ -184,6 +186,25 @@ class PortfolioSnapshot:
         return sum(a.total_value * a.weighted_return for a in self.pretax_accounts) / total
 
     @property
+    def brokerage_accounts(self) -> list[AccountSummary]:
+        """All accounts where account_type == 'brokerage', regardless of owner."""
+        return [a for a in self.accounts if a.account_type == "brokerage"]
+
+    @property
+    def brokerage_total(self) -> float:
+        """Total value across all brokerage accounts, both owners."""
+        return sum(a.total_value for a in self.brokerage_accounts)
+
+    @property
+    def brokerage_weighted_return(self) -> float:
+        """Balance-weighted average return across all brokerage accounts."""
+        accounts = self.brokerage_accounts
+        total = sum(a.total_value for a in accounts)
+        if total <= 0:
+            return 0.0
+        return sum(a.weighted_return * a.total_value for a in accounts) / total
+
+    @property
     def total_portfolio_value(self) -> float:
         return sum(a.total_value for a in self.accounts) + self.txn_shares_value
 
@@ -273,13 +294,28 @@ def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
     for h in brok_snapshot.holdings:
         if h.market_value <= 0:
             continue
-        positions.append(Position(
-            ticker=h.symbol,
-            shares=h.quantity,
-            balance=h.market_value,
-            ttm_dividends=0.0,  # Holding has no dividend history field; TTM unknown
-        ))
+        positions.append(
+            Position(
+                ticker=h.symbol,
+                shares=h.quantity,
+                balance=h.market_value,
+                ttm_dividends=0.0,  # Holding has no dividend history field; TTM unknown
+            )
+        )
     return positions
+
+
+def positions_for_forecast_multi(accounts: Iterable[AccountSummary]) -> list:
+    """Flatten positions across multiple brokerage accounts for the forecast engine.
+
+    Reuses positions_for_forecast per account and concatenates. Used by app.py
+    to feed forecast_portfolio() positions from all brokerage accounts (both
+    owners) rather than just one.
+    """
+    result: list = []
+    for acct in accounts:
+        result.extend(positions_for_forecast(acct))
+    return result
 
 
 def _headers() -> dict[str, str]:
@@ -413,8 +449,12 @@ class TaxReturnSnapshot:
     def total_income(self) -> float:
         """Sum of all income sources (rough AGI proxy)."""
         return (
-            self.wages + self.nec_income + self.investment_income
-            + self.ira_distributions + self.hsa_distributions + self.misc_income
+            self.wages
+            + self.nec_income
+            + self.investment_income
+            + self.ira_distributions
+            + self.hsa_distributions
+            + self.misc_income
         )
 
     @property
@@ -430,7 +470,8 @@ class TaxReturnSnapshot:
 
 
 def _parse_tax_rows(
-    rows: list[dict[str, Any]], year_key: str,
+    rows: list[dict[str, Any]],
+    year_key: str,
 ) -> dict[str, float]:
     """Extract amounts from tax return rows for current or prior year."""
     result: dict[str, float] = {}
@@ -582,19 +623,27 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
                 ytd.ltcg_ytd += ltcg
                 ytd.stcg_ytd += stcg
                 if ltcg:
-                    ytd.gain_events.append(RealizedGainEvent(
-                        date=captured_date,
-                        description=f"{institution.title()} realized gains (YTD)",
-                        proceeds=0.0, cost_basis=0.0,
-                        holding_period="long", account_name=institution.title(),
-                    ))
+                    ytd.gain_events.append(
+                        RealizedGainEvent(
+                            date=captured_date,
+                            description=f"{institution.title()} realized gains (YTD)",
+                            proceeds=0.0,
+                            cost_basis=0.0,
+                            holding_period="long",
+                            account_name=institution.title(),
+                        )
+                    )
                 if stcg:
-                    ytd.gain_events.append(RealizedGainEvent(
-                        date=captured_date,
-                        description=f"{institution.title()} realized gains (YTD)",
-                        proceeds=0.0, cost_basis=0.0,
-                        holding_period="short", account_name=institution.title(),
-                    ))
+                    ytd.gain_events.append(
+                        RealizedGainEvent(
+                            date=captured_date,
+                            description=f"{institution.title()} realized gains (YTD)",
+                            proceeds=0.0,
+                            cost_basis=0.0,
+                            holding_period="short",
+                            account_name=institution.title(),
+                        )
+                    )
             else:
                 # Per-event format (date, description, proceeds, cost_basis)
                 event = RealizedGainEvent(
@@ -771,7 +820,9 @@ def fetch_portfolio() -> PortfolioSnapshot:
         key = f"{acct_type}:{owner}:{acct_name}"
         if key not in accounts_map:
             accounts_map[key] = AccountSummary(
-                account_type=acct_type, owner=owner, account_name=acct_name,
+                account_type=acct_type,
+                owner=owner,
+                account_name=acct_name,
             )
         acct = accounts_map[key]
         acct.holdings.append(h)
@@ -790,14 +841,16 @@ def fetch_portfolio() -> PortfolioSnapshot:
     awards_raw = fetch_equity_awards()
     for row in awards_raw:
         if row.get("outstanding", 0) > 0:
-            snap.equity_grants.append(EquityGrant(
-                grant_id=row.get("grant_id", ""),
-                grant_type=row.get("grant_type", ""),
-                grant_date=row.get("grant_date", ""),
-                shares_granted=row.get("shares_granted", 0),
-                outstanding=row.get("outstanding", 0),
-                current_value=row.get("current_value", 0),
-            ))
+            snap.equity_grants.append(
+                EquityGrant(
+                    grant_id=row.get("grant_id", ""),
+                    grant_type=row.get("grant_type", ""),
+                    grant_date=row.get("grant_date", ""),
+                    shares_granted=row.get("shares_granted", 0),
+                    outstanding=row.get("outstanding", 0),
+                    current_value=row.get("current_value", 0),
+                )
+            )
 
     # --- TXN shares held ---
     shares_raw = fetch_shares()
