@@ -18,6 +18,7 @@ import streamlit as st
 
 from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
+from engine.tax import BRACKETS_MFJ
 from models.household import Household
 
 
@@ -137,11 +138,11 @@ def render(hh: Household):
     for yr in rmd_nc[:1]:  # use first year's deductions for reference
         ded = yr.total_deductions
         fig_w.add_hline(
-            y=ded + 100_800, line_dash="dash", line_color="#22c55e",
+            y=ded + BRACKETS_MFJ[1][0], line_dash="dash", line_color="#22c55e",
             annotation_text="12% ceiling",
         )
         fig_w.add_hline(
-            y=ded + 211_400, line_dash="dash", line_color="#f59e0b",
+            y=ded + BRACKETS_MFJ[2][0], line_dash="dash", line_color="#f59e0b",
             annotation_text="22% ceiling",
         )
 

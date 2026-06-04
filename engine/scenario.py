@@ -6,6 +6,7 @@ IRA balances, brokerage tracking, and net benefit analysis.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from engine.aca import aca_applies, aca_subsidy_loss
@@ -191,7 +192,7 @@ def run_scenario(
         # === Brokerage dividend forecast ===
         # Skip in base year if YTD actuals are provided (they already carry real dividends).
         # yield_rate defaults to 0.0 on GrowthProfile, so this is zero-cost when not configured.
-        use_forecast_divs = (ytd is None or year != hh.base_year)
+        use_forecast_divs = ytd is None or year != hh.base_year
         if use_forecast_divs and hh.brokerage_growth is not None:
             qual_div_this_year = hh.brokerage_growth.qualified_div_for(year, brokerage)
             ord_div_this_year = hh.brokerage_growth.ordinary_div_for(year, brokerage)
@@ -275,8 +276,11 @@ def run_scenario(
 
         # === SS taxation ===
         other_inc = (
-            yr.option_income + yr.your_conversion + yr.spouse_conversion
-            + yr.taxable_rmd + yr.extra_withdrawal
+            yr.option_income
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.taxable_rmd
+            + yr.extra_withdrawal
         )
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
@@ -295,7 +299,9 @@ def run_scenario(
         )
         # YTD: add wages + STCG + ordinary dividends to gross (ordinary), but NOT LTCG/qualified dividends
         if ytd_year is not None:
-            yr.combined_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
+            yr.combined_gross += (
+                ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
+            )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
 
@@ -322,9 +328,8 @@ def run_scenario(
 
         # === ACA subsidy loss ===
         # ACA applies if anyone in household is enrolled and pre-Medicare
-        anyone_on_aca = (
-            aca_applies(ya, hh.your_aca_enrolled)
-            or aca_applies(sa, hh.spouse_aca_enrolled)
+        anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(
+            sa, hh.spouse_aca_enrolled
         )
         if anyone_on_aca:
             base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
@@ -433,12 +438,21 @@ def run_no_conversion(
     return run_scenario(hh, ConversionPlan(), "No Conversion", end_age, early_exercise)
 
 
-def auto_fill_12(
-    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+def _auto_fill_core(
+    hh: Household,
+    early_exercise: bool,
+    ytd: YTDSnapshot | None,
+    room_fn: Callable[[float, float, float], float],
 ) -> ConversionPlan:
-    """
-    Generate a ConversionPlan that fills to the 12% bracket ceiling each year.
-    Runs iteratively since each year's conversion affects the next year's IRA balance.
+    """Shared body of auto_fill_12 / auto_fill_22 / auto_fill_irmaa_safe.
+
+    The only difference between those three is how ``room`` is computed each
+    year. This core does everything else identically; the room calculation is
+    delegated to ``room_fn(fixed_gross, ded, base_magi) -> float``.
+
+    ``base_magi`` is always computed and passed (cheap; identical expression in
+    all three originals). The 12% and 22% variants ignore it; the IRMAA-safe
+    variant uses it to enforce the joint-MAGI ceiling.
     """
     plan = ConversionPlan()
     your_ira = hh.your_ira
@@ -475,6 +489,13 @@ def auto_fill_12(
         rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
         taxable_rmd = rmd  # no QCD in auto-fill
 
+        # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
+        # Identical to approx_magi in the former 12/22 variants; passed to room_fn
+        # so the IRMAA-safe variant can enforce its joint-MAGI ceiling.
+        base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        if ytd_year is not None:
+            base_magi += ytd_year.magi_ytd
+
         # Taxable SS (need to estimate with current other income)
         other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
         # YTD ordinary income affects SS taxation
@@ -489,13 +510,10 @@ def auto_fill_12(
 
         # Deductions
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
-        if ytd_year is not None:
-            approx_magi += ytd_year.magi_ytd
-        ded += senior_bonus_deduction(ya, sa, approx_magi)
+        ded += senior_bonus_deduction(ya, sa, base_magi)
 
-        # Room to 12%
-        room = room_to_12(fixed_gross, ded)
+        # Room — delegated to caller's room_fn
+        room = room_fn(fixed_gross, ded, base_magi)
 
         # Allocate room
         if ya <= 74 and room > 0:
@@ -521,85 +539,44 @@ def auto_fill_12(
     return plan
 
 
+def auto_fill_12(
+    hh: Household,
+    early_exercise: bool = True,
+    ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
+    """
+    Generate a ConversionPlan that fills to the 12% bracket ceiling each year.
+    Runs iteratively since each year's conversion affects the next year's IRA balance.
+    """
+    return _auto_fill_core(
+        hh,
+        early_exercise,
+        ytd,
+        room_fn=lambda fg, ded, _base_magi: room_to_12(fg, ded),
+    )
+
+
 def auto_fill_22(
-    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+    hh: Household,
+    early_exercise: bool = True,
+    ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
     """
     Generate a ConversionPlan that fills to the 22% bracket ceiling each year.
     More aggressive than fill_12 — converts more but at higher marginal rates.
     """
-    plan = ConversionPlan()
-    your_ira = hh.your_ira
-    spouse_ira = hh.spouse_ira
-
-    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
-        year = hh.base_year + yr_idx
-        ya = hh.your_age + yr_idx
-        sa = hh.spouse_age + yr_idx
-        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
-
-        if ya > 80:
-            break
-
-        opt = hh.option_income(year, early_exercise)
-
-        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
-        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
-        your_ss = (
-            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
-            if ya >= hh.ss_start_age
-            else 0.0
-        )
-        spouse_ss = (
-            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
-            if sa >= hh.ss_start_age
-            else 0.0
-        )
-        combined_ss = your_ss + spouse_ss
-
-        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
-        taxable_rmd = rmd
-
-        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
-        if ytd_year is not None:
-            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
-        tss = taxable_ss(combined_ss, other_fixed)
-        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
-        if ytd_year is not None:
-            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
-
-        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        approx_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
-        if ytd_year is not None:
-            approx_magi += ytd_year.magi_ytd
-        ded += senior_bonus_deduction(ya, sa, approx_magi)
-
-        room = room_to_22(fixed_gross, ded)
-
-        if ya <= 74 and room > 0:
-            yc = min(room, your_ira)
-            plan.your_conversions[year] = yc
-            room -= yc
-        else:
-            yc = 0
-
-        if sa <= 74 and room > 0:
-            sc = min(room, spouse_ira)
-            plan.spouse_conversions[year] = sc
-        else:
-            sc = 0
-
-        your_withdrawal = yc + rmd
-        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
-
-        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
-
-    return plan
+    return _auto_fill_core(
+        hh,
+        early_exercise,
+        ytd,
+        room_fn=lambda fg, ded, _base_magi: room_to_22(fg, ded),
+    )
 
 
 def auto_fill_irmaa_safe(
-    hh: Household, early_exercise: bool = True, ytd: YTDSnapshot | None = None,
+    hh: Household,
+    early_exercise: bool = True,
+    ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
     """
     Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
@@ -607,81 +584,14 @@ def auto_fill_irmaa_safe(
     """
     from engine.irmaa import IRMAA_TIERS_MFJ
 
-    irmaa_threshold = IRMAA_TIERS_MFJ[0][0]
+    irmaa_threshold = IRMAA_TIERS_MFJ[0][0]  # tier-1 joint MAGI ceiling
 
-    plan = ConversionPlan()
-    your_ira = hh.your_ira
-    spouse_ira = hh.spouse_ira
+    def _irmaa_room(fixed_gross: float, ded: float, base_magi: float) -> float:
+        # Room to IRMAA threshold, capped at 22% bracket room
+        irmaa_room = max(irmaa_threshold - base_magi, 0.0)
+        return min(irmaa_room, room_to_22(fixed_gross, ded))
 
-    for yr_idx in range(hh.rmd_start_age - 1 - hh.your_age + 1 + 6):
-        year = hh.base_year + yr_idx
-        ya = hh.your_age + yr_idx
-        sa = hh.spouse_age + yr_idx
-        ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
-
-        if ya > 80:
-            break
-
-        opt = hh.option_income(year, early_exercise)
-
-        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
-        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
-        your_ss = (
-            ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
-            if ya >= hh.ss_start_age
-            else 0.0
-        )
-        spouse_ss = (
-            ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
-            if sa >= hh.ss_start_age
-            else 0.0
-        )
-        combined_ss = your_ss + spouse_ss
-
-        rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
-        taxable_rmd = rmd
-
-        # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
-        base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
-        if ytd_year is not None:
-            base_magi += ytd_year.magi_ytd
-
-        # Room to IRMAA threshold
-        room = max(irmaa_threshold - base_magi, 0)
-
-        # Also cap at bracket room (use 22% ceiling as upper bound)
-        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
-        if ytd_year is not None:
-            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
-        tss = taxable_ss(combined_ss, other_fixed)
-        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
-        if ytd_year is not None:
-            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
-        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        ded += senior_bonus_deduction(ya, sa, base_magi)
-        bracket_room = room_to_22(fixed_gross, ded)
-        room = min(room, bracket_room)
-
-        if ya <= 74 and room > 0:
-            yc = min(room, your_ira)
-            plan.your_conversions[year] = yc
-            room -= yc
-        else:
-            yc = 0
-
-        if sa <= 74 and room > 0:
-            sc = min(room, spouse_ira)
-            plan.spouse_conversions[year] = sc
-        else:
-            sc = 0
-
-        your_withdrawal = yc + rmd
-        your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
-
-        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
-
-    return plan
+    return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
 
 
 def add_bracket_fill_withdrawals(
