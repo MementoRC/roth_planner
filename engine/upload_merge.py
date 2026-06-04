@@ -5,6 +5,8 @@ No Streamlit dependency — safe to import in tests and engine modules.
 
 from __future__ import annotations
 
+from engine.portfolio_sync import PortfolioSnapshot
+
 
 def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     """Compute session_state updates from a .user_defaults.json payload.
@@ -35,9 +37,12 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
                 updates[sess_k] = data[file_k]
         return updates
     scalar_keys = [
-        "your_age", "spouse_age",
-        "your_ira", "spouse_ira",
-        "your_ss_fra", "spouse_ss_fra",
+        "your_age",
+        "spouse_age",
+        "your_ira",
+        "spouse_ira",
+        "your_ss_fra",
+        "spouse_ss_fra",
         "living_expenses",
         "stock_price_now",
     ]
@@ -48,3 +53,16 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     if "grant_strikes" in data:
         updates["_user_grant_strikes"] = data["grant_strikes"]
     return updates
+
+
+def derive_ira_balances(snap: PortfolioSnapshot) -> tuple[float, float]:
+    """Return (your_pretax_total, spouse_pretax_total) from a snapshot, filtered by owner.
+
+    Both values are floats summed across pretax accounts. Used by app.py to
+    populate Household.your_ira / Household.spouse_ira without the
+    owner-blind double-count that snap.pretax_total would cause when the
+    snapshot contains spouse-owned accounts from a cross-mapped upload (PR #39).
+    """
+    your_total = sum(a.total_value for a in snap.accounts if a.owner == "you" and a.is_pretax)
+    spouse_total = sum(a.total_value for a in snap.accounts if a.owner == "spouse" and a.is_pretax)
+    return float(your_total), float(spouse_total)
