@@ -92,3 +92,13 @@ def write_keypair(pubkey: bytes, privkey: bytes, *, force: bool = False) -> None
     PUBKEY_PATH.chmod(0o644)
     PRIVKEY_PATH.write_text(base64.b64encode(privkey).decode("ascii") + "\n", encoding="utf-8")
     PRIVKEY_PATH.chmod(0o600)
+
+
+def decode_keymaterial(s: str) -> bytes:
+    """Public wrapper for :func:`_decode_keymaterial`.
+
+    Decodes 32-byte key material from base64 (preferred) or hex.
+    Used by callers outside this module that need to validate or parse
+    a pasted key string (e.g., the Streamlit private-key widget).
+    """
+    return _decode_keymaterial(s)

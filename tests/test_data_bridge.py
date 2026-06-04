@@ -268,3 +268,112 @@ class TestWriteKeypair:
         assert pub_path.read_text(encoding="utf-8").strip() == base64.b64encode(pub2).decode(
             "ascii"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestDerivePubkey
+# ---------------------------------------------------------------------------
+
+
+class TestDerivePubkey:
+    def test_matches_generate_keypair(self):
+        from engine.data_bridge_crypto import derive_pubkey
+
+        pub, priv = generate_keypair()
+        assert derive_pubkey(priv) == pub
+
+    def test_seal_with_derived_pubkey_round_trips(self):
+        from engine.data_bridge_crypto import derive_pubkey
+
+        _, priv = generate_keypair()
+        pub_derived = derive_pubkey(priv)
+        ct = seal(b"derived-pub-test", pub_derived)
+        assert unseal(ct, priv) == b"derived-pub-test"
+
+
+# ---------------------------------------------------------------------------
+# TestOpenUploadedPayload
+# ---------------------------------------------------------------------------
+
+
+class TestOpenUploadedPayload:
+    def test_plaintext_passthrough_no_key(self):
+        from engine.data_bridge_crypto import open_uploaded_payload
+
+        assert open_uploaded_payload(b'{"k": "v"}', None) == b'{"k": "v"}'
+
+    def test_plaintext_passthrough_with_key(self):
+        from engine.data_bridge_crypto import open_uploaded_payload
+
+        _, priv = generate_keypair()
+        assert open_uploaded_payload(b'{"x": 1}', priv) == b'{"x": 1}'
+
+    def test_decrypts_when_magic_present(self):
+        from engine.data_bridge_crypto import open_uploaded_payload
+
+        pub, priv = generate_keypair()
+        ct = seal(b'{"hello": "world"}', pub)
+        assert open_uploaded_payload(ct, priv) == b'{"hello": "world"}'
+
+    def test_raises_value_error_when_encrypted_without_key(self):
+        from engine.data_bridge_crypto import open_uploaded_payload
+
+        pub, _ = generate_keypair()
+        ct = seal(b"secret", pub)
+        with pytest.raises(ValueError, match="no private key"):
+            open_uploaded_payload(ct, None)
+
+    def test_raises_decryption_failed_with_wrong_key(self):
+        from engine.data_bridge_crypto import open_uploaded_payload
+
+        pub, _ = generate_keypair()
+        _, priv2 = generate_keypair()
+        ct = seal(b"secret", pub)
+        with pytest.raises(DecryptionFailedError):
+            open_uploaded_payload(ct, priv2)
+
+
+# ---------------------------------------------------------------------------
+# TestBrowserNonPyodide (CI runs outside Pyodide — verifies degradation)
+# ---------------------------------------------------------------------------
+
+
+class TestBrowserNonPyodide:
+    def test_is_pyodide_returns_false(self):
+        from engine.data_bridge_browser import is_pyodide
+
+        assert is_pyodide() is False
+
+    def test_local_storage_get_returns_none(self):
+        from engine.data_bridge_browser import local_storage_get
+
+        assert local_storage_get("any_key") is None
+
+    def test_local_storage_set_is_noop(self):
+        from engine.data_bridge_browser import local_storage_set
+
+        local_storage_set("some_key", "some_value")  # must not raise
+
+    def test_local_storage_remove_is_noop(self):
+        from engine.data_bridge_browser import local_storage_remove
+
+        local_storage_remove("some_key")  # must not raise
+
+    def test_browser_privkey_ls_key_constant(self):
+        from engine.data_bridge_browser import BROWSER_PRIVKEY_LS_KEY
+
+        assert BROWSER_PRIVKEY_LS_KEY == "roth_planner.data_bridge.priv_b64"
+
+
+# ---------------------------------------------------------------------------
+# TestDecodeKeymaterialPublic (verify public wrapper matches private)
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeKeymaterialPublic:
+    def test_public_wrapper_matches_private(self):
+        from engine.data_bridge_keys import _decode_keymaterial, decode_keymaterial
+
+        raw = b"\xab" * 32
+        encoded = base64.b64encode(raw).decode("ascii")
+        assert decode_keymaterial(encoded) == _decode_keymaterial(encoded)

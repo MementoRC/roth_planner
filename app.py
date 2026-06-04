@@ -14,8 +14,24 @@ st.set_page_config(
 
 
 from config.loader import load_defaults  # noqa: E402
-from engine.data_bridge_crypto import seal  # noqa: E402
-from engine.data_bridge_keys import load_pubkey  # noqa: E402
+from engine.data_bridge_browser import (  # noqa: E402
+    BROWSER_PRIVKEY_LS_KEY,
+    is_pyodide,
+    local_storage_get,
+    local_storage_remove,
+    local_storage_set,
+)
+from engine.data_bridge_crypto import (  # noqa: E402
+    DataBridgeCryptoError,
+    derive_pubkey,
+    open_uploaded_payload,
+    seal,
+)
+from engine.data_bridge_keys import (  # noqa: E402
+    decode_keymaterial,
+    load_privkey,
+    load_pubkey,
+)
 
 
 def _seed_session_state() -> None:
@@ -247,43 +263,148 @@ def _clear_personal_session_state() -> None:
     st.session_state.pop("_seeded", None)  # force re-seed from synthetic
 
 
+def _resolved_pubkey() -> bytes | None:
+    """Resolve V2 public key for encryption.
+
+    Order: env/dotfile (:func:`load_pubkey`), then derive from the
+    session-state private key (browser paste flow). Returns ``None`` if
+    no key is available from any source.
+    """
+    pk = load_pubkey()
+    if pk is not None:
+        return pk
+    priv_b64 = st.session_state.get("data_bridge_privkey_b64")
+    if not priv_b64:
+        return None
+    try:
+        priv_raw = decode_keymaterial(priv_b64)
+    except ValueError:
+        return None
+    return derive_pubkey(priv_raw)
+
+
+def _resolve_privkey_bytes() -> bytes | None:
+    """Resolve V2 private key for decryption.
+
+    Order: session-state pasted key, then disk dotfile/env via
+    :func:`load_privkey`. Returns ``None`` if no key is available.
+    """
+    priv_b64 = st.session_state.get("data_bridge_privkey_b64")
+    if priv_b64:
+        try:
+            return decode_keymaterial(priv_b64)
+        except ValueError:
+            pass
+    return load_privkey()
+
+
+def _handle_v2_privkey() -> None:
+    """Sidebar widget for entering and caching the V2 data-bridge private key.
+
+    On stlite/Pyodide, the key is cached in ``localStorage`` under
+    ``roth_planner.data_bridge.priv_b64`` so it survives page reloads.
+    In all environments, the key lives in ``st.session_state`` under
+    ``data_bridge_privkey_b64`` for the duration of the session.
+    """
+    # Hydrate session_state from localStorage on first paint.
+    if "data_bridge_privkey_b64" not in st.session_state:
+        cached = local_storage_get(BROWSER_PRIVKEY_LS_KEY)
+        if cached:
+            st.session_state["data_bridge_privkey_b64"] = cached
+
+    has_key = "data_bridge_privkey_b64" in st.session_state
+    # Auto-expand on the public site when no key is set — user needs to act.
+    expand = is_pyodide() and not has_key
+
+    with st.sidebar.expander("\U0001f511 V2 private key", expanded=expand):
+        if has_key:
+            st.caption("\U0001f510 Private key loaded for this session.")
+            if st.button("Clear", key="clear_v2_privkey"):
+                st.session_state.pop("data_bridge_privkey_b64", None)
+                local_storage_remove(BROWSER_PRIVKEY_LS_KEY)
+                st.rerun()
+            return
+        st.caption(
+            "Paste your data-bridge private key (base64). Required to decrypt "
+            "uploaded `.json.enc` files and to encrypt exports on the public site."
+        )
+        key_input = st.text_input(
+            "Private key (base64)",
+            type="password",
+            key="_v2_privkey_input",
+            help="From `~/.finextract/data-bridge.priv` on your local host.",
+        )
+        if st.button("Save", key="save_v2_privkey") and key_input:
+            try:
+                decode_keymaterial(key_input)
+            except ValueError as e:
+                st.error(f"Invalid key: {e}")
+                return
+            val = key_input.strip()
+            st.session_state["data_bridge_privkey_b64"] = val
+            local_storage_set(BROWSER_PRIVKEY_LS_KEY, val)
+            st.success("Private key saved.")
+            st.rerun()
+
+
 def _handle_personal_uploads() -> None:
     """Sidebar widget to inject personal defaults + portfolio snapshot
     from JSON uploads. For use in the deployed (stlite) demo where the
     visitor cannot put files next to the app. Local users can ignore
     this and just keep .user_defaults.json + .portfolio_cache.json in cwd.
+
+    Accepts both V1 plaintext ``.json`` and V2 sealed ``.json.enc`` files.
+    Encrypted uploads require the V2 private key configured in the
+    "\U0001f511 V2 private key" sidebar widget (or available on disk).
     """
     with st.sidebar.expander("\U0001f513 Use my real data (this session)"):
         st.caption(
             "Upload your local files for a personalized session. "
-            "Values stay in this browser only; refresh = back to demo."
+            "Values stay in this browser only; refresh = back to demo. "
+            "V2 `.json.enc` files require the private key configured above."
         )
         ud_file = st.file_uploader(
-            ".user_defaults.json (ages, SS, grant strikes)",
-            type=["json"], key="ud_upload",
+            ".user_defaults.json[.enc] (ages, SS, grant strikes)",
+            type=["json", "enc"], key="ud_upload",
         )
         pc_file = st.file_uploader(
-            ".portfolio_cache.json (FinExtract holdings + grants)",
-            type=["json"], key="pc_upload",
+            ".portfolio_cache.json[.enc] (FinExtract holdings + grants)",
+            type=["json", "enc"], key="pc_upload",
         )
         col_a, col_b = st.columns(2)
         if col_a.button("Apply", key="apply_uploads", use_container_width=True):
-            applied = []
+            applied: list[str] = []
+            privkey = _resolve_privkey_bytes()
             if ud_file is not None:
                 try:
-                    data = json.loads(ud_file.read().decode("utf-8"))
+                    raw = ud_file.read()
+                    plaintext = open_uploaded_payload(raw, privkey)
+                    data = json.loads(plaintext.decode("utf-8"))
                     _apply_user_defaults_to_session(data)
-                    applied.append(".user_defaults.json")
-                except (json.JSONDecodeError, ValueError, TypeError) as e:
-                    st.error(f"Invalid .user_defaults.json: {e}")
+                    applied.append(ud_file.name)
+                except (
+                    json.JSONDecodeError,
+                    ValueError,
+                    TypeError,
+                    DataBridgeCryptoError,
+                ) as e:
+                    st.error(f"Invalid {ud_file.name}: {e}")
             if pc_file is not None:
                 try:
-                    data = json.loads(pc_file.read().decode("utf-8"))
+                    raw = pc_file.read()
+                    plaintext = open_uploaded_payload(raw, privkey)
+                    data = json.loads(plaintext.decode("utf-8"))
                     snap = _portfolio_snapshot_from_dict(data)
                     st.session_state["portfolio_snapshot"] = snap
-                    applied.append(".portfolio_cache.json")
-                except (json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
-                    st.error(f"Invalid .portfolio_cache.json: {e}")
+                    applied.append(pc_file.name)
+                except (
+                    json.JSONDecodeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    DataBridgeCryptoError,
+                ) as e:
+                    st.error(f"Invalid {pc_file.name}: {e}")
             if applied:
                 st.success(f"Applied: {', '.join(applied)}. Rerunning…")
                 st.rerun()
@@ -301,7 +422,7 @@ def _handle_personal_exports() -> None:
     Otherwise the V1 plaintext export is shown with a deprecation warning.
     """
     with st.sidebar.expander("📦 Export my data", expanded=False):
-        pubkey = load_pubkey()
+        pubkey = _resolved_pubkey()
         defaults = _user_defaults_from_session()
         cache_path = Path(__file__).resolve().parent / ".portfolio_cache.json"
 
@@ -332,7 +453,16 @@ def _handle_personal_exports() -> None:
                 st.caption("(Run Portfolio Sync first to enable cache export.)")
             return
 
-        # V1 plaintext fallback — deprecated, removed in a future release.
+        # No V2 key. Public site → BLOCK V1 entirely (no plaintext leaves browser).
+        if is_pyodide():
+            st.caption(
+                "\U0001f512 No plaintext export available on the public site. "
+                "Paste your private key in the '\U0001f511 V2 private key' widget above "
+                "to enable encrypted export."
+            )
+            return
+
+        # V1 plaintext fallback — local host only, deprecated.
         st.caption(
             "Saves to your browser's default downloads folder. Share with the public site for third-party analysis."
         )
@@ -362,6 +492,7 @@ def _handle_personal_exports() -> None:
             st.caption("(Run Portfolio Sync first to enable cache export.)")
 
 
+_handle_v2_privkey()
 _handle_personal_uploads()
 _handle_personal_exports()
 

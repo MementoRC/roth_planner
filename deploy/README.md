@@ -98,6 +98,16 @@ key file to fall back to V1 plaintext export (with a deprecation warning).
 
 ### Browser side
 
-The public Streamlit site will (in a future PR) prompt for the private key
-on first use and cache it in `localStorage` under the key
-`roth_planner.data_bridge.priv_b64`. Clear browser storage to invalidate.
+The public Streamlit site shows a "🔑 V2 private key" sidebar widget
+on first use. Paste your data-bridge private key (base64). The key is
+cached in `localStorage` under `roth_planner.data_bridge.priv_b64` so
+it survives page reloads. Click "Clear" in the widget (or wipe browser
+data) to remove it.
+
+Encrypted `.json.enc` uploads are auto-decrypted with the cached private
+key. Encrypted exports use a public key derived from the same private key
+on the fly — no separate paste needed.
+
+The public site refuses to produce V1 plaintext exports: with no V2 key
+configured, the "📦 Export my data" widget shows a "🔒 Paste your
+private key first" hint instead of any download button.
