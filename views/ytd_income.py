@@ -12,6 +12,7 @@ import streamlit as st
 
 from engine.headroom import compute_headroom
 from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
+from engine.niit import NIIT_THRESHOLD_MFJ
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -187,7 +188,7 @@ def render(hh: Household):
     c4.metric(
         "Room to NIIT",
         f"${headroom.room_to_niit:,.0f}",
-        help="MAGI-based ($250K) — LTCG DOES consume this",
+        help=f"MAGI-based (${NIIT_THRESHOLD_MFJ // 1000:.0f}K) — LTCG DOES consume this",
     )
 
     if not headroom.irmaa_relevant:

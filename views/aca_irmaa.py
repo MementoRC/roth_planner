@@ -27,7 +27,7 @@ from engine.irmaa import (
     irmaa_surcharge,
     irmaa_tier,
 )
-from engine.niit import NIIT_THRESHOLD_MFJ, niit
+from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, niit
 from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
 from models.household import Household
 
@@ -72,7 +72,7 @@ def render(hh: Household):
             value=0,
             step=5_000,
             format="%d",
-            help="Capital gains + dividends + interest. NIIT = 3.8% when MAGI > $250K",
+            help=f"Capital gains + dividends + interest. NIIT = {NIIT_RATE * 100:.1f}% when MAGI > ${NIIT_THRESHOLD_MFJ // 1000:.0f}K",
         )
 
     # --- Generate cost curves ---
@@ -266,7 +266,7 @@ def render(hh: Household):
         go.Scatter(
             x=magi_points,
             y=niit_increase,
-            name="NIIT (3.8%)",
+            name=f"NIIT ({NIIT_RATE * 100:.1f}%)",
             stackgroup="cost",
             line={"color": "#8b5cf6"},
             fillcolor="rgba(139,92,246,0.3)",
@@ -411,7 +411,7 @@ def render(hh: Household):
     st.markdown("---")
     st.markdown("### NIIT — Net Investment Income Tax")
     st.markdown(
-        f"**3.8% surtax** on the lesser of net investment income or MAGI above "
+        f"**{NIIT_RATE * 100:.1f}% surtax** on the lesser of net investment income or MAGI above "
         f"**${NIIT_THRESHOLD_MFJ:,}** (MFJ). Applies to capital gains, dividends, "
         "interest, and rental income. Roth conversions are *not* investment income, "
         "but they raise MAGI, which can expose more investment income to the tax."

@@ -313,7 +313,7 @@ def render(hh: Household):
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
             x=niit_conv, line_dash="dash", line_color="#8b5cf6",
-            annotation_text="NIIT $250K",
+            annotation_text=f"NIIT ${NIIT_THRESHOLD_MFJ // 1000:.0f}K",
             annotation_position="top",
         )
 
