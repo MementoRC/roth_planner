@@ -285,6 +285,126 @@ class TestScenarios:
             assert hh.your_age_in(year) >= 75
 
 
+class TestAutoFillCharacterization:
+    """Pin per-year output of the three auto_fill_* functions before refactor.
+
+    These snapshots characterize today's behavior. If the upcoming
+    _auto_fill_core extraction produces different per-year amounts,
+    these tests will catch the drift even if end-to-end totals match.
+
+    Captured against development @ ecbc49d (post-PR #41).
+    """
+
+    def _fixture_household(self) -> Household:
+        """Mirror the fixture used by the existing auto_fill_* behavioral tests."""
+        return Household()
+
+    def test_auto_fill_12_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_12(hh)
+        # Per-year tuples: (year, your_conv, spouse_conv)
+        rows = [
+            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # Captured against development @ ecbc49d (post-PR #41)
+        expected: list[tuple[int, int, int]] = [
+            (2026, 83000, 0),
+            (2027, 113000, 0),
+            (2028, 120500, 0),
+            (2029, 133000, 0),
+            (2030, 127902, 5098),
+            (2031, 0, 133000),
+            (2032, 0, 133000),
+            (2033, 0, 133000),
+            (2034, 0, 133000),
+            (2035, 0, 133000),
+            (2036, 0, 140650),
+            (2037, 0, 18069),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+    def test_auto_fill_22_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_22(hh)
+        rows = [
+            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # Captured against development @ ecbc49d (post-PR #41)
+        expected: list[tuple[int, int, int]] = [
+            (2026, 193600, 0),
+            (2027, 223600, 0),
+            (2028, 111545, 119555),
+            (2029, 0, 243600),
+            (2030, 0, 243600),
+            (2031, 0, 15267),
+            (2032, 0, 0),
+            (2033, 0, 0),
+            (2034, 0, 0),
+            (2035, 0, 0),
+            (2036, 0, 0),
+            (2037, 0, 0),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+    def test_auto_fill_irmaa_safe_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_irmaa_safe(hh)
+        rows = [
+            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # Captured against development @ ecbc49d (post-PR #41)
+        # IRMAA-safe diverges from fill_12/fill_22 in base_magi computation:
+        # uses full combined_ss (not taxable_ss) — these per-year rows capture that.
+        expected: list[tuple[int, int, int]] = [
+            (2026, 168000, 0),
+            (2027, 198000, 0),
+            (2028, 168247, 37253),
+            (2029, 0, 218000),
+            (2030, 0, 218000),
+            (2031, 0, 172791),
+            (2032, 0, 0),
+            (2033, 0, 0),
+            (2034, 0, 0),
+            (2035, 0, 0),
+            (2036, 0, 0),
+            (2037, 0, 0),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+
 class TestPerAccountGrowth:
     """Test per-account growth rate profiles."""
 
