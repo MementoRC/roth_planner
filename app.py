@@ -570,7 +570,7 @@ _handle_personal_exports()
 
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
-from engine.portfolio_sync import positions_for_forecast  # noqa: E402
+from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
 from models.household import GrowthProfile, Household  # noqa: E402
 
 
@@ -604,15 +604,16 @@ def get_household() -> Household:
         if _spouse_pretax > 0:
             hh.spouse_ira = _spouse_pretax
 
-        # Brokerage weighted return + dividend forecast
-        brok = snap.account_by_type("brokerage")
-        if brok and brok.total_value > 0:
+        # Brokerage weighted return + dividend forecast (aggregate across all owners)
+        brokerage_accounts = snap.brokerage_accounts
+        brokerage_total = snap.brokerage_total
+        if brokerage_accounts and brokerage_total > 0:
             _fcst = forecast_portfolio(
-                positions_for_forecast(brok),
-                total_balance=brok.total_value,
+                positions_for_forecast_multi(brokerage_accounts),
+                total_balance=brokerage_total,
             )
             hh.brokerage_growth = GrowthProfile(
-                default_rate=brok.weighted_return,
+                default_rate=snap.brokerage_weighted_return,
                 yield_rate=_fcst.yield_rate,
                 qualified_fraction=_fcst.qualified_fraction,
             )
