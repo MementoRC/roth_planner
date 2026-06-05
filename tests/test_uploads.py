@@ -418,3 +418,183 @@ class TestBrokerageAggregation:
         assert snap.brokerage_total == 0.0
         # Mirror pretax_weighted_return: 0.0 when no accounts (total <= 0)
         assert snap.brokerage_weighted_return == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestHoldingFinExtractFieldsRoundTrip
+#   FinExtract's ingestion server (Phase B) will stamp three new keys onto
+#   every Holding inside .portfolio_cache.json:
+#     - dividends_by_year: dict[str, float]
+#     - dividends_window: dict[str, str]
+#     - dividends_is_stale: bool
+#   The bare Holding(**h) deserialization at portfolio_sync.py:load_snapshot
+#   and app.py:_portfolio_snapshot_from_dict will TypeError on unknown keys.
+#   These tests pin the desired round-trip contract before the fix lands.
+# ---------------------------------------------------------------------------
+
+
+def _make_snapshot_dict_with_dividends() -> dict:
+    """Minimal snapshot JSON dict with one holding that has all three new keys."""
+    return {
+        "txn_shares_held": 0,
+        "txn_shares_value": 0.0,
+        "server_available": True,
+        "error": None,
+        "equity_grants": [],
+        "accounts": [
+            {
+                "account_type": "brokerage",
+                "owner": "you",
+                "account_name": "Brokerage1",
+                "total_value": 100_000.0,
+                "equity_value": 100_000.0,
+                "bond_value": 0.0,
+                "cash_value": 0.0,
+                "crypto_value": 0.0,
+                "target_date_value": 0.0,
+                "holdings": [
+                    {
+                        "symbol": "VTI",
+                        "description": "Vanguard Total Stock",
+                        "quantity": 100.0,
+                        "market_value": 100_000.0,
+                        "account_name": "Brokerage1",
+                        "asset_class": "equity",
+                        "total_gain_loss": None,
+                        "total_gain_loss_pct": None,
+                        "dividends_by_year": {"2025": 5265.98, "2026": 3701.24},
+                        "dividends_window": {"start": "2025-01-01", "end": "2026-06-04"},
+                        "dividends_is_stale": False,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+class TestHoldingFinExtractFieldsRoundTrip:
+    """Round-trip contract for the three FinExtract Phase B dividend fields."""
+
+    def test_holding_accepts_finextract_dividend_fields(self):
+        """Holding must accept all three new kwargs without TypeError.
+
+        Currently fails: TypeError: __init__() got an unexpected keyword
+        argument 'dividends_by_year'.
+        """
+        h = Holding(
+            symbol="VTI",
+            description="Vanguard Total Stock",
+            quantity=100.0,
+            market_value=100_000.0,
+            account_name="Brokerage1",
+            asset_class="equity",
+            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+            dividends_is_stale=False,
+        )
+        assert h.dividends_by_year == {"2025": 5265.98, "2026": 3701.24}
+        assert h.dividends_window == {"start": "2025-01-01", "end": "2026-06-04"}
+        assert h.dividends_is_stale is False
+
+    def test_holding_round_trip_through_load_snapshot(self, monkeypatch, tmp_path):
+        """save_snapshot → load_snapshot must preserve the three new fields.
+
+        Monkeypatches _CACHE_PATH to tmp_path/cache.json so load_snapshot()
+        reads the file we write rather than the production path.
+
+        Currently fails: TypeError during Holding(**h) deserialization in
+        load_snapshot when the dict contains the new keys.
+        """
+        import json
+
+        import engine.portfolio_sync as ps
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, load_snapshot, save_snapshot
+
+        cache_file = tmp_path / "cache.json"
+        monkeypatch.setattr(ps, "_CACHE_PATH", cache_file)
+
+        snap = PortfolioSnapshot(
+            server_available=True,
+            accounts=[
+                AccountSummary(
+                    account_type="brokerage",
+                    owner="you",
+                    account_name="Brokerage1",
+                    total_value=100_000.0,
+                    equity_value=100_000.0,
+                    holdings=[
+                        Holding(
+                            symbol="VTI",
+                            description="Vanguard Total Stock",
+                            quantity=100.0,
+                            market_value=100_000.0,
+                            account_name="Brokerage1",
+                            asset_class="equity",
+                            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+                            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+                            dividends_is_stale=False,
+                        )
+                    ],
+                )
+            ],
+        )
+        save_snapshot(snap)
+        loaded = load_snapshot()
+        assert loaded is not None
+        h = loaded.accounts[0].holdings[0]
+        assert h.dividends_by_year == {"2025": 5265.98, "2026": 3701.24}
+        assert h.dividends_window == {"start": "2025-01-01", "end": "2026-06-04"}
+        assert h.dividends_is_stale is False
+
+    def test_holding_round_trip_via_asdict_dumps_loads(self):
+        """dataclasses.asdict(holding) must include the three new fields,
+        and Holding(**asdict(h)) must reconstruct an equal Holding.
+
+        Currently fails at construction: TypeError on the new kwargs.
+        """
+        from dataclasses import asdict
+
+        original = Holding(
+            symbol="VTI",
+            description="Vanguard Total Stock",
+            quantity=100.0,
+            market_value=100_000.0,
+            account_name="Brokerage1",
+            asset_class="equity",
+            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+            dividends_is_stale=False,
+        )
+        d = asdict(original)
+        assert d["dividends_by_year"] == {"2025": 5265.98, "2026": 3701.24}
+        assert d["dividends_window"] == {"start": "2025-01-01", "end": "2026-06-04"}
+        assert d["dividends_is_stale"] is False
+        reconstructed = Holding(**d)
+        assert reconstructed == original
+
+    def test_holding_round_trip_without_finextract_fields(self):
+        """Holdings constructed the OLD way (8 fields) must still round-trip cleanly.
+
+        This is the backward-compat guard: the three new fields must be None
+        after construction without them and must survive asdict → reconstruct.
+        This test passes BOTH before and after the fix.
+        """
+        from dataclasses import asdict
+
+        h = Holding(
+            symbol="SPY",
+            description="S&P 500 ETF",
+            quantity=10.0,
+            market_value=5_000.0,
+            account_name="Brokerage1",
+            asset_class="equity",
+        )
+        assert h.dividends_by_year is None
+        assert h.dividends_window is None
+        assert h.dividends_is_stale is None
+        d = asdict(h)
+        reconstructed = Holding(**d)
+        assert reconstructed == h
+        assert reconstructed.dividends_by_year is None
+        assert reconstructed.dividends_window is None
+        assert reconstructed.dividends_is_stale is None
