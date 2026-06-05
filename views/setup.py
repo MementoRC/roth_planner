@@ -14,12 +14,6 @@ from engine.data_bridge_browser import (
     local_storage_remove,
     local_storage_set,
 )
-from engine.data_bridge_crypto import (
-    DataBridgeCryptoError,
-    derive_pubkey,
-    open_uploaded_payload,
-    seal,
-)
 from engine.data_bridge_keys import (
     decode_keymaterial,
     load_privkey,
@@ -147,6 +141,9 @@ def _resolved_pubkey() -> bytes | None:
     session-state private key (browser paste flow). Returns ``None`` if
     no key is available from any source.
     """
+    # Deferred: nacl unavailable in Pyodide
+    from engine.data_bridge_crypto import derive_pubkey
+
     pk = load_pubkey()
     if pk is not None:
         return pk
@@ -242,6 +239,12 @@ def _handle_personal_uploads() -> None:
     merges portfolio accounts with ``owner="spouse"`` while preserving the
     receiver's own accounts, grants, and TXN holdings.
     """
+    # Deferred: nacl unavailable in Pyodide
+    from engine.data_bridge_crypto import (
+        DataBridgeCryptoError,
+        open_uploaded_payload,
+    )
+
     with st.expander("\U0001f513 Use my real data (this session)"):
         st.caption(
             "Upload your local files for a personalized session. "
@@ -321,6 +324,9 @@ def _handle_personal_exports() -> None:
     exports are sealed with ``crypto_box_seal`` and emitted as ``.json.enc``.
     Otherwise the V1 plaintext export is shown with a deprecation warning.
     """
+    # Deferred: nacl unavailable in Pyodide
+    from engine.data_bridge_crypto import seal
+
     with st.expander("📦 Export my data", expanded=False):
         pubkey = _resolved_pubkey()
         defaults = _user_defaults_from_session()
