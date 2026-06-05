@@ -103,6 +103,11 @@ class Holding:
     asset_class: str  # "equity", "bond", "cash", "crypto", "target_date"
     total_gain_loss: float | None = None
     total_gain_loss_pct: float | None = None
+    # FinExtract Phase B: per-holding dividend history (populated by ingestion server's
+    # /query/brokerage?data_type=dividends_rollup endpoint; None when not yet available).
+    dividends_by_year: dict[str, float] | None = None
+    dividends_window: dict[str, str] | None = None
+    dividends_is_stale: bool | None = None
 
 
 @dataclass
