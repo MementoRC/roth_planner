@@ -419,6 +419,23 @@ def _parse_quantity(raw: Any) -> float:
         return 0.0
 
 
+def _flatten_query_rows(data: dict) -> list[dict]:
+    """Extract rows from a FinExtract /query response.
+
+    Handles both shapes:
+    - Single-institution: {..., "rows": [...]}
+    - Multi-institution: {"institutions": {"<inst>": {"rows": [...]}, ...}}
+    """
+    if "institutions" in data and isinstance(data["institutions"], dict):
+        return [
+            row
+            for batch in data["institutions"].values()
+            if isinstance(batch, dict)
+            for row in batch.get("rows", [])
+        ]
+    return data.get("rows", [])
+
+
 def fetch_holdings() -> list[dict[str, Any]]:
     """Fetch brokerage holdings from the ingestion server."""
     try:
@@ -429,8 +446,8 @@ def fetch_holdings() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, list[dict[str, Any]]] = resp.json()
-        return data.get("rows", [])
+        data: dict[str, Any] = resp.json()
+        return _flatten_query_rows(data)
     except (requests.RequestException, ValueError):
         return []
 
@@ -445,8 +462,8 @@ def fetch_equity_awards() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, list[dict[str, Any]]] = resp.json()
-        return data.get("rows", [])
+        data: dict[str, Any] = resp.json()
+        return _flatten_query_rows(data)
     except (requests.RequestException, ValueError):
         return []
 
@@ -461,8 +478,8 @@ def fetch_shares() -> list[dict[str, Any]]:
             timeout=5,
         )
         resp.raise_for_status()
-        data: dict[str, list[dict[str, Any]]] = resp.json()
-        return data.get("rows", [])
+        data: dict[str, Any] = resp.json()
+        return _flatten_query_rows(data)
     except (requests.RequestException, ValueError):
         return []
 
