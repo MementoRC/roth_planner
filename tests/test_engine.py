@@ -1390,3 +1390,62 @@ class TestEngineConstantsCharacterization:
         # taxable=0.85*(205_000-44_000)+6_000 = 0.85*161_000+6_000 = 136_850+6_000=142_850
         # cap=0.85*10_000=8_500 → result=8_500
         assert taxable_ss(combined_ss=10_000, other_income=200_000) == approx(8_500)
+
+
+class TestQueryResponseShape:
+    """Verify _flatten_query_rows handles both FinExtract response shapes."""
+
+    def test_single_institution_legacy_shape(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        data = {"domain": "brokerage", "data_type": "holdings", "rows": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]}
+        assert _flatten_query_rows(data) == [{"symbol": "AAPL"}, {"symbol": "MSFT"}]
+
+    def test_multi_institution_current_shape(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        data = {
+            "domain": "brokerage",
+            "data_type": "holdings",
+            "institutions": {
+                "fidelity": {"rows": [{"symbol": "AAPL"}]},
+                "schwab": {"rows": [{"symbol": "MSFT"}, {"symbol": "TXN"}]},
+            },
+        }
+        result = _flatten_query_rows(data)
+        # Order across institutions is dict-iteration order — assert as a set / sorted
+        assert sorted(r["symbol"] for r in result) == ["AAPL", "MSFT", "TXN"]
+        assert len(result) == 3
+
+    def test_empty_institutions(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        data = {"institutions": {}}
+        assert _flatten_query_rows(data) == []
+
+    def test_neither_rows_nor_institutions(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        # FinExtract returning no data at all should yield [] not raise
+        data = {"domain": "brokerage", "data_type": "holdings"}
+        assert _flatten_query_rows(data) == []
+
+    def test_institutions_value_not_dict(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        # Robustness: malformed nested batch should be skipped, not raise
+        data = {"institutions": {"fidelity": "not-a-dict", "schwab": {"rows": [{"symbol": "MSFT"}]}}}
+        result = _flatten_query_rows(data)
+        assert result == [{"symbol": "MSFT"}]
+
+    def test_institution_batch_missing_rows_key(self):
+        from engine.portfolio_sync import _flatten_query_rows
+
+        # If one institution's batch has no 'rows' key, skip silently rather than KeyError
+        data = {
+            "institutions": {
+                "fidelity": {"metadata": "blah"},  # no 'rows' key
+                "schwab": {"rows": [{"symbol": "MSFT"}]},
+            },
+        }
+        assert _flatten_query_rows(data) == [{"symbol": "MSFT"}]
