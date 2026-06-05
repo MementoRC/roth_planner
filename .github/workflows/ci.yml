@@ -17,13 +17,12 @@ permissions:
 
 jobs:
   ci:
-    uses: Claire-s-Monster/ci-framework/.github/workflows/reusable-ci.yml@v2.4.2
+    uses: Claire-s-Monster/ci-framework/.github/workflows/reusable-ci.yml@1a9f71d1ebbd0b1393938a05434af724276934e1  # v2.9.5
     with:
       pixi-environment: "ci"
       python-versions: '["3.11", "3.12"]'
       os-matrix: '["ubuntu-latest"]'
       enable-performance: false
-      enable-release: false
       enable-hygiene-check: true
       editable-install: true
       package-path: "."
