@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -283,6 +285,33 @@ def merge_snapshots(
     )
 
 
+def _derive_ttm_dividends(h: Holding) -> float:
+    """Derive trailing-12-month dividends for a Holding from FinExtract data.
+
+    Strategy:
+    - dividends_by_year + dividends_window present: window-actualized
+      ttm = sum(values) * 365 / window_days
+    - dividends_by_year only: most-recent prior-year value
+    - No data: 0.0 (pre-H2 behavior)
+    """
+    if not h.dividends_by_year:
+        return 0.0
+
+    if h.dividends_window:
+        try:
+            start = date.fromisoformat(h.dividends_window["start"])
+            end = date.fromisoformat(h.dividends_window["end"])
+            days = (end - start).days
+            if days > 0:
+                return sum(h.dividends_by_year.values()) * 365.0 / days
+        except (KeyError, ValueError):
+            pass
+
+    current_year = str(date.today().year)
+    prior = {k: v for k, v in h.dividends_by_year.items() if k < current_year}
+    return max(prior.values()) if prior else 0.0
+
+
 def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
     """Convert brokerage holdings into Position records for dividend forecast.
 
@@ -299,12 +328,18 @@ def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
     for h in brok_snapshot.holdings:
         if h.market_value <= 0:
             continue
+        if h.dividends_is_stale and h.dividends_by_year:
+            warnings.warn(
+                f"{h.symbol}: dividend data is stale (window {h.dividends_window})",
+                UserWarning,
+                stacklevel=2,
+            )
         positions.append(
             Position(
                 ticker=h.symbol,
                 shares=h.quantity,
                 balance=h.market_value,
-                ttm_dividends=0.0,  # Holding has no dividend history field; TTM unknown
+                ttm_dividends=_derive_ttm_dividends(h),
             )
         )
     return positions
