@@ -646,8 +646,8 @@ class TestPositionsForForecastDividendDerivation:
         acct = self._make_brok_account(h)
         positions = positions_for_forecast(acct)
         assert len(positions) == 1
-        # (5265.98 + 3701.24) * 365 / 520 = 6294.61, abs=1.0
-        assert positions[0].ttm_dividends == pytest.approx(6294.83, abs=1.0)
+        # (5265.98 + 3701.24) * 365 / 519 = 6306.43, abs=1.0
+        assert positions[0].ttm_dividends == pytest.approx(6306.43, abs=1.0)
 
     def test_fallback_most_recent_prior_year_when_window_missing(self):
         """When window is absent, fall back to most-recent past year in by_year."""
@@ -690,7 +690,7 @@ class TestPositionsForForecastDividendDerivation:
         positions = positions_for_forecast(acct)
         assert len(positions) == 2
         by_ticker = {p.ticker: p for p in positions}
-        assert by_ticker["VTI"].ttm_dividends == pytest.approx(6294.83, abs=1.0)
+        assert by_ticker["VTI"].ttm_dividends == pytest.approx(6306.43, abs=1.0)
         assert by_ticker["BND"].ttm_dividends == 0.0
 
     def test_stale_data_still_populates_with_warning(self):
@@ -704,7 +704,7 @@ class TestPositionsForForecastDividendDerivation:
         with pytest.warns(UserWarning, match="stale"):
             positions = positions_for_forecast(acct)
         assert len(positions) == 1
-        assert positions[0].ttm_dividends == pytest.approx(6294.83, abs=1.0)
+        assert positions[0].ttm_dividends == pytest.approx(6306.43, abs=1.0)
 
     def test_single_year_dict_no_prior_year_falls_through_to_zero(self):
         """A by_year dict with only a future year and no window → 0.0."""
