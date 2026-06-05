@@ -1449,3 +1449,43 @@ class TestQueryResponseShape:
             },
         }
         assert _flatten_query_rows(data) == [{"symbol": "MSFT"}]
+
+
+class TestAccountTypeOverrides:
+    """Verify _classify_account honors user-supplied overrides."""
+
+    def test_override_hit_returns_mapped_type(self):
+        from engine.portfolio_sync import _classify_account
+
+        assert _classify_account("U1234567", overrides={"U1234567": "trad_ira"}) == ("trad_ira", "you")
+
+    def test_override_miss_falls_through_to_substring_scan(self):
+        from engine.portfolio_sync import _classify_account
+
+        # Override exists for a different account; the queried name has 'ira' → substring match
+        result = _classify_account("Rollover IRA233813501", overrides={"U1234567": "trad_ira"})
+        assert result == ("trad_ira", "you")
+
+    def test_empty_overrides_preserves_legacy_behavior(self):
+        from engine.portfolio_sync import _classify_account
+
+        assert _classify_account("Rollover IRA233813501") == ("trad_ira", "you")
+        assert _classify_account("Individual Brokerage Account") == ("brokerage", "you")
+
+    def test_overrides_supports_multiple_ibkr_accounts(self):
+        from engine.portfolio_sync import _classify_account
+
+        overrides = {"U1234567": "trad_ira", "U7654321": "roth_ira", "U9999999": "brokerage"}
+        assert _classify_account("U1234567", overrides=overrides) == ("trad_ira", "you")
+        assert _classify_account("U7654321", overrides=overrides) == ("roth_ira", "you")
+        assert _classify_account("U9999999", overrides=overrides) == ("brokerage", "you")
+
+    def test_override_can_force_brokerage_classification(self):
+        from engine.portfolio_sync import _classify_account
+
+        # Even an 'ira'-containing name can be overridden to brokerage if user knows better
+        result = _classify_account(
+            "Inheritance IRA Account",
+            overrides={"Inheritance IRA Account": "brokerage"},
+        )
+        assert result == ("brokerage", "you")
