@@ -506,10 +506,9 @@ class TestHoldingFinExtractFieldsRoundTrip:
         load_snapshot when the dict contains the new keys.
         """
         from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, load_snapshot, save_snapshot
-        import engine.portfolio_sync as ps
 
         cache_file = tmp_path / "cache.json"
-        monkeypatch.setattr(ps, "_CACHE_PATH", cache_file)
+        monkeypatch.setattr("engine.portfolio_sync._CACHE_PATH", cache_file)
 
         snap = PortfolioSnapshot(
             server_available=True,
