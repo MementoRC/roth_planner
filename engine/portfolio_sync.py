@@ -419,7 +419,7 @@ def _parse_quantity(raw: Any) -> float:
         return 0.0
 
 
-def _flatten_query_rows(data: dict) -> list[dict]:
+def _flatten_query_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract rows from a FinExtract /query response.
 
     Handles both shapes:
@@ -433,7 +433,8 @@ def _flatten_query_rows(data: dict) -> list[dict]:
             if isinstance(batch, dict)
             for row in batch.get("rows", [])
         ]
-    return data.get("rows", [])
+    rows: list[dict[str, Any]] = data.get("rows", []) or []
+    return rows
 
 
 def fetch_holdings() -> list[dict[str, Any]]:
