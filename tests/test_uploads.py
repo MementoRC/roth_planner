@@ -10,6 +10,7 @@ from engine.portfolio_sync import (
     Holding,
     PortfolioSnapshot,
     merge_snapshots,
+    positions_for_forecast,
     positions_for_forecast_multi,
 )
 from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
@@ -600,3 +601,118 @@ class TestHoldingFinExtractFieldsRoundTrip:
         assert reconstructed.dividends_by_year is None
         assert reconstructed.dividends_window is None
         assert reconstructed.dividends_is_stale is None
+
+
+class TestPositionsForForecastDividendDerivation:
+    """Pin ttm_dividends derivation from FinExtract dividend fields (PR H2)."""
+
+    def _make_brok_account(self, *holdings: Holding) -> AccountSummary:
+        return AccountSummary(
+            account_type="brokerage",
+            owner="you",
+            account_name="Brokerage1",
+            total_value=sum(h.market_value for h in holdings),
+            equity_value=sum(h.market_value for h in holdings),
+            holdings=list(holdings),
+        )
+
+    def _make_holding(
+        self,
+        symbol: str = "VTI",
+        market_value: float = 100_000.0,
+        quantity: float = 100.0,
+        dividends_by_year: dict[str, float] | None = None,
+        dividends_window: dict[str, str] | None = None,
+        dividends_is_stale: bool | None = None,
+    ) -> Holding:
+        return Holding(
+            symbol=symbol,
+            description=f"{symbol} desc",
+            quantity=quantity,
+            market_value=market_value,
+            account_name="Brokerage1",
+            asset_class="equity",
+            dividends_by_year=dividends_by_year,
+            dividends_window=dividends_window,
+            dividends_is_stale=dividends_is_stale,
+        )
+
+    def test_window_actualized_derivation(self):
+        """sum(values) * 365 / window_days when both by_year and window present."""
+        h = self._make_holding(
+            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+        )
+        acct = self._make_brok_account(h)
+        positions = positions_for_forecast(acct)
+        assert len(positions) == 1
+        # (5265.98 + 3701.24) * 365 / 519 = 6306.43, abs=1.0
+        assert positions[0].ttm_dividends == pytest.approx(6306.43, abs=1.0)
+
+    def test_fallback_most_recent_prior_year_when_window_missing(self):
+        """When window is absent, fall back to most-recent past year in by_year."""
+        h = self._make_holding(
+            dividends_by_year={"2020": 4000.0, "2021": 5000.0},
+            dividends_window=None,
+        )
+        acct = self._make_brok_account(h)
+        positions = positions_for_forecast(acct)
+        assert len(positions) == 1
+        assert positions[0].ttm_dividends == pytest.approx(5000.0)
+
+    def test_no_dividend_data_returns_zero(self):
+        """All three FinExtract fields None → ttm_dividends == 0.0 (backward compat)."""
+        h = self._make_holding(
+            dividends_by_year=None,
+            dividends_window=None,
+            dividends_is_stale=None,
+        )
+        acct = self._make_brok_account(h)
+        positions = positions_for_forecast(acct)
+        assert len(positions) == 1
+        assert positions[0].ttm_dividends == 0.0
+
+    def test_mixed_portfolio_partial_dividend_coverage(self):
+        """Only holdings with dividend data contribute non-zero ttm_dividends."""
+        h_with = self._make_holding(
+            symbol="VTI",
+            market_value=100_000.0,
+            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+        )
+        h_without = self._make_holding(
+            symbol="BND",
+            market_value=50_000.0,
+            dividends_by_year=None,
+            dividends_window=None,
+        )
+        acct = self._make_brok_account(h_with, h_without)
+        positions = positions_for_forecast(acct)
+        assert len(positions) == 2
+        by_ticker = {p.ticker: p for p in positions}
+        assert by_ticker["VTI"].ttm_dividends == pytest.approx(6306.43, abs=1.0)
+        assert by_ticker["BND"].ttm_dividends == 0.0
+
+    def test_stale_data_still_populates_with_warning(self):
+        """dividends_is_stale=True: TTM still populated; UserWarning emitted."""
+        h = self._make_holding(
+            dividends_by_year={"2025": 5265.98, "2026": 3701.24},
+            dividends_window={"start": "2025-01-01", "end": "2026-06-04"},
+            dividends_is_stale=True,
+        )
+        acct = self._make_brok_account(h)
+        with pytest.warns(UserWarning, match="stale"):
+            positions = positions_for_forecast(acct)
+        assert len(positions) == 1
+        assert positions[0].ttm_dividends == pytest.approx(6306.43, abs=1.0)
+
+    def test_single_year_dict_no_prior_year_falls_through_to_zero(self):
+        """A by_year dict with only a future year and no window → 0.0."""
+        h = self._make_holding(
+            dividends_by_year={"2099": 1000.0},
+            dividends_window=None,
+        )
+        acct = self._make_brok_account(h)
+        positions = positions_for_forecast(acct)
+        assert len(positions) == 1
+        assert positions[0].ttm_dividends == 0.0
