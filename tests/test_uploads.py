@@ -505,8 +505,8 @@ class TestHoldingFinExtractFieldsRoundTrip:
         Currently fails: TypeError during Holding(**h) deserialization in
         load_snapshot when the dict contains the new keys.
         """
-        import engine.portfolio_sync as ps
         from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, load_snapshot, save_snapshot
+        import engine.portfolio_sync as ps
 
         cache_file = tmp_path / "cache.json"
         monkeypatch.setattr(ps, "_CACHE_PATH", cache_file)
