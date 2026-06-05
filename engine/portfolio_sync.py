@@ -366,14 +366,28 @@ def _headers() -> dict[str, str]:
     return h
 
 
-def _classify_account(account_name: str) -> tuple[str, str]:
+def _classify_account(
+    account_name: str,
+    overrides: dict[str, str] | None = None,
+) -> tuple[str, str]:
     """Determine account type and owner from account name string.
 
     Handles Vanguard ("Claude R. Cirba — Roth IRA Brokerage Account — ..."),
     Fidelity ("Rollover IRA233813501"), and 403b/HSA patterns.
 
+    ``overrides`` is an optional mapping of raw account name/ID →
+    canonical account type (e.g. ``{"U1234567": "trad_ira"}``).  When a
+    match is found the override is returned immediately, bypassing the
+    substring scan.  This supports FinExtract IBKR accounts whose names
+    are raw account IDs with no "ira" substring.
+
     Returns (account_type, owner).
     """
+    if overrides:
+        override = overrides.get(account_name)
+        if override:
+            return override, "you"
+
     name_lower = account_name.lower()
 
     if "roth ira" in name_lower or "roth" in name_lower:
@@ -834,8 +848,15 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     return YTDSnapshot(**data, gain_events=events)
 
 
-def fetch_portfolio() -> PortfolioSnapshot:
-    """Fetch and assemble the complete portfolio snapshot."""
+def fetch_portfolio(
+    account_type_overrides: dict[str, str] | None = None,
+) -> PortfolioSnapshot:
+    """Fetch and assemble the complete portfolio snapshot.
+
+    ``account_type_overrides`` is forwarded to :func:`_classify_account`
+    so that raw IBKR account IDs (e.g. ``U1234567``) can be mapped to the
+    correct account type before the substring scan runs.
+    """
     snap = PortfolioSnapshot()
 
     # Check server availability
@@ -853,7 +874,7 @@ def fetch_portfolio() -> PortfolioSnapshot:
 
     for row in holdings_raw:
         acct_name = row.get("account", "")
-        acct_type, owner = _classify_account(acct_name)
+        acct_type, owner = _classify_account(acct_name, overrides=account_type_overrides)
         symbol = row.get("symbol", "")
         asset_class = _classify_symbol(symbol)
         mv = row.get("market_value", 0) or 0

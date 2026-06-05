@@ -83,6 +83,9 @@ def _user_defaults_from_session() -> dict:
     strikes = st.session_state.get("_user_grant_strikes")
     if strikes:
         payload["grant_strikes"] = strikes
+    overrides = st.session_state.get("account_type_overrides")
+    if overrides:
+        payload["account_type_overrides"] = overrides
     return payload
 
 
@@ -478,7 +481,9 @@ def render(hh: Household) -> None:
     st.header("Portfolio sync")
     _sync = st.button("Sync from FinExtract", help="Pull live holdings from ingestion server")
     if _sync:
-        snap = fetch_portfolio()
+        snap = fetch_portfolio(
+            account_type_overrides=st.session_state.get("account_type_overrides") or None,
+        )
         if snap.server_available:
             st.session_state.portfolio_snapshot = snap
             save_snapshot(snap)

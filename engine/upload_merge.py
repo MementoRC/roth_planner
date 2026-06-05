@@ -52,6 +52,8 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             updates[sess_key] = data[k]
     if "grant_strikes" in data:
         updates["_user_grant_strikes"] = data["grant_strikes"]
+    if "account_type_overrides" in data:
+        updates["account_type_overrides"] = data["account_type_overrides"]
     return updates
 
 
