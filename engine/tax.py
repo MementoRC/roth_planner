@@ -27,6 +27,23 @@ BRACKETS_SINGLE = [
 STD_DEDUCTION_SINGLE = 16_100
 SENIOR_EXTRA_SINGLE = 1_850  # single filer 65+
 
+# Standard deduction — MFJ (2026)
+STD_DEDUCTION_MFJ = 32_200
+SENIOR_EXTRA_MFJ = 1_650  # per spouse 65+
+
+# OBBBA senior bonus deduction (2026-2028, sunsets thereafter)
+OBBBA_BONUS_PER_PERSON = 6_000
+OBBBA_PHASEOUT_START = 150_000
+OBBBA_PHASEOUT_RATE = 0.06  # per $1 of MAGI above threshold
+
+# Social Security taxation tiers (MFJ provisional-income thresholds)
+SS_TIER_1_MFJ = 32_000
+SS_TIER_2_MFJ = 44_000
+SS_MAX_TAXABLE_FRACTION = 0.85
+
+# Federal long-term capital gains / qualified dividend rates (MFJ statutory tiers)
+LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
+
 
 def federal_tax(taxable_income: float) -> float:
     """Compute federal income tax on taxable income (MFJ)."""
@@ -67,17 +84,22 @@ def taxable_ss(combined_ss: float, other_income: float) -> float:
     if combined_ss <= 0:
         return 0.0
     provisional = other_income + 0.5 * combined_ss
-    if provisional <= 32_000:
+    if provisional <= SS_TIER_1_MFJ:
         return 0.0
-    if provisional <= 44_000:
-        taxable = 0.5 * (provisional - 32_000)
+    if provisional <= SS_TIER_2_MFJ:
+        taxable = 0.5 * (provisional - SS_TIER_1_MFJ)
     else:
-        taxable = 0.85 * (provisional - 44_000) + 6_000
-    return min(taxable, 0.85 * combined_ss)
+        # Tier-1 band contributes 0.5*(tier2-tier1) = 6_000; not OBBBA bonus
+        tier1_contribution = 0.5 * (SS_TIER_2_MFJ - SS_TIER_1_MFJ)
+        taxable = SS_MAX_TAXABLE_FRACTION * (provisional - SS_TIER_2_MFJ) + tier1_contribution
+    return min(taxable, SS_MAX_TAXABLE_FRACTION * combined_ss)
 
 
 def deductions(
-    your_age: int, spouse_age: int, std_ded: float = 32_200, senior_extra: float = 1_650
+    your_age: int,
+    spouse_age: int,
+    std_ded: float = STD_DEDUCTION_MFJ,
+    senior_extra: float = SENIOR_EXTRA_MFJ,
 ) -> float:
     """Total standard deduction including senior extras."""
     senior: float = 0
@@ -88,10 +110,14 @@ def deductions(
     return std_ded + senior
 
 
-def senior_bonus_deduction(your_age: int, spouse_age: int, magi: float,
-                           bonus_per_person: float = 6_000,
-                           phaseout_start: float = 150_000,
-                           phaseout_rate: float = 0.06) -> float:
+def senior_bonus_deduction(
+    your_age: int,
+    spouse_age: int,
+    magi: float,
+    bonus_per_person: float = OBBBA_BONUS_PER_PERSON,
+    phaseout_start: float = OBBBA_PHASEOUT_START,
+    phaseout_rate: float = OBBBA_PHASEOUT_RATE,
+) -> float:
     """
     OBBBA Senior Bonus Deduction (2026-2028).
 

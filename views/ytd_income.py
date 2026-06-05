@@ -13,6 +13,7 @@ import streamlit as st
 from engine.headroom import compute_headroom
 from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
 from engine.niit import NIIT_THRESHOLD_MFJ
+from engine.tax import LTCG_RATES_MFJ
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -88,7 +89,7 @@ def render(hh: Household):
                     "Qualified dividends YTD",
                     value=int(ytd.qualified_dividends_ytd),
                     step=500, format="%d",
-                    help="Taxed at LTCG rates (15%/20%); counts toward MAGI but not ordinary brackets.",
+                    help=f"Taxed at LTCG rates ({LTCG_RATES_MFJ[1]:.0%}/{LTCG_RATES_MFJ[2]:.0%}); counts toward MAGI but not ordinary brackets.",
                 )
             with div_col2:
                 ordinary_dividends = st.number_input(
@@ -210,10 +211,10 @@ def render(hh: Household):
 
     # Visual explanation
     st.info(
-        "**Why bracket room differs from IRMAA/NIIT room**: Long-term capital gains are taxed at "
-        "preferential rates (15%) and do NOT stack into ordinary brackets. But they DO count "
-        "toward MAGI for IRMAA surcharges and NIIT. So $200K in LTCG can consume IRMAA/NIIT "
-        "room while leaving your 12%/22% bracket room completely untouched."
+        f"**Why bracket room differs from IRMAA/NIIT room**: Long-term capital gains are taxed at "
+        f"preferential rates ({LTCG_RATES_MFJ[1]:.0%}) and do NOT stack into ordinary brackets. But they DO count "
+        f"toward MAGI for IRMAA surcharges and NIIT. So $200K in LTCG can consume IRMAA/NIIT "
+        f"room while leaving your 12%/22% bracket room completely untouched."
     )
 
     # --- Section 3: IRMAA Impact Warning ---

@@ -22,6 +22,7 @@ from engine.tax import (
     marginal_rate,
     room_to_12,
     room_to_22,
+    senior_bonus_deduction,
     taxable_ss,
 )
 from models.household import GrowthProfile, Household
@@ -1284,3 +1285,108 @@ class TestScenarioDividendProjection:
         # Ordinary div field should be nonzero; qualified should be zero
         assert yr_ord.brokerage_ord_div > 0.0
         assert yr_ord.brokerage_qual_div == pytest.approx(0.0)
+
+
+# ============================================================
+#  G3 Characterization: deductions / senior_bonus / taxable_ss
+# ============================================================
+
+
+class TestEngineConstantsCharacterization:
+    """Pin deductions/senior_bonus/taxable_ss outputs before G3 constants extraction.
+
+    These tests catch any byte-level drift if the extracted constants
+    don't EXACTLY match the previous inline values.
+
+    Expected values derived algebraically from the inline formulas in
+    engine/tax.py as of development HEAD 3b5772e (G2 merge):
+
+      deductions: std_ded=32_200, senior_extra=1_650
+      senior_bonus_deduction: bonus_per_person=6_000, phaseout_start=150_000,
+                              phaseout_rate=0.06 (per $1 of excess, not per person)
+      taxable_ss: tier1=32_000, tier2=44_000, max_fraction=0.85;
+                  tier1→tier2 formula: 0.5*(provisional-32_000)
+                  above tier2: 0.85*(provisional-44_000)+6_000
+    """
+
+    # --- deductions() ---
+
+    def test_deductions_below_65_no_bonus(self):
+        # Both under 65: no senior extras → exactly std_ded
+        # 32_200 + 0 = 32_200
+        assert deductions(60, 60) == approx(32_200)
+
+    def test_deductions_one_senior(self):
+        # ya=65, sa=60: one senior_extra applies
+        # 32_200 + 1_650 = 33_850
+        assert deductions(65, 60) == approx(33_850)
+
+    def test_deductions_both_seniors(self):
+        # ya=67, sa=66: two senior_extras
+        # 32_200 + 1_650 + 1_650 = 35_500
+        assert deductions(67, 66) == approx(35_500)
+
+    # --- senior_bonus_deduction() ---
+
+    def test_senior_bonus_neither_senior(self):
+        # Both under 65: eligible=0 → 0.0
+        assert senior_bonus_deduction(60, 60, magi=100_000) == approx(0.0)
+
+    def test_senior_bonus_under_phaseout(self):
+        # Both 65+, MAGI=100_000 < 150_000: full bonus
+        # eligible=2, total_bonus=12_000, no reduction → 12_000
+        assert senior_bonus_deduction(65, 65, magi=100_000) == approx(12_000)
+
+    def test_senior_bonus_at_phaseout_start(self):
+        # MAGI exactly 150_000: magi <= phaseout_start branch → full 12_000
+        assert senior_bonus_deduction(65, 65, magi=150_000) == approx(12_000)
+
+    def test_senior_bonus_partial_phaseout(self):
+        # MAGI=200_000: reduction = (200_000 - 150_000) * 0.06 = 3_000
+        # result = max(12_000 - 3_000, 0) = 9_000
+        assert senior_bonus_deduction(65, 65, magi=200_000) == approx(9_000)
+
+    def test_senior_bonus_one_person_partial_phaseout(self):
+        # ya=65, sa=60: eligible=1, total_bonus=6_000
+        # MAGI=200_000: reduction=(200_000-150_000)*0.06=3_000
+        # result = max(6_000 - 3_000, 0) = 3_000
+        assert senior_bonus_deduction(65, 60, magi=200_000) == approx(3_000)
+
+    def test_senior_bonus_above_phaseout_cap(self):
+        # MAGI=500_000: reduction=(500_000-150_000)*0.06=21_000 > 12_000
+        # result = max(12_000 - 21_000, 0) = 0.0
+        assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
+
+    # --- taxable_ss() ---
+
+    def test_taxable_ss_zero_ss(self):
+        # combined_ss=0: early-exit guard → 0.0
+        assert taxable_ss(0, other_income=100_000) == approx(0.0)
+
+    def test_taxable_ss_under_tier_1(self):
+        # provisional = 5_000 + 0.5*20_000 = 15_000 <= 32_000 → 0.0
+        assert taxable_ss(combined_ss=20_000, other_income=5_000) == approx(0.0)
+
+    def test_taxable_ss_at_tier_1_boundary(self):
+        # provisional = 22_000 + 0.5*20_000 = 32_000 → branch is provisional<=32_000 → 0.0
+        assert taxable_ss(combined_ss=20_000, other_income=22_000) == approx(0.0)
+
+    def test_taxable_ss_tier_1_to_2(self):
+        # provisional = 26_000 + 0.5*20_000 = 36_000, in [32_000, 44_000]
+        # taxable = 0.5 * (36_000 - 32_000) = 2_000
+        # cap = 0.85 * 20_000 = 17_000 → result = 2_000
+        assert taxable_ss(combined_ss=20_000, other_income=26_000) == approx(2_000)
+
+    def test_taxable_ss_above_tier_2(self):
+        # provisional = 40_000 + 0.5*40_000 = 60_000 > 44_000
+        # taxable = 0.85*(60_000-44_000) + 6_000 = 13_600 + 6_000 = 19_600
+        # cap = 0.85*40_000 = 34_000 → result = 19_600
+        assert taxable_ss(combined_ss=40_000, other_income=40_000) == approx(19_600)
+
+    def test_taxable_ss_capped_at_85pct(self):
+        # Very high other_income forces the 85% cap
+        # combined_ss=10_000, other_income=200_000
+        # provisional=205_000 >> 44_000
+        # taxable=0.85*(205_000-44_000)+6_000 = 0.85*161_000+6_000 = 136_850+6_000=142_850
+        # cap=0.85*10_000=8_500 → result=8_500
+        assert taxable_ss(combined_ss=10_000, other_income=200_000) == approx(8_500)
