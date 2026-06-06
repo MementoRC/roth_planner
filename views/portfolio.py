@@ -19,7 +19,7 @@ def render(hh: Household):
     st.title("Portfolio Sync")
     st.caption(
         "Cached data from FinExtract ingestion server. "
-        "Click 'Sync from FinExtract' in the sidebar to refresh."
+        "Go to **⚙️ Setup → 🔗 Portfolio** and click **🔄 Sync from FinExtract** to refresh."
     )
 
     snap = st.session_state.get("portfolio_snapshot")
@@ -27,7 +27,7 @@ def render(hh: Household):
     if not snap or not snap.server_available:
         st.info(
             "No portfolio data cached yet.\n\n"
-            "Click **Sync from FinExtract** in the sidebar to pull live holdings."
+            "Go to **⚙️ Setup → 🔗 Portfolio** and click **🔄 Sync from FinExtract** to populate this page."
         )
         return
 
