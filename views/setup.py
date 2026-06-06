@@ -630,45 +630,55 @@ def render(hh: Household) -> None:
     with tab_portfolio:
         snap: PortfolioSnapshot | None = st.session_state.get("portfolio_snapshot")
 
-        # Sync button + status banner
-        _sync = st.button(
-            "Sync from FinExtract", help="Pull live holdings from ingestion server"
-        )
-        if snap is not None:
-            st.caption(f"Loaded: {len(snap.accounts)} accounts, {len(snap.equity_grants)} grants")
-
-        if _sync:
-            snap = fetch_portfolio(
-                account_type_overrides=st.session_state.get("account_type_overrides") or None,
+        # Sync button + status banner — local install only (not available on Pyodide/stlite)
+        if is_pyodide():
+            st.caption(
+                "Live sync from FinExtract requires a local install. "
+                "Use the V2 sealed upload widget on the Data bridge tab "
+                "to bring data prepared from a local install instead."
             )
-            if snap.server_available:
-                st.session_state.portfolio_snapshot = snap
-                save_snapshot(snap)
-                # Push synced balances into session state
-                _your_ira, _spouse_ira = derive_ira_balances(snap)
-                if _your_ira > 0:
-                    st.session_state.your_ira = int(_your_ira)
-                if _spouse_ira > 0:
-                    st.session_state.spouse_ira = int(_spouse_ira)
-                # Also sync tax return data
-                tax_snap = fetch_tax_return()
-                if tax_snap.server_available:
-                    st.session_state.tax_return_snapshot = tax_snap
-                    save_tax_snapshot(tax_snap)
-                # Also sync YTD income data
-                ytd_snap = fetch_ytd_snapshot()
-                if ytd_snap.snapshot_date:
-                    st.session_state.ytd_snapshot = ytd_snap
-                    save_ytd_snapshot(ytd_snap)
-                st.success(
-                    f"Synced: {len(snap.accounts)} accounts, "
-                    f"{len(snap.equity_grants)} active grants"
-                    + (", tax return data" if tax_snap.server_available else "")
-                    + (", YTD income" if ytd_snap.snapshot_date else "")
+        else:
+            _sync = st.button(
+                "Sync from FinExtract", help="Pull live holdings from ingestion server"
+            )
+            if snap is not None:
+                st.caption(
+                    f"Loaded: {len(snap.accounts)} accounts, "
+                    f"{len(snap.equity_grants)} grants"
                 )
-            else:
-                st.error(f"Server unavailable: {snap.error}")
-                snap = st.session_state.get("portfolio_snapshot")
+
+            if _sync:
+                snap = fetch_portfolio(
+                    account_type_overrides=st.session_state.get("account_type_overrides") or None,
+                )
+                if snap.server_available:
+                    st.session_state.portfolio_snapshot = snap
+                    save_snapshot(snap)
+                    # Push synced balances into session state
+                    _your_ira, _spouse_ira = derive_ira_balances(snap)
+                    if _your_ira > 0:
+                        st.session_state.your_ira = int(_your_ira)
+                    if _spouse_ira > 0:
+                        st.session_state.spouse_ira = int(_spouse_ira)
+                    # Also sync tax return data
+                    tax_snap = fetch_tax_return()
+                    if tax_snap.server_available:
+                        st.session_state.tax_return_snapshot = tax_snap
+                        save_tax_snapshot(tax_snap)
+                    # Also sync YTD income data
+                    ytd_snap = fetch_ytd_snapshot()
+                    if ytd_snap.snapshot_date:
+                        st.session_state.ytd_snapshot = ytd_snap
+                        save_ytd_snapshot(ytd_snap)
+                    st.success(
+                        f"Synced: {len(snap.accounts)} accounts, "
+                        f"{len(snap.equity_grants)} active grants"
+                        + (", tax return data" if tax_snap.server_available else "")
+                        + (", YTD income" if ytd_snap.snapshot_date else "")
+                    )
+                else:
+                    st.error(f"Server unavailable: {snap.error}")
+                    snap = st.session_state.get("portfolio_snapshot")
 
         _render_portfolio_sub_tabs(snap)
         _render_account_type_overrides(snap)
