@@ -22,7 +22,7 @@ INCLUDE_DIRS = ["engine", "models", "views", "config", "pages"]
 # Standalone files at repo root
 INCLUDE_ROOT_FILES = ["app.py"]
 # Pyodide-installable runtime requirements
-REQUIREMENTS = ["streamlit", "plotly", "pandas", "requests"]
+REQUIREMENTS = ["streamlit", "plotly", "pandas", "requests", "pynacl"]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 # Default stlite version (overridable via --stlite-version)
 DEFAULT_STLITE_VERSION = "0.75.0"
 
