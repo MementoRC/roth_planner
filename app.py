@@ -76,20 +76,23 @@ if "ytd_snapshot" not in st.session_state:
 st.sidebar.title("🎯 Roth Planner")
 st.sidebar.markdown("---")
 
+# ==========================================================================
+# 🆕 V2 NAV PREVIEW BRANCH
+# 8 journey-stops instead of 11 individual pages. See PR description for the
+# rationale. To compare against v1, check out `development` in a parallel
+# worktree: `git worktree add ../roth_planner-v1 development`.
+# ==========================================================================
 page = st.sidebar.radio(
     "Navigate",
     [
         "⚙️ Setup",
-        "📊 Dashboard",
-        "📋 Conversion Planner",
-        "💰 YTD Income",
-        "🎯 Sweet Spot Finder",
-        "📉 RMD Squeeze",
-        "⚖️ Comparator",
-        "🏥 ACA + IRMAA Explorer",
-        "📦 Asset Location",
-        "✅ Roth Eligibility",
-        "🔗 Portfolio",
+        "🎯 Is It Worth It?",
+        "📅 This Year",
+        "🚧 Know the Cliffs",
+        "🛠️ Plan Conversions",
+        "⚖️ Compare Strategies",
+        "🔮 Pressure Test",
+        "💼 Portfolio Audit",
     ],
     label_visibility="collapsed",
 )
@@ -184,43 +187,31 @@ if page == "⚙️ Setup":
     from views import setup
 
     setup.render(get_household())
-elif page == "📊 Dashboard":
+elif page == "🎯 Is It Worth It?":
     from views.dashboard import render
 
     render(get_household())
-elif page == "📋 Conversion Planner":
+elif page == "📅 This Year":
+    from views import this_year
+
+    this_year.render(get_household())
+elif page == "🚧 Know the Cliffs":
+    from views import cliffs
+
+    cliffs.render(get_household())
+elif page == "🛠️ Plan Conversions":
     from views.planner import render
 
     render(get_household())
-elif page == "💰 YTD Income":
-    from views.ytd_income import render
-
-    render(get_household())
-elif page == "🎯 Sweet Spot Finder":
-    from views.sweet_spot import render
-
-    render(get_household())
-elif page == "📉 RMD Squeeze":
-    from views.rmd_squeeze import render
-
-    render(get_household())
-elif page == "⚖️ Comparator":
+elif page == "⚖️ Compare Strategies":
     from views.comparator import render
 
     render(get_household())
-elif page == "🏥 ACA + IRMAA Explorer":
-    from views.aca_irmaa import render
+elif page == "🔮 Pressure Test":
+    from views import pressure_test
 
-    render(get_household())
-elif page == "📦 Asset Location":
-    from views.asset_location import render
-
-    render(get_household())
-elif page == "✅ Roth Eligibility":
-    from views.roth_eligibility import render
-
-    render(get_household())
-elif page == "🔗 Portfolio":
+    pressure_test.render(get_household())
+elif page == "💼 Portfolio Audit":
     from views.portfolio import render
 
     render(get_household())
