@@ -25,6 +25,8 @@ from engine.portfolio_sync import (
     EquityGrant,
     Holding,
     PortfolioSnapshot,
+    apply_dividends_rollup,
+    fetch_dividends_rollup,
     fetch_portfolio,
     fetch_tax_return,
     fetch_ytd_snapshot,
@@ -652,14 +654,18 @@ def render(hh: Household) -> None:
                     account_type_overrides=st.session_state.get("account_type_overrides") or None,
                 )
                 if snap.server_available:
-                    st.session_state.portfolio_snapshot = snap
-                    save_snapshot(snap)
                     # Push synced balances into session state
                     _your_ira, _spouse_ira = derive_ira_balances(snap)
                     if _your_ira > 0:
                         st.session_state.your_ira = int(_your_ira)
                     if _spouse_ira > 0:
                         st.session_state.spouse_ira = int(_spouse_ira)
+                    # Merge dividend history into holdings before saving snapshot
+                    div_rollup = fetch_dividends_rollup()
+                    if div_rollup.server_available:
+                        snap = apply_dividends_rollup(snap, div_rollup)
+                    save_snapshot(snap)
+                    st.session_state.portfolio_snapshot = snap
                     # Also sync tax return data
                     tax_snap = fetch_tax_return()
                     if tax_snap.server_available:
@@ -675,6 +681,7 @@ def render(hh: Household) -> None:
                         f"{len(snap.equity_grants)} active grants"
                         + (", tax return data" if tax_snap.server_available else "")
                         + (", YTD income" if ytd_snap.snapshot_date else "")
+                        + (", dividend history" if div_rollup.server_available else "")
                     )
                 else:
                     st.error(f"Server unavailable: {snap.error}")
