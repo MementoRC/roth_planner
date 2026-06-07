@@ -503,7 +503,7 @@ def _render_portfolio_sub_tabs(
 
 def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
     """Render the Account Type Overrides expander."""
-    from engine.portfolio_sync import _classify_account  # private; deferred intentionally
+    from engine.portfolio_sync import _classify_account, _resolve_override  # private; deferred intentionally
 
     with st.expander("🏷️ Account Type Overrides"):
         if snap is None or not snap.accounts:
@@ -512,7 +512,8 @@ def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
 
         st.caption("Changes take effect on next sync.")
         _type_options = ["trad_ira", "roth_ira", "brokerage", "hsa", "403b"]
-        overrides: dict[str, str] = st.session_state.get("account_type_overrides") or {}
+        _owner_options = ["you", "spouse"]
+        overrides: dict[str, str | dict[str, str]] = st.session_state.get("account_type_overrides") or {}
 
         seen: set[str] = set()
         for acct in snap.accounts:
@@ -522,26 +523,46 @@ def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
             seen.add(acct_id)
 
             auto_type, _ = _classify_account(acct_id)
-            current = overrides.get(acct_id, auto_type)
+            existing = overrides.get(acct_id)
+            if existing is not None:
+                current_type, current_owner = _resolve_override(existing)
+                if not current_type:
+                    current_type = auto_type
+            else:
+                current_type, current_owner = auto_type, "you"
             try:
-                default_idx = _type_options.index(current)
+                type_idx = _type_options.index(current_type)
             except ValueError:
-                default_idx = 0
+                type_idx = 0
+            try:
+                owner_idx = _owner_options.index(current_owner)
+            except ValueError:
+                owner_idx = 0
 
-            col_id, col_type, col_sel = st.columns([3, 2, 2])
+            col_id, col_auto, col_type, col_owner = st.columns([3, 2, 2, 2])
             col_id.text(acct_id)
-            col_type.caption(f"auto: {auto_type}")
-            chosen = col_sel.selectbox(
+            col_auto.caption(f"auto: {auto_type}")
+            chosen_type = col_type.selectbox(
                 "Type",
                 _type_options,
-                index=default_idx,
-                key=f"_override_{acct_id}",
+                index=type_idx,
+                key=f"_override_type_{acct_id}",
                 label_visibility="collapsed",
             )
-            # Write through to the canonical overrides dict in session state.
+            chosen_owner = col_owner.selectbox(
+                "Owner",
+                _owner_options,
+                index=owner_idx,
+                key=f"_override_owner_{acct_id}",
+                label_visibility="collapsed",
+            )
+            # Write through the nested form so owner is persisted alongside type.
             if "account_type_overrides" not in st.session_state:
                 st.session_state["account_type_overrides"] = {}
-            st.session_state["account_type_overrides"][acct_id] = chosen
+            st.session_state["account_type_overrides"][acct_id] = {
+                "type": chosen_type,
+                "owner": chosen_owner,
+            }
 
 
 def render(hh: Household) -> None:
