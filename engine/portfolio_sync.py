@@ -366,17 +366,33 @@ def _headers() -> dict[str, str]:
     return h
 
 
+def _resolve_override(entry: str | dict[str, str]) -> tuple[str, str]:
+    """Return (account_type, owner) from either override form.
+
+    Accepts both the legacy flat string form and the new nested dict form:
+    - ``"trad_ira"``  →  ``("trad_ira", "you")``
+    - ``{"type": "trad_ira", "owner": "spouse"}``  →  ``("trad_ira", "spouse")``
+
+    ``"owner"`` defaults to ``"you"`` when absent from the dict.
+    """
+    if isinstance(entry, dict):
+        return entry.get("type", ""), entry.get("owner", "you")
+    return entry, "you"
+
+
 def _classify_account(
     account_name: str,
-    overrides: dict[str, str] | None = None,
+    overrides: dict[str, str | dict[str, str]] | None = None,
 ) -> tuple[str, str]:
     """Determine account type and owner from account name string.
 
     Handles Vanguard ("Claude R. Cirba — Roth IRA Brokerage Account — ..."),
     Fidelity ("Rollover IRA233813501"), and 403b/HSA patterns.
 
-    ``overrides`` is an optional mapping of raw account name/ID →
-    canonical account type (e.g. ``{"U1234567": "trad_ira"}``).  When a
+    ``overrides`` is an optional mapping of raw account name/ID → either a
+    canonical account type string (legacy flat form, e.g. ``{"U1234567":
+    "trad_ira"}``) or a dict carrying both type and owner (new nested form,
+    e.g. ``{"U1234567": {"type": "trad_ira", "owner": "spouse"}}``).  When a
     match is found the override is returned immediately, bypassing the
     substring scan.  This supports FinExtract IBKR accounts whose names
     are raw account IDs with no "ira" substring.
@@ -384,9 +400,11 @@ def _classify_account(
     Returns (account_type, owner).
     """
     if overrides:
-        override = overrides.get(account_name)
-        if override:
-            return override, "you"
+        entry = overrides.get(account_name)
+        if entry is not None:
+            acct_type, owner = _resolve_override(entry)
+            if acct_type:  # guard against malformed override with empty type
+                return acct_type, owner
 
     name_lower = account_name.lower()
 
@@ -956,7 +974,7 @@ def apply_dividends_rollup(
 
 
 def fetch_portfolio(
-    account_type_overrides: dict[str, str] | None = None,
+    account_type_overrides: dict[str, str | dict[str, str]] | None = None,
 ) -> PortfolioSnapshot:
     """Fetch and assemble the complete portfolio snapshot.
 
