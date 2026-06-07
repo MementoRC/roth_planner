@@ -246,7 +246,7 @@ class TestMeSpouseParity:
         hh = self._baseline_hh()
         hh_sw = self._swap(hh)
         # Each spouse does 50K of QCDs every RMD year
-        qcds = {y: 50_000.0 for y in range(2040, 2061)}
+        qcds = dict.fromkeys(range(2040, 2061), 50_000.0)
         plan = ConversionPlan(qcds=qcds, spouse_qcds=qcds)
         r1 = run_scenario(hh, plan, end_age=95)
         r2 = run_scenario(hh_sw, plan, end_age=95)
