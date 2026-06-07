@@ -503,7 +503,10 @@ def _render_portfolio_sub_tabs(
 
 def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
     """Render the Account Type Overrides expander."""
-    from engine.portfolio_sync import _classify_account, _resolve_override  # private; deferred intentionally
+    from engine.portfolio_sync import (
+        _classify_account,
+        _resolve_override,
+    )
 
     with st.expander("🏷️ Account Type Overrides"):
         if snap is None or not snap.accounts:

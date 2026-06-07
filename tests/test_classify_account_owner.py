@@ -4,8 +4,6 @@ Covers _resolve_override + _classify_account with the nested override form,
 backwards-compat with the legacy flat form, and malformed-override fallthrough.
 """
 
-import pytest
-
 
 class TestResolveOverride:
     """Unit tests for the _resolve_override helper."""
