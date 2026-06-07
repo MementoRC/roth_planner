@@ -530,18 +530,38 @@ def _auto_fill_core(
         room = room_fn(fixed_gross, ded, base_magi)
 
         # Allocate room
-        if ya <= 74 and room > 0:
-            yc = min(room, your_ira)
-            plan.your_conversions[year] = yc
-            room -= yc
-        else:
-            yc = 0
+        # Symmetric allocation: older pre-RMD person first (drains the IRA closest to RMD).
+        # On age tie, larger IRA first. Both criteria are symmetric under me↔spouse swap.
+        you_first = (ya > sa) or (ya == sa and your_ira >= spouse_ira)
 
-        if sa <= 74 and room > 0:
-            sc = min(room, spouse_ira)
-            plan.spouse_conversions[year] = sc
+        if you_first:
+            if ya <= 74 and room > 0:
+                yc = min(room, your_ira)
+                plan.your_conversions[year] = yc
+                room -= yc
+            else:
+                yc = 0
+
+            if sa <= 74 and room > 0:
+                sc = min(room, spouse_ira)
+                plan.spouse_conversions[year] = sc
+                room -= sc
+            else:
+                sc = 0
         else:
-            sc = 0
+            if sa <= 74 and room > 0:
+                sc = min(room, spouse_ira)
+                plan.spouse_conversions[year] = sc
+                room -= sc
+            else:
+                sc = 0
+
+            if ya <= 74 and room > 0:
+                yc = min(room, your_ira)
+                plan.your_conversions[year] = yc
+                room -= yc
+            else:
+                yc = 0
 
         # Update IRAs for next year
         your_withdrawal = yc + rmd
