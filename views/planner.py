@@ -46,6 +46,7 @@ def render(hh: Household):
         st.session_state.conv_plan_your = {}
         st.session_state.conv_plan_spouse = {}
         st.session_state.conv_plan_qcd = {}
+        st.session_state.conv_plan_spouse_qcd = {}
 
     with col_btn1:
         if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
@@ -53,6 +54,7 @@ def render(hh: Household):
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
             st.session_state.conv_plan_qcd = plan.qcds
+            st.session_state.conv_plan_spouse_qcd = plan.spouse_qcds
             st.rerun()
 
     with col_btn2:
@@ -60,6 +62,7 @@ def render(hh: Household):
             st.session_state.conv_plan_your = {}
             st.session_state.conv_plan_spouse = {}
             st.session_state.conv_plan_qcd = {}
+            st.session_state.conv_plan_spouse_qcd = {}
             st.rerun()
 
     # --- Build and run scenario ---
@@ -67,6 +70,7 @@ def render(hh: Household):
         your_conversions=dict(st.session_state.conv_plan_your),
         spouse_conversions=dict(st.session_state.conv_plan_spouse),
         qcds=dict(st.session_state.conv_plan_qcd),
+        spouse_qcds=dict(st.session_state.conv_plan_spouse_qcd),
     )
     result = run_scenario(hh, plan, "Custom", end_age=95)
 
@@ -90,7 +94,7 @@ def render(hh: Household):
 
     # We'll use columns for a compact layout
     # Header row
-    hdr_cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1.2, 1.2, 1, 1.2, 1.2])
+    hdr_cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2])
     headers = [
         "Year",
         "You",
@@ -100,6 +104,7 @@ def render(hh: Household):
         "Your Conv",
         "Sp Conv",
         "QCD",
+        "Sp QCD",
         "Gross",
         "Bracket",
         "Conv Tax",
@@ -115,8 +120,9 @@ def render(hh: Household):
         you_can_conv = ya <= 74
         sp_can_conv = sa <= 74
         qcd_ok = ya >= 71
+        sp_qcd_ok = sa >= 71
 
-        cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1.2, 1.2, 1, 1.2, 1.2])
+        cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2])
 
         # Phase color indicator
         phase_emoji = {
@@ -168,7 +174,7 @@ def render(hh: Household):
         else:
             cols[6].markdown("—")
 
-        # QCD input
+        # Your QCD input
         if qcd_ok and ya >= 75:
             qcd_key = f"qcd_{yr.year}"
             qcd_val = st.session_state.conv_plan_qcd.get(yr.year, 0)
@@ -186,24 +192,42 @@ def render(hh: Household):
         else:
             cols[7].markdown("—")
 
+        # Spouse QCD input
+        if sp_qcd_ok and sa >= 75:
+            sp_qcd_key = f"sp_qcd_{yr.year}"
+            sp_qcd_val = st.session_state.conv_plan_spouse_qcd.get(yr.year, 0)
+            new_sp_qcd = cols[8].number_input(
+                f"sp_qcd{yr.year}",
+                value=int(sp_qcd_val),
+                step=5000,
+                min_value=0,
+                max_value=int(hh.qcd_limit),
+                label_visibility="collapsed",
+                key=sp_qcd_key,
+            )
+            if new_sp_qcd != sp_qcd_val:
+                st.session_state.conv_plan_spouse_qcd[yr.year] = new_sp_qcd
+        else:
+            cols[8].markdown("—")
+
         # Computed columns
-        cols[8].markdown(f"${yr.combined_gross:,.0f}")
+        cols[9].markdown(f"${yr.combined_gross:,.0f}")
 
         # Bracket with color
         br_pct = yr.marginal_bracket * 100
         br_color = "green" if br_pct <= 12 else ("orange" if br_pct <= 22 else "red")
-        cols[9].markdown(f":{br_color}[**{br_pct:.0f}%**]")
+        cols[10].markdown(f":{br_color}[**{br_pct:.0f}%**]")
 
-        cols[10].markdown(f"${yr.conversion_tax:,.0f}" if yr.conversion_tax > 0 else "—")
+        cols[11].markdown(f"${yr.conversion_tax:,.0f}" if yr.conversion_tax > 0 else "—")
 
         # Room with color
         r12 = yr.room_12
         r12_color = "green" if r12 > 50_000 else ("orange" if r12 > 0 else "red")
-        cols[11].markdown(f":{r12_color}[${r12:,.0f}]")
+        cols[12].markdown(f":{r12_color}[${r12:,.0f}]")
 
         r22 = yr.room_22
         r22_color = "green" if r22 > 50_000 else ("orange" if r22 > 0 else "red")
-        cols[12].markdown(f":{r22_color}[${r22:,.0f}]")
+        cols[13].markdown(f":{r22_color}[${r22:,.0f}]")
 
     # --- Totals ---
     st.markdown("---")

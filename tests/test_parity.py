@@ -16,8 +16,10 @@ from dataclasses import replace
 import pytest
 
 from engine.scenario import (
+    ConversionPlan,
     auto_fill_22,
     run_no_conversion,
+    run_scenario,
 )
 from models.household import GrowthProfile, Household
 
@@ -217,8 +219,6 @@ class TestMeSpouseParity:
         plan_swapped = auto_fill_22(hh_swapped)
 
         # Run through resulting scenario years to confirm plan execution is symmetric
-        from engine.scenario import run_scenario
-
         result = run_scenario(hh, plan)
         result_swapped = run_scenario(hh_swapped, plan_swapped)
 
@@ -236,6 +236,30 @@ class TestMeSpouseParity:
     # ------------------------------------------------------------------
     # test 8: asymmetric SS claim ages — combined SS still symmetric under swap
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # test 9: symmetric QCDs both spouses — combined taxable RMD parity
+    # ------------------------------------------------------------------
+
+    def test_no_conversion_symmetric_qcds_combined_taxable_rmd(self) -> None:
+        """With QCDs applied symmetrically to both spouses, combined taxable RMD stays symmetric."""
+        hh = self._baseline_hh()
+        hh_sw = self._swap(hh)
+        # Each spouse does 50K of QCDs every RMD year
+        qcds = dict.fromkeys(range(2040, 2061), 50_000.0)
+        plan = ConversionPlan(qcds=qcds, spouse_qcds=qcds)
+        r1 = run_scenario(hh, plan, end_age=95)
+        r2 = run_scenario(hh_sw, plan, end_age=95)
+        min_len = min(len(r1.years), len(r2.years))
+        for i in range(min_len):
+            y1 = r1.years[i]
+            y2 = r2.years[i]
+            c1 = y1.taxable_rmd + y1.spouse_taxable_rmd
+            c2 = y2.taxable_rmd + y2.spouse_taxable_rmd
+            assert c1 == pytest.approx(c2, rel=1e-6), (
+                f"combined taxable_rmd differs at year-index {i} (year={y1.year}): "
+                f"{c1:.2f} vs {c2:.2f}"
+            )
 
     def test_no_conversion_asymmetric_ss_start_age_symmetric(self) -> None:
         """Asymmetric SS claim ages must still produce symmetric combined SS under swap.

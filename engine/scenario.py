@@ -47,6 +47,7 @@ class YearResult:
     qcd: float = 0.0
     taxable_rmd: float = 0.0
     spouse_rmd: float = 0.0
+    spouse_qcd: float = 0.0
     spouse_taxable_rmd: float = 0.0
     your_ss: float = 0.0
     spouse_ss: float = 0.0
@@ -108,6 +109,7 @@ class ConversionPlan:
     your_conversions: dict[int, float] = field(default_factory=dict)  # year -> amount
     spouse_conversions: dict[int, float] = field(default_factory=dict)
     qcds: dict[int, float] = field(default_factory=dict)  # year -> QCD amount
+    spouse_qcds: dict[int, float] = field(default_factory=dict)  # year -> spouse QCD amount
     extra_withdrawals: dict[int, float] = field(default_factory=dict)  # year -> voluntary excess
 
 
@@ -236,7 +238,8 @@ def run_scenario(
         yr.qcd = min(plan.qcds.get(year, 0.0), yr.your_rmd, hh.qcd_limit)
         yr.taxable_rmd = max(yr.your_rmd - yr.qcd, 0)
         yr.spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        yr.spouse_taxable_rmd = yr.spouse_rmd  # Bug C (spouse QCD) will subtract spouse_qcd here in a future PR
+        yr.spouse_qcd = min(plan.spouse_qcds.get(year, 0.0), yr.spouse_rmd, hh.qcd_limit)
+        yr.spouse_taxable_rmd = max(yr.spouse_rmd - yr.spouse_qcd, 0)
 
         # === Extra voluntary withdrawal (bracket fill post-RMD) ===
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
@@ -491,7 +494,7 @@ def _auto_fill_core(
 
         # RMD
         rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
-        taxable_rmd = rmd  # no QCD in auto-fill
+        taxable_rmd = rmd  # no QCD in auto-fill (QCDs reduce income but not conversion room)
         spouse_taxable_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)  # no spouse QCD in auto-fill
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
@@ -664,6 +667,7 @@ def add_bracket_fill_withdrawals(
         your_conversions=dict(base_plan.your_conversions),
         spouse_conversions=dict(base_plan.spouse_conversions),
         qcds=dict(base_plan.qcds),
+        spouse_qcds=dict(base_plan.spouse_qcds),
     )
 
     for yr in result.years:
