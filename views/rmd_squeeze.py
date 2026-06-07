@@ -30,7 +30,7 @@ def render(hh: Household):
     )
 
     # --- Scenario selection ---
-    col_s1, col_s2 = st.columns(2)
+    col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
         show_qcd = st.toggle(
             "Apply QCD Strategy",
@@ -39,12 +39,21 @@ def render(hh: Household):
         )
     with col_s2:
         qcd_annual = st.number_input(
-            "Annual QCD Amount",
+            "Your Annual QCD",
             value=50_000,
             step=5_000,
             format="%d",
             disabled=not show_qcd,
-            help=f"Max ${hh.qcd_limit:,.0f}/yr per person (2026, inflation-indexed).",
+            help=f"Your QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
+        )
+    with col_s3:
+        spouse_qcd_annual = st.number_input(
+            "Spouse Annual QCD",
+            value=50_000,
+            step=5_000,
+            format="%d",
+            disabled=not show_qcd,
+            help=f"Spouse QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
         )
 
     # --- Run scenarios ---
@@ -53,15 +62,26 @@ def render(hh: Household):
 
     # Build QCD plan if toggled
     if show_qcd:
+        your_qcd_years = {
+            yr: qcd_annual
+            for yr in range(hh.base_year, hh.base_year + 35)
+            if hh.your_age_in(yr) >= 75
+        }
+        spouse_qcd_years = {
+            yr: spouse_qcd_annual
+            for yr in range(hh.base_year, hh.base_year + 35)
+            if hh.spouse_age_in(yr) >= 75
+        }
         qcd_plan = ConversionPlan(
             your_conversions=dict(plan_12.your_conversions),
             spouse_conversions=dict(plan_12.spouse_conversions),
-            qcds={yr: qcd_annual for yr in range(hh.base_year, hh.base_year + 35) if hh.your_age_in(yr) >= 75},
+            qcds=your_qcd_years,
+            spouse_qcds=spouse_qcd_years,
         )
         with_conv = run_scenario(hh, qcd_plan, "Fill 12% + QCD", end_age=95)
         no_conv_qcd = run_scenario(
             hh,
-            ConversionPlan(qcds={yr: qcd_annual for yr in range(hh.base_year, hh.base_year + 35) if hh.your_age_in(yr) >= 75}),
+            ConversionPlan(qcds=your_qcd_years, spouse_qcds=spouse_qcd_years),
             "No Conv + QCD",
             end_age=95,
         )
