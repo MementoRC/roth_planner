@@ -74,6 +74,8 @@ def _user_defaults_from_session() -> dict:
         "spouse_ira",
         "your_ss_fra",
         "spouse_ss_fra",
+        "your_ss_start_age",
+        "spouse_ss_start_age",
         "living_expenses",
         "stock_price_now",
     ]
@@ -132,6 +134,8 @@ def _clear_personal_session_state() -> None:
         "spouse_ira",
         "your_ss_fra",
         "spouse_ss_fra",
+        "your_ss_start_age",
+        "spouse_ss_start_age",
         "living_expenses",
         "txn_price",
     ]
@@ -576,6 +580,14 @@ def render(hh: Household) -> None:
                 step=100,
                 format="%d",
             )
+            st.session_state.your_ss_start_age = st.number_input(
+                "Your SS claim age",
+                min_value=62,
+                max_value=70,
+                value=st.session_state.get("your_ss_start_age", 70),
+                step=1,
+                format="%d",
+            )
             st.session_state.your_aca = st.checkbox(
                 "You on ACA Marketplace",
                 value=st.session_state.your_aca,
@@ -601,6 +613,14 @@ def render(hh: Household) -> None:
                 "Spouse SS at FRA 67 ($/mo)",
                 value=st.session_state.spouse_ss_fra,
                 step=100,
+                format="%d",
+            )
+            st.session_state.spouse_ss_start_age = st.number_input(
+                "Spouse SS claim age",
+                min_value=62,
+                max_value=70,
+                value=st.session_state.get("spouse_ss_start_age", 70),
+                step=1,
                 format="%d",
             )
             st.session_state.spouse_aca = st.checkbox(

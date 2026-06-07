@@ -36,6 +36,8 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("growth_rate", 7.0)
     st.session_state.setdefault("your_aca", False)
     st.session_state.setdefault("spouse_aca", False)
+    st.session_state.setdefault("your_ss_start_age", 70)
+    st.session_state.setdefault("spouse_ss_start_age", 70)
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -113,6 +115,14 @@ def get_household() -> Household:
         txn_price_now=st.session_state.txn_price,
         your_aca_enrolled=st.session_state.your_aca,
         spouse_aca_enrolled=st.session_state.spouse_aca,
+        your_ss_start_age=st.session_state.get(
+            "your_ss_start_age",
+            st.session_state.get("ss_start_age", 70),
+        ),
+        spouse_ss_start_age=st.session_state.get(
+            "spouse_ss_start_age",
+            st.session_state.get("ss_start_age", 70),
+        ),
     )
 
     # If portfolio was synced, derive per-account growth and balances

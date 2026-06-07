@@ -35,16 +35,16 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
 
     opt = hh.option_income(year, early=True)
 
-    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.ss_start_age)
-    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.ss_start_age)
+    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
+    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
     your_ss = (
-        ss_with_cola(your_ss_base, ya - hh.ss_start_age, hh.ss_cola)
-        if ya >= hh.ss_start_age
+        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
+        if ya >= hh.your_ss_start_age
         else 0.0
     )
     spouse_ss = (
-        ss_with_cola(spouse_ss_base, sa - hh.ss_start_age, hh.ss_cola)
-        if sa >= hh.ss_start_age
+        ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+        if sa >= hh.spouse_ss_start_age
         else 0.0
     )
     combined_ss = your_ss + spouse_ss
