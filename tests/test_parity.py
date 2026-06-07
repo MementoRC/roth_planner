@@ -49,6 +49,8 @@ class TestMeSpouseParity:
             spouse_ira=hh.your_ira,
             your_ss_fra=hh.spouse_ss_fra,
             spouse_ss_fra=hh.your_ss_fra,
+            your_ss_start_age=hh.spouse_ss_start_age,
+            spouse_ss_start_age=hh.your_ss_start_age,
             your_ira_growth=hh.spouse_ira_growth,
             spouse_ira_growth=hh.your_ira_growth,
             your_aca_enrolled=hh.spouse_aca_enrolled,
@@ -229,4 +231,31 @@ class TestMeSpouseParity:
             assert combined == pytest.approx(combined_swapped, rel=1e-6), (
                 f"Year index {i} (year={yr.year}): per-year combined conversion "
                 f"{combined:.2f} != swapped {combined_swapped:.2f}"
+            )
+
+    # ------------------------------------------------------------------
+    # test 8: asymmetric SS claim ages — combined SS still symmetric under swap
+    # ------------------------------------------------------------------
+
+    def test_no_conversion_asymmetric_ss_start_age_symmetric(self) -> None:
+        """Asymmetric SS claim ages must still produce symmetric combined SS under swap.
+
+        you=70, spouse=67 → after swap: you=67, spouse=70. The per-person SS
+        amounts flip but the combined sum for each year-index must be equal.
+        """
+        hh = replace(self._baseline_hh(), your_ss_start_age=70, spouse_ss_start_age=67)
+        hh_sw = self._swap(hh)
+
+        r1 = run_no_conversion(hh, end_age=95)
+        r2 = run_no_conversion(hh_sw, end_age=95)
+
+        min_len = min(len(r1.years), len(r2.years))
+        for i in range(min_len):
+            y1 = r1.years[i]
+            y2 = r2.years[i]
+            c1 = y1.your_ss + y1.spouse_ss
+            c2 = y2.your_ss + y2.spouse_ss
+            assert c1 == pytest.approx(c2, rel=1e-6), (
+                f"combined SS differs at year-index {i} (year={y1.year}): "
+                f"{c1:.2f} vs {c2:.2f}"
             )

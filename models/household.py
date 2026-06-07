@@ -59,7 +59,9 @@ class Household:
     # Social Security (monthly at FRA 67)
     your_ss_fra: float = _D["your_ss_fra"]  # $/month at FRA
     spouse_ss_fra: float = _D["spouse_ss_fra"]
-    ss_start_age: int = 70  # both delay to 70
+    ss_start_age: int = 70  # DEPRECATED — use your_ss_start_age / spouse_ss_start_age
+    your_ss_start_age: int = 70  # age you begin claiming SS (62–70)
+    spouse_ss_start_age: int = 70  # age spouse begins claiming SS (62–70)
     ss_cola: float = 0.025  # 2.5% annual COLA
 
     # Growth & inflation
@@ -117,12 +119,12 @@ class Household:
 
     def your_ss_at_70(self) -> float:
         """Annual SS if delayed to 70 (8%/yr for 3 years past FRA 67)."""
-        delay_years = self.ss_start_age - 67
+        delay_years = self.your_ss_start_age - 67
         factor = 1 + delay_years * 0.08  # 24% increase
         return self.your_ss_fra * factor * 12
 
     def spouse_ss_at_70(self) -> float:
-        delay_years = self.ss_start_age - 67
+        delay_years = self.spouse_ss_start_age - 67
         factor = 1 + delay_years * 0.08
         return self.spouse_ss_fra * factor * 12
 

@@ -31,6 +31,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             "your_age": "spouse_age",
             "your_ira": "spouse_ira",
             "your_ss_fra": "spouse_ss_fra",
+            "your_ss_start_age": "spouse_ss_start_age",
         }
         for file_k, sess_k in spouse_field_map.items():
             if file_k in data:
@@ -43,6 +44,8 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         "spouse_ira",
         "your_ss_fra",
         "spouse_ss_fra",
+        "your_ss_start_age",
+        "spouse_ss_start_age",
         "living_expenses",
         "stock_price_now",
     ]
