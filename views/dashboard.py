@@ -272,8 +272,8 @@ def render(hh: Household):
                 st.markdown(
                     f"IRA (WC): **${(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin) / 1e6:.1f}M**"
                 )
-                st.markdown(f"RMD (NC): ${yr_nc.your_rmd:,.0f}")
-                st.markdown(f"RMD (WC): ${yr_wc.your_rmd:,.0f}")
+                st.markdown(f"RMD (NC): ${yr_nc.your_rmd + yr_nc.spouse_rmd:,.0f}")
+                st.markdown(f"RMD (WC): ${yr_wc.your_rmd + yr_wc.spouse_rmd:,.0f}")
                 color = "green" if nb > 0 else "red"
                 st.markdown(f"Net: :{color}[**${nb:,.0f}**]")
 
@@ -335,8 +335,8 @@ def render(hh: Household):
                         "Sp": yr_nc.spouse_age,
                         "IRA (NC)": yr_nc.your_ira_begin + yr_nc.spouse_ira_begin,
                         "IRA (WC)": yr_wc.your_ira_begin + yr_wc.spouse_ira_begin,
-                        "RMD (NC)": yr_nc.your_rmd,
-                        "RMD (WC)": yr_wc.your_rmd,
+                        "RMD (NC)": yr_nc.your_rmd + yr_nc.spouse_rmd,
+                        "RMD (WC)": yr_wc.your_rmd + yr_wc.spouse_rmd,
                         "Tax (NC)": yr_nc.federal_tax_amt,
                         "Tax (WC)": yr_wc.federal_tax_amt,
                         "Tax Saved": yr_nc.federal_tax_amt - yr_wc.federal_tax_amt,
