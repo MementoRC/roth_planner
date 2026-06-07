@@ -98,8 +98,8 @@ def render(hh: Household):
             f"{(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin - yr75_nc.your_ira_begin - yr75_nc.spouse_ira_begin) / 1e6:+.2f}M",
         )
     with c3:
-        total_rmd_nc = sum(yr.your_rmd for yr in rmd_nc)
-        total_rmd_wc = sum(yr.your_rmd for yr in rmd_wc)
+        total_rmd_nc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_nc)
+        total_rmd_wc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_wc)
         st.metric(
             "Total RMDs (75-95)",
             f"${total_rmd_nc / 1e6:.1f}M",
@@ -323,8 +323,8 @@ def render(hh: Household):
             "You/Sp": f"{nc.your_age}/{nc.spouse_age}",
             "IRA (NC)": f"${(nc.your_ira_begin + nc.spouse_ira_begin) / 1e6:.2f}M",
             "IRA (WC)": f"${(wc.your_ira_begin + wc.spouse_ira_begin) / 1e6:.2f}M",
-            "RMD (NC)": f"${nc.your_rmd:,.0f}",
-            "RMD (WC)": f"${wc.your_rmd:,.0f}",
+            "RMD (NC)": f"${nc.your_rmd + nc.spouse_rmd:,.0f}",
+            "RMD (WC)": f"${wc.your_rmd + wc.spouse_rmd:,.0f}",
             "SS": f"${nc.combined_ss:,.0f}",
             "Bracket (NC)": f"{nc.marginal_bracket * 100:.0f}%",
             "Bracket (WC)": f"{wc.marginal_bracket * 100:.0f}%",

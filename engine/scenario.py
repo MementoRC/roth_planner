@@ -46,6 +46,8 @@ class YearResult:
     your_rmd: float = 0.0
     qcd: float = 0.0
     taxable_rmd: float = 0.0
+    spouse_rmd: float = 0.0
+    spouse_taxable_rmd: float = 0.0
     your_ss: float = 0.0
     spouse_ss: float = 0.0
     combined_ss: float = 0.0
@@ -233,6 +235,8 @@ def run_scenario(
         yr.your_rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
         yr.qcd = min(plan.qcds.get(year, 0.0), yr.your_rmd, hh.qcd_limit)
         yr.taxable_rmd = max(yr.your_rmd - yr.qcd, 0)
+        yr.spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
+        yr.spouse_taxable_rmd = yr.spouse_rmd  # Bug C (spouse QCD) will subtract spouse_qcd here in a future PR
 
         # === Extra voluntary withdrawal (bracket fill post-RMD) ===
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
@@ -253,12 +257,13 @@ def run_scenario(
         yr.combined_ss = yr.your_ss + yr.spouse_ss
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
-        # QCD IS excluded from MAGI, so use taxable_rmd
+        # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd
         yr.magi = (
             yr.option_income
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
+            + yr.spouse_taxable_rmd
             + yr.extra_withdrawal
             + yr.combined_ss
         )
@@ -280,6 +285,7 @@ def run_scenario(
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
+            + yr.spouse_taxable_rmd
             + yr.extra_withdrawal
         )
         # YTD ordinary income affects SS taxation
@@ -294,6 +300,7 @@ def run_scenario(
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
+            + yr.spouse_taxable_rmd
             + yr.extra_withdrawal
             + yr.taxable_ss_amt
         )
@@ -392,10 +399,7 @@ def run_scenario(
 
         # === IRA end of year ===
         your_withdrawal = yr.your_conversion + yr.your_rmd + yr.extra_withdrawal
-        spouse_withdrawal = yr.spouse_conversion
-        # Spouse RMD (if spouse hits 75)
-        spouse_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)
-        spouse_withdrawal += spouse_rmd
+        spouse_withdrawal = yr.spouse_conversion + yr.spouse_rmd
 
         yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
         yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.spouse_ira_rate(year))
@@ -488,23 +492,33 @@ def _auto_fill_core(
         # RMD
         rmd = calc_rmd(your_ira, ya, hh.rmd_start_age)
         taxable_rmd = rmd  # no QCD in auto-fill
+        spouse_taxable_rmd = calc_rmd(spouse_ira, sa, hh.rmd_start_age)  # no spouse QCD in auto-fill
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
         # Identical to approx_magi in the former 12/22 variants; passed to room_fn
         # so the IRMAA-safe variant can enforce its joint-MAGI ceiling.
-        base_magi = opt + combined_ss + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        base_magi = (
+            opt
+            + combined_ss
+            + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+            + spouse_taxable_rmd
+        )
         if ytd_year is not None:
             base_magi += ytd_year.magi_ytd
 
         # Taxable SS (need to estimate with current other income)
-        other_fixed = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+        other_fixed = (
+            opt
+            + (taxable_rmd if ya >= hh.rmd_start_age else 0)
+            + spouse_taxable_rmd
+        )
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
             other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
         tss = taxable_ss(combined_ss, other_fixed)
 
         # Fixed gross (ordinary income — no LTCG)
-        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + tss
+        fixed_gross = opt + (taxable_rmd if ya >= hh.rmd_start_age else 0) + spouse_taxable_rmd + tss
         if ytd_year is not None:
             fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
 
@@ -516,18 +530,38 @@ def _auto_fill_core(
         room = room_fn(fixed_gross, ded, base_magi)
 
         # Allocate room
-        if ya <= 74 and room > 0:
-            yc = min(room, your_ira)
-            plan.your_conversions[year] = yc
-            room -= yc
-        else:
-            yc = 0
+        # Symmetric allocation: older pre-RMD person first (drains the IRA closest to RMD).
+        # On age tie, larger IRA first. Both criteria are symmetric under me↔spouse swap.
+        you_first = (ya > sa) or (ya == sa and your_ira >= spouse_ira)
 
-        if sa <= 74 and room > 0:
-            sc = min(room, spouse_ira)
-            plan.spouse_conversions[year] = sc
+        if you_first:
+            if ya <= 74 and room > 0:
+                yc = min(room, your_ira)
+                plan.your_conversions[year] = yc
+                room -= yc
+            else:
+                yc = 0
+
+            if sa <= 74 and room > 0:
+                sc = min(room, spouse_ira)
+                plan.spouse_conversions[year] = sc
+                room -= sc
+            else:
+                sc = 0
         else:
-            sc = 0
+            if sa <= 74 and room > 0:
+                sc = min(room, spouse_ira)
+                plan.spouse_conversions[year] = sc
+                room -= sc
+            else:
+                sc = 0
+
+            if ya <= 74 and room > 0:
+                yc = min(room, your_ira)
+                plan.your_conversions[year] = yc
+                room -= yc
+            else:
+                yc = 0
 
         # Update IRAs for next year
         your_withdrawal = yc + rmd

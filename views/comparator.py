@@ -256,7 +256,7 @@ def render(hh: Household):
     rmd_ages = [a for a in ages if a >= 75]
 
     for i, s in enumerate(scenarios):
-        rmd_vals = [yr.your_rmd for yr in s.years if yr.your_age >= 75]
+        rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= 75]
         fig_rmd.add_trace(go.Bar(
             x=rmd_ages, y=rmd_vals,
             name=s.name,
@@ -286,7 +286,8 @@ def render(hh: Household):
             if yr:
                 ira = yr.your_ira_begin + yr.spouse_ira_begin
                 row[f"{s.name} IRA"] = f"${ira / 1e6:.2f}M"
-                row[f"{s.name} RMD"] = f"${yr.your_rmd:,.0f}" if yr.your_rmd > 0 else "---"
+                total_rmd = yr.your_rmd + yr.spouse_rmd
+                row[f"{s.name} RMD"] = f"${total_rmd:,.0f}" if total_rmd > 0 else "---"
                 row[f"{s.name} Bracket"] = f"{yr.marginal_bracket * 100:.0f}%"
             else:
                 row[f"{s.name} IRA"] = "---"

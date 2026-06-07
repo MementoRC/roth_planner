@@ -85,11 +85,6 @@ class TestMeSpouseParity:
     # test 2: federal_tax symmetric under no-conversion (MFJ combined)
     # ------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Bug H — spouse_rmd computed but never added to yr.magi / yr.combined_gross "
-               "(engine/scenario.py:397-401). Removes when Bug H lands.",
-    )
     def test_no_conversion_federal_tax_symmetric(self) -> None:
         """Federal tax is a single MFJ number — must be symmetric after swap."""
         hh = self._baseline_hh()
@@ -111,11 +106,6 @@ class TestMeSpouseParity:
     # test 3: MAGI symmetric under no-conversion
     # ------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Bug H — spouse_rmd computed but never added to yr.magi / yr.combined_gross "
-               "(engine/scenario.py:397-401). Removes when Bug H lands.",
-    )
     def test_no_conversion_magi_symmetric(self) -> None:
         """MAGI must be identical year-by-year after swap (no grants in baseline)."""
         hh = self._baseline_hh()
@@ -183,11 +173,6 @@ class TestMeSpouseParity:
     # test 6: auto_fill_22 total conversions symmetric
     # ------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Bug I — _auto_fill_core omits spouse RMD from base_magi "
-               "(engine/scenario.py:489-510). Same root cause as Bug H. Removes when Bug I lands.",
-    )
     def test_auto_fill_22_combined_conversions_symmetric(self) -> None:
         """Sum of all conversions over the plan horizon must be symmetric.
 
@@ -221,11 +206,6 @@ class TestMeSpouseParity:
     #         but iterating from the plan dicts directly — belt-and-suspenders)
     # ------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Bug I — _auto_fill_core omits spouse RMD from base_magi "
-               "(engine/scenario.py:489-510). Same root cause as Bug H. Removes when Bug I lands.",
-    )
     def test_auto_fill_22_per_year_conversion_symmetric(self) -> None:
         """Per-year combined conversions must match under swap."""
         hh = self._baseline_hh()
