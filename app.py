@@ -129,6 +129,18 @@ def get_household() -> Household:
             )
         if _spouse_pretax > 0:
             hh.spouse_ira = _spouse_pretax
+            _spouse_pretax_accounts = [
+                a for a in snap.pretax_accounts if a.owner == "spouse"
+            ]
+            _spouse_pretax_weighted_return = (
+                sum(a.total_value * a.weighted_return for a in _spouse_pretax_accounts)
+                / _spouse_pretax
+                if _spouse_pretax_accounts
+                else snap.pretax_weighted_return
+            )
+            hh.spouse_ira_growth = GrowthProfile(
+                default_rate=_spouse_pretax_weighted_return,
+            )
 
         # Brokerage weighted return + dividend forecast (aggregate across all owners)
         brokerage_accounts = snap.brokerage_accounts
