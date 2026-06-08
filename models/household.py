@@ -93,7 +93,9 @@ class Household:
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
 
     # RMD
-    rmd_start_age: int = 75  # SECURE 2.0 for born after 1960
+    rmd_start_age: int = 75  # DEPRECATED — use your_rmd_start_age / spouse_rmd_start_age
+    your_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
+    spouse_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
 
     # Healthcare coverage
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
@@ -108,13 +110,13 @@ class Household:
 
     @property
     def your_conv_window(self) -> int:
-        """Years you can convert (age now through rmd_start_age - 1)."""
-        return max(self.rmd_start_age - 1 - self.your_age + 1, 0)
+        """Years you can convert (age now through your_rmd_start_age - 1)."""
+        return max(self.your_rmd_start_age - 1 - self.your_age + 1, 0)
 
     @property
     def spouse_conv_window(self) -> int:
-        """Years spouse can convert (age now through rmd_start_age - 1)."""
-        return max(self.rmd_start_age - 1 - self.spouse_age + 1, 0)
+        """Years spouse can convert (age now through spouse_rmd_start_age - 1)."""
+        return max(self.spouse_rmd_start_age - 1 - self.spouse_age + 1, 0)
 
     def your_age_in(self, year: int) -> int:
         return self.your_age + (year - self.base_year)

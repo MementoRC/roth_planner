@@ -117,7 +117,7 @@ def project_asset_location(
         yr.conv_bond = conv_bd
 
         # RMD (proportional withdrawal from both asset classes)
-        rmd = calc_rmd(ira_total, ya, hh.rmd_start_age)
+        rmd = calc_rmd(ira_total, ya, hh.your_rmd_start_age)
         yr.rmd = rmd
 
         # RMD is always proportional to current allocation
