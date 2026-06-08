@@ -40,6 +40,8 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("spouse_ss_start_age", 70)
     st.session_state.setdefault("your_rmd_start_age", 75)
     st.session_state.setdefault("spouse_rmd_start_age", 75)
+    st.session_state.setdefault("your_fra_age", 67)
+    st.session_state.setdefault("spouse_fra_age", 67)
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -133,6 +135,8 @@ def get_household() -> Household:
             "spouse_rmd_start_age",
             st.session_state.get("rmd_start_age", 75),
         ),
+        your_fra_age=st.session_state.get("your_fra_age", 67),
+        spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
     )
 
     # If portfolio was synced, derive per-account growth and balances
@@ -149,9 +153,7 @@ def get_household() -> Household:
             )
         if _spouse_pretax > 0:
             hh.spouse_ira = _spouse_pretax
-            _spouse_pretax_accounts = [
-                a for a in snap.pretax_accounts if a.owner == "spouse"
-            ]
+            _spouse_pretax_accounts = [a for a in snap.pretax_accounts if a.owner == "spouse"]
             _spouse_pretax_weighted_return = (
                 sum(a.total_value * a.weighted_return for a in _spouse_pretax_accounts)
                 / _spouse_pretax

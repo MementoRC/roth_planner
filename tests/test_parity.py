@@ -56,6 +56,8 @@ class TestMeSpouseParity:
             spouse_ss_start_age=hh.your_ss_start_age,
             your_rmd_start_age=hh.spouse_rmd_start_age,
             spouse_rmd_start_age=hh.your_rmd_start_age,
+            your_fra_age=hh.spouse_fra_age,
+            spouse_fra_age=hh.your_fra_age,
             your_ira_growth=hh.spouse_ira_growth,
             spouse_ira_growth=hh.your_ira_growth,
             your_aca_enrolled=hh.spouse_aca_enrolled,
@@ -126,8 +128,7 @@ class TestMeSpouseParity:
             yr = result.years[i]
             yr_s = result_swapped.years[i]
             assert yr.magi == pytest.approx(yr_s.magi, rel=1e-6), (
-                f"Year index {i} (year={yr.year}): magi "
-                f"{yr.magi:.2f} != swapped {yr_s.magi:.2f}"
+                f"Year index {i} (year={yr.year}): magi {yr.magi:.2f} != swapped {yr_s.magi:.2f}"
             )
 
     # ------------------------------------------------------------------
@@ -194,16 +195,17 @@ class TestMeSpouseParity:
         plan_swapped = auto_fill_22(hh_swapped)
 
         all_years = sorted(
-            set(plan.your_conversions) | set(plan.spouse_conversions)
-            | set(plan_swapped.your_conversions) | set(plan_swapped.spouse_conversions)
+            set(plan.your_conversions)
+            | set(plan.spouse_conversions)
+            | set(plan_swapped.your_conversions)
+            | set(plan_swapped.spouse_conversions)
         )
 
         for year in all_years:
             total = plan.your_conversions.get(year, 0.0) + plan.spouse_conversions.get(year, 0.0)
-            total_swapped = (
-                plan_swapped.your_conversions.get(year, 0.0)
-                + plan_swapped.spouse_conversions.get(year, 0.0)
-            )
+            total_swapped = plan_swapped.your_conversions.get(
+                year, 0.0
+            ) + plan_swapped.spouse_conversions.get(year, 0.0)
             assert total == pytest.approx(total_swapped, rel=1e-6), (
                 f"Year {year}: combined conversions {total:.2f} != swapped {total_swapped:.2f}"
             )
@@ -283,8 +285,7 @@ class TestMeSpouseParity:
             c1 = y1.your_ss + y1.spouse_ss
             c2 = y2.your_ss + y2.spouse_ss
             assert c1 == pytest.approx(c2, rel=1e-6), (
-                f"combined SS differs at year-index {i} (year={y1.year}): "
-                f"{c1:.2f} vs {c2:.2f}"
+                f"combined SS differs at year-index {i} (year={y1.year}): {c1:.2f} vs {c2:.2f}"
             )
 
     # ------------------------------------------------------------------
@@ -332,7 +333,7 @@ class TestMeSpouseParity:
         hh = Household(
             your_age=74,
             spouse_age=72,
-            your_ira=200_000,   # small — depletes quickly under RMD
+            your_ira=200_000,  # small — depletes quickly under RMD
             spouse_ira=1_500_000,
             your_ss_fra=3_800.0,
             spouse_ss_fra=3_200.0,
@@ -353,3 +354,34 @@ class TestMeSpouseParity:
         # All spouse extra withdrawals should be positive
         for year, amt in plan.spouse_extra_withdrawals.items():
             assert amt > 0, f"spouse_extra_withdrawals[{year}] = {amt} should be positive"
+
+    # ------------------------------------------------------------------
+    # test 13 (E1): per-spouse FRA age — combined SS still symmetric under swap
+    # ------------------------------------------------------------------
+
+    def test_asymmetric_fra_ages_combined_ss_symmetric(self) -> None:
+        """Asymmetric FRA ages must still produce symmetric combined SS under swap.
+
+        your_fra_age=66 (pre-1960 cohort), spouse_fra_age=67 (1960+ cohort).
+        After swap: your=67, spouse=66. Per-person SS amounts differ but
+        combined SS for each year-index must be equal.
+        """
+        hh = replace(
+            self._baseline_hh(),
+            your_fra_age=66,
+            spouse_fra_age=67,
+        )
+        hh_sw = self._swap(hh)
+
+        r1 = run_no_conversion(hh, end_age=95)
+        r2 = run_no_conversion(hh_sw, end_age=95)
+
+        min_len = min(len(r1.years), len(r2.years))
+        for i in range(min_len):
+            y1 = r1.years[i]
+            y2 = r2.years[i]
+            c1 = y1.your_ss + y1.spouse_ss
+            c2 = y2.your_ss + y2.spouse_ss
+            assert c1 == pytest.approx(c2, rel=1e-6), (
+                f"combined SS differs at year-index {i} (year={y1.year}): {c1:.2f} vs {c2:.2f}"
+            )

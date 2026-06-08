@@ -54,8 +54,12 @@ class YearResult:
     combined_ss: float = 0.0
     taxable_ss_amt: float = 0.0
 
-    extra_withdrawal: float = 0.0  # voluntary excess withdrawal from your IRA (post-RMD bracket fill)
-    spouse_extra_withdrawal: float = 0.0  # voluntary excess withdrawal from spouse IRA (post-RMD bracket fill)
+    extra_withdrawal: float = (
+        0.0  # voluntary excess withdrawal from your IRA (post-RMD bracket fill)
+    )
+    spouse_extra_withdrawal: float = (
+        0.0  # voluntary excess withdrawal from spouse IRA (post-RMD bracket fill)
+    )
 
     # YTD actuals (base year only, when ytd snapshot provided)
     ytd_wages: float = 0.0
@@ -111,8 +115,12 @@ class ConversionPlan:
     spouse_conversions: dict[int, float] = field(default_factory=dict)
     qcds: dict[int, float] = field(default_factory=dict)  # year -> QCD amount
     spouse_qcds: dict[int, float] = field(default_factory=dict)  # year -> spouse QCD amount
-    extra_withdrawals: dict[int, float] = field(default_factory=dict)  # year -> voluntary excess (your IRA)
-    spouse_extra_withdrawals: dict[int, float] = field(default_factory=dict)  # year -> voluntary excess (spouse IRA)
+    extra_withdrawals: dict[int, float] = field(
+        default_factory=dict
+    )  # year -> voluntary excess (your IRA)
+    spouse_extra_withdrawals: dict[int, float] = field(
+        default_factory=dict
+    )  # year -> voluntary excess (spouse IRA)
 
 
 @dataclass
@@ -248,8 +256,10 @@ def run_scenario(
         yr.spouse_extra_withdrawal = plan.spouse_extra_withdrawals.get(year, 0.0)
 
         # === Social Security ===
-        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
-        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        spouse_ss_base = ss_benefit_at_age(
+            hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age
+        )
         yr.your_ss = (
             ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
             if ya >= hh.your_ss_start_age
@@ -471,7 +481,9 @@ def _auto_fill_core(
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
 
-    for yr_idx in range(hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6):  # +6 for spouse squeeze years
+    for yr_idx in range(
+        hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
+    ):  # +6 for spouse squeeze years
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
@@ -484,8 +496,10 @@ def _auto_fill_core(
         opt = hh.option_income(year, early_exercise)
 
         # SS
-        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
-        spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        spouse_ss_base = ss_benefit_at_age(
+            hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age
+        )
         your_ss = (
             ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
             if ya >= hh.your_ss_start_age
@@ -501,7 +515,9 @@ def _auto_fill_core(
         # RMD
         rmd = calc_rmd(your_ira, ya, hh.your_rmd_start_age)
         taxable_rmd = rmd  # no QCD in auto-fill (QCDs reduce income but not conversion room)
-        spouse_taxable_rmd = calc_rmd(spouse_ira, sa, hh.spouse_rmd_start_age)  # no spouse QCD in auto-fill
+        spouse_taxable_rmd = calc_rmd(
+            spouse_ira, sa, hh.spouse_rmd_start_age
+        )  # no spouse QCD in auto-fill
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
         # Identical to approx_magi in the former 12/22 variants; passed to room_fn
@@ -516,18 +532,16 @@ def _auto_fill_core(
             base_magi += ytd_year.magi_ytd
 
         # Taxable SS (need to estimate with current other income)
-        other_fixed = (
-            opt
-            + (taxable_rmd if ya >= hh.your_rmd_start_age else 0)
-            + spouse_taxable_rmd
-        )
+        other_fixed = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
             other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
         tss = taxable_ss(combined_ss, other_fixed)
 
         # Fixed gross (ordinary income — no LTCG)
-        fixed_gross = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd + tss
+        fixed_gross = (
+            opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd + tss
+        )
         if ytd_year is not None:
             fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
 
@@ -697,9 +711,7 @@ def add_bracket_fill_withdrawals(
 
         # Offer spouse IRA for any remaining room (spouse still has balance)
         if room > 1000 and yr.spouse_ira_begin > yr.spouse_rmd:
-            spouse_available = max(
-                yr.spouse_ira_begin - yr.spouse_rmd - yr.spouse_conversion, 0
-            )
+            spouse_available = max(yr.spouse_ira_begin - yr.spouse_rmd - yr.spouse_conversion, 0)
             spouse_extra = min(room, spouse_available)
             if spouse_extra > 1000:
                 plan.spouse_extra_withdrawals[yr.year] = spouse_extra

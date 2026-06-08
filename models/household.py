@@ -86,11 +86,13 @@ class Household:
     ltcg_rate: float = 0.15
 
     # Stock option grants
-    grants: list[StockGrant] = field(
-        default_factory=lambda: list(_D["grants"])
-    )
+    grants: list[StockGrant] = field(default_factory=lambda: list(_D["grants"]))
     txn_price_now: float = _D["stock_price_now"]  # current stock price
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
+
+    # FRA (Full Retirement Age for SS benefit calculation)
+    your_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
+    spouse_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
 
     # RMD
     rmd_start_age: int = 75  # DEPRECATED — use your_rmd_start_age / spouse_rmd_start_age
@@ -125,13 +127,14 @@ class Household:
         return self.spouse_age + (year - self.base_year)
 
     def your_ss_at_70(self) -> float:
-        """Annual SS if delayed to 70 (8%/yr for 3 years past FRA 67)."""
-        delay_years = self.your_ss_start_age - 67
-        factor = 1 + delay_years * 0.08  # 24% increase
+        """Annual SS if delayed to 70 (8%/yr past your FRA)."""
+        delay_years = self.your_ss_start_age - self.your_fra_age
+        factor = 1 + delay_years * 0.08
         return self.your_ss_fra * factor * 12
 
     def spouse_ss_at_70(self) -> float:
-        delay_years = self.spouse_ss_start_age - 67
+        """Annual SS if delayed to 70 (8%/yr past spouse FRA)."""
+        delay_years = self.spouse_ss_start_age - self.spouse_fra_age
         factor = 1 + delay_years * 0.08
         return self.spouse_ss_fra * factor * 12
 
