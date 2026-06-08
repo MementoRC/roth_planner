@@ -82,6 +82,7 @@ def _user_defaults_from_session() -> dict:
         "spouse_fra_age",
         "living_expenses",
         "stock_price_now",
+        "aca_benchmark_premium_annual",
     ]
     payload: dict = {}
     for k in scalar_keys:
@@ -146,6 +147,7 @@ def _clear_personal_session_state() -> None:
         "spouse_fra_age",
         "living_expenses",
         "txn_price",
+        "aca_benchmark_premium_annual",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -714,6 +716,21 @@ def render(hh: Household) -> None:
                 value=st.session_state.txn_price,
                 step=5,
                 format="%d",
+            )
+            st.session_state["aca_benchmark_premium_annual"] = st.number_input(
+                "ACA Benchmark Premium ($/yr)",
+                min_value=0,
+                max_value=60_000,
+                value=int(
+                    st.session_state.get("aca_benchmark_premium_annual", 21_600.0)
+                ),
+                step=100,
+                format="%d",
+                help=(
+                    "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
+                    "for your age group. Used to calculate ACA subsidy loss from conversions. "
+                    "Varies widely by geography — check healthcare.gov for your area."
+                ),
             )
 
     # ------------------------------------------------------------------
