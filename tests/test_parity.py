@@ -17,8 +17,8 @@ import pytest
 
 from engine.scenario import (
     ConversionPlan,
-    auto_fill_22,
     add_bracket_fill_withdrawals,
+    auto_fill_22,
     run_no_conversion,
     run_scenario,
 )
