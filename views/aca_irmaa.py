@@ -102,7 +102,9 @@ def render(hh: Household):
             aca_loss_vals.append(0)
 
         # IRMAA
-        surcharge = irmaa_surcharge(magi, num_people=2)
+        surcharge = irmaa_surcharge(
+            magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+        )
         irmaa_vals.append(surcharge)
         irmaa_tier_vals.append(irmaa_tier(magi))
 
@@ -116,7 +118,9 @@ def render(hh: Household):
         marginal_vals.append(marginal_rate(taxable))
 
         # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
-        base_irmaa = irmaa_surcharge(base_magi, num_people=2)
+        base_irmaa = irmaa_surcharge(
+            base_magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+        )
         base_niit = niit(base_magi, net_inv_income)
         hidden = (
             aca_subsidy_loss(base_magi, magi)
@@ -232,7 +236,9 @@ def render(hh: Household):
     fig_hidden = go.Figure()
 
     # Stacked area: ACA loss + IRMAA increase + NIIT increase
-    base_irmaa = irmaa_surcharge(base_magi, num_people=2)
+    base_irmaa = irmaa_surcharge(
+        base_magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+    )
     base_niit = niit(base_magi, net_inv_income)
     irmaa_increase = [max(v - base_irmaa, 0) for v in irmaa_vals]
     niit_increase = [max(v - base_niit, 0) for v in niit_vals]

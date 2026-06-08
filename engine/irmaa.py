@@ -24,20 +24,23 @@ BASE_PART_B = 202.90 * 12  # annual per person
 BASE_PART_D = 0.0  # base Part D surcharge is $0
 
 
-def irmaa_surcharge(magi: float, num_people: int = 2) -> float:
+def irmaa_surcharge(
+    magi: float, num_people: int = 2, base_part_b: float = BASE_PART_B
+) -> float:
     """
     Calculate total annual IRMAA surcharge for household.
 
     Args:
         magi: Modified Adjusted Gross Income (joint)
         num_people: number of people on Medicare (1 or 2)
+        base_part_b: annual per-person base Part B premium (default: module constant)
 
     Returns:
         Total annual surcharge above base premiums.
     """
     for threshold, part_b_annual, part_d_annual in reversed(IRMAA_TIERS_MFJ):
         if magi > threshold:
-            surcharge_per_person = (part_b_annual - BASE_PART_B) + (part_d_annual - BASE_PART_D)
+            surcharge_per_person = (part_b_annual - base_part_b) + (part_d_annual - BASE_PART_D)
             return surcharge_per_person * num_people
     return 0.0
 
@@ -51,7 +54,10 @@ def irmaa_tier(magi: float) -> int:
 
 
 def irmaa_for_year(
-    income_year_magi: float, your_age_income_year: int, spouse_age_income_year: int
+    income_year_magi: float,
+    your_age_income_year: int,
+    spouse_age_income_year: int,
+    base_part_b: float = BASE_PART_B,
 ) -> tuple[float, int]:
     """
     Calculate IRMAA that will be charged 2 years AFTER the income year.
@@ -69,7 +75,7 @@ def irmaa_for_year(
     if on_medicare == 0:
         return 0.0, 0
 
-    surcharge = irmaa_surcharge(income_year_magi, on_medicare)
+    surcharge = irmaa_surcharge(income_year_magi, on_medicare, base_part_b)
     return surcharge, your_age_income_year + 2
 
 
