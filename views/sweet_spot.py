@@ -76,8 +76,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
     }
 
 
-def _all_in_at_conversion(hh: Household, base: dict, conv: float,
-                           net_inv_income: float) -> dict:
+def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income: float) -> dict:
     """Compute all-in costs at a given conversion amount."""
     ya, sa = base["ya"], base["sa"]
 
@@ -111,10 +110,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float,
     irmaa_delta = irmaa_cost - base_irmaa
 
     # ACA
-    anyone_on_aca = (
-        aca_applies(ya, hh.your_aca_enrolled)
-        or aca_applies(sa, hh.spouse_aca_enrolled)
-    )
+    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     aca_loss = aca_subsidy_loss(base["base_magi"], magi) if anyone_on_aca else 0.0
 
     # NIIT
@@ -152,13 +148,15 @@ def _find_sweet_spots(results: list[dict]) -> list[dict]:
             continue
         marginal = (curr["all_in"] - prev["all_in"]) / STEP * 100  # per $100
         if i > 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
-            spots.append({
-                "conv": prev["conv"],
-                "label": f"${prev['conv']:,.0f}",
-                "reason": _classify_jump(prev, curr),
-                "marginal_before": prev_marginal,
-                "marginal_after": marginal,
-            })
+            spots.append(
+                {
+                    "conv": prev["conv"],
+                    "label": f"${prev['conv']:,.0f}",
+                    "reason": _classify_jump(prev, curr),
+                    "marginal_before": prev_marginal,
+                    "marginal_after": marginal,
+                }
+            )
         prev_marginal = marginal
 
     return spots
@@ -206,7 +204,7 @@ def render(hh: Household):
             step=5_000,
             format="%d",
             help="Capital gains + dividends + interest from brokerage. "
-                 "Used to estimate NIIT impact.",
+            "Used to estimate NIIT impact.",
         )
 
     # --- Compute base income ---
@@ -222,10 +220,12 @@ def render(hh: Household):
     c4.metric("Base MAGI", f"${base['base_magi']:,.0f}")
 
     # --- Sweep conversion amounts ---
-    max_conv = int(min(
-        base["total_ded"] + BRACKETS_MFJ[-2][0],  # up to 35% bracket
-        hh.your_ira + hh.spouse_ira,
-    ))
+    max_conv = int(
+        min(
+            base["total_ded"] + BRACKETS_MFJ[-2][0],  # up to 35% bracket
+            hh.your_ira + hh.spouse_ira,
+        )
+    )
     max_conv = min(max_conv, 800_000)  # cap at $800K for performance
 
     convs = list(range(0, max_conv + STEP, STEP))
@@ -249,42 +249,58 @@ def render(hh: Household):
     marginal_aca = [0.0]
     marginal_niit = [0.0]
     for i in range(1, len(results)):
-        marginal_tax.append(
-            (results[i]["conv_tax"] - results[i - 1]["conv_tax"]) / STEP * 1000
-        )
+        marginal_tax.append((results[i]["conv_tax"] - results[i - 1]["conv_tax"]) / STEP * 1000)
         marginal_irmaa.append(
             (results[i]["irmaa_delta"] - results[i - 1]["irmaa_delta"]) / STEP * 1000
         )
-        marginal_aca.append(
-            (results[i]["aca_loss"] - results[i - 1]["aca_loss"]) / STEP * 1000
-        )
+        marginal_aca.append((results[i]["aca_loss"] - results[i - 1]["aca_loss"]) / STEP * 1000)
         marginal_niit.append(
             (results[i]["niit_delta"] - results[i - 1]["niit_delta"]) / STEP * 1000
         )
 
     fig_m = go.Figure()
-    fig_m.add_trace(go.Scatter(
-        x=convs, y=marginal_tax, name="Fed Tax",
-        stackgroup="one", line={"color": "#3b82f6"},
-        hovertemplate="Fed Tax: $%{y:.0f} per $1K<extra></extra>",
-    ))
-    fig_m.add_trace(go.Scatter(
-        x=convs, y=marginal_irmaa, name="IRMAA",
-        stackgroup="one", line={"color": "#ef4444"},
-        hovertemplate="IRMAA: $%{y:.0f} per $1K<extra></extra>",
-    ))
+    fig_m.add_trace(
+        go.Scatter(
+            x=convs,
+            y=marginal_tax,
+            name="Fed Tax",
+            stackgroup="one",
+            line={"color": "#3b82f6"},
+            hovertemplate="Fed Tax: $%{y:.0f} per $1K<extra></extra>",
+        )
+    )
+    fig_m.add_trace(
+        go.Scatter(
+            x=convs,
+            y=marginal_irmaa,
+            name="IRMAA",
+            stackgroup="one",
+            line={"color": "#ef4444"},
+            hovertemplate="IRMAA: $%{y:.0f} per $1K<extra></extra>",
+        )
+    )
     if any(v > 0 for v in marginal_aca):
-        fig_m.add_trace(go.Scatter(
-            x=convs, y=marginal_aca, name="ACA Loss",
-            stackgroup="one", line={"color": "#f59e0b"},
-            hovertemplate="ACA Loss: $%{y:.0f} per $1K<extra></extra>",
-        ))
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_aca,
+                name="ACA Loss",
+                stackgroup="one",
+                line={"color": "#f59e0b"},
+                hovertemplate="ACA Loss: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
     if any(v > 0 for v in marginal_niit):
-        fig_m.add_trace(go.Scatter(
-            x=convs, y=marginal_niit, name="NIIT",
-            stackgroup="one", line={"color": "#8b5cf6"},
-            hovertemplate="NIIT: $%{y:.0f} per $1K<extra></extra>",
-        ))
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_niit,
+                name="NIIT",
+                stackgroup="one",
+                line={"color": "#8b5cf6"},
+                hovertemplate="NIIT: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
 
     # Add bracket boundary lines
     bracket_boundaries = []
@@ -294,8 +310,10 @@ def render(hh: Household):
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
             fig_m.add_vline(
-                x=boundary_conv, line_dash="dot", line_color="#94a3b8",
-                annotation_text=f"{rate*100:.0f}% bracket",
+                x=boundary_conv,
+                line_dash="dot",
+                line_color="#94a3b8",
+                annotation_text=f"{rate * 100:.0f}% bracket",
                 annotation_position="top",
             )
 
@@ -304,8 +322,10 @@ def render(hh: Household):
         irmaa_conv = threshold - base["base_magi"]
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
-                x=irmaa_conv, line_dash="dash", line_color="#ef4444",
-                annotation_text=f"IRMAA ${threshold/1000:.0f}K",
+                x=irmaa_conv,
+                line_dash="dash",
+                line_color="#ef4444",
+                annotation_text=f"IRMAA ${threshold / 1000:.0f}K",
                 annotation_position="bottom",
             )
 
@@ -313,7 +333,9 @@ def render(hh: Household):
     niit_conv = NIIT_THRESHOLD_MFJ - base["base_magi"]
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
-            x=niit_conv, line_dash="dash", line_color="#8b5cf6",
+            x=niit_conv,
+            line_dash="dash",
+            line_color="#8b5cf6",
             annotation_text=f"NIIT ${NIIT_THRESHOLD_MFJ // 1000:.0f}K",
             annotation_position="top",
         )
@@ -380,50 +402,57 @@ def render(hh: Household):
     st.caption("Total cost (tax + IRMAA + ACA + NIIT) at each conversion level.")
 
     fig_c = go.Figure()
-    fig_c.add_trace(go.Scatter(
-        x=convs,
-        y=[r["conv_tax"] for r in results],
-        name="Federal Tax",
-        stackgroup="one",
-        line={"color": "#3b82f6"},
-    ))
-    fig_c.add_trace(go.Scatter(
-        x=convs,
-        y=[r["irmaa_delta"] for r in results],
-        name="IRMAA",
-        stackgroup="one",
-        line={"color": "#ef4444"},
-    ))
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=[r["conv_tax"] for r in results],
+            name="Federal Tax",
+            stackgroup="one",
+            line={"color": "#3b82f6"},
+        )
+    )
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=[r["irmaa_delta"] for r in results],
+            name="IRMAA",
+            stackgroup="one",
+            line={"color": "#ef4444"},
+        )
+    )
     if any(r["aca_loss"] > 0 for r in results):
-        fig_c.add_trace(go.Scatter(
-            x=convs,
-            y=[r["aca_loss"] for r in results],
-            name="ACA Loss",
-            stackgroup="one",
-            line={"color": "#f59e0b"},
-        ))
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r["aca_loss"] for r in results],
+                name="ACA Loss",
+                stackgroup="one",
+                line={"color": "#f59e0b"},
+            )
+        )
     if any(r["niit_delta"] > 0 for r in results):
-        fig_c.add_trace(go.Scatter(
-            x=convs,
-            y=[r["niit_delta"] for r in results],
-            name="NIIT",
-            stackgroup="one",
-            line={"color": "#8b5cf6"},
-        ))
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r["niit_delta"] for r in results],
+                name="NIIT",
+                stackgroup="one",
+                line={"color": "#8b5cf6"},
+            )
+        )
 
     # Effective rate overlay
-    eff_rates = [
-        r["all_in"] / max(r["conv"], 1) * 100 if r["conv"] > 0 else 0
-        for r in results
-    ]
-    fig_c.add_trace(go.Scatter(
-        x=convs,
-        y=eff_rates,
-        name="Avg Eff Rate %",
-        yaxis="y2",
-        line={"color": "#10b981", "width": 2, "dash": "dot"},
-        hovertemplate="Eff Rate: %{y:.1f}%<extra></extra>",
-    ))
+    eff_rates = [r["all_in"] / max(r["conv"], 1) * 100 if r["conv"] > 0 else 0 for r in results]
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=eff_rates,
+            name="Avg Eff Rate %",
+            yaxis="y2",
+            line={"color": "#10b981", "width": 2, "dash": "dot"},
+            hovertemplate="Eff Rate: %{y:.1f}%<extra></extra>",
+        )
+    )
 
     fig_c.update_layout(
         xaxis_title="Conversion Amount ($)",

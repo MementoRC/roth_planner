@@ -33,8 +33,7 @@ def test_spouse_pretax_weighted_return_per_owner() -> None:
     spouse_pretax = sum(a.total_value for a in spouse_pretax_accounts)
 
     spouse_weighted_return = (
-        sum(a.total_value * a.weighted_return for a in spouse_pretax_accounts)
-        / spouse_pretax
+        sum(a.total_value * a.weighted_return for a in spouse_pretax_accounts) / spouse_pretax
         if spouse_pretax_accounts
         else snap.pretax_weighted_return
     )
@@ -54,8 +53,7 @@ def test_spouse_pretax_fallback_when_no_spouse_accounts() -> None:
     spouse_pretax = sum(a.total_value for a in spouse_pretax_accounts)
 
     spouse_weighted_return = (
-        sum(a.total_value * a.weighted_return for a in spouse_pretax_accounts)
-        / spouse_pretax
+        sum(a.total_value * a.weighted_return for a in spouse_pretax_accounts) / spouse_pretax
         if spouse_pretax_accounts
         else snap.pretax_weighted_return
     )

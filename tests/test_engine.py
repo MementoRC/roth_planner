@@ -167,6 +167,7 @@ class TestNIIT:
     def test_zero_investment_income(self):
         assert niit(500_000, 0) == 0
 
+
 class TestACA:
     def test_applies_pre_medicare(self):
         assert aca_applies(61) is True
@@ -193,14 +194,16 @@ class TestHouseholdProperties:
     def test_spouse_conv_window_property(self):
         """spouse_conv_window mirrors your_conv_window formula for spouse_age."""
         from dataclasses import replace
+
         hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
-        assert hh.your_conv_window == max(75 - 1 - 61 + 1, 0)    # 14
+        assert hh.your_conv_window == max(75 - 1 - 61 + 1, 0)  # 14
         assert hh.spouse_conv_window == max(75 - 1 - 55 + 1, 0)  # 20
         assert hh.spouse_conv_window > hh.your_conv_window
 
     def test_conv_windows_symmetric_under_swap(self):
         """Under me<->spouse swap, the windows swap correctly."""
         from dataclasses import replace
+
         hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
         hh_sw = replace(hh, your_age=hh.spouse_age, spouse_age=hh.your_age)
         assert hh_sw.your_conv_window == hh.spouse_conv_window
@@ -321,7 +324,11 @@ class TestAutoFillCharacterization:
         plan = auto_fill_12(hh)
         # Per-year tuples: (year, your_conv, spouse_conv)
         rows = [
-            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
         # Captured against development @ ecbc49d (post-PR #41)
@@ -355,7 +362,11 @@ class TestAutoFillCharacterization:
         hh = self._fixture_household()
         plan = auto_fill_22(hh)
         rows = [
-            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
         # Captured against development @ ecbc49d (post-PR #41)
@@ -389,7 +400,11 @@ class TestAutoFillCharacterization:
         hh = self._fixture_household()
         plan = auto_fill_irmaa_safe(hh)
         rows = [
-            (yr, round(plan.your_conversions.get(yr, 0.0)), round(plan.spouse_conversions.get(yr, 0.0)))
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
         # Captured against development @ ecbc49d (post-PR #41)
@@ -598,10 +613,21 @@ class TestPortfolioSync:
 
         snap = PortfolioSnapshot(
             accounts=[
-                AccountSummary(account_type="trad_ira", owner="you", total_value=1_500_000,
-                               equity_value=500_000, bond_value=500_000, cash_value=500_000),
-                AccountSummary(account_type="403b", owner="you", total_value=140_000,
-                               equity_value=100_000, bond_value=40_000),
+                AccountSummary(
+                    account_type="trad_ira",
+                    owner="you",
+                    total_value=1_500_000,
+                    equity_value=500_000,
+                    bond_value=500_000,
+                    cash_value=500_000,
+                ),
+                AccountSummary(
+                    account_type="403b",
+                    owner="you",
+                    total_value=140_000,
+                    equity_value=100_000,
+                    bond_value=40_000,
+                ),
                 AccountSummary(account_type="hsa", owner="you", total_value=60_000),
                 AccountSummary(account_type="brokerage", owner="you", total_value=100_000),
             ],
@@ -764,8 +790,11 @@ class TestYTDSnapshot:
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(
-            wages_ytd=100_000, ltcg_ytd=200_000, stcg_ytd=10_000,
-            ordinary_dividends_ytd=5_000, interest_ytd=3_000,
+            wages_ytd=100_000,
+            ltcg_ytd=200_000,
+            stcg_ytd=10_000,
+            ordinary_dividends_ytd=5_000,
+            interest_ytd=3_000,
             ira_conversions_ytd=20_000,
         )
         expected = 100_000 + 200_000 + 10_000 + 5_000 + 3_000 + 20_000
@@ -775,8 +804,11 @@ class TestYTDSnapshot:
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(
-            ltcg_ytd=150_000, stcg_ytd=20_000, ordinary_dividends_ytd=10_000,
-            interest_ytd=5_000, wages_ytd=80_000,
+            ltcg_ytd=150_000,
+            stcg_ytd=20_000,
+            ordinary_dividends_ytd=10_000,
+            interest_ytd=5_000,
+            wages_ytd=80_000,
         )
         # Investment income: LTCG + STCG + dividends + interest (no wages)
         assert ytd.total_investment_income == approx(185_000)
@@ -785,16 +817,21 @@ class TestYTDSnapshot:
         from models.ytd_income import RealizedGainEvent
 
         event = RealizedGainEvent(
-            date="2026-03-15", description="TXN stop-loss",
-            proceeds=250_000, cost_basis=150_000,
-            holding_period="long", account_name="Schwab Brokerage",
+            date="2026-03-15",
+            description="TXN stop-loss",
+            proceeds=250_000,
+            cost_basis=150_000,
+            holding_period="long",
+            account_name="Schwab Brokerage",
         )
         assert event.gain_loss == approx(100_000)
         assert event.is_ltcg is True
 
         short_event = RealizedGainEvent(
-            date="2026-03-15", description="AAPL sale",
-            proceeds=50_000, cost_basis=45_000,
+            date="2026-03-15",
+            description="AAPL sale",
+            proceeds=50_000,
+            cost_basis=45_000,
             holding_period="short",
         )
         assert short_event.gain_loss == approx(5_000)
@@ -1022,14 +1059,22 @@ class TestScenarioWithYTD:
         monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
 
         ytd = YTDSnapshot(
-            tax_year=2026, wages_ytd=50_000, ltcg_ytd=200_000,
-            stcg_ytd=10_000, ordinary_dividends_ytd=5_000, interest_ytd=3_000,
-            ira_conversions_ytd=20_000, snapshot_date="2026-06-15",
+            tax_year=2026,
+            wages_ytd=50_000,
+            ltcg_ytd=200_000,
+            stcg_ytd=10_000,
+            ordinary_dividends_ytd=5_000,
+            interest_ytd=3_000,
+            ira_conversions_ytd=20_000,
+            snapshot_date="2026-06-15",
             gain_events=[
                 RealizedGainEvent(
-                    date="2026-03-15", description="TXN stop-loss",
-                    proceeds=250_000, cost_basis=50_000,
-                    holding_period="long", account_name="Schwab",
+                    date="2026-03-15",
+                    description="TXN stop-loss",
+                    proceeds=250_000,
+                    cost_basis=50_000,
+                    holding_period="long",
+                    account_name="Schwab",
                 ),
             ],
         )
@@ -1053,12 +1098,28 @@ class TestTaxReturnParsing:
         from engine.portfolio_sync import _parse_tax_rows
 
         rows = [
-            {"form_label": "Wages and Salaries (W-2)", "amount_current": 102225, "amount_prior": 118161},
+            {
+                "form_label": "Wages and Salaries (W-2)",
+                "amount_current": 102225,
+                "amount_prior": 118161,
+            },
             {"form_label": "Form 1099-NEC", "amount_current": 4150, "amount_prior": None},
-            {"form_label": "Investments and Savings", "amount_current": 92429, "amount_prior": 165861},
-            {"form_label": "IRA, 401(k), Pension Plan Withdrawals (1099-R)", "amount_current": 7397, "amount_prior": None},
+            {
+                "form_label": "Investments and Savings",
+                "amount_current": 92429,
+                "amount_prior": 165861,
+            },
+            {
+                "form_label": "IRA, 401(k), Pension Plan Withdrawals (1099-R)",
+                "amount_current": 7397,
+                "amount_prior": None,
+            },
             {"form_label": "1099-SA, HSA, MSA", "amount_current": 895, "amount_prior": 583},
-            {"form_label": "Miscellaneous Income, 1099-A, 1099-C", "amount_current": None, "amount_prior": 48401},
+            {
+                "form_label": "Miscellaneous Income, 1099-A, 1099-C",
+                "amount_current": None,
+                "amount_prior": 48401,
+            },
         ]
         parsed = _parse_tax_rows(rows, "amount_current")
         assert parsed["wages"] == 102225
@@ -1073,7 +1134,11 @@ class TestTaxReturnParsing:
 
         rows = [
             {"form_label": "HSA, MSA Contributions", "amount_current": 5300, "amount_prior": 5150},
-            {"form_label": "Traditional and Roth IRA Contributions", "amount_current": 8000, "amount_prior": 16000},
+            {
+                "form_label": "Traditional and Roth IRA Contributions",
+                "amount_current": 8000,
+                "amount_prior": 16000,
+            },
             {"form_label": "Sales Tax", "amount_current": 1686, "amount_prior": 1881},
             {"form_label": "Foreign Tax Credit", "amount_current": 365, "amount_prior": 355},
         ]
@@ -1087,8 +1152,16 @@ class TestTaxReturnParsing:
         from engine.portfolio_sync import _parse_tax_rows
 
         rows = [
-            {"form_label": "Wages and Salaries (W-2)", "amount_current": 102225, "amount_prior": 118161},
-            {"form_label": "Investments and Savings", "amount_current": 92429, "amount_prior": 165861},
+            {
+                "form_label": "Wages and Salaries (W-2)",
+                "amount_current": 102225,
+                "amount_prior": 118161,
+            },
+            {
+                "form_label": "Investments and Savings",
+                "amount_current": 92429,
+                "amount_prior": 165861,
+            },
         ]
         parsed = _parse_tax_rows(rows, "amount_prior")
         assert parsed["wages"] == 118161
@@ -1119,8 +1192,10 @@ class TestTaxReturnParsing:
         monkeypatch.setattr(portfolio_sync, "_TAX_CACHE_PATH", tmp_path / "tax.json")
 
         snap = TaxReturnSnapshot(
-            wages=100_000, investment_income=50_000,
-            hsa_contributions=5_000, server_available=True,
+            wages=100_000,
+            investment_income=50_000,
+            hsa_contributions=5_000,
+            server_available=True,
         )
         save_tax_snapshot(snap)
         loaded = load_tax_snapshot()
@@ -1193,7 +1268,7 @@ class TestDividendForecast:
 
         positions = [
             Position(ticker="TXN", shares=500, balance=100_000, ttm_dividends=2700),  # 2.7% qual
-            Position(ticker="VNQ", shares=100, balance=10_000, ttm_dividends=400),    # 4% ord (REIT)
+            Position(ticker="VNQ", shares=100, balance=10_000, ttm_dividends=400),  # 4% ord (REIT)
         ]
         fcst = forecast_portfolio(positions, total_balance=110_000)
         # TXN: annual_income=2700, qual_frac=1.0 → qualified=2700, ordinary=0
@@ -1457,7 +1532,11 @@ class TestQueryResponseShape:
     def test_single_institution_legacy_shape(self):
         from engine.portfolio_sync import _flatten_query_rows
 
-        data = {"domain": "brokerage", "data_type": "holdings", "rows": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]}
+        data = {
+            "domain": "brokerage",
+            "data_type": "holdings",
+            "rows": [{"symbol": "AAPL"}, {"symbol": "MSFT"}],
+        }
         assert _flatten_query_rows(data) == [{"symbol": "AAPL"}, {"symbol": "MSFT"}]
 
     def test_multi_institution_current_shape(self):
@@ -1493,7 +1572,9 @@ class TestQueryResponseShape:
         from engine.portfolio_sync import _flatten_query_rows
 
         # Robustness: malformed nested batch should be skipped, not raise
-        data = {"institutions": {"fidelity": "not-a-dict", "schwab": {"rows": [{"symbol": "MSFT"}]}}}
+        data = {
+            "institutions": {"fidelity": "not-a-dict", "schwab": {"rows": [{"symbol": "MSFT"}]}}
+        }
         result = _flatten_query_rows(data)
         assert result == [{"symbol": "MSFT"}]
 
@@ -1516,7 +1597,10 @@ class TestAccountTypeOverrides:
     def test_override_hit_returns_mapped_type(self):
         from engine.portfolio_sync import _classify_account
 
-        assert _classify_account("U1234567", overrides={"U1234567": "trad_ira"}) == ("trad_ira", "you")
+        assert _classify_account("U1234567", overrides={"U1234567": "trad_ira"}) == (
+            "trad_ira",
+            "you",
+        )
 
     def test_override_miss_falls_through_to_substring_scan(self):
         from engine.portfolio_sync import _classify_account
@@ -1598,7 +1682,11 @@ class TestDividendsRollupFetchAndMap:
         result = fetch_dividends_rollup()
         assert result.server_available is True
         assert "AAPL" in result.by_symbol
-        assert result.window == {"from": "2024-06-01", "to": "2025-12-15", "months_covered_approx": 18.5}
+        assert result.window == {
+            "from": "2024-06-01",
+            "to": "2025-12-15",
+            "months_covered_approx": 18.5,
+        }
         assert result.freshness["is_stale"] is False
 
     # ------------------------------------------------------------------

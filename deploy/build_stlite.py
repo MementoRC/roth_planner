@@ -11,6 +11,7 @@ writes the resulting index.html to the output directory.
 The generated index.html is fully self-contained — no runtime fetches
 from GitHub. Defaults gate ensures only synthetic values are shipped.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,13 @@ INCLUDE_DIRS = ["engine", "models", "views", "config", "pages"]
 # Standalone files at repo root
 INCLUDE_ROOT_FILES = ["app.py"]
 # Pyodide-installable runtime requirements
-REQUIREMENTS = ["streamlit", "plotly", "pandas", "requests", "pynacl"]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
+REQUIREMENTS = [
+    "streamlit",
+    "plotly",
+    "pandas",
+    "requests",
+    "pynacl",
+]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 # Default stlite version (overridable via --stlite-version)
 DEFAULT_STLITE_VERSION = "0.75.0"
 
@@ -55,8 +62,7 @@ def build(repo_root: Path, out_dir: Path, stlite_version: str) -> Path:
     requirements_json = json.dumps(REQUIREMENTS)
 
     rendered = (
-        template
-        .replace("__STLITE_VERSION__", stlite_version)
+        template.replace("__STLITE_VERSION__", stlite_version)
         .replace("__REQUIREMENTS_JSON__", requirements_json)
         .replace("__FILE_MAP_JSON__", file_map_json)
     )
@@ -73,8 +79,11 @@ def build(repo_root: Path, out_dir: Path, stlite_version: str) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", default="_site", help="Output directory (default: _site)")
-    parser.add_argument("--stlite-version", default=DEFAULT_STLITE_VERSION,
-                        help=f"stlite-mountable version on jsdelivr (default: {DEFAULT_STLITE_VERSION})")
+    parser.add_argument(
+        "--stlite-version",
+        default=DEFAULT_STLITE_VERSION,
+        help=f"stlite-mountable version on jsdelivr (default: {DEFAULT_STLITE_VERSION})",
+    )
     parser.add_argument("--repo-root", default=".", help="Repo root (default: cwd)")
     args = parser.parse_args()
 

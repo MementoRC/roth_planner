@@ -18,6 +18,7 @@ happens in app.py, not here.
 Defaults are loaded at module-import time. Restart the app to pick
 up changes to the override file.
 """
+
 from __future__ import annotations
 
 import json

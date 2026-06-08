@@ -143,26 +143,38 @@ def render(hh: Household):
     fig_w = go.Figure()
 
     # No-conversion scenario stacks
-    fig_w.add_trace(go.Bar(
-        x=ages, y=[yr.taxable_rmd for yr in rmd_nc],
-        name="Taxable RMD", marker_color="#ef4444",
-        hovertemplate="RMD: $%{y:,.0f}<extra></extra>",
-    ))
-    fig_w.add_trace(go.Bar(
-        x=ages, y=[yr.taxable_ss_amt for yr in rmd_nc],
-        name="Taxable SS", marker_color="#60a5fa",
-        hovertemplate="Taxable SS: $%{y:,.0f}<extra></extra>",
-    ))
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.taxable_rmd for yr in rmd_nc],
+            name="Taxable RMD",
+            marker_color="#ef4444",
+            hovertemplate="RMD: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.taxable_ss_amt for yr in rmd_nc],
+            name="Taxable SS",
+            marker_color="#60a5fa",
+            hovertemplate="Taxable SS: $%{y:,.0f}<extra></extra>",
+        )
+    )
 
     # Bracket ceiling lines
     for yr in rmd_nc[:1]:  # use first year's deductions for reference
         ded = yr.total_deductions
         fig_w.add_hline(
-            y=ded + BRACKETS_MFJ[1][0], line_dash="dash", line_color="#22c55e",
+            y=ded + BRACKETS_MFJ[1][0],
+            line_dash="dash",
+            line_color="#22c55e",
             annotation_text="12% ceiling",
         )
         fig_w.add_hline(
-            y=ded + BRACKETS_MFJ[2][0], line_dash="dash", line_color="#f59e0b",
+            y=ded + BRACKETS_MFJ[2][0],
+            line_dash="dash",
+            line_color="#f59e0b",
             annotation_text="22% ceiling",
         )
 
@@ -180,22 +192,26 @@ def render(hh: Household):
     st.markdown("### Marginal Bracket: No Conversion vs With Conversion")
 
     fig_br = go.Figure()
-    fig_br.add_trace(go.Scatter(
-        x=ages,
-        y=[yr.marginal_bracket * 100 for yr in rmd_nc],
-        name="No Conversion",
-        line={"color": "#ef4444", "width": 3},
-        mode="lines+markers",
-        hovertemplate="Age %{x}: %{y:.0f}%<extra>No Conv</extra>",
-    ))
-    fig_br.add_trace(go.Scatter(
-        x=ages,
-        y=[yr.marginal_bracket * 100 for yr in rmd_wc],
-        name="With Conversion (12%)",
-        line={"color": "#22c55e", "width": 3},
-        mode="lines+markers",
-        hovertemplate="Age %{x}: %{y:.0f}%<extra>With Conv</extra>",
-    ))
+    fig_br.add_trace(
+        go.Scatter(
+            x=ages,
+            y=[yr.marginal_bracket * 100 for yr in rmd_nc],
+            name="No Conversion",
+            line={"color": "#ef4444", "width": 3},
+            mode="lines+markers",
+            hovertemplate="Age %{x}: %{y:.0f}%<extra>No Conv</extra>",
+        )
+    )
+    fig_br.add_trace(
+        go.Scatter(
+            x=ages,
+            y=[yr.marginal_bracket * 100 for yr in rmd_wc],
+            name="With Conversion (12%)",
+            line={"color": "#22c55e", "width": 3},
+            mode="lines+markers",
+            hovertemplate="Age %{x}: %{y:.0f}%<extra>With Conv</extra>",
+        )
+    )
 
     fig_br.update_layout(
         xaxis_title="Your Age",
@@ -214,22 +230,38 @@ def render(hh: Household):
     with col_l:
         st.markdown("#### No Conversion")
         fig_nc = go.Figure()
-        fig_nc.add_trace(go.Bar(
-            x=ages, y=[yr.federal_tax_amt for yr in rmd_nc],
-            name="Fed Tax", marker_color="#ef4444",
-        ))
-        fig_nc.add_trace(go.Bar(
-            x=ages, y=[yr.irmaa_cost for yr in rmd_nc],
-            name="IRMAA", marker_color="#f59e0b",
-        ))
-        fig_nc.add_trace(go.Bar(
-            x=ages, y=[yr.brokerage_gain_tax for yr in rmd_nc],
-            name="Brok Cap Gains", marker_color="#8b5cf6",
-        ))
-        fig_nc.add_trace(go.Bar(
-            x=ages, y=[yr.niit_cost for yr in rmd_nc],
-            name="NIIT", marker_color="#ec4899",
-        ))
+        fig_nc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.federal_tax_amt for yr in rmd_nc],
+                name="Fed Tax",
+                marker_color="#ef4444",
+            )
+        )
+        fig_nc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.irmaa_cost for yr in rmd_nc],
+                name="IRMAA",
+                marker_color="#f59e0b",
+            )
+        )
+        fig_nc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.brokerage_gain_tax for yr in rmd_nc],
+                name="Brok Cap Gains",
+                marker_color="#8b5cf6",
+            )
+        )
+        fig_nc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.niit_cost for yr in rmd_nc],
+                name="NIIT",
+                marker_color="#ec4899",
+            )
+        )
         fig_nc.update_layout(
             barmode="stack",
             xaxis_title="Your Age",
@@ -242,22 +274,38 @@ def render(hh: Household):
     with col_r:
         st.markdown("#### With Conversion (Fill 12%)")
         fig_wc = go.Figure()
-        fig_wc.add_trace(go.Bar(
-            x=ages, y=[yr.federal_tax_amt for yr in rmd_wc],
-            name="Fed Tax", marker_color="#3b82f6",
-        ))
-        fig_wc.add_trace(go.Bar(
-            x=ages, y=[yr.irmaa_cost for yr in rmd_wc],
-            name="IRMAA", marker_color="#f59e0b",
-        ))
-        fig_wc.add_trace(go.Bar(
-            x=ages, y=[yr.brokerage_gain_tax for yr in rmd_wc],
-            name="Brok Cap Gains", marker_color="#8b5cf6",
-        ))
-        fig_wc.add_trace(go.Bar(
-            x=ages, y=[yr.niit_cost for yr in rmd_wc],
-            name="NIIT", marker_color="#ec4899",
-        ))
+        fig_wc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.federal_tax_amt for yr in rmd_wc],
+                name="Fed Tax",
+                marker_color="#3b82f6",
+            )
+        )
+        fig_wc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.irmaa_cost for yr in rmd_wc],
+                name="IRMAA",
+                marker_color="#f59e0b",
+            )
+        )
+        fig_wc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.brokerage_gain_tax for yr in rmd_wc],
+                name="Brok Cap Gains",
+                marker_color="#8b5cf6",
+            )
+        )
+        fig_wc.add_trace(
+            go.Bar(
+                x=ages,
+                y=[yr.niit_cost for yr in rmd_wc],
+                name="NIIT",
+                marker_color="#ec4899",
+            )
+        )
         fig_wc.update_layout(
             barmode="stack",
             xaxis_title="Your Age",
@@ -275,24 +323,28 @@ def render(hh: Household):
     )
 
     fig_brok = go.Figure()
-    fig_brok.add_trace(go.Scatter(
-        x=ages,
-        y=[yr.brokerage_balance for yr in rmd_nc],
-        name="No Conversion",
-        fill="tozeroy",
-        fillcolor="rgba(239,68,68,0.15)",
-        line={"color": "#ef4444", "width": 2},
-        hovertemplate="Age %{x}: $%{y:,.0f}<extra>No Conv Brok</extra>",
-    ))
-    fig_brok.add_trace(go.Scatter(
-        x=ages,
-        y=[yr.brokerage_balance for yr in rmd_wc],
-        name="With Conversion",
-        fill="tozeroy",
-        fillcolor="rgba(59,130,246,0.15)",
-        line={"color": "#3b82f6", "width": 2},
-        hovertemplate="Age %{x}: $%{y:,.0f}<extra>With Conv Brok</extra>",
-    ))
+    fig_brok.add_trace(
+        go.Scatter(
+            x=ages,
+            y=[yr.brokerage_balance for yr in rmd_nc],
+            name="No Conversion",
+            fill="tozeroy",
+            fillcolor="rgba(239,68,68,0.15)",
+            line={"color": "#ef4444", "width": 2},
+            hovertemplate="Age %{x}: $%{y:,.0f}<extra>No Conv Brok</extra>",
+        )
+    )
+    fig_brok.add_trace(
+        go.Scatter(
+            x=ages,
+            y=[yr.brokerage_balance for yr in rmd_wc],
+            name="With Conversion",
+            fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.15)",
+            line={"color": "#3b82f6", "width": 2},
+            hovertemplate="Age %{x}: $%{y:,.0f}<extra>With Conv Brok</extra>",
+        )
+    )
     fig_brok.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Brokerage Balance ($)",
@@ -306,24 +358,30 @@ def render(hh: Household):
     if no_conv_qcd and rmd_nc_qcd:
         st.markdown("### QCD Impact — Tax Savings from Charitable Distributions")
         fig_qcd = go.Figure()
-        fig_qcd.add_trace(go.Scatter(
-            x=ages,
-            y=[yr.federal_tax_amt for yr in rmd_nc],
-            name="No Conv, No QCD",
-            line={"color": "#ef4444", "width": 2, "dash": "dash"},
-        ))
-        fig_qcd.add_trace(go.Scatter(
-            x=ages,
-            y=[yr.federal_tax_amt for yr in rmd_nc_qcd],
-            name=f"No Conv + ${qcd_annual / 1000:.0f}K QCD",
-            line={"color": "#f59e0b", "width": 2},
-        ))
-        fig_qcd.add_trace(go.Scatter(
-            x=ages,
-            y=[yr.federal_tax_amt for yr in rmd_wc],
-            name=f"Fill 12% + ${qcd_annual / 1000:.0f}K QCD",
-            line={"color": "#22c55e", "width": 3},
-        ))
+        fig_qcd.add_trace(
+            go.Scatter(
+                x=ages,
+                y=[yr.federal_tax_amt for yr in rmd_nc],
+                name="No Conv, No QCD",
+                line={"color": "#ef4444", "width": 2, "dash": "dash"},
+            )
+        )
+        fig_qcd.add_trace(
+            go.Scatter(
+                x=ages,
+                y=[yr.federal_tax_amt for yr in rmd_nc_qcd],
+                name=f"No Conv + ${qcd_annual / 1000:.0f}K QCD",
+                line={"color": "#f59e0b", "width": 2},
+            )
+        )
+        fig_qcd.add_trace(
+            go.Scatter(
+                x=ages,
+                y=[yr.federal_tax_amt for yr in rmd_wc],
+                name=f"Fill 12% + ${qcd_annual / 1000:.0f}K QCD",
+                line={"color": "#22c55e", "width": 3},
+            )
+        )
         fig_qcd.update_layout(
             xaxis_title="Your Age",
             yaxis_title="Annual Federal Tax ($)",
@@ -338,24 +396,26 @@ def render(hh: Household):
 
     rows = []
     for nc, wc in zip(rmd_nc, rmd_wc, strict=False):
-        rows.append({
-            "Year": str(nc.year),
-            "You/Sp": f"{nc.your_age}/{nc.spouse_age}",
-            "IRA (NC)": f"${(nc.your_ira_begin + nc.spouse_ira_begin) / 1e6:.2f}M",
-            "IRA (WC)": f"${(wc.your_ira_begin + wc.spouse_ira_begin) / 1e6:.2f}M",
-            "RMD (NC)": f"${nc.your_rmd + nc.spouse_rmd:,.0f}",
-            "RMD (WC)": f"${wc.your_rmd + wc.spouse_rmd:,.0f}",
-            "SS": f"${nc.combined_ss:,.0f}",
-            "Bracket (NC)": f"{nc.marginal_bracket * 100:.0f}%",
-            "Bracket (WC)": f"{wc.marginal_bracket * 100:.0f}%",
-            "Tax (NC)": f"${nc.federal_tax_amt:,.0f}",
-            "Tax (WC)": f"${wc.federal_tax_amt:,.0f}",
-            "Saved": f"${nc.federal_tax_amt - wc.federal_tax_amt:,.0f}",
-            "IRMAA (NC)": f"${nc.irmaa_cost:,.0f}",
-            "IRMAA (WC)": f"${wc.irmaa_cost:,.0f}",
-            "Excess RMD": f"${nc.excess_rmd:,.0f}",
-            "Brok (NC)": f"${nc.brokerage_balance:,.0f}",
-        })
+        rows.append(
+            {
+                "Year": str(nc.year),
+                "You/Sp": f"{nc.your_age}/{nc.spouse_age}",
+                "IRA (NC)": f"${(nc.your_ira_begin + nc.spouse_ira_begin) / 1e6:.2f}M",
+                "IRA (WC)": f"${(wc.your_ira_begin + wc.spouse_ira_begin) / 1e6:.2f}M",
+                "RMD (NC)": f"${nc.your_rmd + nc.spouse_rmd:,.0f}",
+                "RMD (WC)": f"${wc.your_rmd + wc.spouse_rmd:,.0f}",
+                "SS": f"${nc.combined_ss:,.0f}",
+                "Bracket (NC)": f"{nc.marginal_bracket * 100:.0f}%",
+                "Bracket (WC)": f"{wc.marginal_bracket * 100:.0f}%",
+                "Tax (NC)": f"${nc.federal_tax_amt:,.0f}",
+                "Tax (WC)": f"${wc.federal_tax_amt:,.0f}",
+                "Saved": f"${nc.federal_tax_amt - wc.federal_tax_amt:,.0f}",
+                "IRMAA (NC)": f"${nc.irmaa_cost:,.0f}",
+                "IRMAA (WC)": f"${wc.irmaa_cost:,.0f}",
+                "Excess RMD": f"${nc.excess_rmd:,.0f}",
+                "Brok (NC)": f"${nc.brokerage_balance:,.0f}",
+            }
+        )
 
     df = pd.DataFrame(rows)
     st.dataframe(df, hide_index=True, use_container_width=True)

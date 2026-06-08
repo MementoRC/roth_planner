@@ -167,9 +167,7 @@ def compute_headroom(
     # --- ACA cliff ---
     from engine.aca import FPL_2, aca_applies
 
-    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(
-        sa, hh.spouse_aca_enrolled
-    )
+    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     if anyone_on_aca:
         aca_cliff = 4.0 * FPL_2  # 400% FPL
         result.room_to_aca_cliff = max(aca_cliff - locked_magi, 0.0)

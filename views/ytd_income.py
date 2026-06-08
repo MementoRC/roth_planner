@@ -71,40 +71,54 @@ def render(hh: Household):
         col1, col2, col3 = st.columns(3)
         with col1:
             wages = st.number_input(
-                "Wages YTD", value=int(ytd.wages_ytd), step=5_000, format="%d",
+                "Wages YTD",
+                value=int(ytd.wages_ytd),
+                step=5_000,
+                format="%d",
             )
             ltcg = st.number_input(
                 "Long-Term Capital Gains YTD",
                 value=int(ytd.ltcg_ytd) if ytd.ltcg_ytd > 0 else 0,
-                step=10_000, format="%d",
+                step=10_000,
+                format="%d",
                 help="From stop-loss triggers, mutual fund distributions, etc.",
             )
         with col2:
             stcg = st.number_input(
-                "Short-Term Capital Gains YTD", value=int(ytd.stcg_ytd), step=5_000, format="%d",
+                "Short-Term Capital Gains YTD",
+                value=int(ytd.stcg_ytd),
+                step=5_000,
+                format="%d",
             )
             div_col1, div_col2 = st.columns(2)
             with div_col1:
                 qualified_dividends = st.number_input(
                     "Qualified dividends YTD",
                     value=int(ytd.qualified_dividends_ytd),
-                    step=500, format="%d",
+                    step=500,
+                    format="%d",
                     help=f"Taxed at LTCG rates ({LTCG_RATES_MFJ[1]:.0%}/{LTCG_RATES_MFJ[2]:.0%}); counts toward MAGI but not ordinary brackets.",
                 )
             with div_col2:
                 ordinary_dividends = st.number_input(
                     "Ordinary dividends YTD",
                     value=int(ytd.ordinary_dividends_ytd),
-                    step=500, format="%d",
+                    step=500,
+                    format="%d",
                     help="Taxed as ordinary income; stacks into brackets and SS taxation.",
                 )
         with col3:
             interest = st.number_input(
-                "Interest YTD", value=int(ytd.interest_ytd), step=1_000, format="%d",
+                "Interest YTD",
+                value=int(ytd.interest_ytd),
+                step=1_000,
+                format="%d",
             )
             conversions_done = st.number_input(
-                "Roth Conversions Done YTD", value=int(ytd.ira_conversions_ytd),
-                step=5_000, format="%d",
+                "Roth Conversions Done YTD",
+                value=int(ytd.ira_conversions_ytd),
+                step=5_000,
+                format="%d",
                 help="Conversions already completed this year",
             )
 
@@ -128,15 +142,17 @@ def render(hh: Household):
         with st.expander(f"Realized Gain Events ({len(ytd.gain_events)})"):
             events_data = []
             for e in ytd.gain_events:
-                events_data.append({
-                    "Date": e.date,
-                    "Description": e.description,
-                    "Account": e.account_name,
-                    "Proceeds": f"${e.proceeds:,.0f}",
-                    "Basis": f"${e.cost_basis:,.0f}",
-                    "Gain/Loss": f"${e.gain_loss:,.0f}",
-                    "Type": "LTCG" if e.is_ltcg else "STCG",
-                })
+                events_data.append(
+                    {
+                        "Date": e.date,
+                        "Description": e.description,
+                        "Account": e.account_name,
+                        "Proceeds": f"${e.proceeds:,.0f}",
+                        "Basis": f"${e.cost_basis:,.0f}",
+                        "Gain/Loss": f"${e.gain_loss:,.0f}",
+                        "Type": "LTCG" if e.is_ltcg else "STCG",
+                    }
+                )
             st.dataframe(pd.DataFrame(events_data), use_container_width=True)
 
     # --- Section 2: Conversion Headroom ---
@@ -182,9 +198,12 @@ def render(hh: Household):
         delta="TRIGGERED" if headroom.irmaa_already_triggered else None,
         delta_color="inverse" if headroom.irmaa_already_triggered else "off",
         help="MAGI-based — LTCG DOES consume this. "
-        + (f"Not relevant until {headroom.irmaa_first_relevant_year} income year "
-           f"(Medicare starts at 65, 2-year lookback)."
-           if not headroom.irmaa_relevant else ""),
+        + (
+            f"Not relevant until {headroom.irmaa_first_relevant_year} income year "
+            f"(Medicare starts at 65, 2-year lookback)."
+            if not headroom.irmaa_relevant
+            else ""
+        ),
     )
     c4.metric(
         "Room to NIIT",
@@ -245,12 +264,14 @@ def render(hh: Household):
         with st.expander("IRMAA Tier Details"):
             tier_data = []
             for i, (threshold, part_b, part_d) in enumerate(IRMAA_TIERS_MFJ, 1):
-                tier_data.append({
-                    "Tier": i,
-                    "MAGI Threshold": f"${threshold:,.0f}",
-                    "Part B (annual/person)": f"${part_b:,.0f}",
-                    "Part D Surcharge (annual/person)": f"${part_d:,.0f}",
-                })
+                tier_data.append(
+                    {
+                        "Tier": i,
+                        "MAGI Threshold": f"${threshold:,.0f}",
+                        "Part B (annual/person)": f"${part_b:,.0f}",
+                        "Part D Surcharge (annual/person)": f"${part_d:,.0f}",
+                    }
+                )
             st.dataframe(pd.DataFrame(tier_data), use_container_width=True)
 
     # --- Section 4: Integration Toggle ---
@@ -272,8 +293,7 @@ def render(hh: Household):
         )
     else:
         st.info(
-            "YTD data is NOT being applied to the Conversion Planner. "
-            "Toggle above to integrate."
+            "YTD data is NOT being applied to the Conversion Planner. Toggle above to integrate."
         )
 
     # Save snapshot for persistence

@@ -34,9 +34,8 @@ from models.household import Household
 
 def render(hh: Household):
     st.title("🏥 ACA + IRMAA Explorer")
-    anyone_on_aca = (
-        aca_applies(hh.your_age, hh.your_aca_enrolled)
-        or aca_applies(hh.spouse_age, hh.spouse_aca_enrolled)
+    anyone_on_aca = aca_applies(hh.your_age, hh.your_aca_enrolled) or aca_applies(
+        hh.spouse_age, hh.spouse_aca_enrolled
     )
     aca_status = "Enrolled" if anyone_on_aca else "Not enrolled"
     st.caption(
@@ -181,9 +180,7 @@ def render(hh: Household):
             st.plotly_chart(fig_aca, use_container_width=True)
         else:
             if hh.your_age >= 65:
-                st.info(
-                    f"You are {hh.your_age} — on Medicare. See IRMAA section."
-                )
+                st.info(f"You are {hh.your_age} — on Medicare. See IRMAA section.")
             else:
                 st.info(
                     "ACA not enrolled. Toggle 'You/Spouse on ACA Marketplace' "
@@ -380,13 +377,15 @@ def render(hh: Household):
         irmaa_data = []
         for i, (threshold, part_b, part_d) in enumerate(IRMAA_TIERS_MFJ):
             surcharge_pp = (part_b - BASE_PART_B) + part_d
-            irmaa_data.append({
-                "Tier": i + 1,
-                "MAGI >": f"${threshold:,.0f}",
-                "Part B/mo": f"${part_b / 12:,.2f}",
-                "Part D/mo": f"${part_d / 12:,.2f}",
-                "Surcharge/yr (×2)": f"${surcharge_pp * 2:,.0f}",
-            })
+            irmaa_data.append(
+                {
+                    "Tier": i + 1,
+                    "MAGI >": f"${threshold:,.0f}",
+                    "Part B/mo": f"${part_b / 12:,.2f}",
+                    "Part D/mo": f"${part_d / 12:,.2f}",
+                    "Surcharge/yr (×2)": f"${surcharge_pp * 2:,.0f}",
+                }
+            )
         st.dataframe(pd.DataFrame(irmaa_data), use_container_width=True, hide_index=True)
 
     with col_ref2:
@@ -396,11 +395,15 @@ def render(hh: Household):
         aca_data = []
         for upper_fpl, cap_rate in ACA_CAP_SCHEDULE:
             fpl_label = "400%+" if upper_fpl == float("inf") else f"≤{upper_fpl:.0%}"
-            aca_data.append({
-                "FPL Range": fpl_label,
-                "MAGI ≤": f"${upper_fpl * FPL_2:,.0f}" if upper_fpl != float("inf") else "No limit",
-                "Premium Cap": f"{cap_rate:.1%} of income",
-            })
+            aca_data.append(
+                {
+                    "FPL Range": fpl_label,
+                    "MAGI ≤": f"${upper_fpl * FPL_2:,.0f}"
+                    if upper_fpl != float("inf")
+                    else "No limit",
+                    "Premium Cap": f"{cap_rate:.1%} of income",
+                }
+            )
         st.dataframe(pd.DataFrame(aca_data), use_container_width=True, hide_index=True)
 
         st.caption(

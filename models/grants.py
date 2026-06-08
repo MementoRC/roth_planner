@@ -1,6 +1,7 @@
 """Equity-comp grant dataclasses, isolated to break the config↔household
 import cycle (config.defaults needs StockGrant, household needs config.loader).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

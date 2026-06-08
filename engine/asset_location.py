@@ -110,9 +110,7 @@ def project_asset_location(
         total_conv += conv
 
         # Allocate conversion by strategy
-        conv_eq, conv_bd = _allocate_conversion(
-            conv, ira_eq, ira_bd, strategy
-        )
+        conv_eq, conv_bd = _allocate_conversion(conv, ira_eq, ira_bd, strategy)
         yr.conv_equity = conv_eq
         yr.conv_bond = conv_bd
 
@@ -132,8 +130,8 @@ def project_asset_location(
         ira_bd = max(ira_bd - conv_bd - rmd_bd, 0)
 
         # Grow IRA
-        ira_eq *= (1 + equity_return)
-        ira_bd *= (1 + bond_return)
+        ira_eq *= 1 + equity_return
+        ira_bd *= 1 + bond_return
 
         # Update Roth (conversions flow in, then grow)
         roth_eq = (roth_eq + conv_eq) * (1 + equity_return)

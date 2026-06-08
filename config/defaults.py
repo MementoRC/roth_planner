@@ -6,6 +6,7 @@ Personal overrides live in `.user_defaults.py` (gitignored) — see
 Do NOT add household-specific values here. Keep this file safe to
 make public.
 """
+
 from models.grants import StockGrant
 
 DEFAULTS: dict = {
@@ -17,7 +18,6 @@ DEFAULTS: dict = {
     "your_ss_fra": 2_500,
     "spouse_ss_fra": 2_500,
     "living_expenses": 60_000,
-
     # Employer / equity comp — fictional Acme Corp
     "employer_name": "Acme Corp",
     "stock_ticker": "ACME",
