@@ -276,7 +276,6 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Combined IRA ($)",
         yaxis_tickformat="$,.0s",
-
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
@@ -331,7 +330,6 @@ def render(hh: Household):
         xaxis_title="Year",
         yaxis_title="Gross Income ($)",
         yaxis_tickformat="$,.0s",
-
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )

@@ -16,7 +16,9 @@ from engine.portfolio_sync import (
 from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
 
 
-def _make_account(owner: str, name: str, value: float, acct_type: str = "brokerage") -> AccountSummary:
+def _make_account(
+    owner: str, name: str, value: float, acct_type: str = "brokerage"
+) -> AccountSummary:
     return AccountSummary(
         account_type=acct_type,
         owner=owner,

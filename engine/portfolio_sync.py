@@ -876,7 +876,9 @@ class DividendsRollupSnapshot:
 
     server_available: bool = False
     by_symbol: dict[str, dict[str, Any]] = field(default_factory=dict)
-    window: dict[str, Any] = field(default_factory=dict)  # original from/to keys (plus optional metadata)
+    window: dict[str, Any] = field(
+        default_factory=dict
+    )  # original from/to keys (plus optional metadata)
     freshness: dict[str, Any] = field(default_factory=dict)  # original is_stale, as_of, etc.
     error: str | None = None
 

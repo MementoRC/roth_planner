@@ -45,26 +45,30 @@ def render(hh: Household):
     acct_rows = []
     for acct in snap.accounts:
         label = acct_labels.get(acct.account_type, acct.account_type.title())
-        acct_rows.append({
-            "Account": f"{label} ({acct.account_name})" if acct.account_name else label,
-            "Total Value": f"${acct.total_value:,.0f}",
-            "Equity": f"${acct.equity_value:,.0f}",
-            "Bonds": f"${acct.bond_value:,.0f}",
-            "Cash": f"${acct.cash_value:,.0f}",
-            "Crypto": f"${acct.crypto_value:,.0f}",
-            "Wtd Return": f"{acct.weighted_return * 100:.1f}%",
-        })
+        acct_rows.append(
+            {
+                "Account": f"{label} ({acct.account_name})" if acct.account_name else label,
+                "Total Value": f"${acct.total_value:,.0f}",
+                "Equity": f"${acct.equity_value:,.0f}",
+                "Bonds": f"${acct.bond_value:,.0f}",
+                "Cash": f"${acct.cash_value:,.0f}",
+                "Crypto": f"${acct.crypto_value:,.0f}",
+                "Wtd Return": f"{acct.weighted_return * 100:.1f}%",
+            }
+        )
 
     if snap.txn_shares_value > 0:
-        acct_rows.append({
-            "Account": f"{ticker} Shares (ESPP/RSU)",
-            "Owner": "You",
-            "Total Value": f"${snap.txn_shares_value:,.0f}",
-            "Equity": f"${snap.txn_shares_value:,.0f}",
-            "Bonds": "$0",
-            "Equity %": "100%",
-            "Expected Return": "—",
-        })
+        acct_rows.append(
+            {
+                "Account": f"{ticker} Shares (ESPP/RSU)",
+                "Owner": "You",
+                "Total Value": f"${snap.txn_shares_value:,.0f}",
+                "Equity": f"${snap.txn_shares_value:,.0f}",
+                "Bonds": "$0",
+                "Equity %": "100%",
+                "Expected Return": "—",
+            }
+        )
 
     st.dataframe(pd.DataFrame(acct_rows), hide_index=True, use_container_width=True)
 
@@ -97,15 +101,19 @@ def render(hh: Household):
     holdings_rows = []
     for acct in snap.accounts:
         for h in acct.holdings:
-            holdings_rows.append({
-                "Account": acct.account_type.replace("_", " ").title(),
-                "Symbol": h.symbol,
-                "Description": h.description,
-                "Shares": f"{h.quantity:,.1f}",
-                "Value": f"${h.market_value:,.0f}",
-                "Class": h.asset_class.title(),
-                "Gain/Loss": f"${h.total_gain_loss:,.0f}" if h.total_gain_loss is not None else "—",
-            })
+            holdings_rows.append(
+                {
+                    "Account": acct.account_type.replace("_", " ").title(),
+                    "Symbol": h.symbol,
+                    "Description": h.description,
+                    "Shares": f"{h.quantity:,.1f}",
+                    "Value": f"${h.market_value:,.0f}",
+                    "Class": h.asset_class.title(),
+                    "Gain/Loss": f"${h.total_gain_loss:,.0f}"
+                    if h.total_gain_loss is not None
+                    else "—",
+                }
+            )
 
     st.dataframe(pd.DataFrame(holdings_rows), hide_index=True, use_container_width=True)
 
@@ -145,13 +153,15 @@ def render(hh: Household):
         values.append(snap.txn_shares_value)
         colors.append("#ef4444")
 
-    fig_alloc.add_trace(go.Pie(
-        labels=labels,
-        values=values,
-        marker={"colors": colors},
-        hole=0.4,
-        textinfo="label+percent",
-    ))
+    fig_alloc.add_trace(
+        go.Pie(
+            labels=labels,
+            values=values,
+            marker={"colors": colors},
+            hole=0.4,
+            textinfo="label+percent",
+        )
+    )
     fig_alloc.update_layout(height=400, showlegend=False)
     st.plotly_chart(fig_alloc, use_container_width=True)
 
@@ -161,14 +171,16 @@ def render(hh: Household):
 
         grant_rows = []
         for g in snap.equity_grants:
-            grant_rows.append({
-                "Grant ID": g.grant_id,
-                "Type": g.grant_type,
-                "Grant Date": g.grant_date,
-                "Granted": f"{g.shares_granted:,}",
-                "Outstanding": f"{g.outstanding:,}",
-                "Current Value": f"${g.current_value:,.0f}",
-            })
+            grant_rows.append(
+                {
+                    "Grant ID": g.grant_id,
+                    "Type": g.grant_type,
+                    "Grant Date": g.grant_date,
+                    "Granted": f"{g.shares_granted:,}",
+                    "Outstanding": f"{g.outstanding:,}",
+                    "Current Value": f"${g.current_value:,.0f}",
+                }
+            )
 
         st.dataframe(pd.DataFrame(grant_rows), hide_index=True, use_container_width=True)
 
@@ -178,19 +190,23 @@ def render(hh: Household):
         comp_rows = []
         for i, g in enumerate(snap.equity_grants):
             plan = plan_grants[i] if i < len(plan_grants) else None
-            comp_rows.append({
-                "Source": "FinExtract",
-                "Grant": g.grant_date,
-                "Outstanding": g.outstanding,
-                "Value": f"${g.current_value:,.0f}",
-            })
+            comp_rows.append(
+                {
+                    "Source": "FinExtract",
+                    "Grant": g.grant_date,
+                    "Outstanding": g.outstanding,
+                    "Value": f"${g.current_value:,.0f}",
+                }
+            )
             if plan:
-                comp_rows.append({
-                    "Source": "Planner Default",
-                    "Grant": str(plan.year),
-                    "Outstanding": plan.shares,
-                    "Value": f"${plan.spread(hh.txn_price_now):,.0f}",
-                })
+                comp_rows.append(
+                    {
+                        "Source": "Planner Default",
+                        "Grant": str(plan.year),
+                        "Outstanding": plan.shares,
+                        "Value": f"${plan.spread(hh.txn_price_now):,.0f}",
+                    }
+                )
 
         st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
 
@@ -204,7 +220,7 @@ def render(hh: Household):
     # --- Growth Rate Mapping ---
     st.markdown("---")
     st.markdown("### Growth Rate Mapping")
-    returns_str = ", ".join(f"{k} {v*100:.0f}%" for k, v in EXPECTED_RETURNS.items())
+    returns_str = ", ".join(f"{k} {v * 100:.0f}%" for k, v in EXPECTED_RETURNS.items())
     st.caption(f"Expected returns: {returns_str}.")
 
     rate_rows = []
@@ -212,51 +228,61 @@ def render(hh: Household):
     # Your pre-tax IRA (Rollover IRA + 403b combined)
     pretax = snap.pretax_total
     if pretax > 0:
-        rate_rows.append({
-            "Account": "Your IRA (pre-tax total)",
-            "Balance": f"${pretax:,.0f}",
-            "Weighted Return": f"{snap.pretax_weighted_return * 100:.1f}%",
-            "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
-            "Status": "Synced" if hh.your_ira_growth else "Default",
-        })
+        rate_rows.append(
+            {
+                "Account": "Your IRA (pre-tax total)",
+                "Balance": f"${pretax:,.0f}",
+                "Weighted Return": f"{snap.pretax_weighted_return * 100:.1f}%",
+                "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
+                "Status": "Synced" if hh.your_ira_growth else "Default",
+            }
+        )
     else:
-        rate_rows.append({
-            "Account": "Your IRA",
-            "Balance": f"${hh.your_ira:,.0f}",
-            "Weighted Return": "—",
-            "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
-            "Status": "Default",
-        })
+        rate_rows.append(
+            {
+                "Account": "Your IRA",
+                "Balance": f"${hh.your_ira:,.0f}",
+                "Weighted Return": "—",
+                "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
+                "Status": "Default",
+            }
+        )
 
-    rate_rows.append({
-        "Account": "Spouse IRA",
-        "Balance": f"${hh.spouse_ira:,.0f}",
-        "Weighted Return": "—",
-        "Planner Uses": f"{hh.spouse_ira_rate(hh.base_year) * 100:.1f}%",
-        "Status": "Synced" if hh.spouse_ira_growth else "Default (no data)",
-    })
+    rate_rows.append(
+        {
+            "Account": "Spouse IRA",
+            "Balance": f"${hh.spouse_ira:,.0f}",
+            "Weighted Return": "—",
+            "Planner Uses": f"{hh.spouse_ira_rate(hh.base_year) * 100:.1f}%",
+            "Status": "Synced" if hh.spouse_ira_growth else "Default (no data)",
+        }
+    )
 
     brok = snap.account_by_type("brokerage")
     if brok and brok.total_value > 0:
-        rate_rows.append({
-            "Account": "Brokerage",
-            "Balance": f"${brok.total_value:,.0f}",
-            "Weighted Return": f"{brok.weighted_return * 100:.1f}%",
-            "Planner Uses": f"{hh.brokerage_rate(hh.base_year) * 100:.1f}%",
-            "Status": "Synced" if hh.brokerage_growth else "Default",
-        })
+        rate_rows.append(
+            {
+                "Account": "Brokerage",
+                "Balance": f"${brok.total_value:,.0f}",
+                "Weighted Return": f"{brok.weighted_return * 100:.1f}%",
+                "Planner Uses": f"{hh.brokerage_rate(hh.base_year) * 100:.1f}%",
+                "Status": "Synced" if hh.brokerage_growth else "Default",
+            }
+        )
 
     # Show other accounts as informational
     for acct in snap.accounts:
         if acct.account_type in ("roth_ira", "hsa"):
             label = acct_labels.get(acct.account_type, acct.account_type)
-            rate_rows.append({
-                "Account": label,
-                "Balance": f"${acct.total_value:,.0f}",
-                "Weighted Return": f"{acct.weighted_return * 100:.1f}%",
-                "Planner Uses": "Not modeled",
-                "Status": "Info only",
-            })
+            rate_rows.append(
+                {
+                    "Account": label,
+                    "Balance": f"${acct.total_value:,.0f}",
+                    "Weighted Return": f"{acct.weighted_return * 100:.1f}%",
+                    "Planner Uses": "Not modeled",
+                    "Status": "Info only",
+                }
+            )
 
     st.dataframe(pd.DataFrame(rate_rows), hide_index=True, use_container_width=True)
 

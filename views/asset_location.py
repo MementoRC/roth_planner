@@ -39,8 +39,7 @@ def render(hh: Household):
     # Combine your + spouse conversions into a single annual amount
     all_years = set(plan.your_conversions.keys()) | set(plan.spouse_conversions.keys())
     annual_conv = {
-        y: plan.your_conversions.get(y, 0) + plan.spouse_conversions.get(y, 0)
-        for y in all_years
+        y: plan.your_conversions.get(y, 0) + plan.spouse_conversions.get(y, 0) for y in all_years
     }
 
     total_planned = sum(annual_conv.values())
@@ -59,14 +58,16 @@ def render(hh: Household):
     summary_data = []
     for strat, (label, _) in STRATEGIES.items():
         r = results[strat]
-        summary_data.append({
-            "Strategy": label,
-            "IRA at 75": f"${r.ira_at_75:,.0f}",
-            "IRA at 85": f"${r.ira_at_85:,.0f}",
-            "RMD at 75": f"${r.rmd_at_75:,.0f}",
-            "RMD at 85": f"${r.rmd_at_85:,.0f}",
-            "IRA Growth at 75": f"{r.ira_growth_at_75 * 100:.1f}%",
-        })
+        summary_data.append(
+            {
+                "Strategy": label,
+                "IRA at 75": f"${r.ira_at_75:,.0f}",
+                "IRA at 85": f"${r.ira_at_85:,.0f}",
+                "RMD at 75": f"${r.rmd_at_75:,.0f}",
+                "RMD at 85": f"${r.rmd_at_85:,.0f}",
+                "IRA Growth at 75": f"{r.ira_growth_at_75 * 100:.1f}%",
+            }
+        )
 
     import pandas as pd
 
@@ -92,12 +93,14 @@ def render(hh: Household):
 
     for strat, (label, color) in STRATEGIES.items():
         r = results[strat]
-        fig_ira.add_trace(go.Scatter(
-            x=[y.your_age for y in r.years],
-            y=[y.ira_total for y in r.years],
-            name=label,
-            line={"color": color, "width": 2},
-        ))
+        fig_ira.add_trace(
+            go.Scatter(
+                x=[y.your_age for y in r.years],
+                y=[y.ira_total for y in r.years],
+                name=label,
+                line={"color": color, "width": 2},
+            )
+        )
 
     fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_ira.update_layout(
@@ -115,12 +118,14 @@ def render(hh: Household):
 
     for strat, (label, color) in STRATEGIES.items():
         r = results[strat]
-        fig_roth.add_trace(go.Scatter(
-            x=[y.your_age for y in r.years],
-            y=[y.roth_total for y in r.years],
-            name=label,
-            line={"color": color, "width": 2},
-        ))
+        fig_roth.add_trace(
+            go.Scatter(
+                x=[y.your_age for y in r.years],
+                y=[y.roth_total for y in r.years],
+                name=label,
+                line={"color": color, "width": 2},
+            )
+        )
 
     fig_roth.update_layout(
         xaxis_title="Your Age",
@@ -136,18 +141,22 @@ def render(hh: Household):
 
     eq_years = results["equity_first"].years
     fig_comp = go.Figure()
-    fig_comp.add_trace(go.Bar(
-        x=[y.your_age for y in eq_years],
-        y=[y.ira_equity for y in eq_years],
-        name="Equities",
-        marker_color="#22c55e",
-    ))
-    fig_comp.add_trace(go.Bar(
-        x=[y.your_age for y in eq_years],
-        y=[y.ira_bond for y in eq_years],
-        name="Bonds",
-        marker_color="#60a5fa",
-    ))
+    fig_comp.add_trace(
+        go.Bar(
+            x=[y.your_age for y in eq_years],
+            y=[y.ira_equity for y in eq_years],
+            name="Equities",
+            marker_color="#22c55e",
+        )
+    )
+    fig_comp.add_trace(
+        go.Bar(
+            x=[y.your_age for y in eq_years],
+            y=[y.ira_bond for y in eq_years],
+            name="Bonds",
+            marker_color="#60a5fa",
+        )
+    )
 
     fig_comp.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_comp.update_layout(
@@ -170,12 +179,14 @@ def render(hh: Household):
     fig_gr = go.Figure()
     for strat, (label, color) in STRATEGIES.items():
         r = results[strat]
-        fig_gr.add_trace(go.Scatter(
-            x=[y.your_age for y in r.years if y.ira_total > 0],
-            y=[y.ira_growth_rate * 100 for y in r.years if y.ira_total > 0],
-            name=label,
-            line={"color": color, "width": 2},
-        ))
+        fig_gr.add_trace(
+            go.Scatter(
+                x=[y.your_age for y in r.years if y.ira_total > 0],
+                y=[y.ira_growth_rate * 100 for y in r.years if y.ira_total > 0],
+                name=label,
+                line={"color": color, "width": 2},
+            )
+        )
 
     fig_gr.update_layout(
         xaxis_title="Your Age",
@@ -192,12 +203,14 @@ def render(hh: Household):
     for strat, (label, color) in STRATEGIES.items():
         r = results[strat]
         rmd_years = [y for y in r.years if y.rmd > 0]
-        fig_rmd.add_trace(go.Bar(
-            x=[y.your_age for y in rmd_years],
-            y=[y.rmd for y in rmd_years],
-            name=label,
-            marker_color=color,
-        ))
+        fig_rmd.add_trace(
+            go.Bar(
+                x=[y.your_age for y in rmd_years],
+                y=[y.rmd for y in rmd_years],
+                name=label,
+                marker_color=color,
+            )
+        )
 
     fig_rmd.update_layout(
         barmode="group",

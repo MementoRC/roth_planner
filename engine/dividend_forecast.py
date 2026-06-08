@@ -23,24 +23,34 @@ from pathlib import Path
 # .dividend_rates.json. Conservative defaults — REITs/MLPs/bond funds are
 # ordinary (Section 199A REIT divs are non-qualified at federal level).
 QUALIFIED_DEFAULTS: dict[str, float] = {
-    "equity": 1.0,        # individual stocks (TXN, AAPL, etc.)
-    "etf_equity": 1.0,    # broad-market equity ETFs
-    "etf_intl": 0.7,      # international (FTC complications, mixed qualified)
+    "equity": 1.0,  # individual stocks (TXN, AAPL, etc.)
+    "etf_equity": 1.0,  # broad-market equity ETFs
+    "etf_intl": 0.7,  # international (FTC complications, mixed qualified)
     "reit": 0.0,
     "mlp": 0.0,
     "bond_fund": 0.0,
     "money_market": 0.0,
-    "unknown": 0.85,      # safe-ish default for mixed funds
+    "unknown": 0.85,  # safe-ish default for mixed funds
 }
 
 # Tickers we explicitly classify. Extend via .dividend_rates.json overrides.
 TICKER_CLASS: dict[str, str] = {
     "TXN": "equity",
-    "VTI": "etf_equity", "VOO": "etf_equity", "SPY": "etf_equity",
-    "IVV": "etf_equity", "QQQ": "etf_equity", "VTSAX": "etf_equity",
-    "VXUS": "etf_intl", "VEA": "etf_intl", "VWO": "etf_intl",
-    "BND": "bond_fund", "AGG": "bond_fund", "VBTLX": "bond_fund",
-    "VMFXX": "money_market", "SPAXX": "money_market", "FDRXX": "money_market",
+    "VTI": "etf_equity",
+    "VOO": "etf_equity",
+    "SPY": "etf_equity",
+    "IVV": "etf_equity",
+    "QQQ": "etf_equity",
+    "VTSAX": "etf_equity",
+    "VXUS": "etf_intl",
+    "VEA": "etf_intl",
+    "VWO": "etf_intl",
+    "BND": "bond_fund",
+    "AGG": "bond_fund",
+    "VBTLX": "bond_fund",
+    "VMFXX": "money_market",
+    "SPAXX": "money_market",
+    "FDRXX": "money_market",
     "VNQ": "reit",
 }
 
@@ -51,8 +61,8 @@ class Position:
 
     ticker: str
     shares: float
-    balance: float                 # current market value of this position
-    ttm_dividends: float = 0.0     # trailing 12-month dividends received
+    balance: float  # current market value of this position
+    ttm_dividends: float = 0.0  # trailing 12-month dividends received
 
     @property
     def ttm_per_share(self) -> float:
@@ -63,8 +73,8 @@ class Position:
 class DividendForecast:
     yield_rate: float
     qualified_fraction: float
-    per_position: dict[str, dict[str, float]]   # ticker -> {annual_div, qualified}
-    source_counts: dict[str, int]                # strategy -> count
+    per_position: dict[str, dict[str, float]]  # ticker -> {annual_div, qualified}
+    source_counts: dict[str, int]  # strategy -> count
 
 
 def _load_overrides(path: Path) -> Mapping[str, Mapping[str, float]]:

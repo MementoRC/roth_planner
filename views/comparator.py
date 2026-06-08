@@ -115,20 +115,22 @@ def render(hh: Household):
         lifetime_brok = _lifetime_brok_tax(s)
         total_cost = lifetime_tax + lifetime_irmaa + lifetime_brok
 
-        summary_rows.append({
-            "Scenario": s.name,
-            "Total Converted": f"${total_conv:,.0f}",
-            "Conv Tax Paid": f"${s.total_conv_tax:,.0f}",
-            "Avg Conv Rate": f"{s.total_conv_tax / max(total_conv, 1) * 100:.1f}%",
-            "Lifetime Tax": f"${lifetime_tax:,.0f}",
-            "Lifetime IRMAA": f"${lifetime_irmaa:,.0f}",
-            "Lifetime Brok Tax": f"${lifetime_brok:,.0f}",
-            "Total All-In Cost": f"${total_cost:,.0f}",
-            "vs Baseline": f"${total_cost - (_lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)):+,.0f}",
-            "IRA at 75": f"${_ira_at_age(s, 75) / 1e6:.2f}M",
-            "IRA at 85": f"${_ira_at_age(s, 85) / 1e6:.2f}M",
-            "IRA at 95": f"${_ira_at_age(s, 95) / 1e6:.2f}M",
-        })
+        summary_rows.append(
+            {
+                "Scenario": s.name,
+                "Total Converted": f"${total_conv:,.0f}",
+                "Conv Tax Paid": f"${s.total_conv_tax:,.0f}",
+                "Avg Conv Rate": f"{s.total_conv_tax / max(total_conv, 1) * 100:.1f}%",
+                "Lifetime Tax": f"${lifetime_tax:,.0f}",
+                "Lifetime IRMAA": f"${lifetime_irmaa:,.0f}",
+                "Lifetime Brok Tax": f"${lifetime_brok:,.0f}",
+                "Total All-In Cost": f"${total_cost:,.0f}",
+                "vs Baseline": f"${total_cost - (_lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)):+,.0f}",
+                "IRA at 75": f"${_ira_at_age(s, 75) / 1e6:.2f}M",
+                "IRA at 85": f"${_ira_at_age(s, 85) / 1e6:.2f}M",
+                "IRA at 95": f"${_ira_at_age(s, 95) / 1e6:.2f}M",
+            }
+        )
 
     df_summary = pd.DataFrame(summary_rows)
     st.dataframe(df_summary, hide_index=True, use_container_width=True)
@@ -143,12 +145,15 @@ def render(hh: Household):
 
     for i, s in enumerate(scenarios):
         ira_vals = [yr.your_ira_begin + yr.spouse_ira_begin for yr in s.years]
-        fig_ira.add_trace(go.Scatter(
-            x=ages, y=ira_vals,
-            name=s.name,
-            line={"color": COLORS[i % len(COLORS)], "width": 2 + (1 if i == 0 else 0)},
-            hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
-        ))
+        fig_ira.add_trace(
+            go.Scatter(
+                x=ages,
+                y=ira_vals,
+                name=s.name,
+                line={"color": COLORS[i % len(COLORS)], "width": 2 + (1 if i == 0 else 0)},
+                hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
+            )
+        )
 
     fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_ira.update_layout(
@@ -167,13 +172,15 @@ def render(hh: Household):
         st.markdown("### Annual Federal Tax")
         fig_tax = go.Figure()
         for i, s in enumerate(scenarios):
-            fig_tax.add_trace(go.Scatter(
-                x=ages,
-                y=[yr.federal_tax_amt for yr in s.years],
-                name=s.name,
-                line={"color": COLORS[i % len(COLORS)]},
-                hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
-            ))
+            fig_tax.add_trace(
+                go.Scatter(
+                    x=ages,
+                    y=[yr.federal_tax_amt for yr in s.years],
+                    name=s.name,
+                    line={"color": COLORS[i % len(COLORS)]},
+                    hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
+                )
+            )
         fig_tax.update_layout(
             xaxis_title="Your Age",
             yaxis_title="Federal Tax ($)",
@@ -186,15 +193,17 @@ def render(hh: Household):
         st.markdown("### Marginal Bracket")
         fig_br = go.Figure()
         for i, s in enumerate(scenarios):
-            fig_br.add_trace(go.Scatter(
-                x=ages,
-                y=[yr.marginal_bracket * 100 for yr in s.years],
-                name=s.name,
-                line={"color": COLORS[i % len(COLORS)]},
-                mode="lines+markers",
-                marker={"size": 3},
-                hovertemplate=f"{s.name}<br>Age %{{x}}: %{{y:.0f}}%<extra></extra>",
-            ))
+            fig_br.add_trace(
+                go.Scatter(
+                    x=ages,
+                    y=[yr.marginal_bracket * 100 for yr in s.years],
+                    name=s.name,
+                    line={"color": COLORS[i % len(COLORS)]},
+                    mode="lines+markers",
+                    marker={"size": 3},
+                    hovertemplate=f"{s.name}<br>Age %{{x}}: %{{y:.0f}}%<extra></extra>",
+                )
+            )
         fig_br.update_layout(
             xaxis_title="Your Age",
             yaxis_title="Marginal Bracket (%)",
@@ -230,13 +239,16 @@ def render(hh: Household):
             cum_brok_saved += yr_b.brokerage_gain_tax - yr_s.brokerage_gain_tax
             cum_benefit.append(cum_rmd_saved + cum_brok_saved - cum_conv_tax)
 
-        fig_net.add_trace(go.Scatter(
-            x=ages, y=cum_benefit,
-            name=s.name,
-            line={"color": COLORS[i % len(COLORS)], "width": 2},
-            fill="tozeroy" if len(scenarios) <= 3 else None,
-            hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
-        ))
+        fig_net.add_trace(
+            go.Scatter(
+                x=ages,
+                y=cum_benefit,
+                name=s.name,
+                line={"color": COLORS[i % len(COLORS)], "width": 2},
+                fill="tozeroy" if len(scenarios) <= 3 else None,
+                hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
+            )
+        )
 
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
     fig_net.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
@@ -257,13 +269,16 @@ def render(hh: Household):
 
     for i, s in enumerate(scenarios):
         rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= 75]
-        fig_rmd.add_trace(go.Bar(
-            x=rmd_ages, y=rmd_vals,
-            name=s.name,
-            marker_color=COLORS[i % len(COLORS)],
-            opacity=0.7,
-            hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
-        ))
+        fig_rmd.add_trace(
+            go.Bar(
+                x=rmd_ages,
+                y=rmd_vals,
+                name=s.name,
+                marker_color=COLORS[i % len(COLORS)],
+                opacity=0.7,
+                hovertemplate=f"{s.name}<br>Age %{{x}}: $%{{y:,.0f}}<extra></extra>",
+            )
+        )
 
     fig_rmd.update_layout(
         barmode="group",
@@ -307,15 +322,17 @@ def render(hh: Household):
             conv_rows = []
             for yr in s.years:
                 if yr.your_conversion > 0 or yr.spouse_conversion > 0:
-                    conv_rows.append({
-                        "Year": str(yr.year),
-                        "You/Sp": f"{yr.your_age}/{yr.spouse_age}",
-                        "Your Conv": f"${yr.your_conversion:,.0f}",
-                        "Sp Conv": f"${yr.spouse_conversion:,.0f}",
-                        "Bracket": f"{yr.marginal_bracket * 100:.0f}%",
-                        "Conv Tax": f"${yr.conversion_tax:,.0f}",
-                        "IRMAA": f"${yr.irmaa_cost:,.0f}",
-                    })
+                    conv_rows.append(
+                        {
+                            "Year": str(yr.year),
+                            "You/Sp": f"{yr.your_age}/{yr.spouse_age}",
+                            "Your Conv": f"${yr.your_conversion:,.0f}",
+                            "Sp Conv": f"${yr.spouse_conversion:,.0f}",
+                            "Bracket": f"{yr.marginal_bracket * 100:.0f}%",
+                            "Conv Tax": f"${yr.conversion_tax:,.0f}",
+                            "IRMAA": f"${yr.irmaa_cost:,.0f}",
+                        }
+                    )
             if conv_rows:
                 st.dataframe(pd.DataFrame(conv_rows), hide_index=True, use_container_width=True)
 
@@ -371,11 +388,14 @@ def render(hh: Household):
 
             # SS with COLA
             from engine.ira import ss_with_cola
+
             ss_at_proj = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0
 
             # Single filer tax
             other_inc = rmd
-            tss = taxable_ss(ss_at_proj, other_inc)  # SS taxation uses Single thresholds too but formula is same
+            tss = taxable_ss(
+                ss_at_proj, other_inc
+            )  # SS taxation uses Single thresholds too but formula is same
             gross = rmd + tss
             ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
             taxable = max(gross - ded, 0)

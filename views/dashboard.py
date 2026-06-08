@@ -21,7 +21,11 @@ def render(hh: Household):
         f"IRAs ${hh.your_ira / 1e6:.1f}M + ${hh.spouse_ira / 1e6:.1f}M · "
         f"{hh.growth_rate * 100:.0f}% growth · "
         f"RMD at {hh.your_rmd_start_age}"
-        + (f"/{hh.spouse_rmd_start_age}" if hh.spouse_rmd_start_age != hh.your_rmd_start_age else "")
+        + (
+            f"/{hh.spouse_rmd_start_age}"
+            if hh.spouse_rmd_start_age != hh.your_rmd_start_age
+            else ""
+        )
     )
 
     # --- Run both scenarios ---
@@ -116,7 +120,6 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="IRA Balance ($)",
         yaxis_tickformat="$,.0s",
-
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
@@ -244,7 +247,6 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Net Benefit ($)",
         yaxis_tickformat="$,.0s",
-
         height=400,
     )
     st.plotly_chart(fig_net, use_container_width=True)

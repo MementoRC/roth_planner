@@ -32,5 +32,3 @@ def niit(magi: float, net_investment_income: float) -> float:
     excess = magi - NIIT_THRESHOLD_MFJ
     taxable_nii = min(net_investment_income, excess)
     return taxable_nii * NIIT_RATE
-
-
