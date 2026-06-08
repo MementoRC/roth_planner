@@ -3,7 +3,7 @@
 import pytest
 
 from config.defaults import DEFAULTS
-from engine.aca import aca_applies, aca_subsidy
+from engine.aca import aca_applies, aca_subsidy, aca_subsidy_loss
 from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit
@@ -179,6 +179,62 @@ class TestACA:
 
     def test_high_income_subsidy(self):
         aca_subsidy(300_000)  # just verify no error
+
+    def test_benchmark_premium_default_unchanged(self):
+        """Default benchmark (21600) must produce same subsidy loss as the old hardcoded constant."""
+        base_magi = 60_000.0
+        new_magi = 80_000.0
+        default_loss = aca_subsidy_loss(base_magi, new_magi, 21_600.0)
+        assert default_loss == aca_subsidy_loss(base_magi, new_magi)
+
+    def test_benchmark_premium_doubled_increases_loss(self):
+        """Doubling the benchmark raises subsidy loss when new_magi crosses 400% FPL cliff.
+
+        Pre-ARP: subsidies cut off above 400% FPL ($84,600 for family of 2).
+        base_magi (60k) stays below the cliff (subsidy positive).
+        new_magi (100k) is above the cliff (subsidy = 0 by rule).
+        Loss = aca_subsidy(base) - 0; a higher benchmark raises aca_subsidy(base).
+        """
+        base_magi = 60_000.0
+        new_magi = 100_000.0  # above 400% FPL — pre-ARP subsidy = 0
+        loss_default = aca_subsidy_loss(base_magi, new_magi, 21_600.0)
+        loss_double = aca_subsidy_loss(base_magi, new_magi, 43_200.0)
+        assert loss_double > loss_default
+
+    def test_household_benchmark_field_wires_through_scenario(self):
+        """Household.aca_benchmark_premium_annual flows into run_scenario aca_loss.
+
+        Uses a low base income so the household is below 400% FPL in base year
+        and the 30k conversion pushes new_magi above the cliff.
+        """
+        from dataclasses import replace
+
+        hh_default = Household(
+            your_age=61,
+            spouse_age=65,  # spouse already on Medicare — only "you" trigger ACA
+            your_ira=200_000,
+            spouse_ira=200_000,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            your_aca_enrolled=True,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+        hh_double = replace(hh_default, aca_benchmark_premium_annual=43_200.0)
+
+        # Conversion of 100k in base year — pushes MAGI above 400% FPL ($84,600)
+        # while base MAGI (no conversion) is 0 → subsidy loss = aca_subsidy(0) - 0
+        # With higher benchmark, aca_subsidy(0) is larger → loss_double > loss_default
+        plan = ConversionPlan(your_conversions={2026: 100_000})
+        result_default = run_scenario(hh_default, plan)
+        result_double = run_scenario(hh_double, plan)
+
+        loss_default = sum(yr.aca_loss for yr in result_default.years)
+        loss_double = sum(yr.aca_loss for yr in result_double.years)
+        assert loss_double > loss_default
 
 
 class TestHouseholdProperties:
