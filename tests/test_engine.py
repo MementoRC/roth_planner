@@ -190,6 +190,22 @@ class TestHouseholdProperties:
         expected = max(75 - 1 - DEFAULTS["your_age"] + 1, 0)
         assert hh.your_conv_window == expected
 
+    def test_spouse_conv_window_property(self):
+        """spouse_conv_window mirrors your_conv_window formula for spouse_age."""
+        from dataclasses import replace
+        hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
+        assert hh.your_conv_window == max(75 - 1 - 61 + 1, 0)    # 14
+        assert hh.spouse_conv_window == max(75 - 1 - 55 + 1, 0)  # 20
+        assert hh.spouse_conv_window > hh.your_conv_window
+
+    def test_conv_windows_symmetric_under_swap(self):
+        """Under me<->spouse swap, the windows swap correctly."""
+        from dataclasses import replace
+        hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
+        hh_sw = replace(hh, your_age=hh.spouse_age, spouse_age=hh.your_age)
+        assert hh_sw.your_conv_window == hh.spouse_conv_window
+        assert hh_sw.spouse_conv_window == hh.your_conv_window
+
     def test_ss_at_70(self):
         hh = Household()
         expected_annual = DEFAULTS["your_ss_fra"] * 1.24 * 12
