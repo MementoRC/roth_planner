@@ -186,7 +186,8 @@ def render(hh: Household):
     )
 
     # --- Year selector ---
-    conv_years = list(range(hh.base_year, hh.base_year + hh.your_conv_window))
+    conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
+    conv_years = list(range(hh.base_year, hh.base_year + conv_window))
     if not conv_years:
         st.warning("No conversion window remaining.")
         return
