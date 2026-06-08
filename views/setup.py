@@ -78,6 +78,8 @@ def _user_defaults_from_session() -> dict:
         "spouse_ss_start_age",
         "your_rmd_start_age",
         "spouse_rmd_start_age",
+        "your_fra_age",
+        "spouse_fra_age",
         "living_expenses",
         "stock_price_now",
     ]
@@ -140,6 +142,8 @@ def _clear_personal_session_state() -> None:
         "spouse_ss_start_age",
         "your_rmd_start_age",
         "spouse_rmd_start_age",
+        "your_fra_age",
+        "spouse_fra_age",
         "living_expenses",
         "txn_price",
     ]
@@ -520,7 +524,9 @@ def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
         st.caption("Changes take effect on next sync.")
         _type_options = ["trad_ira", "roth_ira", "brokerage", "hsa", "403b"]
         _owner_options = ["you", "spouse"]
-        overrides: dict[str, str | dict[str, str]] = st.session_state.get("account_type_overrides") or {}
+        overrides: dict[str, str | dict[str, str]] = (
+            st.session_state.get("account_type_overrides") or {}
+        )
 
         seen: set[str] = set()
         for acct in snap.accounts:
@@ -625,6 +631,15 @@ def render(hh: Household) -> None:
                 format="%d",
                 help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
             )
+            st.session_state.your_fra_age = st.number_input(
+                "Your FRA (Full Retirement Age)",
+                min_value=65,
+                max_value=70,
+                value=st.session_state.get("your_fra_age", 67),
+                step=1,
+                format="%d",
+                help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
+            )
             st.session_state.your_aca = st.checkbox(
                 "You on ACA Marketplace",
                 value=st.session_state.your_aca,
@@ -669,6 +684,15 @@ def render(hh: Household) -> None:
                 format="%d",
                 help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
             )
+            st.session_state.spouse_fra_age = st.number_input(
+                "Spouse FRA (Full Retirement Age)",
+                min_value=65,
+                max_value=70,
+                value=st.session_state.get("spouse_fra_age", 67),
+                step=1,
+                format="%d",
+                help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
+            )
             st.session_state.spouse_aca = st.checkbox(
                 "Spouse on ACA Marketplace",
                 value=st.session_state.spouse_aca,
@@ -711,8 +735,7 @@ def render(hh: Household) -> None:
             )
             if snap is not None:
                 st.caption(
-                    f"Loaded: {len(snap.accounts)} accounts, "
-                    f"{len(snap.equity_grants)} grants"
+                    f"Loaded: {len(snap.accounts)} accounts, {len(snap.equity_grants)} grants"
                 )
 
             if _sync:
