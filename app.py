@@ -37,6 +37,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("your_aca", False)
     st.session_state.setdefault("spouse_aca", False)
     st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", 202.90)
     st.session_state.setdefault("your_ss_start_age", 70)
     st.session_state.setdefault("spouse_ss_start_age", 70)
     st.session_state.setdefault("your_rmd_start_age", 75)
@@ -122,6 +123,9 @@ def get_household() -> Household:
         spouse_aca_enrolled=st.session_state.spouse_aca,
         aca_benchmark_premium_annual=st.session_state.get(
             "aca_benchmark_premium_annual", 21_600.0
+        ),
+        medicare_part_b_base_monthly=st.session_state.get(
+            "medicare_part_b_base_monthly", 202.90
         ),
         your_ss_start_age=st.session_state.get(
             "your_ss_start_age",

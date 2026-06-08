@@ -103,6 +103,7 @@ class Household:
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
     spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
     aca_benchmark_premium_annual: float = 21_600.0  # 2nd-lowest-cost Silver plan annual cost (household-level; varies by state/county/age)
+    medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top
 
     # QCD
     qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)

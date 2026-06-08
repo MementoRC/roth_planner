@@ -83,6 +83,7 @@ def _user_defaults_from_session() -> dict:
         "living_expenses",
         "stock_price_now",
         "aca_benchmark_premium_annual",
+        "medicare_part_b_base_monthly",
     ]
     payload: dict = {}
     for k in scalar_keys:
@@ -148,6 +149,7 @@ def _clear_personal_session_state() -> None:
         "living_expenses",
         "txn_price",
         "aca_benchmark_premium_annual",
+        "medicare_part_b_base_monthly",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -730,6 +732,20 @@ def render(hh: Household) -> None:
                     "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
                     "for your age group. Used to calculate ACA subsidy loss from conversions. "
                     "Varies widely by geography — check healthcare.gov for your area."
+                ),
+            )
+            st.session_state["medicare_part_b_base_monthly"] = st.number_input(
+                "Medicare Part B Base Premium ($/mo)",
+                min_value=0.0,
+                max_value=1000.0,
+                value=float(
+                    st.session_state.get("medicare_part_b_base_monthly", 202.90)
+                ),
+                step=1.0,
+                format="%.2f",
+                help=(
+                    "Standard Medicare Part B monthly premium (CMS-published; $202.90 in 2026). "
+                    "IRMAA surcharges are computed on top of this base."
                 ),
             )
 

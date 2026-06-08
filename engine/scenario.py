@@ -348,7 +348,9 @@ def run_scenario(
         yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
 
         # === IRMAA (2-year lookback) ===
-        irmaa_cost, _ = irmaa_for_year(yr.magi, ya, sa)
+        irmaa_cost, _ = irmaa_for_year(
+            yr.magi, ya, sa, base_part_b=hh.medicare_part_b_base_monthly * 12
+        )
         yr.irmaa_cost = irmaa_cost
         yr.irmaa_room = irmaa_next_threshold(yr.magi)
 
