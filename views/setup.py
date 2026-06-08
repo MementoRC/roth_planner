@@ -83,6 +83,7 @@ def _user_defaults_from_session() -> dict:
         "living_expenses",
         "stock_price_now",
         "aca_benchmark_premium_annual",
+        "aca_enhanced_subsidies_active",
         "medicare_part_b_base_monthly",
     ]
     payload: dict = {}
@@ -149,6 +150,7 @@ def _clear_personal_session_state() -> None:
         "living_expenses",
         "txn_price",
         "aca_benchmark_premium_annual",
+        "aca_enhanced_subsidies_active",
         "medicare_part_b_base_monthly",
     ]
     for k in keys_to_clear:
@@ -732,6 +734,15 @@ def render(hh: Household) -> None:
                     "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
                     "for your age group. Used to calculate ACA subsidy loss from conversions. "
                     "Varies widely by geography — check healthcare.gov for your area."
+                ),
+            )
+            st.session_state["aca_enhanced_subsidies_active"] = st.checkbox(
+                "ACA enhanced subsidies active (ARP/IRA-style)",
+                value=st.session_state.get("aca_enhanced_subsidies_active", False),
+                help=(
+                    "Toggle for sensitivity analysis. Default OFF matches current law "
+                    "(ARP enhanced subsidies expired Dec 31, 2025). Turn ON to model "
+                    "what-if ARP gets extended."
                 ),
             )
             st.session_state["medicare_part_b_base_monthly"] = st.number_input(

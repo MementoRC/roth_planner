@@ -362,7 +362,10 @@ def run_scenario(
         if anyone_on_aca:
             base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
             yr.aca_loss = aca_subsidy_loss(
-                base_magi, yr.magi, hh.aca_benchmark_premium_annual
+                base_magi,
+                yr.magi,
+                hh.aca_benchmark_premium_annual,
+                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
             )
         else:
             yr.aca_loss = 0.0

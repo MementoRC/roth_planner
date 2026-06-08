@@ -103,6 +103,7 @@ class Household:
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
     spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
     aca_benchmark_premium_annual: float = 21_600.0  # 2nd-lowest-cost Silver plan annual cost (household-level; varies by state/county/age)
+    aca_enhanced_subsidies_active: bool = False  # law toggle for sensitivity analysis: True = ARP/IRA-style enhanced subsidies; False = current law (ARP expired Dec 31, 2025)
     medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top
 
     # QCD

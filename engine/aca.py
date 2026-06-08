@@ -36,24 +36,32 @@ ACA_PRE_ARP_SCHEDULE = [
     (4.00, 0.096),  # 300-400%: 9.6% (capped)
 ]
 
-# Active schedule: select based on ENHANCED_SUBSIDIES_ACTIVE flag
-ACA_CAP_SCHEDULE = ACA_ENHANCED_SCHEDULE if ENHANCED_SUBSIDIES_ACTIVE else ACA_PRE_ARP_SCHEDULE
-
 # Approximate annual benchmark silver plan premium for couple age ~60-64
 # (varies by state/county — $1,600-$2,000/mo range; using $1,800/mo)
 BENCHMARK_PREMIUM_ANNUAL = 1_800 * 12
 
 
-def aca_premium_cap_rate(magi: float) -> float:
+def _aca_cap_schedule(enhanced: bool) -> list[tuple[float, float]]:
+    """Return the premium cap schedule for the given subsidy law state."""
+    return ACA_ENHANCED_SCHEDULE if enhanced else ACA_PRE_ARP_SCHEDULE
+
+
+def aca_premium_cap_rate(
+    magi: float, enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE
+) -> float:
     """Premium cap as fraction of income based on FPL multiple."""
     fpl_ratio = magi / FPL_2
-    for upper_fpl, cap_rate in ACA_CAP_SCHEDULE:
+    for upper_fpl, cap_rate in _aca_cap_schedule(enhanced_subsidies_active):
         if fpl_ratio <= upper_fpl:
             return cap_rate
     return 0.085
 
 
-def aca_subsidy(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> float:
+def aca_subsidy(
+    magi: float,
+    benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
+    enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
+) -> float:
     """
     Calculate ACA premium tax credit (subsidy).
 
@@ -63,28 +71,35 @@ def aca_subsidy(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> flo
     When using pre-ARP schedule, no subsidies above 400% FPL.
     """
     # Check 400% FPL cliff for pre-ARP schedule
-    if not ENHANCED_SUBSIDIES_ACTIVE and magi > 4.0 * FPL_2:
+    if not enhanced_subsidies_active and magi > 4.0 * FPL_2:
         return 0.0
 
-    cap_rate = aca_premium_cap_rate(magi)
+    cap_rate = aca_premium_cap_rate(magi, enhanced_subsidies_active)
     expected_contribution = magi * cap_rate
     return max(benchmark - expected_contribution, 0)
 
 
 def aca_subsidy_loss(
-    base_magi: float, new_magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL
+    base_magi: float,
+    new_magi: float,
+    benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
+    enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
 ) -> float:
     """
     How much ACA subsidy is lost due to additional income (e.g., conversion).
     """
-    base = aca_subsidy(base_magi, benchmark)
-    new = aca_subsidy(new_magi, benchmark)
+    base = aca_subsidy(base_magi, benchmark, enhanced_subsidies_active)
+    new = aca_subsidy(new_magi, benchmark, enhanced_subsidies_active)
     return max(base - new, 0)
 
 
-def aca_net_cost(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> float:
+def aca_net_cost(
+    magi: float,
+    benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
+    enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
+) -> float:
     """What you actually pay for the silver plan after subsidy."""
-    return max(benchmark - aca_subsidy(magi, benchmark), 0)
+    return max(benchmark - aca_subsidy(magi, benchmark, enhanced_subsidies_active), 0)
 
 
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:

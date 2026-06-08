@@ -269,6 +269,61 @@ class TestACA:
         loss_double = sum(yr.aca_loss for yr in result_double.years)
         assert loss_double > loss_default
 
+    def test_enhanced_subsidies_default_off_pre_arp_cliff(self):
+        """With enhanced_subsidies_active=False, subsidy = 0 above 400% FPL (pre-ARP cliff)."""
+        from engine.aca import FPL_2
+
+        above_cliff = 4.1 * FPL_2  # above 400% FPL
+        assert aca_subsidy(above_cliff, enhanced_subsidies_active=False) == 0.0
+
+    def test_enhanced_subsidies_on_no_cliff(self):
+        """With enhanced_subsidies_active=True, subsidy > 0 above 400% FPL (8.5% cap, no cliff)."""
+        from engine.aca import BENCHMARK_PREMIUM_ANNUAL, FPL_2
+
+        above_cliff = 4.1 * FPL_2  # above 400% FPL
+        sub = aca_subsidy(above_cliff, enhanced_subsidies_active=True)
+        # Enhanced: subsidy = benchmark - income * 8.5% (no cliff)
+        expected = max(BENCHMARK_PREMIUM_ANNUAL - above_cliff * 0.085, 0)
+        assert sub > 0.0
+        assert sub == pytest.approx(expected)
+
+    def test_household_aca_toggle_wires_through_scenario(self):
+        """Household.aca_enhanced_subsidies_active flows into run_scenario aca_loss.
+
+        At MAGI above 400% FPL, pre-ARP returns 0 loss (cliff absorbs it);
+        enhanced returns positive loss (8.5% cap applies with no cliff).
+        """
+        from dataclasses import replace
+
+        hh_base = Household(
+            your_age=61,
+            spouse_age=65,  # spouse on Medicare — only "you" triggers ACA
+            your_ira=2_000_000,
+            spouse_ira=0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            your_aca_enrolled=True,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            aca_enhanced_subsidies_active=False,
+        )
+        # Conversion of 200k pushes MAGI well above 400% FPL ($84,600).
+        # base_magi (0) is below cliff so pre-ARP subsidy(base) > 0,
+        # but new_magi (200k) is above cliff so pre-ARP subsidy(new) = 0 → loss > 0.
+        # With enhanced=True, subsidy(new) uses 8.5% cap → smaller loss.
+        plan = ConversionPlan(your_conversions={2026: 200_000})
+        result_pre_arp = run_scenario(hh_base, plan)
+        result_enhanced = run_scenario(replace(hh_base, aca_enhanced_subsidies_active=True), plan)
+
+        loss_pre_arp = result_pre_arp.years[0].aca_loss
+        loss_enhanced = result_enhanced.years[0].aca_loss
+        # Pre-ARP: new_magi above cliff → subsidy(new) = 0 → loss = subsidy(base_magi=0)
+        # Enhanced: subsidy(new) > 0 (8.5% cap) → loss is smaller
+        assert loss_pre_arp > loss_enhanced
+
 
 class TestHouseholdProperties:
     def test_age_gap(self):

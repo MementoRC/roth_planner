@@ -11,10 +11,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.aca import (
-    ACA_CAP_SCHEDULE,
     BENCHMARK_PREMIUM_ANNUAL,
-    ENHANCED_SUBSIDIES_ACTIVE,
     FPL_2,
+    _aca_cap_schedule,
     aca_applies,
     aca_net_cost,
     aca_subsidy,
@@ -41,7 +40,7 @@ def render(hh: Household):
     st.caption(
         f"You {hh.your_age} / Spouse {hh.spouse_age} · "
         f"ACA: {aca_status} · IRMAA lookback: 2 years · "
-        f"Enhanced subsidies: {'Active' if ENHANCED_SUBSIDIES_ACTIVE else 'Expired (pre-ARP rules)'}"
+        f"Enhanced subsidies: {'Active' if hh.aca_enhanced_subsidies_active else 'Expired (pre-ARP rules)'}"
     )
 
     # --- Interactive MAGI slider ---
@@ -92,10 +91,16 @@ def render(hh: Household):
     for magi in magi_points:
         # ACA (only meaningful if enrolled and pre-65)
         if anyone_on_aca:
-            sub = aca_subsidy(magi)
+            sub = aca_subsidy(magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active)
             aca_subsidy_vals.append(sub)
-            aca_net_cost_vals.append(aca_net_cost(magi))
-            aca_loss_vals.append(aca_subsidy_loss(base_magi, magi))
+            aca_net_cost_vals.append(
+                aca_net_cost(magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active)
+            )
+            aca_loss_vals.append(
+                aca_subsidy_loss(
+                    base_magi, magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active
+                )
+            )
         else:
             aca_subsidy_vals.append(0)
             aca_net_cost_vals.append(0)
@@ -123,7 +128,9 @@ def render(hh: Household):
         )
         base_niit = niit(base_magi, net_inv_income)
         hidden = (
-            aca_subsidy_loss(base_magi, magi)
+            aca_subsidy_loss(
+                base_magi, magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active
+            )
             + max(surcharge - base_irmaa, 0)
             + max(niit(magi, net_inv_income) - base_niit, 0)
         )
@@ -163,7 +170,7 @@ def render(hh: Household):
             )
 
             # Mark FPL thresholds
-            if not ENHANCED_SUBSIDIES_ACTIVE:
+            if not hh.aca_enhanced_subsidies_active:
                 cliff_magi = 4.0 * FPL_2
                 fig_aca.add_vline(
                     x=cliff_magi,
@@ -363,8 +370,8 @@ def render(hh: Household):
         }
 
         if you_on_aca or sp_on_aca:
-            row["ACA Subsidy"] = f"${aca_subsidy(base_magi):,.0f}"
-            row["ACA You Pay"] = f"${aca_net_cost(base_magi):,.0f}"
+            row["ACA Subsidy"] = f"${aca_subsidy(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            row["ACA You Pay"] = f"${aca_net_cost(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
         else:
             row["ACA Subsidy"] = "—"
             row["ACA You Pay"] = "—"
@@ -396,10 +403,10 @@ def render(hh: Household):
 
     with col_ref2:
         st.markdown(
-            f"### ACA Premium Schedule ({'Enhanced' if ENHANCED_SUBSIDIES_ACTIVE else 'Pre-ARP'})"
+            f"### ACA Premium Schedule ({'Enhanced' if hh.aca_enhanced_subsidies_active else 'Pre-ARP'})"
         )
         aca_data = []
-        for upper_fpl, cap_rate in ACA_CAP_SCHEDULE:
+        for upper_fpl, cap_rate in _aca_cap_schedule(hh.aca_enhanced_subsidies_active):
             fpl_label = "400%+" if upper_fpl == float("inf") else f"≤{upper_fpl:.0%}"
             aca_data.append(
                 {
