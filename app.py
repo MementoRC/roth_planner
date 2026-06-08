@@ -38,6 +38,8 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("spouse_aca", False)
     st.session_state.setdefault("your_ss_start_age", 70)
     st.session_state.setdefault("spouse_ss_start_age", 70)
+    st.session_state.setdefault("your_rmd_start_age", 75)
+    st.session_state.setdefault("spouse_rmd_start_age", 75)
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -122,6 +124,14 @@ def get_household() -> Household:
         spouse_ss_start_age=st.session_state.get(
             "spouse_ss_start_age",
             st.session_state.get("ss_start_age", 70),
+        ),
+        your_rmd_start_age=st.session_state.get(
+            "your_rmd_start_age",
+            st.session_state.get("rmd_start_age", 75),
+        ),
+        spouse_rmd_start_age=st.session_state.get(
+            "spouse_rmd_start_age",
+            st.session_state.get("rmd_start_age", 75),
         ),
     )
 

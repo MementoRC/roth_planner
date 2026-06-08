@@ -18,6 +18,7 @@ import pytest
 from engine.scenario import (
     ConversionPlan,
     auto_fill_22,
+    add_bracket_fill_withdrawals,
     run_no_conversion,
     run_scenario,
 )
@@ -53,6 +54,8 @@ class TestMeSpouseParity:
             spouse_ss_fra=hh.your_ss_fra,
             your_ss_start_age=hh.spouse_ss_start_age,
             spouse_ss_start_age=hh.your_ss_start_age,
+            your_rmd_start_age=hh.spouse_rmd_start_age,
+            spouse_rmd_start_age=hh.your_rmd_start_age,
             your_ira_growth=hh.spouse_ira_growth,
             spouse_ira_growth=hh.your_ira_growth,
             your_aca_enrolled=hh.spouse_aca_enrolled,
@@ -283,3 +286,70 @@ class TestMeSpouseParity:
                 f"combined SS differs at year-index {i} (year={y1.year}): "
                 f"{c1:.2f} vs {c2:.2f}"
             )
+
+    # ------------------------------------------------------------------
+    # test 11 (Bug B): asymmetric rmd_start_age — combined IRA decay still symmetric
+    # ------------------------------------------------------------------
+
+    def test_no_conversion_asymmetric_rmd_start_age_symmetric(self) -> None:
+        """Asymmetric RMD start ages must still produce symmetric combined IRA under swap.
+
+        your_rmd_start_age=73 (pre-1960 cohort), spouse_rmd_start_age=75 (post-1960).
+        After swap: your=75, spouse=73. Combined IRA begin each year-index must match.
+        """
+        hh = replace(
+            self._baseline_hh(),
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=75,
+        )
+        hh_sw = self._swap(hh)
+
+        r1 = run_no_conversion(hh, end_age=95)
+        r2 = run_no_conversion(hh_sw, end_age=95)
+
+        min_len = min(len(r1.years), len(r2.years))
+        for i in range(min_len):
+            y1 = r1.years[i]
+            y2 = r2.years[i]
+            c1 = y1.your_ira_begin + y1.spouse_ira_begin
+            c2 = y2.your_ira_begin + y2.spouse_ira_begin
+            assert c1 == pytest.approx(c2, rel=1e-6), (
+                f"combined IRA begin differs at year-index {i} (year={y1.year}): "
+                f"{c1:.2f} vs {c2:.2f}"
+            )
+
+    # ------------------------------------------------------------------
+    # test 12 (Bug J): bracket-fill withdrawals debit spouse IRA when yours is exhausted
+    # ------------------------------------------------------------------
+
+    def test_bracket_fill_uses_spouse_ira_when_yours_exhausted(self) -> None:
+        """add_bracket_fill_withdrawals should draw from spouse IRA when your IRA is empty.
+
+        Use a household where your IRA is small so it's quickly depleted by RMDs,
+        while spouse IRA is large. In RMD years after your IRA is near zero,
+        the bracket fill should populate spouse_extra_withdrawals.
+        """
+        hh = Household(
+            your_age=74,
+            spouse_age=72,
+            your_ira=200_000,   # small — depletes quickly under RMD
+            spouse_ira=1_500_000,
+            your_ss_fra=3_800.0,
+            spouse_ss_fra=3_200.0,
+            your_ira_growth=GrowthProfile(default_rate=0.07),
+            spouse_ira_growth=GrowthProfile(default_rate=0.07),
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+        )
+        base_plan = ConversionPlan()
+        plan = add_bracket_fill_withdrawals(hh, base_plan, target_bracket=0.22)
+
+        # At least some spouse extra withdrawals should be populated in RMD years
+        # (once your small IRA is exhausted, bracket fill must use spouse IRA)
+        assert len(plan.spouse_extra_withdrawals) > 0, (
+            "Expected spouse_extra_withdrawals to be non-empty when your IRA is small"
+        )
+        # All spouse extra withdrawals should be positive
+        for year, amt in plan.spouse_extra_withdrawals.items():
+            assert amt > 0, f"spouse_extra_withdrawals[{year}] = {amt} should be positive"

@@ -19,7 +19,9 @@ def render(hh: Household):
     st.caption(
         f"You {hh.your_age} / Spouse {hh.spouse_age} · "
         f"IRAs ${hh.your_ira / 1e6:.1f}M + ${hh.spouse_ira / 1e6:.1f}M · "
-        f"{hh.growth_rate * 100:.0f}% growth · RMD at {hh.rmd_start_age}"
+        f"{hh.growth_rate * 100:.0f}% growth · "
+        f"RMD at {hh.your_rmd_start_age}"
+        + (f"/{hh.spouse_rmd_start_age}" if hh.spouse_rmd_start_age != hh.your_rmd_start_age else "")
     )
 
     # --- Run both scenarios ---

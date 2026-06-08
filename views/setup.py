@@ -76,6 +76,8 @@ def _user_defaults_from_session() -> dict:
         "spouse_ss_fra",
         "your_ss_start_age",
         "spouse_ss_start_age",
+        "your_rmd_start_age",
+        "spouse_rmd_start_age",
         "living_expenses",
         "stock_price_now",
     ]
@@ -136,6 +138,8 @@ def _clear_personal_session_state() -> None:
         "spouse_ss_fra",
         "your_ss_start_age",
         "spouse_ss_start_age",
+        "your_rmd_start_age",
+        "spouse_rmd_start_age",
         "living_expenses",
         "txn_price",
     ]
@@ -612,6 +616,15 @@ def render(hh: Household) -> None:
                 step=1,
                 format="%d",
             )
+            st.session_state.your_rmd_start_age = st.number_input(
+                "Your RMD start age",
+                min_value=72,
+                max_value=75,
+                value=st.session_state.get("your_rmd_start_age", 75),
+                step=1,
+                format="%d",
+                help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
+            )
             st.session_state.your_aca = st.checkbox(
                 "You on ACA Marketplace",
                 value=st.session_state.your_aca,
@@ -646,6 +659,15 @@ def render(hh: Household) -> None:
                 value=st.session_state.get("spouse_ss_start_age", 70),
                 step=1,
                 format="%d",
+            )
+            st.session_state.spouse_rmd_start_age = st.number_input(
+                "Spouse RMD start age",
+                min_value=72,
+                max_value=75,
+                value=st.session_state.get("spouse_rmd_start_age", 75),
+                step=1,
+                format="%d",
+                help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
             )
             st.session_state.spouse_aca = st.checkbox(
                 "Spouse on ACA Marketplace",
