@@ -154,7 +154,10 @@ def compute_headroom(
 
     # Find first income year where IRMAA actually matters
     first_medicare_age = 65
-    years_until_medicare = max(first_medicare_age - 2 - ya, 0)
+    years_until_medicare = max(
+        min(first_medicare_age - 2 - ya, first_medicare_age - 2 - sa),
+        0,
+    )
     result.irmaa_first_relevant_year = year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)
