@@ -885,6 +885,49 @@ class TestHeadroom:
         hr = compute_headroom(hh, ytd)
         assert hr.conversions_done == approx(50_000)
 
+    def test_irmaa_advisory_uses_earlier_medicare(self):
+        """When spouse is older, advisory year should reflect spouse's Medicare start.
+
+        IRMAA advisory year should be min(your_medicare_year, spouse_medicare_year).
+        Without the fix, it would incorrectly use only your age.
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        # Case 1: You are 55, spouse is 64 (spouse reaches 65 first in 1 year)
+        # Spouse's Medicare start (65) occurs in 1 year from now (2026 + 1 = 2027)
+        # IRMAA lookback is 2 years before Medicare start, so first relevant income year
+        # is 65 - 2 = 63, which occurs 1 year from now when spouse is 65 (2026 + 0 = 2026... wait, let me recalculate)
+        # When spouse is 64 in 2026, they turn 65 in 2027.
+        # Income in 2025 affects Medicare premiums starting at 65 (2027).
+        # So 2025 is the first relevant income year (lookback from 2027 Medicare start).
+        # From 2026: years_until_medicare = max(min(65-2-55, 65-2-64), 0) = max(min(8, -1), 0) = 0
+        # So first_relevant_year = 2026 + 0 = 2026.
+        # But wait: the income YEAR is 2026. Income in 2026 affects Medicare premiums
+        # when spouse turns 65 in 2027? No: Medicare premium lookback is 2 years.
+        # Income in 2026 + 2 = 2028 affects premiums at age 65.
+        # So spouse reaches "first relevant" when they are age 63 in 2025 (income year),
+        # because 2025 + 2 = 2027 = when they turn 65.
+        # From 2026 perspective: first relevant is 2026 + (63 - 64) = 2026 - 1 = 2025 (clamped to min).
+        # Actually simpler: at base_year 2026, spouse age 64:
+        # years_until_spouse_relevant = max(65 - 2 - 64, 0) = max(-1, 0) = 0.
+        hh = Household(your_age=55, spouse_age=64, base_year=2026)
+        ytd = YTDSnapshot(tax_year=2026)
+        hr = compute_headroom(hh, ytd)
+        # Spouse reaches 65 at end of 2026 (age 64 → 65).
+        # Income in 2024 affects premiums at 65 (2026).
+        # So first relevant year is 2024 (which is 2026 - 2 from spouse age perspective).
+        # From 2026: years_until_medicare = max(min(65-2-55, 65-2-64), 0) = max(min(8, -1), 0) = 0
+        # Expected first_relevant_year = 2026 + 0 = 2026 ✓
+        assert hr.irmaa_first_relevant_year == 2026
+
+        # Case 2: Swap — you are 64, spouse is 55
+        # years_until_medicare = max(min(65-2-64, 65-2-55), 0) = max(min(-1, 8), 0) = 0
+        # Expected: 2026 + 0 = 2026 (same result) ✓
+        hh2 = Household(your_age=64, spouse_age=55, base_year=2026)
+        hr2 = compute_headroom(hh2, YTDSnapshot(tax_year=2026))
+        assert hr2.irmaa_first_relevant_year == 2026
+
 
 class TestScenarioWithYTD:
     """Test scenario engine with YTD injection."""
