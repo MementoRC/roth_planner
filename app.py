@@ -139,15 +139,9 @@ def get_household() -> Household:
         txn_price_now=st.session_state.txn_price,
         your_aca_enrolled=st.session_state.your_aca,
         spouse_aca_enrolled=st.session_state.spouse_aca,
-        aca_benchmark_premium_annual=st.session_state.get(
-            "aca_benchmark_premium_annual", 21_600.0
-        ),
-        aca_enhanced_subsidies_active=st.session_state.get(
-            "aca_enhanced_subsidies_active", False
-        ),
-        medicare_part_b_base_monthly=st.session_state.get(
-            "medicare_part_b_base_monthly", 202.90
-        ),
+        aca_benchmark_premium_annual=st.session_state.get("aca_benchmark_premium_annual", 21_600.0),
+        aca_enhanced_subsidies_active=st.session_state.get("aca_enhanced_subsidies_active", False),
+        medicare_part_b_base_monthly=st.session_state.get("medicare_part_b_base_monthly", 202.90),
         your_ss_start_age=st.session_state.get(
             "your_ss_start_age",
             st.session_state.get("ss_start_age", 70),
@@ -167,9 +161,7 @@ def get_household() -> Household:
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
         prior_year_magi={
-            int(k): float(v)
-            for k, v in st.session_state.get("prior_year_magi", {}).items()
-            if v
+            int(k): float(v) for k, v in st.session_state.get("prior_year_magi", {}).items() if v
         },
         survivor=_build_survivor_scenario(),
         inherited_iras=[

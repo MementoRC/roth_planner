@@ -912,9 +912,7 @@ def render(hh: Household) -> None:
                 "ACA Benchmark Premium ($/yr)",
                 min_value=0,
                 max_value=60_000,
-                value=int(
-                    st.session_state.get("aca_benchmark_premium_annual", 21_600.0)
-                ),
+                value=int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)),
                 step=100,
                 format="%d",
                 help=(
@@ -936,9 +934,7 @@ def render(hh: Household) -> None:
                 "Medicare Part B Base Premium ($/mo)",
                 min_value=0.0,
                 max_value=1000.0,
-                value=float(
-                    st.session_state.get("medicare_part_b_base_monthly", 202.90)
-                ),
+                value=float(st.session_state.get("medicare_part_b_base_monthly", 202.90)),
                 step=1.0,
                 format="%.2f",
                 help=(

@@ -110,7 +110,9 @@ def aca_net_cost(
     filing_status: str = "MFJ",
 ) -> float:
     """What you actually pay for the silver plan after subsidy."""
-    return max(benchmark - aca_subsidy(magi, benchmark, enhanced_subsidies_active, filing_status), 0)
+    return max(
+        benchmark - aca_subsidy(magi, benchmark, enhanced_subsidies_active, filing_status), 0
+    )
 
 
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:

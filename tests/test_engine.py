@@ -175,9 +175,7 @@ class TestIRMAA:
         With a raised base ($300/mo) the per-tier delta shrinks, so total IRMAA is lower.
         """
         hh_default = Household(your_age=63, spouse_age=63)
-        hh_high_base = Household(
-            your_age=63, spouse_age=63, medicare_part_b_base_monthly=300.0
-        )
+        hh_high_base = Household(your_age=63, spouse_age=63, medicare_part_b_base_monthly=300.0)
         # Conversion large enough to push MAGI above Tier 1 ($218K)
         plan = ConversionPlan(your_conversions={2026: 250_000})
         r_default = run_scenario(hh_default, plan, end_age=68)
@@ -204,7 +202,9 @@ class TestIRMAA:
 
         # Compute expected IRMAA using yr0.magi directly (old-engine behaviour)
         expected_cost, _ = irmaa_for_year(
-            yr0.magi, yr0.your_age, yr0.spouse_age,
+            yr0.magi,
+            yr0.your_age,
+            yr0.spouse_age,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr0.irmaa_cost == approx(expected_cost)
@@ -230,12 +230,16 @@ class TestIRMAA:
 
         # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1)
         expected_from_yr0, _ = irmaa_for_year(
-            yr0.magi, yr2.your_age, yr2.spouse_age,
+            yr0.magi,
+            yr2.your_age,
+            yr2.spouse_age,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         # Year-2 MAGI (no conversion) should produce a lower IRMAA
         expected_from_yr2, _ = irmaa_for_year(
-            yr2.magi, yr2.your_age, yr2.spouse_age,
+            yr2.magi,
+            yr2.your_age,
+            yr2.spouse_age,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0), (
@@ -258,7 +262,8 @@ class TestIRMAA:
 
         hh_no_anchor = Household(your_age=63, spouse_age=63)
         hh_anchored = Household(
-            your_age=63, spouse_age=63,
+            your_age=63,
+            spouse_age=63,
             prior_year_magi={base_year - 2: filed_magi},
         )
         plan = ConversionPlan()  # no conversions — year-0 MAGI low without anchor
@@ -269,7 +274,9 @@ class TestIRMAA:
         yr0_anc = r_anc.years[0]
 
         expected_anchored, _ = irmaa_for_year(
-            filed_magi, yr0_anc.your_age, yr0_anc.spouse_age,
+            filed_magi,
+            yr0_anc.your_age,
+            yr0_anc.spouse_age,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr0_anc.irmaa_cost == approx(expected_anchored), (
@@ -290,7 +297,8 @@ class TestIRMAA:
 
         base_year = 2026
         hh_anchored = Household(
-            your_age=63, spouse_age=63,
+            your_age=63,
+            spouse_age=63,
             prior_year_magi={base_year - 2: 300_000.0, base_year - 1: 310_000.0},
         )
         plan = ConversionPlan(your_conversions={2026: 250_000})
@@ -301,7 +309,9 @@ class TestIRMAA:
 
         # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history
         expected_from_yr0_magi, _ = irmaa_for_year(
-            yr0.magi, yr2.your_age, yr2.spouse_age,
+            yr0.magi,
+            yr2.your_age,
+            yr2.spouse_age,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
@@ -2169,8 +2179,7 @@ class TestInheritedIRA:
 
         # Filter to the 10 drain years
         drain_years = [
-            yr for yr in result.years
-            if self.BASE_YEAR + 1 <= yr.year <= self.BASE_YEAR + 10
+            yr for yr in result.years if self.BASE_YEAR + 1 <= yr.year <= self.BASE_YEAR + 10
         ]
         assert len(drain_years) == 10
 
@@ -2466,7 +2475,9 @@ class TestSurvivorScenario:
         # Sanity: the year-of-death row itself is still MFJ filing
         from engine.tax import federal_tax as federal_tax_mfj
 
-        assert yr_death.federal_tax_amt == approx(federal_tax_mfj(yr_death.taxable_income), tol=0.01)
+        assert yr_death.federal_tax_amt == approx(
+            federal_tax_mfj(yr_death.taxable_income), tol=0.01
+        )
 
     # --- (c) symmetric case: who_dies="spouse" ---
 
