@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from config.loader import load_defaults
 from models.grants import StockGrant
 
 _D = load_defaults()
+
+
+@dataclass
+class SurvivorScenario:
+    """When one spouse dies during the projection.
+
+    Survivor files Single from death_year + 1 onward (IRS allows MFJ for the
+    year of death itself, treated as the last MFJ year). Deceased spouse's
+    SS payments end, their IRA rolls into the survivor's IRA, their QCD
+    allowance ends, only the survivor's senior bonus applies.
+
+    NOT YET MODELED (deferred):
+    - SS survivor benefit step-up (taking higher of two benefits)
+    - Inherited-IRA stretch / 10-year rule (E5)
+    """
+
+    who_dies: Literal["you", "spouse"]
+    death_year: int  # calendar year of death; survivor files Single from death_year + 1
 
 
 @dataclass
@@ -118,6 +137,16 @@ class Household:
 
     # QCD
     qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)
+
+    # Survivor scenario (optional sensitivity analysis)
+    survivor: SurvivorScenario | None = None
+    """Optional survivor scenario for sensitivity analysis. When set, the
+    projection switches the surviving spouse to single-filer status starting
+    death_year + 1, transfers the deceased's IRA to the survivor (spousal
+    rollover), zeroes deceased's SS, and uses single-filer tax brackets,
+    std deduction, and senior bonus.
+
+    Default None = baseline MFJ projection where both spouses survive to end_age."""
 
     @property
     def age_gap(self) -> int:

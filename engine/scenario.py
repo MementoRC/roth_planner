@@ -14,15 +14,21 @@ from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
 from engine.tax import (
+    BRACKETS_SINGLE,
+    SENIOR_EXTRA_SINGLE,
+    STD_DEDUCTION_SINGLE,
     deductions,
     federal_tax,
+    federal_tax_single,
     marginal_rate,
+    marginal_rate_single,
     room_to_12,
     room_to_22,
+    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
-from models.household import Household
+from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
 
@@ -174,12 +180,31 @@ def run_scenario(
     # Accumulates projected MAGI per calendar year for IRMAA 2-year lookback
     magi_history: dict[int, float] = {}
 
+    # Survivor scenario pre-check
+    surv: SurvivorScenario | None = hh.survivor
+    _rollover_done: bool = False
+
     total_years = end_age - hh.your_age + 1
 
     for yr_idx in range(total_years):
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+
+        # === Survivor scenario: determine filing status and effective ages ===
+        survivor_active = surv is not None and year >= surv.death_year + 1
+        current_filing_status = "Single" if survivor_active else hh.filing_status
+
+        # IRA rollover: at the first year survivor_active, roll deceased into survivor
+        if survivor_active and not _rollover_done:
+            assert surv is not None  # narrowing: survivor_active implies surv is not None
+            if surv.who_dies == "you":
+                spouse_ira += your_ira
+                your_ira = 0.0
+            else:
+                your_ira += spouse_ira
+                spouse_ira = 0.0
+            _rollover_done = True
 
         yr = YearResult(year=year, your_age=ya, spouse_age=sa, phase="")
 
@@ -246,6 +271,10 @@ def run_scenario(
             yr.your_conversion = remaining
 
         # === RMD ===
+        # When survivor_active, deceased's IRA was rolled to survivor at death_year+1.
+        # The deceased's IRA variable is now 0, so calc_rmd returns 0 naturally.
+        # QCD: after death the deceased's QCD limit is unavailable; survivor keeps
+        # their own limit (qcd_limit is per-person, so no change needed for survivor).
         yr.your_rmd = calc_rmd(your_ira, ya, hh.your_rmd_start_age)
         yr.qcd = min(plan.qcds.get(year, 0.0), yr.your_rmd, hh.qcd_limit)
         yr.taxable_rmd = max(yr.your_rmd - yr.qcd, 0)
@@ -272,6 +301,14 @@ def run_scenario(
             if sa >= hh.spouse_ss_start_age
             else 0.0
         )
+        # Survivor: zero the deceased spouse's SS from death_year + 1 onward
+        # (SS survivor benefit step-up is NOT yet modeled — deferred to future PR)
+        if survivor_active:
+            assert surv is not None  # narrowing: survivor_active implies surv is not None
+            if surv.who_dies == "you":
+                yr.your_ss = 0.0
+            else:
+                yr.spouse_ss = 0.0
         yr.combined_ss = yr.your_ss + yr.spouse_ss
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
@@ -314,7 +351,7 @@ def run_scenario(
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
             other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
-        yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc)
+        yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc, filing_status=current_filing_status)
 
         # === Combined gross (for tax) ===
         # Includes ordinary income only — LTCG taxed separately at preferential rate
@@ -337,20 +374,36 @@ def run_scenario(
         yr.combined_gross += ord_div_this_year
 
         # === Deductions ===
-        yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
+        if survivor_active:
+            assert surv is not None  # narrowing: survivor_active implies surv is not None
+            # Use single-filer std deduction + senior extra; zero deceased age so
+            # only the survivor counts toward the senior-extra and OBBBA bonus.
+            ya_eff = 0 if surv.who_dies == "you" else ya
+            sa_eff = 0 if surv.who_dies == "spouse" else sa
+            yr.total_deductions = deductions(ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE)
+            yr.total_deductions += senior_bonus_deduction(ya_eff, sa_eff, yr.magi)
+        else:
+            yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
 
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
         # === Federal tax ===
-        yr.federal_tax_amt = federal_tax(yr.taxable_income)
-        yr.marginal_bracket = marginal_rate(yr.taxable_income)
+        if survivor_active:
+            yr.federal_tax_amt = federal_tax_single(yr.taxable_income)
+            yr.marginal_bracket = marginal_rate_single(yr.taxable_income)
+        else:
+            yr.federal_tax_amt = federal_tax(yr.taxable_income)
+            yr.marginal_bracket = marginal_rate(yr.taxable_income)
 
         # === Conversion tax (incremental) ===
         base_gross = yr.combined_gross - yr.your_conversion - yr.spouse_conversion
         base_taxable = max(base_gross - yr.total_deductions, 0)
-        yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
+        if survivor_active:
+            yr.conversion_tax = federal_tax_single(yr.taxable_income) - federal_tax_single(base_taxable)
+        else:
+            yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
 
         # === IRMAA (2-year lookback) ===
         # IRMAA paid in year Y is based on filed MAGI of year Y-2.
@@ -368,7 +421,11 @@ def run_scenario(
             # (only reached for yr_idx < 2 when prior_year_magi is empty).
             magi_for_irmaa = yr.magi
         irmaa_cost, _ = irmaa_for_year(
-            magi_for_irmaa, ya, sa, base_part_b=hh.medicare_part_b_base_monthly * 12
+            magi_for_irmaa,
+            ya,
+            sa,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+            filing_status=current_filing_status,
         )
         yr.irmaa_cost = irmaa_cost
         yr.irmaa_room = irmaa_next_threshold(yr.magi)
@@ -409,14 +466,19 @@ def run_scenario(
         # YTD: add realized gains, dividends, interest to investment income
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income
-        yr.niit_cost = niit(yr.magi, net_investment_income)
+        yr.niit_cost = niit(yr.magi, net_investment_income, filing_status=current_filing_status)
 
         # === All-in cost of conversions ===
         yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost
 
         # === Bracket room ===
-        yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions)
-        yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions)
+        if survivor_active:
+            # Single brackets: 12% ceiling = 50_400, 22% ceiling = 105_700
+            yr.room_12 = room_to_bracket(yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[1][0])
+            yr.room_22 = room_to_bracket(yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[2][0])
+        else:
+            yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions)
+            yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions)
 
         # === Living expenses & brokerage ===
         years_from_base = yr_idx

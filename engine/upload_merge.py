@@ -71,6 +71,9 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         updates["prior_year_magi"] = {
             int(k): float(v) for k, v in data["prior_year_magi"].items() if v
         }
+    # survivor is a joint field (not spouse-specific); pass through as-is when not as_spouse
+    if "survivor" in data and not as_spouse:
+        updates["survivor"] = data["survivor"]
     return updates
 
 
