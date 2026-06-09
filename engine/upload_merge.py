@@ -66,6 +66,11 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         updates["_user_grant_strikes"] = data["grant_strikes"]
     if "account_type_overrides" in data:
         updates["account_type_overrides"] = data["account_type_overrides"]
+    if "prior_year_magi" in data:
+        # Keys arrive as strings from JSON; cast to int at load time
+        updates["prior_year_magi"] = {
+            int(k): float(v) for k, v in data["prior_year_magi"].items() if v
+        }
     return updates
 
 

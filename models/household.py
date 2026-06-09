@@ -106,6 +106,16 @@ class Household:
     aca_enhanced_subsidies_active: bool = False  # law toggle for sensitivity analysis: True = ARP/IRA-style enhanced subsidies; False = current law (ARP expired Dec 31, 2025)
     medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top
 
+    # IRMAA lookback anchor
+    prior_year_magi: dict[int, float] = field(default_factory=dict)
+    """Year-keyed sparse map of FILED MAGI values for IRMAA anchor.
+
+    Overrides the engine's projected MAGI for the first 2 projection years
+    (IRMAA has 2-year lookback). E.g., {2024: 285000.0, 2025: 290000.0}
+    locks in 2026 + 2027 IRMAA from actual filed values. Years not in the
+    map fall through to magi_history (projection-year accumulated) or
+    to a same-year approximation."""
+
     # QCD
     qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)
 
