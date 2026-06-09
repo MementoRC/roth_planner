@@ -78,9 +78,7 @@ def marginal_rate(taxable_income: float) -> float:
     return 0.37
 
 
-def taxable_ss(
-    combined_ss: float, other_income: float, filing_status: str = "MFJ"
-) -> float:
+def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MFJ") -> float:
     """
     Compute taxable portion of Social Security.
 

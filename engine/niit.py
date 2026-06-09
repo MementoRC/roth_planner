@@ -18,9 +18,7 @@ NIIT_THRESHOLD_SINGLE = 200_000
 NIIT_RATE = 0.038
 
 
-def niit(
-    magi: float, net_investment_income: float, filing_status: str = "MFJ"
-) -> float:
+def niit(magi: float, net_investment_income: float, filing_status: str = "MFJ") -> float:
     """
     Calculate Net Investment Income Tax.
 
