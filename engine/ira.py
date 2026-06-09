@@ -87,3 +87,15 @@ def ss_benefit_at_age(monthly_fra: float, claim_age: int, fra_age: int = 67) -> 
 def ss_with_cola(base_annual: float, years_collecting: int, cola: float = 0.025) -> float:
     """Apply COLA to SS benefit."""
     return base_annual * (1 + cola) ** years_collecting
+
+
+def inherited_ira_drain(balance: float, years_remaining: int) -> float:
+    """Year-N-of-10 drain: balance / years_remaining.
+
+    years_remaining = 10 - (current_year - inherited_year)
+    Returns 0 if years_remaining <= 0 (already fully drained).
+    Final year (years_remaining=1) drains the entire balance ("balloon").
+    """
+    if years_remaining <= 0:
+        return 0.0
+    return balance / years_remaining

@@ -4,7 +4,14 @@ import pytest
 
 from config.defaults import DEFAULTS
 from engine.aca import aca_applies, aca_subsidy, aca_subsidy_loss
-from engine.ira import calc_rmd, project_ira, rmd_divisor, ss_benefit_at_age, ss_with_cola
+from engine.ira import (
+    calc_rmd,
+    inherited_ira_drain,
+    project_ira,
+    rmd_divisor,
+    ss_benefit_at_age,
+    ss_with_cola,
+)
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
 from engine.niit import niit
 from engine.scenario import (
@@ -25,7 +32,7 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
-from models.household import GrowthProfile, Household, SurvivorScenario
+from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario
 
 
 def approx(expected, tol=1.0):
@@ -2098,6 +2105,188 @@ class TestDividendsRollupFetchAndMap:
         apply_dividends_rollup(snap, rollup)
         holding = self._all_holdings(snap)[0]
         assert holding.dividends_by_year == {"2024": 423.5}
+
+
+class TestInheritedIRA:
+    """SECURE Act 10-year rule — engine integration tests."""
+
+    BASE_YEAR = 2026
+
+    def _base_hh(self, **kwargs) -> Household:
+        return Household(
+            your_age=61,
+            spouse_age=55,
+            your_ira=500_000,
+            spouse_ira=500_000,
+            growth_rate=0.07,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Pure helper tests
+    # ------------------------------------------------------------------
+
+    def test_drain_helper_year1(self):
+        assert inherited_ira_drain(100_000, 10) == pytest.approx(10_000.0)
+
+    def test_drain_helper_final_year(self):
+        assert inherited_ira_drain(50_000, 1) == pytest.approx(50_000.0)
+
+    def test_drain_helper_zero_when_exhausted(self):
+        assert inherited_ira_drain(50_000, 0) == 0.0
+        assert inherited_ira_drain(50_000, -1) == 0.0
+
+    # ------------------------------------------------------------------
+    # a) Regression guard: empty inherited_iras changes nothing
+    # ------------------------------------------------------------------
+
+    def test_no_inherited_iras_default_unchanged(self):
+        hh_base = self._base_hh()
+        hh_with_empty = self._base_hh(inherited_iras=[])
+        plan = ConversionPlan()
+        r_base = run_scenario(hh_base, plan)
+        r_empty = run_scenario(hh_with_empty, plan)
+        for yr_b, yr_e in zip(r_base.years, r_empty.years, strict=True):
+            assert yr_b.magi == pytest.approx(yr_e.magi)
+            assert yr_b.your_ira_end == pytest.approx(yr_e.your_ira_end)
+            assert yr_e.your_inherited_distribution == 0.0
+            assert yr_e.spouse_inherited_distribution == 0.0
+
+    # ------------------------------------------------------------------
+    # b) Full 10-year drain: balance reaches zero, sum of distributions >= initial
+    # ------------------------------------------------------------------
+
+    def test_inherited_ira_drains_over_10_years(self):
+        initial_balance = 100_000.0
+        iira = InheritedIRA(
+            balance=initial_balance,
+            inherited_year=self.BASE_YEAR + 1,
+            owner="you",
+            growth_rate=0.07,
+        )
+        hh = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira])
+        result = run_scenario(hh, ConversionPlan(), end_age=hh.your_age + 15)
+
+        # Filter to the 10 drain years
+        drain_years = [
+            yr for yr in result.years
+            if self.BASE_YEAR + 1 <= yr.year <= self.BASE_YEAR + 10
+        ]
+        assert len(drain_years) == 10
+
+        total_distributed = sum(yr.your_inherited_distribution for yr in drain_years)
+        # Total distributions must exceed initial balance (growth during drain window)
+        assert total_distributed >= initial_balance
+
+        # Year 1 distribution: 100_000 / 10 = 10_000 exactly (no growth yet: inherited_year=base+1)
+        assert drain_years[0].your_inherited_distribution == pytest.approx(10_000.0)
+
+        # After year 10, balance should be fully drained
+        post_drain_years = [yr for yr in result.years if yr.year > self.BASE_YEAR + 10]
+        for yr in post_drain_years:
+            assert yr.your_inherited_distribution == pytest.approx(0.0)
+            assert yr.your_inherited_balance_end == pytest.approx(0.0)
+
+    # ------------------------------------------------------------------
+    # c) Zero distribution before inherited_year
+    # ------------------------------------------------------------------
+
+    def test_inherited_ira_drain_pre_inheritance_year_zero(self):
+        iira = InheritedIRA(
+            balance=200_000.0,
+            inherited_year=self.BASE_YEAR + 5,
+            owner="you",
+            growth_rate=0.07,
+        )
+        hh = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira])
+        result = run_scenario(hh, ConversionPlan(), end_age=hh.your_age + 20)
+
+        pre_years = [yr for yr in result.years if yr.year < self.BASE_YEAR + 5]
+        for yr in pre_years:
+            assert yr.your_inherited_distribution == 0.0
+
+        first_drain = next(yr for yr in result.years if yr.year == self.BASE_YEAR + 5)
+        assert first_drain.your_inherited_distribution > 0.0
+
+    # ------------------------------------------------------------------
+    # d) Distribution appears in MAGI
+    # ------------------------------------------------------------------
+
+    def test_inherited_ira_distribution_appears_in_magi(self):
+        iira = InheritedIRA(
+            balance=100_000.0,
+            inherited_year=self.BASE_YEAR,
+            owner="you",
+            growth_rate=0.0,  # no growth → deterministic drain amounts
+        )
+        hh_with = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira])
+        hh_without = self._base_hh(base_year=self.BASE_YEAR)
+        plan = ConversionPlan()
+        r_with = run_scenario(hh_with, plan)
+        r_without = run_scenario(hh_without, plan)
+
+        for yr_w, yr_wo in zip(r_with.years, r_without.years, strict=True):
+            if yr_w.your_inherited_distribution > 0:
+                magi_delta = yr_w.magi - yr_wo.magi
+                assert magi_delta == pytest.approx(yr_w.your_inherited_distribution, rel=1e-6)
+
+    # ------------------------------------------------------------------
+    # e) Owner routing: "you" vs "spouse"
+    # ------------------------------------------------------------------
+
+    def test_inherited_ira_owner_routing(self):
+        iira_you = InheritedIRA(
+            balance=80_000.0,
+            inherited_year=self.BASE_YEAR,
+            owner="you",
+            growth_rate=0.0,
+        )
+        iira_spouse = InheritedIRA(
+            balance=60_000.0,
+            inherited_year=self.BASE_YEAR,
+            owner="spouse",
+            growth_rate=0.0,
+        )
+        hh = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira_you, iira_spouse])
+        result = run_scenario(hh, ConversionPlan())
+
+        first_year = result.years[0]
+        # year 0 of 10: 80_000 / 10 = 8_000; 60_000 / 10 = 6_000
+        assert first_year.your_inherited_distribution == pytest.approx(8_000.0)
+        assert first_year.spouse_inherited_distribution == pytest.approx(6_000.0)
+
+    # ------------------------------------------------------------------
+    # f) Multiple inherited IRAs same owner drain independently
+    # ------------------------------------------------------------------
+
+    def test_multiple_inherited_iras_same_owner(self):
+        iira_a = InheritedIRA(
+            balance=100_000.0,
+            inherited_year=self.BASE_YEAR,
+            owner="you",
+            growth_rate=0.0,
+        )
+        iira_b = InheritedIRA(
+            balance=50_000.0,
+            inherited_year=self.BASE_YEAR + 2,
+            owner="you",
+            growth_rate=0.0,
+        )
+        hh = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira_a, iira_b])
+        result = run_scenario(hh, ConversionPlan(), end_age=hh.your_age + 20)
+
+        # Year 0: only iira_a draining (iira_b not yet inherited)
+        yr0 = result.years[0]
+        assert yr0.your_inherited_distribution == pytest.approx(100_000.0 / 10)
+
+        # Year 2: both draining independently
+        yr2 = next(yr for yr in result.years if yr.year == self.BASE_YEAR + 2)
+        # iira_a: balance after 2 drain cycles (no growth), years_remaining=8
+        # After yr0: balance = (100_000 - 10_000) * 1.0 = 90_000
+        # After yr1: balance = (90_000 - 90_000/9) * 1.0 = 80_000
+        # yr2 drain from iira_a: 80_000 / 8 = 10_000
+        # iira_b: first drain = 50_000 / 10 = 5_000
+        assert yr2.your_inherited_distribution == pytest.approx(10_000.0 + 5_000.0)
 
 
 class TestSingleFilerFoundations:
