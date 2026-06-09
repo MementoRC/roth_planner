@@ -13,6 +13,7 @@ import streamlit as st
 from engine.scenario import (
     ConversionPlan,
     ScenarioResult,
+    YearResult,
     add_bracket_fill_withdrawals,
     auto_fill_12,
     auto_fill_22,
@@ -20,7 +21,7 @@ from engine.scenario import (
     run_no_conversion,
     run_scenario,
 )
-from models.household import Household
+from models.household import Household, SurvivorScenario
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -31,6 +32,120 @@ SCENARIO_PRESETS = {
     "IRMAA-Safe Max": "irmaa_safe",
     "Custom (from Planner)": "custom",
 }
+
+
+def _survivor_death_ages(hh: Household) -> tuple[str, list[int]]:
+    """Return (who_dies, death_ages_to_sweep) based on hh.survivor.
+
+    When hh.survivor is set: single-element list from the configured scenario.
+    When hh.survivor is None: default sweep [70, 75, 80, 85] treating 'you' as dying.
+    """
+    surv: SurvivorScenario | None = hh.survivor
+    if surv is not None:
+        who_dies = surv.who_dies
+        base_age = hh.your_age if who_dies == "you" else hh.spouse_age
+        death_age = base_age + (surv.death_year - hh.base_year)
+        return who_dies, [death_age]
+    return "you", [70, 75, 80, 85]
+
+
+def _compute_survivor_snapshot(
+    hh: Household,
+    scenarios: list[ScenarioResult],
+    who_dies: str,
+    death_ages: list[int],
+) -> list[dict[str, str]]:
+    """Compute survivor analysis rows (pure function, no Streamlit calls).
+
+    For each death_age and scenario, projects the surviving spouse's tax
+    burden 5 years after the death year using Single-filer rules.
+
+    Fixes vs legacy inline code:
+    - Uses the SURVIVING spouse's per-person rmd_start_age (not deprecated hh.rmd_start_age)
+    - Passes filing_status="Single" to taxable_ss (correct $25K/$34K thresholds)
+    - Supports who_dies="spouse" in addition to who_dies="you"
+    """
+    from engine.ira import calc_rmd, ss_with_cola
+    from engine.tax import (
+        SENIOR_EXTRA_SINGLE,
+        STD_DEDUCTION_SINGLE,
+        federal_tax_single,
+        marginal_rate_single,
+        taxable_ss,
+    )
+
+    if who_dies == "you":
+        death_col = "Your Death Age"
+        survivor_col = "Spouse Age"
+        survivor_rmd_start = hh.spouse_rmd_start_age
+
+        def _surv_age(deceased_age: int, proj: int) -> int:
+            return (deceased_age - hh.age_gap) + proj
+
+        def _surv_rate(year: int) -> float:
+            return hh.spouse_ira_rate(year)
+
+        def _yr_death_match(y: YearResult, da: int) -> bool:
+            return y.your_age == da
+
+    else:
+        death_col = "Spouse Death Age"
+        survivor_col = "Your Age"
+        survivor_rmd_start = hh.your_rmd_start_age
+
+        def _surv_age(deceased_age: int, proj: int) -> int:  # type: ignore[misc]
+            return (deceased_age + hh.age_gap) + proj
+
+        def _surv_rate(year: int) -> float:  # type: ignore[misc]
+            return hh.your_ira_rate(year)
+
+        def _yr_death_match(y: YearResult, da: int) -> bool:  # type: ignore[misc]
+            return y.spouse_age == da
+
+    deceased_base_age = hh.your_age if who_dies == "you" else hh.spouse_age
+
+    rows: list[dict[str, str]] = []
+    for death_age in death_ages:
+        row: dict[str, str] = {
+            death_col: str(death_age),
+            survivor_col: str(_surv_age(death_age, 0)),
+        }
+        for s in scenarios:
+            yr_death = next((y for y in s.years if _yr_death_match(y, death_age)), None)
+            if not yr_death:
+                row[f"{s.name} Inherited IRA"] = "---"
+                row[f"{s.name} Survivor Tax"] = "---"
+                row[f"{s.name} Bracket"] = "---"
+                continue
+
+            inherited_ira = yr_death.your_ira_begin + yr_death.spouse_ira_begin
+            survivor_ss = max(yr_death.your_ss, yr_death.spouse_ss)
+
+            proj_years = 5
+            survivor_age = _surv_age(death_age, proj_years)
+            death_year_calc = hh.base_year + (death_age - deceased_base_age)
+            rate = _surv_rate(death_year_calc + proj_years)
+            ira_grown = inherited_ira * (1 + rate) ** proj_years
+
+            # FIX: use the surviving spouse's own rmd_start_age
+            rmd = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
+
+            ss_grown = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0.0
+
+            # FIX: Single filing_status uses correct $25K/$34K SS thresholds (not MFJ $32K/$44K)
+            tss = taxable_ss(ss_grown, rmd, filing_status="Single")
+            gross = rmd + tss
+            ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
+            taxable = max(gross - ded, 0.0)
+            tax = federal_tax_single(taxable)
+            bracket = marginal_rate_single(taxable)
+
+            row[f"{s.name} Inherited IRA"] = f"${inherited_ira / 1e6:.2f}M"
+            row[f"{s.name} Survivor Tax"] = f"${tax:,.0f}/yr"
+            row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
+
+        rows.append(row)
+    return rows
 
 
 def _build_scenario(hh: Household, key: str) -> ScenarioResult:
@@ -340,80 +455,36 @@ def render(hh: Household):
     st.markdown("---")
     st.markdown("### Surviving Spouse Analysis")
     st.caption(
-        "What happens if you die early? Your spouse inherits your IRA (rolls into hers), "
+        "What happens if one spouse dies early? The survivor inherits both IRAs, "
         "files Single (tighter brackets), and keeps the higher of two SS benefits."
     )
 
-    from engine.ira import calc_rmd  # noqa: E402
-    from engine.tax import (  # noqa: E402
-        SENIOR_EXTRA_SINGLE,
-        STD_DEDUCTION_SINGLE,
-        federal_tax_single,
-        marginal_rate_single,
-        taxable_ss,
-    )
+    who_dies, death_ages = _survivor_death_ages(hh)
 
-    death_ages = [70, 75, 80, 85]
+    # Scenario source caption
+    surv = hh.survivor
+    if surv is not None:
+        base_age = hh.your_age if who_dies == "you" else hh.spouse_age
+        death_age_display = base_age + (surv.death_year - hh.base_year)
+        st.caption(
+            f"Modeling: **{who_dies}** dies in **{surv.death_year}** "
+            f"(age {death_age_display})."
+        )
+    else:
+        default_death_age = hh.your_age + 5
+        st.caption(
+            f"Default snapshot (you die at age {default_death_age}) — "
+            "set a Survivor scenario in Setup → Joint to model a specific case."
+        )
 
-    # For each scenario, compute survivor impact at each death age
-    survivor_rows = []
-    for death_age in death_ages:
-        row = {"Your Death Age": str(death_age), "Spouse Age": str(death_age - hh.age_gap)}
-
-        for s in scenarios:
-            # Find the year of death
-            yr_death = next((y for y in s.years if y.your_age == death_age), None)
-            if not yr_death:
-                row[f"{s.name} Inherited IRA"] = "---"
-                row[f"{s.name} Survivor Tax"] = "---"
-                row[f"{s.name} Bracket"] = "---"
-                continue
-
-            # Spouse inherits both IRAs
-            inherited_ira = yr_death.your_ira_begin + yr_death.spouse_ira_begin
-
-            # Survivor gets higher of two SS (with COLA applied)
-            survivor_ss = max(yr_death.your_ss, yr_death.spouse_ss)
-
-            # Project 5 years out — what does year death+5 look like for survivor?
-            proj_years = 5
-            survivor_age = (death_age - hh.age_gap) + proj_years
-            # Use spouse's growth rate since she inherits into her IRA
-            death_year = hh.base_year + (death_age - hh.your_age)
-            surv_rate = hh.spouse_ira_rate(death_year + proj_years)
-            ira_grown = inherited_ira * (1 + surv_rate) ** proj_years
-
-            # RMD on combined IRA (survivor's RMD age)
-            rmd = calc_rmd(ira_grown, survivor_age, hh.rmd_start_age)
-
-            # SS with COLA
-            from engine.ira import ss_with_cola
-
-            ss_at_proj = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0
-
-            # Single filer tax
-            other_inc = rmd
-            tss = taxable_ss(
-                ss_at_proj, other_inc
-            )  # SS taxation uses Single thresholds too but formula is same
-            gross = rmd + tss
-            ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
-            taxable = max(gross - ded, 0)
-            tax = federal_tax_single(taxable)
-            bracket = marginal_rate_single(taxable)
-
-            row[f"{s.name} Inherited IRA"] = f"${inherited_ira / 1e6:.2f}M"
-            row[f"{s.name} Survivor Tax"] = f"${tax:,.0f}/yr"
-            row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
-
-        survivor_rows.append(row)
+    survivor_rows = _compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
 
     st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, use_container_width=True)
 
     st.markdown("""
-**Why this matters**: When you die, your spouse:
+**Why this matters**: When one spouse dies, the survivor:
 - Files **Single** — 12% bracket tops at $50K taxable (vs $101K for MFJ)
-- Inherits your IRA — combined with hers, RMDs are massive
+- Inherits the deceased's IRA — combined with their own, RMDs are massive
 - Gets only the **higher** of two SS benefits (not both)
 - Result: unconverted IRAs create an even worse squeeze for the survivor
 
