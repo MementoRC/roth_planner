@@ -41,8 +41,16 @@ SS_TIER_1_MFJ = 32_000
 SS_TIER_2_MFJ = 44_000
 SS_MAX_TAXABLE_FRACTION = 0.85
 
+# Social Security taxation tiers (Single provisional-income thresholds)
+SS_TIER_1_SINGLE = 25_000
+SS_TIER_2_SINGLE = 34_000
+
 # Federal long-term capital gains / qualified dividend rates (MFJ statutory tiers)
 LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
+
+# LTCG bracket thresholds for Single filer (taxable income upper bounds)
+# 0% up to $48,350; 15% up to $533,400; 20% above
+LTCG_THRESHOLDS_SINGLE = (48_350, 533_400)
 
 
 def federal_tax(taxable_income: float) -> float:
@@ -70,28 +78,35 @@ def marginal_rate(taxable_income: float) -> float:
     return 0.37
 
 
-def taxable_ss(combined_ss: float, other_income: float) -> float:
+def taxable_ss(
+    combined_ss: float, other_income: float, filing_status: str = "MFJ"
+) -> float:
     """
-    Compute taxable portion of Social Security (MFJ).
+    Compute taxable portion of Social Security.
 
     Provisional income = other_income + 0.5 * SS
-    Below $32,000: 0% taxable
-    $32,000–$44,000: 50% of excess
-    Above $44,000: 85% of excess + $6,000
+    MFJ:    Below $32,000: 0% | $32,000–$44,000: 50% of excess | Above: 85%
+    Single: Below $25,000: 0% | $25,000–$34,000: 50% of excess | Above: 85%
 
     Capped at 85% of total SS.
     """
     if combined_ss <= 0:
         return 0.0
-    provisional = other_income + 0.5 * combined_ss
-    if provisional <= SS_TIER_1_MFJ:
-        return 0.0
-    if provisional <= SS_TIER_2_MFJ:
-        taxable = 0.5 * (provisional - SS_TIER_1_MFJ)
+    if filing_status == "Single":
+        tier1 = SS_TIER_1_SINGLE
+        tier2 = SS_TIER_2_SINGLE
     else:
-        # Tier-1 band contributes 0.5*(tier2-tier1) = 6_000; not OBBBA bonus
-        tier1_contribution = 0.5 * (SS_TIER_2_MFJ - SS_TIER_1_MFJ)
-        taxable = SS_MAX_TAXABLE_FRACTION * (provisional - SS_TIER_2_MFJ) + tier1_contribution
+        tier1 = SS_TIER_1_MFJ
+        tier2 = SS_TIER_2_MFJ
+    provisional = other_income + 0.5 * combined_ss
+    if provisional <= tier1:
+        return 0.0
+    if provisional <= tier2:
+        taxable = 0.5 * (provisional - tier1)
+    else:
+        # Tier-1 band contributes 0.5*(tier2-tier1)
+        tier1_contribution = 0.5 * (tier2 - tier1)
+        taxable = SS_MAX_TAXABLE_FRACTION * (provisional - tier2) + tier1_contribution
     return min(taxable, SS_MAX_TAXABLE_FRACTION * combined_ss)
 
 

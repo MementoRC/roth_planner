@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_for_year, irmaa_tier
-from engine.niit import NIIT_THRESHOLD_MFJ
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year, irmaa_tier
+from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import deductions, room_to_12, room_to_22, senior_bonus_deduction, taxable_ss
 from models.household import Household
 from models.ytd_income import YTDSnapshot
@@ -71,6 +71,7 @@ def compute_headroom(
     hh: Household,
     ytd: YTDSnapshot,
     early_exercise: bool = True,
+    filing_status: str = "MFJ",
 ) -> HeadroomResult:
     """Compute remaining conversion headroom for the base year.
 
@@ -126,8 +127,10 @@ def compute_headroom(
 
     result.room_to_12pct = room_to_12(locked_gross, ded)
     result.room_to_22pct = room_to_22(locked_gross, ded)
-    result.room_to_irmaa_t1 = max(IRMAA_TIERS_MFJ[0][0] - locked_magi, 0.0)
-    result.room_to_niit = max(NIIT_THRESHOLD_MFJ - locked_magi, 0.0)
+    irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    niit_threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
+    result.room_to_irmaa_t1 = max(irmaa_tiers[0][0] - locked_magi, 0.0)
+    result.room_to_niit = max(niit_threshold - locked_magi, 0.0)
 
     # === WITH PLANNED (locked + option exercise) ===
 
@@ -144,12 +147,12 @@ def compute_headroom(
 
     result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned)
     result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned)
-    result.room_to_irmaa_t1_with_planned = max(IRMAA_TIERS_MFJ[0][0] - planned_magi, 0.0)
-    result.room_to_niit_with_planned = max(NIIT_THRESHOLD_MFJ - planned_magi, 0.0)
+    result.room_to_irmaa_t1_with_planned = max(irmaa_tiers[0][0] - planned_magi, 0.0)
+    result.room_to_niit_with_planned = max(niit_threshold - planned_magi, 0.0)
 
     # === IRMAA relevance check (age-aware) ===
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
-    irmaa_cost, _ = irmaa_for_year(planned_magi, ya, sa)
+    irmaa_cost, _ = irmaa_for_year(planned_magi, ya, sa, filing_status=filing_status)
     result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)
 
     # Find first income year where IRMAA actually matters
@@ -165,11 +168,12 @@ def compute_headroom(
     result.irmaa_already_triggered = result.irmaa_tier_current > 0 and result.irmaa_relevant
 
     # --- ACA cliff ---
-    from engine.aca import FPL_2, aca_applies
+    from engine.aca import FPL_1, FPL_2, aca_applies
 
     anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     if anyone_on_aca:
-        aca_cliff = 4.0 * FPL_2  # 400% FPL
+        fpl = FPL_1 if filing_status == "Single" else FPL_2
+        aca_cliff = 4.0 * fpl  # 400% FPL
         result.room_to_aca_cliff = max(aca_cliff - locked_magi, 0.0)
 
     return result

@@ -13,22 +13,28 @@ even though conversion income itself is not "investment income."
 
 # MFJ threshold — not inflation-indexed (set by ACA in 2013, unchanged since)
 NIIT_THRESHOLD_MFJ = 250_000
+# Single threshold — not inflation-indexed
+NIIT_THRESHOLD_SINGLE = 200_000
 NIIT_RATE = 0.038
 
 
-def niit(magi: float, net_investment_income: float) -> float:
+def niit(
+    magi: float, net_investment_income: float, filing_status: str = "MFJ"
+) -> float:
     """
     Calculate Net Investment Income Tax.
 
     Args:
-        magi: Modified Adjusted Gross Income (joint)
+        magi: Modified Adjusted Gross Income
         net_investment_income: Capital gains + dividends + interest + rental income
+        filing_status: "MFJ" (default, $250K threshold) or "Single" ($200K threshold)
 
     Returns:
         NIIT amount (3.8% on lesser of NII or MAGI excess over threshold)
     """
-    if magi <= NIIT_THRESHOLD_MFJ or net_investment_income <= 0:
+    threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
+    if magi <= threshold or net_investment_income <= 0:
         return 0.0
-    excess = magi - NIIT_THRESHOLD_MFJ
+    excess = magi - threshold
     taxable_nii = min(net_investment_income, excess)
     return taxable_nii * NIIT_RATE
