@@ -212,6 +212,16 @@ def render(hh: Household):
             ),
         )
 
+    # Prior-year MAGI anchor for IRMAA 2-year lookback
+    prior_magi_anchor = st.session_state.get("prior_year_magi") or {}
+    if prior_magi_anchor:
+        sorted_years = sorted(prior_magi_anchor.keys(), reverse=True)
+        most_recent = sorted_years[0]
+        st.caption(
+            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi_anchor[most_recent]:,.0f}"
+            " — used for IRMAA 2-year lookback"
+        )
+
     st.markdown("### Your Situation")
     col1, col2, col3 = st.columns(3)
 
