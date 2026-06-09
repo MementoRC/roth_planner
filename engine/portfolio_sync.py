@@ -366,6 +366,31 @@ def _headers() -> dict[str, str]:
     return h
 
 
+# B1: FinExtract normalized owner field → roth_planner you/spouse mapping.
+# Vocabulary per FinExtract server.js inferOwnerFromTitle/resolveOwner:
+#   primary | secondary | joint | trust | unknown (+ legacy you|spouse).
+# Unknown / unrecognized / empty → None so caller can fall through to the
+# substring scan or default.
+_OWNER_HINT_MAP: dict[str, str] = {
+    "primary": "you",
+    "secondary": "spouse",
+    "joint": "you",
+    "trust": "you",
+    "you": "you",
+    "spouse": "spouse",
+}
+
+
+def _resolve_owner_hint(owner_raw: object) -> str | None:
+    """Map a normalized owner-field value to 'you' / 'spouse', or None."""
+    if owner_raw is None:
+        return None
+    key = str(owner_raw).strip().lower()
+    if not key:
+        return None
+    return _OWNER_HINT_MAP.get(key)
+
+
 def _resolve_override(entry: str | dict[str, str]) -> tuple[str, str]:
     """Return (account_type, owner) from either override form.
 
@@ -383,6 +408,8 @@ def _resolve_override(entry: str | dict[str, str]) -> tuple[str, str]:
 def _classify_account(
     account_name: str,
     overrides: dict[str, str | dict[str, str]] | None = None,
+    *,
+    owner_hint: object = None,
 ) -> tuple[str, str]:
     """Determine account type and owner from account name string.
 
@@ -396,6 +423,11 @@ def _classify_account(
     match is found the override is returned immediately, bypassing the
     substring scan.  This supports FinExtract IBKR accounts whose names
     are raw account IDs with no "ira" substring.
+
+    ``owner_hint`` accepts the FinExtract normalized ``owner`` field
+    (``primary`` / ``secondary`` / ``joint`` / ``trust`` / ``unknown`` plus
+    legacy ``you`` / ``spouse``).  It wins over the substring-scan default
+    but loses to a dict-shaped override that already carries an explicit owner.
 
     Returns (account_type, owner).
     """
@@ -420,9 +452,8 @@ def _classify_account(
     else:
         acct_type = "brokerage"
 
-    # All accounts are "you" for now — spouse detection would need
-    # separate institution or name matching
-    owner = "you"
+    resolved_hint = _resolve_owner_hint(owner_hint)
+    owner = resolved_hint if resolved_hint is not None else "you"
 
     return acct_type, owner
 
@@ -1001,7 +1032,11 @@ def fetch_portfolio(
 
     for row in holdings_raw:
         acct_name = row.get("account", "")
-        acct_type, owner = _classify_account(acct_name, overrides=account_type_overrides)
+        acct_type, owner = _classify_account(
+            acct_name,
+            overrides=account_type_overrides,
+            owner_hint=row.get("owner"),
+        )
         symbol = row.get("symbol", "")
         asset_class = _classify_symbol(symbol)
         mv = row.get("market_value", 0) or 0
