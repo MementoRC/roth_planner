@@ -45,6 +45,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("spouse_rmd_start_age", 75)
     st.session_state.setdefault("your_fra_age", 67)
     st.session_state.setdefault("spouse_fra_age", 67)
+    st.session_state.setdefault("prior_year_magi", {})
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -149,6 +150,11 @@ def get_household() -> Household:
         ),
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
+        prior_year_magi={
+            int(k): float(v)
+            for k, v in st.session_state.get("prior_year_magi", {}).items()
+            if v
+        },
     )
 
     # If portfolio was synced, derive per-account growth and balances

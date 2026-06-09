@@ -171,6 +171,8 @@ def run_scenario(
     cum_niit = 0.0
     cum_rmd_tax = 0.0
     cum_brok_tax = 0.0
+    # Accumulates projected MAGI per calendar year for IRMAA 2-year lookback
+    magi_history: dict[int, float] = {}
 
     total_years = end_age - hh.your_age + 1
 
@@ -296,6 +298,9 @@ def run_scenario(
         # Forecast brokerage dividends: both qual and ord affect MAGI
         yr.magi += qual_div_this_year + ord_div_this_year
 
+        # Accumulate projected MAGI for future IRMAA lookback resolution
+        magi_history[year] = yr.magi
+
         # === SS taxation ===
         other_inc = (
             yr.option_income
@@ -348,8 +353,22 @@ def run_scenario(
         yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
 
         # === IRMAA (2-year lookback) ===
+        # IRMAA paid in year Y is based on filed MAGI of year Y-2.
+        # Resolution priority: prior_year_magi anchor > magi_history > same-year fallback.
+        income_year = year - 2
+        if income_year in hh.prior_year_magi:
+            # User has provided actual filed MAGI for the lookback year
+            magi_for_irmaa = hh.prior_year_magi[income_year]
+        elif income_year in magi_history:
+            # We've already projected the lookback year in this loop
+            magi_for_irmaa = magi_history[income_year]
+        else:
+            # Fallback: lookback year predates the projection window and no anchor provided.
+            # Use this year's projected MAGI as a same-year approximation
+            # (only reached for yr_idx < 2 when prior_year_magi is empty).
+            magi_for_irmaa = yr.magi
         irmaa_cost, _ = irmaa_for_year(
-            yr.magi, ya, sa, base_part_b=hh.medicare_part_b_base_monthly * 12
+            magi_for_irmaa, ya, sa, base_part_b=hh.medicare_part_b_base_monthly * 12
         )
         yr.irmaa_cost = irmaa_cost
         yr.irmaa_room = irmaa_next_threshold(yr.magi)

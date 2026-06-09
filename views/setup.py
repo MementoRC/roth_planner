@@ -98,6 +98,9 @@ def _user_defaults_from_session() -> dict:
     overrides = st.session_state.get("account_type_overrides")
     if overrides:
         payload["account_type_overrides"] = overrides
+    prior_magi = st.session_state.get("prior_year_magi")
+    if prior_magi:
+        payload["prior_year_magi"] = {str(k): v for k, v in prior_magi.items()}
     return payload
 
 
@@ -152,6 +155,7 @@ def _clear_personal_session_state() -> None:
         "aca_benchmark_premium_annual",
         "aca_enhanced_subsidies_active",
         "medicare_part_b_base_monthly",
+        "prior_year_magi",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -454,6 +458,57 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
         st.info("No holdings loaded — click Sync above.")
         return
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
+def _render_prior_year_magi_anchor() -> None:
+    """Render the Prior-year filed MAGI anchor expander in the Joint sub-tab."""
+    base_year: int = 2026
+    with st.expander("Prior-year filed MAGI anchor (IRMAA lookback)", expanded=False):
+        st.caption(
+            "Optional. Enter actual filed MAGI from your tax return. "
+            "The engine will use these values instead of projecting MAGI for the "
+            "IRMAA 2-year-lookback "
+            f"(years {base_year} and {base_year + 1} IRMAA will be anchored to these). "
+            "Leave 0 to use projected MAGI."
+        )
+        prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
+
+        v1 = st.number_input(
+            f"{base_year - 2} filed MAGI",
+            min_value=0,
+            max_value=2_000_000,
+            value=int(prior_magi.get(base_year - 2, 0)),
+            step=1_000,
+            format="%d",
+            help=(
+                f"Filed MAGI from your {base_year - 2} tax return. "
+                f"Anchors {base_year} IRMAA via the 2-year lookback."
+            ),
+        )
+        v2 = st.number_input(
+            f"{base_year - 1} filed MAGI",
+            min_value=0,
+            max_value=2_000_000,
+            value=int(prior_magi.get(base_year - 1, 0)),
+            step=1_000,
+            format="%d",
+            help=(
+                f"Filed MAGI from your {base_year - 1} tax return. "
+                f"Anchors {base_year + 1} IRMAA via the 2-year lookback."
+            ),
+        )
+
+        if v1 > 0:
+            prior_magi[base_year - 2] = float(v1)
+        else:
+            prior_magi.pop(base_year - 2, None)
+
+        if v2 > 0:
+            prior_magi[base_year - 1] = float(v2)
+        else:
+            prior_magi.pop(base_year - 1, None)
+
+        st.session_state["prior_year_magi"] = prior_magi
 
 
 def _render_grants_section(grants: list[EquityGrant]) -> None:
@@ -759,6 +814,7 @@ def render(hh: Household) -> None:
                     "IRMAA surcharges are computed on top of this base."
                 ),
             )
+            _render_prior_year_magi_anchor()
 
     # ------------------------------------------------------------------
     # TAB 2: Portfolio
