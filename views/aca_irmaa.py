@@ -370,8 +370,12 @@ def render(hh: Household):
         }
 
         if you_on_aca or sp_on_aca:
-            row["ACA Subsidy"] = f"${aca_subsidy(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
-            row["ACA You Pay"] = f"${aca_net_cost(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            row["ACA Subsidy"] = (
+                f"${aca_subsidy(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            )
+            row["ACA You Pay"] = (
+                f"${aca_net_cost(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            )
         else:
             row["ACA Subsidy"] = "—"
             row["ACA You Pay"] = "—"

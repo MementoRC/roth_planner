@@ -70,17 +70,13 @@ class TestComputeSurvivorSnapshot:
         rows = _compute_survivor_snapshot(base_hh, base_scenarios, "you", [70, 75, 80, 85])
         assert len(rows) == 4
 
-    def test_row_keys_for_you_dies(
-        self, base_hh: Household, base_scenarios: list
-    ) -> None:
+    def test_row_keys_for_you_dies(self, base_hh: Household, base_scenarios: list) -> None:
         rows = _compute_survivor_snapshot(base_hh, base_scenarios, "you", [75])
         assert "Your Death Age" in rows[0]
         assert "Spouse Age" in rows[0]
         assert "No Conversion Inherited IRA" in rows[0]
 
-    def test_row_keys_for_spouse_dies(
-        self, base_hh: Household, base_scenarios: list
-    ) -> None:
+    def test_row_keys_for_spouse_dies(self, base_hh: Household, base_scenarios: list) -> None:
         rows = _compute_survivor_snapshot(base_hh, base_scenarios, "spouse", [55])
         assert "Spouse Death Age" in rows[0]
         assert "Your Age" in rows[0]
@@ -156,9 +152,7 @@ class TestComputeSurvivorSnapshot:
         assert len(rows) == 1
         assert rows[0]["Your Death Age"] == "66"  # 61 + (2031-2026)
 
-    def test_survivor_scenario_spouse_dies(
-        self, base_hh: Household, base_scenarios: list
-    ) -> None:
+    def test_survivor_scenario_spouse_dies(self, base_hh: Household, base_scenarios: list) -> None:
         """who_dies='spouse' produces Spouse Death Age column."""
         base_hh.survivor = SurvivorScenario(who_dies="spouse", death_year=2034)
         who_dies, death_ages = _survivor_death_ages(base_hh)

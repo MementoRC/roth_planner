@@ -467,8 +467,7 @@ def render(hh: Household):
         base_age = hh.your_age if who_dies == "you" else hh.spouse_age
         death_age_display = base_age + (surv.death_year - hh.base_year)
         st.caption(
-            f"Modeling: **{who_dies}** dies in **{surv.death_year}** "
-            f"(age {death_age_display})."
+            f"Modeling: **{who_dies}** dies in **{surv.death_year}** (age {death_age_display})."
         )
     else:
         default_death_age = hh.your_age + 5

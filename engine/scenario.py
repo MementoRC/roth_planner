@@ -112,7 +112,9 @@ class YearResult:
     your_inherited_distribution: float = 0.0
     spouse_inherited_distribution: float = 0.0
     your_inherited_balance_end: float = 0.0  # sum of inherited balances for "you" at end of year
-    spouse_inherited_balance_end: float = 0.0  # sum of inherited balances for "spouse" at end of year
+    spouse_inherited_balance_end: float = (
+        0.0  # sum of inherited balances for "spouse" at end of year
+    )
 
     # IRA end of year
     your_ira_end: float = 0.0
@@ -384,7 +386,9 @@ def run_scenario(
         # YTD ordinary income affects SS taxation
         if ytd_year is not None:
             other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
-        yr.taxable_ss_amt = taxable_ss(yr.combined_ss, other_inc, filing_status=current_filing_status)
+        yr.taxable_ss_amt = taxable_ss(
+            yr.combined_ss, other_inc, filing_status=current_filing_status
+        )
 
         # === Combined gross (for tax) ===
         # Includes ordinary income only — LTCG taxed separately at preferential rate
@@ -415,7 +419,9 @@ def run_scenario(
             # only the survivor counts toward the senior-extra and OBBBA bonus.
             ya_eff = 0 if surv.who_dies == "you" else ya
             sa_eff = 0 if surv.who_dies == "spouse" else sa
-            yr.total_deductions = deductions(ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE)
+            yr.total_deductions = deductions(
+                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
+            )
             yr.total_deductions += senior_bonus_deduction(ya_eff, sa_eff, yr.magi)
         else:
             yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
@@ -436,7 +442,9 @@ def run_scenario(
         base_gross = yr.combined_gross - yr.your_conversion - yr.spouse_conversion
         base_taxable = max(base_gross - yr.total_deductions, 0)
         if survivor_active:
-            yr.conversion_tax = federal_tax_single(yr.taxable_income) - federal_tax_single(base_taxable)
+            yr.conversion_tax = federal_tax_single(yr.taxable_income) - federal_tax_single(
+                base_taxable
+            )
         else:
             yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
 
@@ -509,8 +517,12 @@ def run_scenario(
         # === Bracket room ===
         if survivor_active:
             # Single brackets: 12% ceiling = 50_400, 22% ceiling = 105_700
-            yr.room_12 = room_to_bracket(yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[1][0])
-            yr.room_22 = room_to_bracket(yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[2][0])
+            yr.room_12 = room_to_bracket(
+                yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[1][0]
+            )
+            yr.room_22 = room_to_bracket(
+                yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[2][0]
+            )
         else:
             yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions)
             yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions)
@@ -548,9 +560,7 @@ def run_scenario(
 
         # Inherited IRA end-of-year balances (sum by owner, after drain+growth applied above)
         yr.your_inherited_balance_end = sum(
-            inherited_balances[i]
-            for i, iira in enumerate(hh.inherited_iras)
-            if iira.owner == "you"
+            inherited_balances[i] for i, iira in enumerate(hh.inherited_iras) if iira.owner == "you"
         )
         yr.spouse_inherited_balance_end = sum(
             inherited_balances[i]
