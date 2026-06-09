@@ -25,7 +25,7 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
-from models.household import GrowthProfile, Household
+from models.household import GrowthProfile, Household, SurvivorScenario
 
 
 def approx(expected, tol=1.0):
@@ -2206,6 +2206,195 @@ class TestSingleFilerFoundations:
         from engine.aca import aca_premium_cap_rate
 
         assert aca_premium_cap_rate(60_000) == aca_premium_cap_rate(60_000, filing_status="MFJ")
+
+
+class TestSurvivorScenario:
+    """PR6b: SurvivorScenario dataclass + run_scenario survivor wiring."""
+
+    # --- shared fixture ---
+
+    def _base_hh(self, **kwargs) -> Household:
+        """Minimal household with both SS claimed and RMD start at 75.
+
+        Ages: you=61, spouse=55 → death_year=2030 means you are 65 at death,
+        spouse is 59 at death. Single filing starts 2031 (you=66, spouse=60).
+        """
+        return Household(
+            your_age=61,
+            spouse_age=55,
+            your_ira=1_000_000,
+            spouse_ira=800_000,
+            your_ss_fra=3_000,  # $3K/mo at FRA 67
+            spouse_ss_fra=2_500,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.07,
+            living_expenses=80_000,
+            **kwargs,
+        )
+
+    # --- (a) default None — must be a no-op ---
+
+    def test_survivor_default_none_no_behavior_change(self):
+        """Household.survivor=None (default) must produce identical results to omitting the field.
+
+        Regression guard: the survivor wiring must be a pure no-op on the default path.
+        """
+        hh_no_field = self._base_hh()
+        hh_explicit_none = self._base_hh(survivor=None)
+        plan = ConversionPlan()
+        r1 = run_scenario(hh_no_field, plan, end_age=80)
+        r2 = run_scenario(hh_explicit_none, plan, end_age=80)
+        assert r1.total_your_conv == r2.total_your_conv
+        assert abs(r1.years[-1].your_ira_end - r2.years[-1].your_ira_end) < 1.0
+        assert abs(r1.total_conv_tax - r2.total_conv_tax) < 1.0
+
+    # --- (b) filing status switches at death_year + 1 ---
+
+    def test_survivor_who_dies_you_switches_filing_status_year_after_death(self):
+        """death_year=2030: year 2030 is still MFJ, year 2031 switches to Single.
+
+        Verify that federal_tax in 2031 matches federal_tax_single(taxable_income).
+        """
+        from engine.tax import federal_tax_single
+
+        surv = SurvivorScenario(who_dies="you", death_year=2030)
+        hh = self._base_hh(survivor=surv)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=72)
+
+        yr_death = next(y for y in result.years if y.year == 2030)
+        yr_after = next(y for y in result.years if y.year == 2031)
+
+        # Year of death is still MFJ — federal_tax on that year's taxable income
+        # must differ from federal_tax_single (unless taxable_income is 0)
+        # Year after death: federal_tax_amt must equal federal_tax_single(taxable_income)
+        assert yr_after.federal_tax_amt == approx(
+            federal_tax_single(yr_after.taxable_income), tol=0.01
+        )
+        # Sanity: the year-of-death row itself is still MFJ filing
+        from engine.tax import federal_tax as federal_tax_mfj
+
+        assert yr_death.federal_tax_amt == approx(federal_tax_mfj(yr_death.taxable_income), tol=0.01)
+
+    # --- (c) symmetric case: who_dies="spouse" ---
+
+    def test_survivor_who_dies_spouse_symmetric(self):
+        """who_dies='spouse': same filing-status switch but you are the survivor."""
+        from engine.tax import federal_tax_single
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        hh = self._base_hh(survivor=surv)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=72)
+
+        yr_after = next(y for y in result.years if y.year == 2031)
+        assert yr_after.federal_tax_amt == approx(
+            federal_tax_single(yr_after.taxable_income), tol=0.01
+        )
+
+    # --- (d) IRA rollover at death_year + 1 ---
+
+    def test_survivor_rolls_deceased_ira_to_survivor(self):
+        """who_dies='spouse': at death_year+1 spouse_ira rolls into your_ira.
+
+        spouse_ira_begin in 2031 must be 0; your_ira_begin must contain
+        the combined balance that grew through 2030.
+        """
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        hh = self._base_hh(survivor=surv)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=72)
+
+        yr_2030 = next(y for y in result.years if y.year == 2030)
+        yr_2031 = next(y for y in result.years if y.year == 2031)
+
+        # After rollover, deceased's IRA is 0 at beginning of 2031
+        assert yr_2031.spouse_ira_begin == approx(0.0, tol=1.0)
+        # Survivor's IRA beginning-of-2031 reflects both balances from end-of-2030
+        combined_end_2030 = yr_2030.your_ira_end + yr_2030.spouse_ira_end
+        assert yr_2031.your_ira_begin == approx(combined_end_2030, tol=1.0)
+
+        # Rollover is exactly one-time: 2032 spouse_ira_begin stays 0
+        yr_2032 = next(y for y in result.years if y.year == 2032)
+        assert yr_2032.spouse_ira_begin == approx(0.0, tol=1.0)
+
+    # --- (e) deceased SS zeroed ---
+
+    def test_survivor_zeros_deceased_ss(self):
+        """who_dies='spouse': spouse_ss=0 from death_year+1; your_ss unchanged.
+
+        Note: SS survivor benefit step-up is NOT modeled; survivor keeps their
+        own benefit only. Future PR to add step-up logic.
+        """
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        # Use ages where both are past SS start age by 2031 so we can observe SS
+        hh = Household(
+            your_age=70,
+            spouse_age=70,
+            your_ira=1_000_000,
+            spouse_ira=800_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=2_500,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.07,
+            living_expenses=80_000,
+            survivor=surv,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=80)
+
+        yr_2030 = next(y for y in result.years if y.year == 2030)
+        yr_2031 = next(y for y in result.years if y.year == 2031)
+
+        # Year of death: both SS still active (MFJ year)
+        assert yr_2030.spouse_ss > 0
+        assert yr_2030.your_ss > 0
+
+        # Year after death: deceased (spouse) SS is 0; survivor (you) SS continues
+        assert yr_2031.spouse_ss == approx(0.0, tol=0.01)
+        assert yr_2031.your_ss > 0
+
+    # --- (f) single std deduction applies post-survivor ---
+
+    def test_survivor_uses_single_std_deduction(self):
+        """Post-death year uses STD_DEDUCTION_SINGLE for total_deductions baseline.
+
+        With both ages < 65 in 2031, total_deductions should equal STD_DEDUCTION_SINGLE
+        (no senior extras, no OBBBA bonus at this MAGI level — we keep income low).
+        """
+        from engine.tax import STD_DEDUCTION_SINGLE
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        # Use ages so neither is 65 in 2031: you=55 → 60 in 2031
+        hh = Household(
+            your_age=55,
+            spouse_age=50,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=2_500,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.07,
+            living_expenses=50_000,
+            survivor=surv,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=65)
+
+        yr_2031 = next(y for y in result.years if y.year == 2031)
+
+        # Neither survivor age (60) nor deceased spouse age (55) triggers senior extra
+        # and low MAGI means no OBBBA phaseout — deductions = STD_DEDUCTION_SINGLE exactly
+        assert yr_2031.total_deductions == approx(STD_DEDUCTION_SINGLE, tol=0.01)
 
     def test_aca_premium_cap_rate_single_higher_fpl_ratio(self):
         """Single filer at same MAGI has higher FPL ratio → hits higher cap schedule band."""

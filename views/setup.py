@@ -101,6 +101,9 @@ def _user_defaults_from_session() -> dict:
     prior_magi = st.session_state.get("prior_year_magi")
     if prior_magi:
         payload["prior_year_magi"] = {str(k): v for k, v in prior_magi.items()}
+    survivor = st.session_state.get("survivor")
+    if survivor:
+        payload["survivor"] = survivor
     return payload
 
 
@@ -156,6 +159,7 @@ def _clear_personal_session_state() -> None:
         "aca_enhanced_subsidies_active",
         "medicare_part_b_base_monthly",
         "prior_year_magi",
+        "survivor",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -458,6 +462,53 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
         st.info("No holdings loaded — click Sync above.")
         return
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
+def _render_survivor_scenario() -> None:
+    """Render the Survivor scenario expander in the Joint sub-tab."""
+    base_year: int = 2026
+    current: dict = st.session_state.get("survivor") or {}
+
+    with st.expander("Survivor scenario (advanced sensitivity)", expanded=False):
+        st.caption(
+            "Optional. Models death of one spouse mid-projection. "
+            "Survivor switches to single-filer brackets, std deduction, and senior bonus "
+            "starting death_year + 1. Deceased's IRA rolls to survivor (spousal rollover); "
+            "deceased's SS ends. "
+            "NOT YET MODELED: SS survivor benefit step-up; inherited-IRA stretch rules."
+        )
+        enabled = st.checkbox(
+            "Enable survivor scenario",
+            value=bool(current),
+            key="_survivor_enabled",
+        )
+        if enabled:
+            who_options = ["Me", "Spouse"]
+            who_default = 0 if current.get("who_dies", "you") == "you" else 1
+            who_choice = st.radio(
+                "Who dies?",
+                who_options,
+                index=who_default,
+                horizontal=True,
+                key="_survivor_who_dies",
+            )
+            who_dies = "you" if who_choice == "Me" else "spouse"
+            death_year = st.number_input(
+                "Year of death",
+                min_value=base_year,
+                max_value=base_year + 30,
+                value=int(current.get("death_year", base_year + 5)),
+                step=1,
+                format="%d",
+                help=(
+                    "Calendar year in which the spouse dies. "
+                    "MFJ filing applies for that year; Single filing begins the following year."
+                ),
+                key="_survivor_death_year",
+            )
+            st.session_state["survivor"] = {"who_dies": who_dies, "death_year": int(death_year)}
+        else:
+            st.session_state["survivor"] = None
 
 
 def _render_prior_year_magi_anchor() -> None:
@@ -815,6 +866,7 @@ def render(hh: Household) -> None:
                 ),
             )
             _render_prior_year_magi_anchor()
+            _render_survivor_scenario()
 
     # ------------------------------------------------------------------
     # TAB 2: Portfolio

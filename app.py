@@ -46,6 +46,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("your_fra_age", 67)
     st.session_state.setdefault("spouse_fra_age", 67)
     st.session_state.setdefault("prior_year_magi", {})
+    st.session_state.setdefault("survivor", None)
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -107,7 +108,21 @@ page = st.sidebar.radio(
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
 from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
-from models.household import GrowthProfile, Household  # noqa: E402
+from models.household import GrowthProfile, Household, SurvivorScenario  # noqa: E402
+
+
+def _build_survivor_scenario() -> SurvivorScenario | None:
+    """Reconstruct SurvivorScenario from session_state dict (JSON-friendly storage)."""
+    survivor_dict = st.session_state.get("survivor")
+    if not survivor_dict or not isinstance(survivor_dict, dict):
+        return None
+    death_year = survivor_dict.get("death_year")
+    if not death_year:
+        return None
+    return SurvivorScenario(
+        who_dies=survivor_dict.get("who_dies", "you"),
+        death_year=int(death_year),
+    )
 
 
 def get_household() -> Household:
@@ -155,6 +170,7 @@ def get_household() -> Household:
             for k, v in st.session_state.get("prior_year_magi", {}).items()
             if v
         },
+        survivor=_build_survivor_scenario(),
     )
 
     # If portfolio was synced, derive per-account growth and balances
