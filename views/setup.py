@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -24,9 +25,12 @@ from engine.portfolio_sync import (
     AccountSummary,
     EquityGrant,
     Holding,
+    MagiSnapshot,
     PortfolioSnapshot,
     apply_dividends_rollup,
+    apply_magi,
     fetch_dividends_rollup,
+    fetch_magi,
     fetch_portfolio,
     fetch_tax_return,
     fetch_ytd_snapshot,
@@ -990,6 +994,24 @@ def render(hh: Household) -> None:
                     if tax_snap.server_available:
                         st.session_state.tax_return_snapshot = tax_snap
                         save_tax_snapshot(tax_snap)
+                    # A3: MAGI 2-year history from FinExtract (IRMAA lookback anchor)
+                    try:
+                        plan_year = datetime.now(UTC).year
+                        magi_snap = MagiSnapshot(fetched_at=datetime.now(UTC))
+                        for offset in (
+                            1,
+                            2,
+                        ):  # batchTaxYear-1 and batchTaxYear-2 (2-year coverage shipped)
+                            apply_magi(magi_snap, fetch_magi(plan_year - offset))
+                        if magi_snap.prior_year_magi:
+                            existing = dict(st.session_state.get("prior_year_magi") or {})
+                            # Gap-fill only: do NOT override manual entries
+                            for yr, val in magi_snap.prior_year_magi.items():
+                                if yr not in existing or not existing[yr]:
+                                    existing[yr] = val
+                            st.session_state["prior_year_magi"] = existing
+                    except Exception:  # noqa: BLE001 — sync is best-effort, never block on MAGI failure
+                        pass
                     # Also sync YTD income data
                     ytd_snap = fetch_ytd_snapshot()
                     if ytd_snap.snapshot_date:

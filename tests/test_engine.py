@@ -2605,3 +2605,139 @@ class TestSurvivorScenario:
         single_rate = aca_premium_cap_rate(magi, filing_status="Single")
         # Single filer is further up the FPL scale → equal or higher cap rate
         assert single_rate >= mfj_rate
+
+
+class TestFetchMagi:
+    """Verify fetch_magi + apply_magi end-to-end (A3 — prior-year MAGI consumer)."""
+
+    # ------------------------------------------------------------------
+    # fetch_magi tests
+    # ------------------------------------------------------------------
+
+    def test_fetch_magi_happy_path_returns_dict(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_magi
+
+        payload = {
+            "year": 2024,
+            "filing_status": "MFJ",
+            "agi": 180_000.0,
+            "magi": 183_000.0,
+            "tax_exempt_interest": 3_000.0,
+            "ss_taxable_amount": 0.0,
+            "foreign_earned_income_exclusion": 0.0,
+            "source": "turbotax",
+        }
+
+        class _FakeResp:
+            status_code = 200
+
+            def json(self):
+                return payload
+
+            def raise_for_status(self):
+                pass
+
+        monkeypatch.setattr(req, "get", lambda *a, **kw: _FakeResp())
+        result = fetch_magi(2024)
+        assert isinstance(result, dict)
+        assert result["year"] == 2024
+        assert result["magi"] == 183_000.0
+
+    def test_fetch_magi_404_returns_none(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_magi
+
+        class _FakeResp:
+            status_code = 404
+
+            def raise_for_status(self):
+                pass
+
+        monkeypatch.setattr(req, "get", lambda *a, **kw: _FakeResp())
+        assert fetch_magi(2020) is None
+
+    def test_fetch_magi_network_error_returns_none(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_magi
+
+        def _raise(*args, **kwargs):
+            raise req.exceptions.ConnectionError("refused")
+
+        monkeypatch.setattr(req, "get", _raise)
+        assert fetch_magi(2024) is None
+
+    def test_fetch_magi_malformed_shape_returns_none(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_magi
+
+        class _FakeList:
+            status_code = 200
+
+            def json(self):
+                return [{"year": 2024}]
+
+            def raise_for_status(self):
+                pass
+
+        monkeypatch.setattr(req, "get", lambda *a, **kw: _FakeList())
+        assert fetch_magi(2024) is None
+
+    # ------------------------------------------------------------------
+    # apply_magi tests
+    # ------------------------------------------------------------------
+
+    def _make_snap(self):
+        from datetime import UTC, datetime
+
+        from engine.portfolio_sync import MagiSnapshot
+
+        return MagiSnapshot(fetched_at=datetime.now(UTC))
+
+    def test_apply_magi_populates_prior_year_magi_and_agi(self):
+        from engine.portfolio_sync import apply_magi
+
+        snap = self._make_snap()
+        data = {
+            "year": 2024,
+            "filing_status": "MFJ",
+            "agi": 180_000.0,
+            "magi": 183_000.0,
+        }
+        result = apply_magi(snap, data)
+        assert result.prior_year_magi[2024] == pytest.approx(183_000.0)
+        assert result.agi[2024] == pytest.approx(180_000.0)
+        assert result.filing_status[2024] == "MFJ"
+
+    def test_apply_magi_none_input_no_op(self):
+        from engine.portfolio_sync import apply_magi
+
+        snap = self._make_snap()
+        result = apply_magi(snap, None)
+        assert result.prior_year_magi == {}
+        assert result.agi == {}
+
+    def test_apply_magi_missing_optional_fields(self):
+        from engine.portfolio_sync import apply_magi
+
+        snap = self._make_snap()
+        # Only year + magi; no agi or filing_status
+        data = {"year": 2023, "magi": 175_000.0}
+        result = apply_magi(snap, data)
+        assert result.prior_year_magi[2023] == pytest.approx(175_000.0)
+        assert 2023 not in result.agi
+        assert 2023 not in result.filing_status
+
+    def test_apply_magi_invalid_year_no_op(self):
+        from engine.portfolio_sync import apply_magi
+
+        snap = self._make_snap()
+        for bad_year in ("abc", None):
+            data = {"year": bad_year, "magi": 150_000.0}
+            result = apply_magi(snap, data)
+            assert result.prior_year_magi == {}
+            assert result.agi == {}
