@@ -136,6 +136,16 @@ def render(hh: Household):
 
     st.markdown("---")
 
+    # Prior-year MAGI anchor for IRMAA 2-year lookback
+    prior_magi = st.session_state.get("prior_year_magi") or {}
+    if prior_magi:
+        sorted_years = sorted(prior_magi.keys(), reverse=True)
+        most_recent = sorted_years[0]
+        st.caption(
+            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi[most_recent]:,.0f}"
+            " — used for IRMAA 2-year lookback"
+        )
+
     # --- Chart 1: RMD Income Waterfall ---
     st.markdown("### Income Composition During RMD Years")
     st.caption("Stacked view: where your income comes from and how it fills brackets.")

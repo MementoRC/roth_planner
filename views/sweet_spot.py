@@ -219,6 +219,16 @@ def render(hh: Household):
     base_result = _all_in_at_conversion(hh, base, 0, net_inv_income)
     c4.metric("Base MAGI", f"${base['base_magi']:,.0f}")
 
+    # Prior-year MAGI anchor for IRMAA 2-year lookback
+    prior_magi = st.session_state.get("prior_year_magi") or {}
+    if prior_magi:
+        sorted_years = sorted(prior_magi.keys(), reverse=True)
+        most_recent = sorted_years[0]
+        st.caption(
+            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi[most_recent]:,.0f}"
+            " — used for IRMAA 2-year lookback"
+        )
+
     # --- Sweep conversion amounts ---
     max_conv = int(
         min(
