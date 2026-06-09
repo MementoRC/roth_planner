@@ -188,6 +188,16 @@ def render(hh: Household):
         help="Ordinary bracket room — LTCG does NOT consume this",
     )
 
+    # Prior-year MAGI anchor for IRMAA 2-year lookback
+    prior_magi = st.session_state.get("prior_year_magi") or {}
+    if prior_magi:
+        sorted_years = sorted(prior_magi.keys(), reverse=True)
+        most_recent = sorted_years[0]
+        st.caption(
+            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi[most_recent]:,.0f}"
+            " — used for IRMAA 2-year lookback"
+        )
+
     # IRMAA — show room but note if not yet relevant
     irmaa_label = "Room to IRMAA"
     if not headroom.irmaa_relevant:
