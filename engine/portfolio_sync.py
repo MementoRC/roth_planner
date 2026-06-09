@@ -1007,7 +1007,7 @@ def fetch_magi(year: int, *, timeout: float = 3.0) -> dict[str, Any] | None:
     try:
         resp = requests.get(
             f"{BASE_URL}/query/tax_return",
-            params={"data_type": "magi", "year": year},
+            params={"data_type": "magi", "year": str(year)},
             headers=_headers(),
             timeout=timeout,
         )
