@@ -104,6 +104,9 @@ def _user_defaults_from_session() -> dict:
     survivor = st.session_state.get("survivor")
     if survivor:
         payload["survivor"] = survivor
+    inherited_iras = st.session_state.get("inherited_iras")
+    if inherited_iras:
+        payload["inherited_iras"] = inherited_iras
     return payload
 
 
@@ -160,6 +163,7 @@ def _clear_personal_session_state() -> None:
         "medicare_part_b_base_monthly",
         "prior_year_magi",
         "survivor",
+        "inherited_iras",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
@@ -509,6 +513,83 @@ def _render_survivor_scenario() -> None:
             st.session_state["survivor"] = {"who_dies": who_dies, "death_year": int(death_year)}
         else:
             st.session_state["survivor"] = None
+
+
+def _render_inherited_iras() -> None:
+    """Render the Inherited IRAs expander in the Joint sub-tab."""
+    base_year: int = 2026
+
+    with st.expander("Inherited IRAs (non-spousal, 10-year rule)", expanded=False):
+        st.caption(
+            "Model non-spousal inherited IRAs subject to the SECURE Act 10-year rule. "
+            "The beneficiary must fully distribute the balance within 10 years of inheritance. "
+            "Distributions add to ordinary income (MAGI). "
+            "Leave empty if no inheritances are modeled."
+        )
+
+        iiras: list[dict] = list(st.session_state.get("inherited_iras") or [])
+        to_remove: int | None = None
+
+        for idx, entry in enumerate(iiras):
+            col_bal, col_yr, col_owner, col_remove = st.columns([3, 2, 2, 1])
+            new_bal = col_bal.number_input(
+                "Balance ($)",
+                min_value=0,
+                max_value=10_000_000,
+                value=int(entry.get("balance", 0)),
+                step=10_000,
+                format="%d",
+                key=f"iira_balance_{idx}",
+                label_visibility="collapsed" if idx > 0 else "visible",
+            )
+            new_yr = col_yr.number_input(
+                "Year inherited",
+                min_value=base_year,
+                max_value=base_year + 30,
+                value=int(entry.get("inherited_year", base_year + 5)),
+                step=1,
+                format="%d",
+                key=f"iira_year_{idx}",
+                label_visibility="collapsed" if idx > 0 else "visible",
+            )
+            owner_options = ["Me", "Spouse"]
+            owner_val = entry.get("owner", "you")
+            owner_idx_sel = 0 if owner_val == "you" else 1
+            owner_choice = col_owner.radio(
+                "Owner",
+                owner_options,
+                index=owner_idx_sel,
+                horizontal=True,
+                key=f"iira_owner_{idx}",
+                label_visibility="collapsed" if idx > 0 else "visible",
+            )
+            if col_remove.button("Remove", key=f"iira_remove_{idx}"):
+                to_remove = idx
+            iiras[idx] = {
+                "balance": float(new_bal),
+                "inherited_year": int(new_yr),
+                "owner": "you" if owner_choice == "Me" else "spouse",
+                "growth_rate": float(entry.get("growth_rate", 0.07)),
+            }
+
+        if to_remove is not None:
+            iiras.pop(to_remove)
+            st.session_state["inherited_iras"] = iiras
+            st.rerun()
+
+        if st.button("Add inherited IRA", key="iira_add"):
+            iiras.append(
+                {
+                    "balance": 0.0,
+                    "inherited_year": base_year + 5,
+                    "owner": "you",
+                    "growth_rate": 0.07,
+                }
+            )
+            st.session_state["inherited_iras"] = iiras
+            st.rerun()
+
+        st.session_state["inherited_iras"] = iiras
 
 
 def _render_prior_year_magi_anchor() -> None:
@@ -867,6 +948,7 @@ def render(hh: Household) -> None:
             )
             _render_prior_year_magi_anchor()
             _render_survivor_scenario()
+            _render_inherited_iras()
 
     # ------------------------------------------------------------------
     # TAB 2: Portfolio

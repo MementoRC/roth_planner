@@ -74,6 +74,9 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     # survivor is a joint field (not spouse-specific); pass through as-is when not as_spouse
     if "survivor" in data and not as_spouse:
         updates["survivor"] = data["survivor"]
+    # inherited_iras is a joint field; each entry carries its own owner field
+    if "inherited_iras" in data and not as_spouse:
+        updates["inherited_iras"] = data["inherited_iras"]
     return updates
 
 

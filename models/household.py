@@ -12,6 +12,35 @@ _D = load_defaults()
 
 
 @dataclass
+class InheritedIRA:
+    """A non-spousal inherited IRA subject to the SECURE Act 10-year rule.
+
+    The beneficiary (owner) must fully distribute the balance within 10 years
+    of inherited_year. Drain formula: balance_start_of_year / years_remaining
+    (1/10 first year, 1/9, ..., 1/1 final year — effectively a front-end-loaded
+    drain that fully empties at year 10).
+
+    Drained amount adds to the owner's ordinary income (combined_gross + MAGI).
+    Inherited IRAs are NOT eligible for QCD. Balance grows at `growth_rate`
+    between draws (default 0.07 to match the engine's IRA growth heuristic).
+
+    NOT MODELED:
+    - Eligible Designated Beneficiary (EDB) exceptions — spouse, minor child,
+      disabled/chronically ill, less-than-10-years-younger. These can still
+      stretch. The planner assumes non-EDB (most common adult-child case).
+    - Year-by-year required minimum distribution within the 10-year window
+      when the original owner was already past RMD age (2024 IRS guidance).
+      Even drain is the planning heuristic; user can mimic balloon-strategies
+      manually by setting a 10-year inheritance and converting in low-MAGI years.
+    """
+
+    balance: float
+    inherited_year: int  # calendar year owner takes possession
+    owner: Literal["you", "spouse"]
+    growth_rate: float = 0.07
+
+
+@dataclass
 class SurvivorScenario:
     """When one spouse dies during the projection.
 
@@ -22,7 +51,6 @@ class SurvivorScenario:
 
     NOT YET MODELED (deferred):
     - SS survivor benefit step-up (taking higher of two benefits)
-    - Inherited-IRA stretch / 10-year rule (E5)
     """
 
     who_dies: Literal["you", "spouse"]
@@ -147,6 +175,14 @@ class Household:
     std deduction, and senior bonus.
 
     Default None = baseline MFJ projection where both spouses survive to end_age."""
+
+    inherited_iras: list[InheritedIRA] = field(default_factory=list)
+    """List of non-spousal inherited IRAs subject to the 10-year rule.
+
+    Empty list (default) = no inherited IRAs in the plan.
+    Multiple entries supported (e.g., user inherits from a parent in 2027 AND
+    spouse inherits from a sibling in 2030).
+    See InheritedIRA docstring for drain formula and scope."""
 
     @property
     def age_gap(self) -> int:

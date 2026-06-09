@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from engine.aca import aca_applies, aca_subsidy_loss
-from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
+from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
 from engine.tax import (
@@ -108,6 +108,12 @@ class YearResult:
     brokerage_qual_div: float = 0.0  # qualified dividends (MAGI-only / LTCG rate)
     brokerage_ord_div: float = 0.0  # ordinary dividends (ordinary income stack)
 
+    # Inherited IRA distributions (SECURE Act 10-year rule)
+    your_inherited_distribution: float = 0.0
+    spouse_inherited_distribution: float = 0.0
+    your_inherited_balance_end: float = 0.0  # sum of inherited balances for "you" at end of year
+    spouse_inherited_balance_end: float = 0.0  # sum of inherited balances for "spouse" at end of year
+
     # IRA end of year
     your_ira_end: float = 0.0
     spouse_ira_end: float = 0.0
@@ -183,6 +189,9 @@ def run_scenario(
     # Survivor scenario pre-check
     surv: SurvivorScenario | None = hh.survivor
     _rollover_done: bool = False
+
+    # Mutable copies of inherited IRA balances (one per InheritedIRA), keyed by index
+    inherited_balances: list[float] = [iira.balance for iira in hh.inherited_iras]
 
     total_years = end_age - hh.your_age + 1
 
@@ -286,6 +295,28 @@ def run_scenario(
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
         yr.spouse_extra_withdrawal = plan.spouse_extra_withdrawals.get(year, 0.0)
 
+        # === Inherited IRA drains (SECURE Act 10-year rule) ===
+        your_inherited_distribution = 0.0
+        spouse_inherited_distribution = 0.0
+        for idx, iira in enumerate(hh.inherited_iras):
+            if year < iira.inherited_year:
+                continue  # not yet inherited
+            years_in = year - iira.inherited_year
+            years_remaining = 10 - years_in
+            if years_remaining <= 0:
+                continue  # fully drained
+            drain = inherited_ira_drain(inherited_balances[idx], years_remaining)
+            if iira.owner == "you":
+                your_inherited_distribution += drain
+            else:
+                spouse_inherited_distribution += drain
+            # Apply drain + growth to balance for next year
+            inherited_balances[idx] = max(inherited_balances[idx] - drain, 0.0) * (
+                1 + iira.growth_rate
+            )
+        yr.your_inherited_distribution = your_inherited_distribution
+        yr.spouse_inherited_distribution = spouse_inherited_distribution
+
         # === Social Security ===
         your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
         spouse_ss_base = ss_benefit_at_age(
@@ -322,6 +353,8 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.spouse_extra_withdrawal
             + yr.combined_ss
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution
         )
         # YTD: add wages, LTCG, STCG, dividends, interest to MAGI
         if ytd_year is not None:
@@ -364,6 +397,8 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.spouse_extra_withdrawal
             + yr.taxable_ss_amt
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution
         )
         # YTD: add wages + STCG + ordinary dividends to gross (ordinary), but NOT LTCG/qualified dividends
         if ytd_year is not None:
@@ -510,6 +545,18 @@ def run_scenario(
 
         yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
         yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.spouse_ira_rate(year))
+
+        # Inherited IRA end-of-year balances (sum by owner, after drain+growth applied above)
+        yr.your_inherited_balance_end = sum(
+            inherited_balances[i]
+            for i, iira in enumerate(hh.inherited_iras)
+            if iira.owner == "you"
+        )
+        yr.spouse_inherited_balance_end = sum(
+            inherited_balances[i]
+            for i, iira in enumerate(hh.inherited_iras)
+            if iira.owner == "spouse"
+        )
 
         # Carry forward
         your_ira = yr.your_ira_end

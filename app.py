@@ -47,6 +47,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("spouse_fra_age", 67)
     st.session_state.setdefault("prior_year_magi", {})
     st.session_state.setdefault("survivor", None)
+    st.session_state.setdefault("inherited_iras", [])
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -108,7 +109,7 @@ page = st.sidebar.radio(
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
 from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
-from models.household import GrowthProfile, Household, SurvivorScenario  # noqa: E402
+from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario  # noqa: E402
 
 
 def _build_survivor_scenario() -> SurvivorScenario | None:
@@ -171,6 +172,16 @@ def get_household() -> Household:
             if v
         },
         survivor=_build_survivor_scenario(),
+        inherited_iras=[
+            InheritedIRA(
+                balance=float(e["balance"]),
+                inherited_year=int(e["inherited_year"]),
+                owner=str(e["owner"]),
+                growth_rate=float(e.get("growth_rate", 0.07)),
+            )
+            for e in st.session_state.get("inherited_iras", [])
+            if e.get("balance", 0) > 0
+        ],
     )
 
     # If portfolio was synced, derive per-account growth and balances
