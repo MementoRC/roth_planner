@@ -37,43 +37,51 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
         "agi": {
             "form": "f1040",
             "line": "11",
-            # Label text confirmed from pdftotext of real 2023 TurboTax PDF
-            "regex": r"This is your adjusted gross income[\s.]*(\d[\d,]*)",
+            # TurboTax repeats the line number after the label with dot leaders:
+            # "This is your adjusted gross income .......... 11  162,433"
+            # Without the (?:11\s+)? skip, [\s.]* bridges to the first digit
+            # and captures "11" (the repeated line token) instead of the value.
+            # The skip is optional so synthetic fixtures without the repeat still pass.
+            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\d[\d,]*)",
             "optional": False,
         },
         "tax_exempt_interest": {
             "form": "f1040",
             "line": "2a",
-            "regex": r"Tax-exempt interest[\s.]*2a\s+(\d[\d,]*)",
+            # "Tax-exempt interest .......... 2a  2,511" — 2a already consumed.
+            # Optional skip guards against any layout variant without the label.
+            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "qualified_dividends": {
             "form": "f1040",
             "line": "3a",
-            "regex": r"Qualified dividends[\s.]*3a\s+(\d[\d,]*)",
+            # "Qualified dividends .......... 3a  500" — 3a already consumed.
+            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "ordinary_dividends": {
             "form": "f1040",
             "line": "3b",
-            "regex": r"Ordinary dividends[\s.]*3b\s+(\d[\d,]*)",
+            # "Ordinary dividends .......... 3b  1,200" — 3b already consumed.
+            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "taxable_ss": {
             "form": "f1040",
             "line": "6b",
-            # SS block spans multiple text segments; allow up to 80 chars gap
+            # SS block spans multiple text segments; allow up to 80 chars gap.
+            # 6b is already consumed in the [\s\S]{0,80}6b\s+ span.
             "regex": r"Social security benefits[\s\S]{0,80}6b\s+(\d[\d,]*)",
             "optional": True,
         },
         "feie": {
             "form": "sch1",
             "line": "8d",
-            # TurboTax repeats the line number after the label: "8d  Foreign earned
-            # income exclusion  8d  3,000". The repeated "8d" must be consumed before
-            # capturing the amount, otherwise [\s\S]{0,40}(\d…) greedily matches the
-            # "8" in "8d" instead of the actual currency figure.
-            "regex": r"Foreign earned income exclusion\s+8d\s+(\d[\d,]*)",
+            # TurboTax repeats the line number after the label with dot leaders:
+            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
+            # guards against layouts without the repeated 8d.
+            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
             "optional": True,
         },
     },
@@ -82,25 +90,26 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
         "agi": {
             "form": "f1040",
             "line": "11",
-            "regex": r"This is your adjusted gross income[\s.]*(\d[\d,]*)",
+            # See 2023 agi comment — optional (?:11\s+)? skip for realistic layout.
+            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\d[\d,]*)",
             "optional": False,
         },
         "tax_exempt_interest": {
             "form": "f1040",
             "line": "2a",
-            "regex": r"Tax-exempt interest[\s.]*2a\s+(\d[\d,]*)",
+            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "qualified_dividends": {
             "form": "f1040",
             "line": "3a",
-            "regex": r"Qualified dividends[\s.]*3a\s+(\d[\d,]*)",
+            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "ordinary_dividends": {
             "form": "f1040",
             "line": "3b",
-            "regex": r"Ordinary dividends[\s.]*3b\s+(\d[\d,]*)",
+            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
             "optional": True,
         },
         "taxable_ss": {
@@ -112,7 +121,10 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
         "feie": {
             "form": "sch1",
             "line": "8d",
-            "regex": r"Foreign earned income exclusion\s+8d\s+(\d[\d,]*)",
+            # TurboTax repeats the line number after the label with dot leaders:
+            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
+            # guards against layouts without the repeated 8d.
+            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
             "optional": True,
         },
     },
