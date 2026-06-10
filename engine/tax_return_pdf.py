@@ -411,3 +411,24 @@ def load_pdf_tax_records() -> dict[int, Form1040Record]:
             # Skip malformed entries — partial corruption should not blow up
             continue
     return result
+
+
+def merge_pdf_magi(
+    existing: dict[int, float],
+    records: dict[int, Form1040Record],
+) -> dict[int, float]:
+    """Gap-fill ``existing`` MAGI dict with PDF-sourced values.
+
+    Only fills years that are absent or falsy in ``existing`` — manual
+    in-session edits and FinExtract values already in place are preserved.
+    PDF takes precedence over FinExtract because FinExtract only covers the
+    current + prior year from the TurboTax dashboard, while PDFs carry
+    Schedule 1 detail for any historical year.
+
+    Returns a *new* dict; does not mutate ``existing``.
+    """
+    result = dict(existing)
+    for year, rec in records.items():
+        if not result.get(year):
+            result[year] = rec.magi
+    return result
