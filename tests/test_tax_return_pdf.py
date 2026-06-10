@@ -365,3 +365,78 @@ class TestCacheRoundTrip:
         loaded = load_pdf_tax_records()
         assert set(loaded.keys()) == {2023, 2024}
         assert loaded[2024].agi == pytest.approx(200_000.0)
+
+
+# ---------------------------------------------------------------------------
+# TestRealisticTurboTaxLineLayout
+# Regression fixtures that mirror actual TurboTax PDF text layout:
+#   <n>  <label> ......dots...... <n>  <value>
+# The repeated line-number token must NOT be captured as the value.
+# ---------------------------------------------------------------------------
+
+# Realistic TurboTax 1040 page: every labeled line has the line number repeated
+# after the dot leaders before the value, matching what pdfplumber extracts from
+# a real TurboTax export.
+_F1040_REALISTIC = """\
+Department of the Treasury — Internal Revenue Service
+Form 1040 (2023)         U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest ..........................  2a          4,200
+    b  Taxable interest ..........................  2b          1,800
+3a  Qualified dividends ..........................  3a          8,750
+    b  Ordinary dividends ........................  3b         15,300
+6   Social security benefits .....................  6b         18,000
+11  Subtract line 10 from line 9. This is your adjusted gross income ......  11    287,654
+"""
+
+# Schedule 1 realistic: line label then dots then repeated line id then value.
+_SCH1_REALISTIC = """\
+SCHEDULE 1 (Form 1040)
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+
+8d  Foreign earned income exclusion .............  8d          6,500
+"""
+
+
+def _pages_realistic() -> list[str]:
+    """Bundle with realistic TurboTax dot-leader + repeated-line-number layout."""
+    return [_F1040_REALISTIC, _SCH1_REALISTIC]
+
+
+class TestRealisticTurboTaxLineLayout:
+    """Guard against capturing the repeated line-number token instead of the value."""
+
+    def test_agi_skips_repeated_11(self) -> None:
+        # "...adjusted gross income ...... 11    287,654" — must NOT return 11
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.agi == pytest.approx(287_654.0)
+
+    def test_agi_not_captured_as_line_number(self) -> None:
+        # Explicit guard: value must be far larger than any line number
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.agi > 100, "AGI parsed as line number (11) instead of actual value"
+
+    def test_tax_exempt_interest_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.tax_exempt_interest == pytest.approx(4_200.0)
+
+    def test_qualified_dividends_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.qualified_dividends == pytest.approx(8_750.0)
+
+    def test_ordinary_dividends_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.ordinary_dividends == pytest.approx(15_300.0)
+
+    def test_taxable_ss_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.taxable_ss == pytest.approx(18_000.0)
+
+    def test_feie_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.feie == pytest.approx(6_500.0)
+
+    def test_magi_realistic(self) -> None:
+        # MAGI = AGI + tax_exempt_interest + feie
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.magi == pytest.approx(287_654.0 + 4_200.0 + 6_500.0)
