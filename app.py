@@ -11,6 +11,7 @@ st.set_page_config(
 
 
 from config.loader import load_defaults  # noqa: E402
+from engine.tax_return_pdf import load_pdf_tax_records, merge_pdf_magi  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -84,6 +85,16 @@ if "ytd_snapshot" not in st.session_state:
     _cached_ytd = load_ytd_snapshot()
     if _cached_ytd is not None:
         st.session_state.ytd_snapshot = _cached_ytd
+
+# Hydrate prior_year_magi from PDF cache (PDF wins over FinExtract gap-fill).
+# merge_pdf_magi only fills absent/zero years so manual edits are preserved.
+
+_pdf_records = load_pdf_tax_records()
+if _pdf_records:
+    st.session_state["prior_year_magi"] = merge_pdf_magi(
+        st.session_state.get("prior_year_magi") or {},
+        _pdf_records,
+    )
 
 st.sidebar.title("🎯 Roth Planner")
 st.sidebar.markdown("---")

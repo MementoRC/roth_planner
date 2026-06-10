@@ -39,6 +39,12 @@ from engine.portfolio_sync import (
     save_tax_snapshot,
     save_ytd_snapshot,
 )
+from engine.tax_return_pdf import (
+    Form1040ParseError,
+    load_pdf_tax_records,
+    parse_form_1040_pdf,
+    save_pdf_tax_records,
+)
 from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
 from models.household import Household
 
@@ -596,6 +602,103 @@ def _render_inherited_iras() -> None:
         st.session_state["inherited_iras"] = iiras
 
 
+_FILING_STATUS_OPTIONS = [
+    "married_filing_jointly",
+    "single",
+    "married_filing_separately",
+    "head_of_household",
+]
+
+_FILING_STATUS_LABELS = {
+    "married_filing_jointly": "Married Filing Jointly",
+    "single": "Single",
+    "married_filing_separately": "Married Filing Separately",
+    "head_of_household": "Head of Household",
+}
+
+
+def _render_pdf_1040_import() -> None:
+    """Widget to import MAGI from a TurboTax-exported 1040 PDF.
+
+    Gated behind ``is_pyodide()`` — pdfplumber is not available in the web build.
+    Parses the PDF, shows a confirmation preview with the filing-status selectbox
+    (parser leaves it None), then on confirm persists the record and writes MAGI
+    into session_state["prior_year_magi"].
+    """
+    with st.expander("📄 Import 1040 PDF (TurboTax export)", expanded=False):
+        if is_pyodide():
+            st.caption("1040 PDF import requires a local install.")
+            return
+
+        st.caption(
+            "Upload a TurboTax-exported 1040 PDF to back-fill prior-year MAGI. "
+            "Supports tax years 2023 and 2024. "
+            "Parsed values are shown for confirmation before saving."
+        )
+        pdf_file = st.file_uploader(
+            "Form 1040 PDF (TurboTax export)",
+            type=["pdf"],
+            key="pdf_1040_upload",
+        )
+
+        if pdf_file is None:
+            return
+
+        # Parse on every render while a file is present; cache result in session_state
+        # to avoid re-parsing on every widget interaction after the file is loaded.
+        cache_key = f"_pdf_1040_parsed_{pdf_file.name}_{pdf_file.size}"
+        if cache_key not in st.session_state:
+            try:
+                rec = parse_form_1040_pdf(pdf_file.read())
+                st.session_state[cache_key] = rec
+            except Form1040ParseError as exc:
+                st.error(f"Could not parse {pdf_file.name}: {exc}")
+                return
+
+        rec = st.session_state[cache_key]
+
+        st.write("**Parsed values — please confirm:**")
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Tax Year", str(rec.tax_year))
+        col_b.metric("AGI", f"${rec.agi:,.0f}")
+        col_c.metric("MAGI", f"${rec.magi:,.0f}")
+        col_d, col_e = st.columns(2)
+        col_d.metric("Tax-Exempt Interest", f"${rec.tax_exempt_interest:,.0f}")
+        col_e.metric("FEIE", f"${rec.feie:,.0f}")
+
+        status_idx = (
+            _FILING_STATUS_OPTIONS.index(rec.filing_status)
+            if rec.filing_status in _FILING_STATUS_OPTIONS
+            else 0
+        )
+        chosen_status = st.selectbox(
+            "Filing Status",
+            options=_FILING_STATUS_OPTIONS,
+            index=status_idx,
+            format_func=lambda s: _FILING_STATUS_LABELS.get(s, s),
+            key=f"_pdf_1040_filing_status_{rec.tax_year}",
+            help="Select the filing status for this return (parser cannot auto-detect checkboxes).",
+        )
+
+        if st.button("Save 1040 record", key=f"_pdf_1040_save_{rec.tax_year}"):
+            rec.filing_status = chosen_status
+            records = load_pdf_tax_records()
+            records[rec.tax_year] = rec
+            save_pdf_tax_records(records)
+            # Direct write — user just confirmed; overrides any existing value
+            prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
+            prior_magi[rec.tax_year] = rec.magi
+            st.session_state["prior_year_magi"] = prior_magi
+            # Clear parse cache so a new upload starts fresh
+            st.session_state.pop(cache_key, None)
+            st.success(
+                f"Saved {rec.tax_year} 1040 record "
+                f"(MAGI ${rec.magi:,.0f}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
+                "Rerunning…"
+            )
+            st.rerun()
+
+
 def _render_prior_year_magi_anchor() -> None:
     """Render the Prior-year filed MAGI anchor expander in the Joint sub-tab."""
     base_year: int = 2026
@@ -947,6 +1050,7 @@ def render(hh: Household) -> None:
                 ),
             )
             _render_prior_year_magi_anchor()
+            _render_pdf_1040_import()
             _render_survivor_scenario()
             _render_inherited_iras()
 
