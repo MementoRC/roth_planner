@@ -649,7 +649,8 @@ def _render_pdf_1040_import() -> None:
         cache_key = f"_pdf_1040_parsed_{pdf_file.name}_{pdf_file.size}"
         if cache_key not in st.session_state:
             try:
-                rec = parse_form_1040_pdf(pdf_file.read())
+                with st.spinner("Parsing 1040 PDF…"):
+                    rec = parse_form_1040_pdf(pdf_file.read())
                 st.session_state[cache_key] = rec
             except Form1040ParseError as exc:
                 st.error(f"Could not parse {pdf_file.name}: {exc}")
@@ -684,7 +685,8 @@ def _render_pdf_1040_import() -> None:
             rec.filing_status = chosen_status
             records = load_pdf_tax_records()
             records[rec.tax_year] = rec
-            save_pdf_tax_records(records)
+            with st.spinner("Saving…"):
+                save_pdf_tax_records(records)
             # Direct write — user just confirmed; overrides any existing value
             prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
             prior_magi[rec.tax_year] = rec.magi
