@@ -29,8 +29,10 @@ from engine.portfolio_sync import (
     PortfolioSnapshot,
     apply_dividends_rollup,
     apply_magi,
+    apply_option_exercises,
     fetch_dividends_rollup,
     fetch_magi,
+    fetch_option_exercises,
     fetch_portfolio,
     fetch_tax_return,
     fetch_ytd_snapshot,
@@ -1120,6 +1122,10 @@ def render(hh: Household) -> None:
                         pass
                     # Also sync YTD income data
                     ytd_snap = fetch_ytd_snapshot()
+                    # Phase: option exercises — fetch + apply before saving YTD snapshot
+                    exercises = fetch_option_exercises()
+                    if exercises.server_available:
+                        ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
                     if ytd_snap.snapshot_date:
                         st.session_state.ytd_snapshot = ytd_snap
                         save_ytd_snapshot(ytd_snap)
@@ -1129,6 +1135,7 @@ def render(hh: Household) -> None:
                         + (", tax return data" if tax_snap.server_available else "")
                         + (", YTD income" if ytd_snap.snapshot_date else "")
                         + (", dividend history" if div_rollup.server_available else "")
+                        + (", option exercises" if exercises.server_available else "")
                     )
                 else:
                     st.error(f"Server unavailable: {snap.error}")

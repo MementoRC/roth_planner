@@ -10,6 +10,7 @@ Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 import pandas as pd
 import streamlit as st
 
+from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
 from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
 from engine.niit import NIIT_THRESHOLD_MFJ
@@ -42,25 +43,39 @@ def render(hh: Household):
     # --- Section 1: YTD Income Entry ---
     st.markdown("### YTD Income Entry")
 
-    col_sync, col_status = st.columns([1, 3])
-    with col_sync:
-        sync_ytd = st.button(
-            "Sync from FinExtract",
-            help="Pull realized gains and YTD income from ingestion server",
-            key="ytd_sync_btn",
+    if is_pyodide():
+        st.caption(
+            "Live sync requires a local install. "
+            "Use the Setup → Data Bridge tab to upload a snapshot."
         )
-    if sync_ytd:
-        from engine.portfolio_sync import fetch_ytd_snapshot, save_ytd_snapshot
+    else:
+        col_sync, col_status = st.columns([1, 3])
+        with col_sync:
+            sync_ytd = st.button(
+                "Sync from FinExtract",
+                help="Pull realized gains and YTD income from ingestion server",
+                key="ytd_sync_btn",
+            )
+        if sync_ytd:
+            from engine.portfolio_sync import (
+                apply_option_exercises,
+                fetch_option_exercises,
+                fetch_ytd_snapshot,
+                save_ytd_snapshot,
+            )
 
-        ytd_snap = fetch_ytd_snapshot()
-        if ytd_snap.snapshot_date:
-            st.session_state.ytd_snapshot = ytd_snap
-            save_ytd_snapshot(ytd_snap)
-            with col_status:
-                st.success(f"Synced YTD data ({len(ytd_snap.gain_events)} gain events)")
-        else:
-            with col_status:
-                st.warning("FinExtract unavailable — use manual entry below")
+            ytd_snap = fetch_ytd_snapshot()
+            exercises = fetch_option_exercises()
+            if exercises.server_available:
+                ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
+            if ytd_snap.snapshot_date:
+                st.session_state.ytd_snapshot = ytd_snap
+                save_ytd_snapshot(ytd_snap)
+                with col_status:
+                    st.success(f"Synced YTD data ({len(ytd_snap.gain_events)} gain events)")
+            else:
+                with col_status:
+                    st.warning("FinExtract unavailable — use manual entry below")
 
     manual = st.checkbox("Manual entry", value=True)
 

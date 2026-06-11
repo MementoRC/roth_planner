@@ -32,6 +32,7 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
+from models.grants import StockGrant
 from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario
 
 
@@ -1262,6 +1263,70 @@ class TestHeadroom:
         hh2 = Household(your_age=64, spouse_age=55, base_year=2026)
         hr2 = compute_headroom(hh2, YTDSnapshot(tax_year=2026))
         assert hr2.irmaa_first_relevant_year == 2026
+
+
+class TestHeadroomOptionIncomeSubtract:
+    """Tests for YTD-realized NQO spread subtraction from planned option income."""
+
+    def test_planned_greater_than_realized_subtracts(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026)],
+            txn_price_now=200.0,
+        )
+        # planned option income = (200 - 104) * 2000 = 192_000
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=50_000)
+        result = compute_headroom(hh, ytd)
+        assert result.realized_option_income_ytd == approx(50_000)
+        assert result.planned_option_income == approx(192_000 - 50_000)
+
+    def test_planned_equal_realized_zero_remaining(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026)],
+            txn_price_now=200.0,
+        )
+        # planned = 192_000; realized = 192_000 → result = 0
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=192_000)
+        result = compute_headroom(hh, ytd)
+        assert result.planned_option_income == approx(0.0)
+        assert result.realized_option_income_ytd == approx(192_000)
+
+    def test_realized_exceeds_planned_floors_at_zero(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026)],
+            txn_price_now=200.0,
+        )
+        # planned = 192_000; realized = 300_000 → floor at 0 (no negative)
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=300_000)
+        result = compute_headroom(hh, ytd)
+        assert result.planned_option_income == approx(0.0)
+        assert result.realized_option_income_ytd == approx(300_000)
+
+    def test_zero_realized_unchanged_planned(self):
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026)],
+            txn_price_now=200.0,
+        )
+        # planned = 192_000; realized = 0 → planned unchanged
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=0)
+        result = compute_headroom(hh, ytd)
+        assert result.planned_option_income == approx(192_000)
+        assert result.realized_option_income_ytd == approx(0.0)
 
 
 class TestScenarioWithYTD:
