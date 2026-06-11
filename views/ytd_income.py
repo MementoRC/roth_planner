@@ -183,11 +183,51 @@ def render(hh: Household):
     m2.metric("of which LTCG", f"${headroom.ytd_ltcg:,.0f}")
     m3.metric("Conversions Done", f"${headroom.conversions_done:,.0f}")
 
+    # NQO exercises YTD (FinExtract sync, PR3 of finextract-nqo-exercises)
+    if ytd.nqo_exercise_ytd or getattr(ytd, "_option_exercises_by_grant", None):
+        st.metric(
+            "NQO exercises (YTD)",
+            f"${ytd.nqo_exercise_ytd:,.0f}",
+            help=(
+                "Realized NQO ordinary-income spread from FinExtract equity_compensation. "
+                "Subtracted from planned option income in the conversion-room calc."
+            ),
+        )
+        by_grant: dict[str, float] = getattr(ytd, "_option_exercises_by_grant", {}) or {}
+        if by_grant:
+            with st.expander("Per-grant breakdown"):
+                grant_rows = [
+                    {"Grant #": gid, "YTD spread": f"${spread:,.0f}"}
+                    for gid, spread in by_grant.items()
+                ]
+                st.dataframe(grant_rows, use_container_width=True, hide_index=True)
+                if hh.grants:
+                    household_rows = [
+                        {
+                            "Year": g.year,
+                            "Strike": f"${g.strike:.2f}",
+                            "Shares": g.shares,
+                            "Expiry": g.expiry_year,
+                        }
+                        for g in hh.grants
+                    ]
+                    st.dataframe(household_rows, use_container_width=True, hide_index=True)
+                    st.caption(
+                        "Household grants (for reference; matching by grant_number requires "
+                        "StockGrant.grant_id extension — future work)."
+                    )
+
     if headroom.planned_option_income > 0:
         st.caption(
             f"Option exercise ({hh.base_year}): **${headroom.planned_option_income:,.0f}** — "
             "this is a choice, not locked in. Headroom shown below excludes it."
         )
+        if headroom.realized_option_income_ytd:
+            st.caption(
+                f"Planned reflects ${headroom.realized_option_income_ytd:,.0f} already realized YTD "
+                f"(of ${headroom.planned_option_income + headroom.realized_option_income_ytd:,.0f} "
+                "originally planned)."
+            )
 
     st.markdown("#### Room for Conversions (from locked income only)")
 
