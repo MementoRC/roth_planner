@@ -57,6 +57,7 @@ class YTDSnapshot:
     qualified_dividends_ytd: float = 0.0
     ordinary_dividends_ytd: float = 0.0
     interest_ytd: float = 0.0
+    nqo_exercise_ytd: float = 0.0  # NQO ordinary-income spread from realized exercises
 
     # Drill-down events
     gain_events: list[RealizedGainEvent] = field(default_factory=list)
@@ -85,6 +86,7 @@ class YTDSnapshot:
             + self.ira_conversions_ytd
             + self.ira_distributions_ytd
             + self.ordinary_dividends_ytd
+            + self.nqo_exercise_ytd
         )
 
     @property
@@ -112,6 +114,7 @@ class YTDSnapshot:
             + self.ltcg_ytd
             + self.dividends_ytd
             + self.interest_ytd
+            + self.nqo_exercise_ytd
         )
 
     def with_snapshot_date(self) -> YTDSnapshot:

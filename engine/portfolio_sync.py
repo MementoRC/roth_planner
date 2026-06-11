@@ -18,11 +18,14 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
 from models.ytd_income import RealizedGainEvent, YTDSnapshot
+
+if TYPE_CHECKING:
+    from models.household import Household
 
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
 
@@ -874,6 +877,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "qualified_dividends_ytd": ytd.qualified_dividends_ytd,
         "ordinary_dividends_ytd": ytd.ordinary_dividends_ytd,
         "interest_ytd": ytd.interest_ytd,
+        "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "manually_entered": ytd.manually_entered,
     }
@@ -895,6 +899,9 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
         data["ordinary_dividends_ytd"] = data.pop("dividends_ytd")
     else:
         data.pop("dividends_ytd", None)
+    # Migrate pre-PR1 caches that lack nqo_exercise_ytd.
+    if "nqo_exercise_ytd" not in data:
+        data["nqo_exercise_ytd"] = 0.0
     return YTDSnapshot(**data, gain_events=events)
 
 
@@ -1005,6 +1012,120 @@ def apply_dividends_rollup(
             holding.dividends_is_stale = is_stale
 
     return snap
+
+
+@dataclass
+class OptionExercisesSnapshot:
+    """FinExtract /query/equity_compensation?data_type=order_detail_summary response.
+
+    Aggregates NQO ordinary-income spread from UBS EPAS order_detail_summary rows.
+    server_available=False means transport failure; server_available=True with
+    total_spread=0 means the endpoint responded but no exercises are recorded yet.
+    """
+
+    server_available: bool = False
+    error: str = ""
+    total_spread: float = 0.0  # Aggregate NQO ordinary spread across all rows
+    by_grant_id: dict[str, float] = field(default_factory=dict)  # grant_id -> spread $
+    warnings: list[str] = field(default_factory=list)
+    rows_count: int = 0
+    captured_at: str = ""
+
+
+def fetch_option_exercises() -> OptionExercisesSnapshot:
+    """Fetch NQO order_detail_summary rows from FinExtract equity_compensation domain.
+
+    Returns OptionExercisesSnapshot with server_available=False on transport error.
+    404 (no batches yet) returns server_available=True with empty fields.
+    Uses _flatten_query_rows since both shapes {rows:[...]} and {institutions:{...}}
+    are possible.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/query/equity_compensation",
+            params={"data_type": "order_detail_summary"},
+            headers=_headers(),
+            timeout=5,
+        )
+        if resp.status_code == 404:
+            return OptionExercisesSnapshot(server_available=True)
+        if resp.status_code != 200:
+            return OptionExercisesSnapshot(server_available=False, error=f"HTTP {resp.status_code}")
+        data = resp.json()
+        rows = _flatten_query_rows(data)
+        # captured_at: best-effort pull from first institution batch
+        captured_at = ""
+        if isinstance(data.get("institutions"), dict):
+            for batch in data["institutions"].values():
+                if isinstance(batch, dict) and batch.get("captured_at"):
+                    captured_at = str(batch["captured_at"])
+                    break
+        return _parse_option_exercises_rows(rows, captured_at=captured_at)
+    except (requests.RequestException, ValueError) as e:
+        return OptionExercisesSnapshot(server_available=False, error=str(e))
+
+
+def _parse_option_exercises_rows(
+    rows: list[dict[str, Any]], captured_at: str = ""
+) -> OptionExercisesSnapshot:
+    """Aggregate per-row ordinary spread from UBS order_detail_summary rows."""
+    snap = OptionExercisesSnapshot(server_available=True, captured_at=captured_at)
+    for row in rows:
+        try:
+            grant_price = float(row.get("grant_price") or 0)
+            qty = float(row.get("execution_quantity") or 0)
+            gross = float(row.get("gross_proceeds") or 0)
+        except (TypeError, ValueError):
+            snap.warnings.append(
+                f"row skipped: non-numeric fields in {row.get('grant_number', '?')}"
+            )
+            continue
+        if qty <= 0 or grant_price <= 0:
+            # Cancelled or zero-execution row; skip silently
+            continue
+        spread = gross - (grant_price * qty)
+        if spread < 0:
+            snap.warnings.append(
+                f"negative spread for grant {row.get('grant_number', '?')}:"
+                f" gross={gross}, strike*qty={grant_price * qty}"
+            )
+            continue
+        snap.total_spread += spread
+        snap.rows_count += 1
+        grant_id = str(row.get("grant_number") or "").strip()
+        if grant_id:
+            snap.by_grant_id[grant_id] = snap.by_grant_id.get(grant_id, 0.0) + spread
+    return snap
+
+
+def apply_option_exercises(
+    ytd: YTDSnapshot,
+    exercises: OptionExercisesSnapshot,
+    hh: Household,
+) -> YTDSnapshot:
+    """Merge OptionExercisesSnapshot into YTDSnapshot. Mutates in place; returns same ytd.
+
+    Sets ytd.nqo_exercise_ytd to the total spread. Stashes per-grant-id breakdown on
+    a new attribute ytd._option_exercises_by_grant (consumed by PR2 headroom subtract).
+    Performs grant_id -> EquityGrant join with grant_date-year fallback; unmatched
+    rows still flow into the total but emit a warning.
+    """
+    if not exercises.server_available:
+        return ytd
+    ytd.nqo_exercise_ytd = exercises.total_spread
+    # Stash for PR2 consumption; not a dataclass field to avoid breaking PR1 save/load
+    ytd._option_exercises_by_grant = dict(exercises.by_grant_id)  # type: ignore[attr-defined]  # noqa: SLF001 — PR2 will promote to dataclass field
+    # Validate grant_id matches against hh.grants (best-effort warning only)
+    if hh and hh.grants:
+        known_ids: set[str] = set()
+        for g in hh.grants:
+            gid_val = getattr(g, "grant_id", None)
+            if gid_val:
+                known_ids.add(str(gid_val))
+        for gid in exercises.by_grant_id:
+            if known_ids and gid not in known_ids:
+                exercises.warnings.append(f"grant_id {gid} not matched in household grants")
+    return ytd
 
 
 @dataclass
