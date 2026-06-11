@@ -33,6 +33,9 @@ class HeadroomResult:
     # Planned income (option exercises — still a choice)
     planned_option_income: float = 0.0
 
+    # YTD-realized NQO spread (subtracted from planned above)
+    realized_option_income_ytd: float = 0.0
+
     # Ordinary bracket room (unaffected by LTCG)
     # Computed from locked income only (planned income excluded)
     room_to_12pct: float = 0.0
@@ -92,7 +95,13 @@ def compute_headroom(
 
     # --- Planned income (still a choice) ---
     opt = hh.option_income(year, early_exercise)
-    result.planned_option_income = opt
+    # Subtract YTD-realized NQO spread from planned (per finextract-nqo-exercises plan).
+    # Uses total realized (ytd.nqo_exercise_ytd) since StockGrant has no grant_id for
+    # per-grant attribution. Single-grant-per-year early-exercise model: total
+    # subtraction is equivalent to per-grant.
+    realized = ytd.nqo_exercise_ytd
+    result.realized_option_income_ytd = realized
+    result.planned_option_income = max(0.0, opt - realized)
 
     # SS (unlikely at age 61, but handle generically)
     from engine.ira import ss_benefit_at_age, ss_with_cola
