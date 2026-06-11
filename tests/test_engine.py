@@ -2117,6 +2117,186 @@ class TestDividendsRollupFetchAndMap:
         assert holding.dividends_by_year == {"2024": 423.5}
 
 
+class TestOptionExercisesFetchAndApply:
+    """Verify fetch_option_exercises + apply_option_exercises end-to-end."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _fake_resp(self, status_code: int, payload: dict):
+        """Build a minimal requests.Response stub."""
+
+        class _Resp:
+            def __init__(self, code, data):
+                self.status_code = code
+                self._data = data
+
+            def json(self):
+                return self._data
+
+        return _Resp(status_code, payload)
+
+    def _one_row(
+        self,
+        grant_price: float = 104.0,
+        execution_quantity: float = 1000.0,
+        gross_proceeds: float = 200_000.0,
+        grant_number: str = "G1",
+    ) -> dict:
+        return {
+            "grant_price": grant_price,
+            "execution_quantity": execution_quantity,
+            "gross_proceeds": gross_proceeds,
+            "grant_number": grant_number,
+        }
+
+    # ------------------------------------------------------------------
+    # fetch_option_exercises tests
+    # ------------------------------------------------------------------
+
+    def test_multi_institution_shape_parsed(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {
+            "domain": "equity_compensation",
+            "data_type": "order_detail_summary",
+            "institutions": {
+                "UBS": {
+                    "rows": [self._one_row()],
+                    "captured_at": "2026-03-15T10:00:00Z",
+                }
+            },
+        }
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.rows_count == 1
+        expected_spread = 200_000.0 - 104.0 * 1000.0
+        assert abs(snap.total_spread - expected_spread) < 0.01
+
+    def test_single_institution_shape_parsed(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {"rows": [self._one_row()]}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.rows_count == 1
+        expected_spread = 200_000.0 - 104.0 * 1000.0
+        assert abs(snap.total_spread - expected_spread) < 0.01
+
+    def test_empty_rows_zero_spread(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {"institutions": {}}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.total_spread == 0.0
+        assert snap.rows_count == 0
+
+    def test_same_day_sale_math(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        # gross=200000, grant_price=104, qty=1000 → spread=200000 - 104*1000 = 96000
+        payload = {"rows": [self._one_row(gross_proceeds=200_000.0)]}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert abs(snap.total_spread - 96_000.0) < 0.01
+
+    def test_per_grant_aggregation(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        row1 = self._one_row(
+            grant_price=104.0,
+            execution_quantity=500.0,
+            gross_proceeds=100_000.0,
+            grant_number="G1",
+        )
+        row2 = self._one_row(
+            grant_price=104.0,
+            execution_quantity=300.0,
+            gross_proceeds=60_000.0,
+            grant_number="G1",
+        )
+        payload = {"rows": [row1, row2]}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        # Both rows same grant_number → summed in by_grant_id["G1"]
+        assert "G1" in snap.by_grant_id
+        spread1 = 100_000.0 - 104.0 * 500.0
+        spread2 = 60_000.0 - 104.0 * 300.0
+        assert abs(snap.by_grant_id["G1"] - (spread1 + spread2)) < 0.01
+        assert snap.rows_count == 2
+
+    def test_per_grant_fallback_when_id_empty(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {"rows": [self._one_row(grant_number="")]}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        # Empty grant_number → contributes to total but NOT to by_grant_id
+        assert snap.total_spread > 0.0
+        assert snap.by_grant_id == {}
+
+    def test_404_empty_snapshot_server_available(self, monkeypatch):
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(404, {}))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.total_spread == 0.0
+        assert snap.rows_count == 0
+        assert snap.error == ""
+
+    def test_load_path_migration_legacy_cache(self, tmp_path, monkeypatch):
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot
+
+        cache_file = tmp_path / "ytd_legacy.json"
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_file)
+
+        # Write a cache dict that deliberately omits nqo_exercise_ytd
+        legacy_data = {
+            "tax_year": 2026,
+            "snapshot_date": "2026-03-01",
+            "wages_ytd": 80_000.0,
+            "nec_income_ytd": 0.0,
+            "ira_conversions_ytd": 0.0,
+            "ira_distributions_ytd": 0.0,
+            "ltcg_ytd": 0.0,
+            "stcg_ytd": 0.0,
+            "qualified_dividends_ytd": 0.0,
+            "ordinary_dividends_ytd": 0.0,
+            "interest_ytd": 0.0,
+            "gain_events": [],
+            "manually_entered": True,
+            # nqo_exercise_ytd intentionally absent
+        }
+        cache_file.write_text(json.dumps(legacy_data))
+
+        result = load_ytd_snapshot()
+        assert result is not None
+        assert result.nqo_exercise_ytd == 0.0
+
+
 class TestInheritedIRA:
     """SECURE Act 10-year rule — engine integration tests."""
 
