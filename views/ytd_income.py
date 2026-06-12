@@ -168,7 +168,7 @@ def render(hh: Household):
                         "Type": "LTCG" if e.is_ltcg else "STCG",
                     }
                 )
-            st.dataframe(pd.DataFrame(events_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(events_data), width="stretch")
 
     # --- Section 2: Conversion Headroom ---
     st.markdown("---")
@@ -210,10 +210,10 @@ def render(hh: Household):
                         rows.append({
                             "Grant #": grant_id,
                             "YTD spread": f"${spread:,.0f}",
-                            "Year": g.year,
+                            "Year": str(g.year),
                             "Strike": f"${g.strike:.2f}",
-                            "Shares": g.shares,
-                            "Expiry": g.expiry_year,
+                            "Shares": str(g.shares),
+                            "Expiry": str(g.expiry_year),
                         })
                     else:
                         rows.append({
@@ -224,7 +224,7 @@ def render(hh: Household):
                             "Shares": "—",
                             "Expiry": "—",
                         })
-                st.dataframe(rows, use_container_width=True, hide_index=True)
+                st.dataframe(rows, width="stretch", hide_index=True)
                 unmatched = sum(1 for r in rows if r["Year"] == "—")
                 if unmatched:
                     st.caption(
@@ -352,7 +352,7 @@ def render(hh: Household):
                         "Part D Surcharge (annual/person)": f"${part_d:,.0f}",
                     }
                 )
-            st.dataframe(pd.DataFrame(tier_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(tier_data), width="stretch")
 
     # --- Section 4: Integration Toggle ---
     st.markdown("---")

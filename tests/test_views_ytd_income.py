@@ -144,6 +144,39 @@ class TestYtdIncomeNqoDisplay:
         assert joined_call is not None, "Expected st.dataframe call with list of rows"
         rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
         assert len(rows) == 1
-        assert rows[0]["Year"] == 2019, f"Matched row should show Year=2019; got: {rows[0]}"
+        assert rows[0]["Year"] == "2019", f"Matched row should show Year='2019' (str); got: {rows[0]}"
         assert rows[0]["Strike"] == "$104.00"
         assert rows[0]["Grant #"] == "GR-2019"
+
+    def test_per_grant_table_year_column_is_string(self):
+        """Year/Shares/Expiry columns must be strings to avoid PyArrow ArrowTypeError."""
+        grants = [
+            StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"),
+        ]
+        hh = _stub_hh(grants=grants)
+        ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0)
+        ytd._option_exercises_by_grant = {"GR-2019": 96_000.0}  # noqa: SLF001
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        dataframe_calls = mock_st.dataframe.call_args_list
+        joined_call = next(
+            (c for c in dataframe_calls if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)),
+            None,
+        )
+        assert joined_call is not None
+        rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
+        assert len(rows) == 1
+        row = rows[0]
+        # Verify Year, Shares, Expiry are all strings (not int)
+        assert isinstance(row["Year"], str), f"Year should be str, got {type(row['Year'])}: {row['Year']}"
+        assert isinstance(row["Shares"], str), f"Shares should be str, got {type(row['Shares'])}: {row['Shares']}"
+        assert isinstance(row["Expiry"], str), f"Expiry should be str, got {type(row['Expiry'])}: {row['Expiry']}"
+        assert row["Year"] == "2019"
+        assert row["Shares"] == "1000"
+        assert row["Expiry"] == "2029"
