@@ -1969,6 +1969,231 @@ class TestEngineConstantsCharacterization:
         assert taxable_ss(combined_ss=10_000, other_income=200_000) == approx(8_500)
 
 
+class TestFetchYTDSnapshotNoDoubleCount:
+    """Guard against double-count when both YTD endpoints respond with dividend/interest data.
+
+    Math audit 2026-06-12 finding #4: investment_income and ytd_income both
+    accumulated into ordinary_dividends_ytd and interest_ytd via +=.  When both
+    endpoints returned data for the same period (mid-year syncs), those fields
+    were silently 2x'd → wrong MAGI → wrong IRMAA tier.
+
+    Endpoint ownership contract:
+      investment_income  → ordinary_dividends_ytd, interest_ytd
+      ytd_income         → wages_ytd, nec_income_ytd, qualified_dividends_ytd,
+                           ira_conversions_ytd, ira_distributions_ytd
+    """
+
+    def _make_investment_income_response(
+        self, dividends: float, interest: float
+    ) -> dict:
+        """Simulate /query/brokerage?data_type=investment_income multi-institution shape."""
+        return {
+            "institutions": {
+                "fidelity": {
+                    "rows": [
+                        {"received_dividends": dividends, "received_interest": interest}
+                    ]
+                }
+            }
+        }
+
+    def _make_ytd_income_response(
+        self,
+        wages: float = 0.0,
+        total_dividends: float = 0.0,
+        qualified_dividends: float = 0.0,
+        interest: float = 0.0,
+        conversions: float = 0.0,
+    ) -> dict:
+        """Simulate /query/tax_return?data_type=ytd_income rows shape."""
+        rows = []
+        if wages:
+            rows.append({"label": "Wages (W-2)", "amount": wages})
+        if total_dividends:
+            rows.append({"label": "1099-DIV dividends", "amount": total_dividends})
+        if qualified_dividends:
+            rows.append(
+                {"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends}
+            )
+        if interest:
+            rows.append({"label": "Interest income (1099-INT)", "amount": interest})
+        if conversions:
+            rows.append({"label": "IRA conversion", "amount": conversions})
+        return {"rows": rows}
+
+    def test_no_double_count_dividends(self, monkeypatch):
+        """Both endpoints return $5_000 dividends — result must be $5_000 not $10_000."""
+        import requests
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        call_log: list[str] = []
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            call_log.append(data_type)
+            if data_type == "investment_income":
+                return _FakeResp(
+                    self._make_investment_income_response(dividends=5_000.0, interest=0.0)
+                )
+            if data_type == "ytd_income":
+                # ytd_income also has 1099-DIV data for the same period
+                return _FakeResp(
+                    self._make_ytd_income_response(total_dividends=5_000.0, wages=80_000.0)
+                )
+            return _FakeResp({"rows": []})
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        monkeypatch.setattr(portfolio_sync, "_headers", lambda: {})
+
+        ytd = fetch_ytd_snapshot()
+
+        assert ytd.ordinary_dividends_ytd == approx(5_000.0), (
+            f"Expected 5_000 (no double-count), got {ytd.ordinary_dividends_ytd}"
+        )
+
+    def test_no_double_count_interest(self, monkeypatch):
+        """Both endpoints return $3_000 interest — result must be $3_000 not $6_000."""
+        import requests
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            if data_type == "investment_income":
+                return _FakeResp(
+                    self._make_investment_income_response(dividends=0.0, interest=3_000.0)
+                )
+            if data_type == "ytd_income":
+                return _FakeResp(
+                    self._make_ytd_income_response(interest=3_000.0, wages=80_000.0)
+                )
+            return _FakeResp({"rows": []})
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        monkeypatch.setattr(portfolio_sync, "_headers", lambda: {})
+
+        ytd = fetch_ytd_snapshot()
+
+        assert ytd.interest_ytd == approx(3_000.0), (
+            f"Expected 3_000 (no double-count), got {ytd.interest_ytd}"
+        )
+
+    def test_fallback_when_investment_income_empty(self, monkeypatch):
+        """When investment_income returns no rows, ytd_income wages/conversions still populate."""
+        import requests
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            if data_type == "investment_income":
+                # Empty — no dividend/interest data from brokerage
+                return _FakeResp({"rows": []})
+            if data_type == "ytd_income":
+                return _FakeResp(
+                    self._make_ytd_income_response(
+                        wages=120_000.0,
+                        qualified_dividends=2_000.0,
+                        conversions=50_000.0,
+                    )
+                )
+            return _FakeResp({"rows": []})
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        monkeypatch.setattr(portfolio_sync, "_headers", lambda: {})
+
+        ytd = fetch_ytd_snapshot()
+
+        # ytd_income-owned fields must be populated
+        assert ytd.wages_ytd == approx(120_000.0)
+        assert ytd.qualified_dividends_ytd == approx(2_000.0)
+        assert ytd.ira_conversions_ytd == approx(50_000.0)
+        # investment_income was empty → dividend/interest stay zero
+        assert ytd.ordinary_dividends_ytd == approx(0.0)
+        assert ytd.interest_ytd == approx(0.0)
+
+    def test_fallback_when_ytd_income_empty(self, monkeypatch):
+        """When ytd_income returns no rows, investment_income dividends/interest survive."""
+        import requests
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            if data_type == "investment_income":
+                return _FakeResp(
+                    self._make_investment_income_response(dividends=4_500.0, interest=800.0)
+                )
+            if data_type == "ytd_income":
+                # Empty — tax-return endpoint has no data yet
+                return _FakeResp({"rows": []})
+            return _FakeResp({"rows": []})
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        monkeypatch.setattr(portfolio_sync, "_headers", lambda: {})
+
+        ytd = fetch_ytd_snapshot()
+
+        assert ytd.ordinary_dividends_ytd == approx(4_500.0)
+        assert ytd.interest_ytd == approx(800.0)
+        # ytd_income-owned fields stay at defaults
+        assert ytd.wages_ytd == approx(0.0)
+        assert ytd.ira_conversions_ytd == approx(0.0)
+
+
 class TestQueryResponseShape:
     """Verify _flatten_query_rows handles both FinExtract response shapes."""
 
