@@ -791,7 +791,22 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     except (requests.RequestException, ValueError):
         pass
 
-    # Investment income (dividends + interest from brokerage)
+    # Investment income (dividends + interest from brokerage).
+    #
+    # Endpoint ownership contract (prevents double-count):
+    #   investment_income  → SOLE owner of ordinary_dividends_ytd and interest_ytd.
+    #                        These fields are written here and never touched again below.
+    #   ytd_income         → SOLE owner of wages_ytd, nec_income_ytd, qualified_dividends_ytd,
+    #                        ira_conversions_ytd, ira_distributions_ytd.
+    #                        It does NOT write ordinary_dividends_ytd or interest_ytd even
+    #                        though 1099-DIV/INT data appears in its rows — those are the
+    #                        same underlying transactions already captured here.
+    #
+    # Background: both endpoints can return dividend and interest figures simultaneously
+    # (investment_income from live brokerage transactions; ytd_income from 1099 tax forms
+    # covering the same period).  Accumulating with += into the same fields silently 2x'd
+    # those values → wrong total_ordinary_income → wrong MAGI → wrong IRMAA tier.
+    # (Surfaced by math audit 2026-06-12, finding #4.)
     try:
         resp = requests.get(
             f"{BASE_URL}/query/brokerage",
@@ -807,7 +822,10 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     except (requests.RequestException, ValueError):
         pass
 
-    # YTD income summary (tax return endpoint — wages, conversions, etc.)
+    # YTD income summary (tax return endpoint — wages, conversions, etc.).
+    # Owns: wages_ytd, nec_income_ytd, qualified_dividends_ytd,
+    #       ira_conversions_ytd, ira_distributions_ytd.
+    # Does NOT touch ordinary_dividends_ytd or interest_ytd (see contract above).
     try:
         resp = requests.get(
             f"{BASE_URL}/query/tax_return",
@@ -820,12 +838,10 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         parsed = _parse_ytd_income_rows(rows)
         ytd.wages_ytd = parsed.get("wages", 0.0)
         ytd.nec_income_ytd = parsed.get("nec_income", 0.0)
-        # Split 1099-DIV: box 1a (total) minus box 1b (qualified) = non-qualified residual
-        _total_div = parsed.get("total_dividends", 0.0)
-        _qual_div = parsed.get("qualified_dividends", 0.0)
-        ytd.qualified_dividends_ytd += _qual_div
-        ytd.ordinary_dividends_ytd += max(_total_div - _qual_div, 0.0)
-        ytd.interest_ytd += parsed.get("interest", 0.0)
+        # qualified_dividends_ytd from 1099-DIV box 1b (tax rate, not volume).
+        # ordinary_dividends_ytd is intentionally excluded here — owned by
+        # investment_income above to prevent double-count.
+        ytd.qualified_dividends_ytd = parsed.get("qualified_dividends", 0.0)
         ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
         ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
     except (requests.RequestException, ValueError):
