@@ -1136,6 +1136,49 @@ class TestYTDSnapshot:
         # sum property still works
         assert ytd.dividends_ytd == approx(5_000)
 
+    def test_total_ordinary_income_includes_interest(self):
+        """Interest is fully ordinary income and must be included in total_ordinary_income."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=50_000, interest_ytd=3_000)
+        assert ytd.total_ordinary_income == approx(53_000)
+
+    def test_ltcg_stack_walk_uses_interest_inclusive_base(self):
+        """Regression: interest_ytd shifts the LTCG bracket boundary.
+
+        With wages=90_000 and interest=5_000, ordinary base=95_050 — which is
+        above the 0%-LTCG threshold (94_050). Any LTCG should therefore be taxed
+        at 15%. Without interest in the base, ordinary=90_000 < 94_050, and $4,050
+        of LTCG would incorrectly land in the 0%-rate band.
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ, estimate_ytd_federal_tax
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(your_age=61, spouse_age=55, your_ira=500_000, spouse_ira=500_000)
+
+        # ordinary base = 90_000 + 5_000 = 95_050 > LTCG 0%-threshold (94_050)
+        # → all 20_000 LTCG should be taxed at 15%
+        wages = 90_000.0
+        interest = 5_000.0
+        ltcg = 20_000.0
+        ytd = YTDSnapshot(wages_ytd=wages, interest_ytd=interest, ltcg_ytd=ltcg)
+
+        result = estimate_ytd_federal_tax(ytd, hh)
+
+        # ltcg_start = 95_050 (wages + interest), ltcg_end = 115_050
+        # ltcg_at_15 = min(115_050, 583_750) - max(95_050, 94_050) = 115_050 - 95_050 = 20_000
+        assert result.ltcg_tax == approx(ltcg * 0.15)
+
+        # Sanity: without interest, ordinary=90_000 < threshold → part lands in 0%-band
+        ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
+        result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
+        # ltcg_at_15 = 110_000 - 94_050 = 15_950 (not 20_000) without interest
+        assert result_no_interest.ltcg_tax == approx(
+            (wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
+        )
+        assert result_no_interest.ltcg_tax < result.ltcg_tax
+
 
 class TestHeadroom:
     """Test conversion headroom calculations."""

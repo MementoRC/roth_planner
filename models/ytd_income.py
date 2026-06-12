@@ -74,10 +74,10 @@ class YTDSnapshot:
     def total_ordinary_income(self) -> float:
         """Income that stacks into ordinary tax brackets.
 
-        Includes: wages, NEC, STCG, conversions, distributions, ordinary dividends.
+        Includes: wages, NEC, STCG, conversions, distributions, ordinary dividends, interest.
         Excludes: LTCG and qualified dividends (taxed at preferential rates, not in brackets).
-        Ordinary (non-qualified) dividends are taxed as ordinary income and must count
-        toward bracket headroom and SS taxation.
+        Ordinary (non-qualified) dividends and interest are taxed as ordinary income and must
+        count toward bracket headroom and SS taxation.
         """
         return (
             self.wages_ytd
@@ -86,6 +86,7 @@ class YTDSnapshot:
             + self.ira_conversions_ytd
             + self.ira_distributions_ytd
             + self.ordinary_dividends_ytd
+            + self.interest_ytd
             + self.nqo_exercise_ytd
         )
 
