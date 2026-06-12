@@ -1126,6 +1126,8 @@ def render(hh: Household) -> None:
                     exercises = fetch_option_exercises()
                     if exercises.server_available:
                         ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
+                        if exercises.captured_at:
+                            st.session_state["exercises_captured_at"] = exercises.captured_at
                     if ytd_snap.snapshot_date:
                         st.session_state.ytd_snapshot = ytd_snap
                         save_ytd_snapshot(ytd_snap)

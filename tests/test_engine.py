@@ -2380,6 +2380,35 @@ class TestOptionExercisesFetchAndApply:
         assert snap.rows_count == 0
         assert snap.error == ""
 
+    def test_captured_at_propagated_from_multi_institution(self, monkeypatch):
+        """captured_at from first institution batch is surfaced on the snapshot."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {
+            "institutions": {
+                "UBS": {
+                    "rows": [self._one_row()],
+                    "captured_at": "2026-06-10T12:00:00Z",
+                }
+            }
+        }
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.captured_at == "2026-06-10T12:00:00Z"
+
+    def test_captured_at_empty_for_single_institution_shape(self, monkeypatch):
+        """Single-institution (rows-only) shape has no captured_at — defaults to empty string."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        payload = {"rows": [self._one_row()]}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.captured_at == ""
+
     def test_load_path_migration_legacy_cache(self, tmp_path, monkeypatch):
         import json
 
