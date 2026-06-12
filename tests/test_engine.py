@@ -2409,6 +2409,162 @@ class TestOptionExercisesFetchAndApply:
         snap = fetch_option_exercises()
         assert snap.captured_at == ""
 
+    # ------------------------------------------------------------------
+    # mode=history aggregation tests
+    # ------------------------------------------------------------------
+
+    def test_mode_history_aggregates_across_batches(self, monkeypatch):
+        """mode=history: rows from all batches are combined, not just the latest."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        batches = [
+            {
+                "batch_id": "b1",
+                "captured_at": "2026-06-01T10:00:00Z",
+                "row_count": 3,
+                "rows": [
+                    self._one_row(gross_proceeds=200_000.0),
+                    self._one_row(gross_proceeds=200_000.0),
+                    self._one_row(gross_proceeds=200_000.0),
+                ],
+            },
+            {
+                "batch_id": "b2",
+                "captured_at": "2026-06-05T10:00:00Z",
+                "row_count": 1,
+                "rows": [self._one_row(gross_proceeds=200_000.0)],
+            },
+            {
+                "batch_id": "b3",
+                "captured_at": "2026-06-10T10:00:00Z",
+                "row_count": 1,
+                "rows": [self._one_row(gross_proceeds=200_000.0)],
+            },
+        ]
+        payload = {"batches": batches}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.rows_count == 5
+        expected_spread = 5 * (200_000.0 - 104.0 * 1000.0)
+        assert abs(snap.total_spread - expected_spread) < 0.01
+
+    def test_mode_history_latest_captured_at_picked(self, monkeypatch):
+        """mode=history: snapshot captured_at reflects the most recent batch timestamp."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        batches = [
+            {
+                "batch_id": "b1",
+                "captured_at": "2026-06-01T10:00:00Z",
+                "rows": [self._one_row()],
+            },
+            {
+                "batch_id": "b2",
+                "captured_at": "2026-06-10T12:00:00Z",
+                "rows": [self._one_row()],
+            },
+            {
+                "batch_id": "b3",
+                "captured_at": "2026-06-05T08:00:00Z",
+                "rows": [self._one_row()],
+            },
+        ]
+        payload = {"batches": batches}
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.captured_at == "2026-06-10T12:00:00Z"
+
+    def test_mode_history_fallback_to_legacy_shape(self, monkeypatch):
+        """When response has no batches key, falls back to legacy _flatten_query_rows path."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_option_exercises
+
+        # Legacy multi-institution shape — no "batches" key
+        payload = {
+            "institutions": {
+                "UBS": {
+                    "rows": [self._one_row()],
+                    "captured_at": "2026-06-10T12:00:00Z",
+                }
+            }
+        }
+        monkeypatch.setattr(req, "get", lambda *a, **kw: self._fake_resp(200, payload))
+        snap = fetch_option_exercises()
+        assert snap.server_available is True
+        assert snap.rows_count == 1
+        expected_spread = 200_000.0 - 104.0 * 1000.0
+        assert abs(snap.total_spread - expected_spread) < 0.01
+
+    # ------------------------------------------------------------------
+    # apply_option_exercises grant_id normalization tests
+    # ------------------------------------------------------------------
+
+    def test_grant_id_match_case_insensitive(self):
+        """Household grant_id 'GR-2019'; UBS sends 'gr2019' — normalizes to same key."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=96_000.0,
+            by_grant_id={"gr2019": 96_000.0},
+        )
+        ytd_snap = apply_option_exercises(YTDSnapshot(), exercises, hh)
+        # Key remapped to household format; no warning
+        assert "GR-2019" in exercises.by_grant_id
+        assert "gr2019" not in exercises.by_grant_id
+        assert exercises.warnings == []
+        assert ytd_snap.nqo_exercise_ytd == 96_000.0
+
+    def test_grant_id_match_strips_special_chars(self):
+        """Household grant_id 'GR-2019'; UBS sends 'GR2019' (no dash) — normalized match."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=96_000.0,
+            by_grant_id={"GR2019": 96_000.0},
+        )
+        apply_option_exercises(YTDSnapshot(), exercises, hh)
+        assert "GR-2019" in exercises.by_grant_id
+        assert "GR2019" not in exercises.by_grant_id
+        assert exercises.warnings == []
+
+    def test_grant_id_unmatched_warning_and_total_preserved(self):
+        """Unmatched grant_id keeps raw key, emits warning, total_spread unchanged."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=50_000.0,
+            by_grant_id={"GR-OTHER": 50_000.0},
+        )
+        ytd_snap = apply_option_exercises(YTDSnapshot(), exercises, hh)
+        assert "GR-OTHER" in exercises.by_grant_id
+        assert len(exercises.warnings) == 1
+        assert "GR-OTHER" in exercises.warnings[0]
+        assert ytd_snap.nqo_exercise_ytd == 50_000.0
+
     def test_load_path_migration_legacy_cache(self, tmp_path, monkeypatch):
         import json
 
