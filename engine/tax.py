@@ -57,9 +57,10 @@ SS_TIER_2_SINGLE = 34_000
 # Federal long-term capital gains / qualified dividend rates (MFJ statutory tiers)
 LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
 
-# LTCG bracket thresholds for MFJ (taxable income upper bounds, 2025 TCJA)
-# 0% up to $94,050; 15% up to $583,750; 20% above
-LTCG_THRESHOLDS_MFJ = (94_050, 583_750)
+# LTCG bracket thresholds for MFJ (taxable income upper bounds, 2026 — IRS Rev. Proc. 2025-32)
+# 0% up to $96,700; 15% up to $600,050; 20% above
+# OBBBA did NOT modify LTCG thresholds; they follow the inflation-adjusted Rev. Proc. schedule.
+LTCG_THRESHOLDS_MFJ = (96_700, 600_050)
 
 # LTCG bracket thresholds for Single filer (taxable income upper bounds)
 # 0% up to $48,350; 15% up to $533,400; 20% above
