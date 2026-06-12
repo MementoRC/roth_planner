@@ -1146,9 +1146,9 @@ class TestYTDSnapshot:
     def test_ltcg_stack_walk_uses_interest_inclusive_base(self):
         """Regression: interest_ytd shifts the LTCG bracket boundary.
 
-        With wages=90_000 and interest=5_000, ordinary base=95_050 — which is
-        above the 0%-LTCG threshold (94_050). Any LTCG should therefore be taxed
-        at 15%. Without interest in the base, ordinary=90_000 < 94_050, and $4,050
+        With wages=90_000 and interest=10_000, ordinary base=100_000 — which is
+        above the 0%-LTCG threshold (96_700). Any LTCG should therefore be taxed
+        at 15%. Without interest in the base, ordinary=90_000 < 96_700, and $6,700
         of LTCG would incorrectly land in the 0%-rate band.
         """
         from engine.tax import LTCG_THRESHOLDS_MFJ, estimate_ytd_federal_tax
@@ -1157,23 +1157,23 @@ class TestYTDSnapshot:
 
         hh = Household(your_age=61, spouse_age=55, your_ira=500_000, spouse_ira=500_000)
 
-        # ordinary base = 90_000 + 5_000 = 95_050 > LTCG 0%-threshold (94_050)
+        # ordinary base = 90_000 + 10_000 = 100_000 > LTCG 0%-threshold (96_700)
         # → all 20_000 LTCG should be taxed at 15%
         wages = 90_000.0
-        interest = 5_000.0
+        interest = 10_000.0
         ltcg = 20_000.0
         ytd = YTDSnapshot(wages_ytd=wages, interest_ytd=interest, ltcg_ytd=ltcg)
 
         result = estimate_ytd_federal_tax(ytd, hh)
 
-        # ltcg_start = 95_050 (wages + interest), ltcg_end = 115_050
-        # ltcg_at_15 = min(115_050, 583_750) - max(95_050, 94_050) = 115_050 - 95_050 = 20_000
+        # ltcg_start = 100_000, ltcg_end = 120_000
+        # ltcg_at_15 = min(120_000, 600_050) - max(100_000, 96_700) = 120_000 - 100_000 = 20_000
         assert result.ltcg_tax == approx(ltcg * 0.15)
 
         # Sanity: without interest, ordinary=90_000 < threshold → part lands in 0%-band
         ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
         result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
-        # ltcg_at_15 = 110_000 - 94_050 = 15_950 (not 20_000) without interest
+        # ltcg_at_15 = min(110_000, 600_050) - max(90_000, 96_700) = 110_000 - 96_700 = 13_300
         assert result_no_interest.ltcg_tax == approx(
             (wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
         )
@@ -4024,7 +4024,7 @@ class TestEstimateYtdFederalTax:
         from engine.tax import LTCG_THRESHOLDS_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
-        # Wages well below 0%-threshold ($94,050) → LTCG rate is 0%
+        # Wages well below 0%-threshold ($96,700) → LTCG rate is 0%
         ytd_zero = YTDSnapshot(wages_ytd=50_000.0, ltcg_ytd=10_000.0)
         r_zero = estimate_ytd_federal_tax(ytd_zero, self._hh())
         assert r_zero.ltcg_tax == pytest.approx(0.0)
@@ -4061,7 +4061,7 @@ class TestEstimateYtdFederalTax:
         assert result.room_to_next_bracket == pytest.approx(BRACKETS_MFJ[1][0] - wages)
 
     def test_ltcg_tax_when_stack_crosses_15pct_threshold(self):
-        """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div → ~$32,842 LTCG tax."""
+        """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div → ~$32,442 LTCG tax."""
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
@@ -4072,18 +4072,18 @@ class TestEstimateYtdFederalTax:
         )
         result = estimate_ytd_federal_tax(ytd, self._hh())
         # ltcg_start=$27K, ltcg_end=$312,977
-        # ltcg_at_15 = min($312,977, $583,750) - max($27K, $94,050) = $312,977 - $94,050 = $218,927
-        # ltcg_tax = $218,927 × 0.15 = $32,839.05
-        assert result.ltcg_tax == pytest.approx(218_927.0 * 0.15, abs=50)
+        # ltcg_at_15 = min($312,977, $600,050) - max($27K, $96,700) = $312,977 - $96,700 = $216,277
+        # ltcg_tax = $216,277 × 0.15 = $32,441.55
+        assert result.ltcg_tax == pytest.approx(216_277.0 * 0.15, abs=50)
 
     def test_ltcg_tax_all_in_0pct_bracket(self):
-        """Stack entirely under $94,050 threshold → LTCG tax = $0."""
+        """Stack entirely under $96,700 threshold → LTCG tax = $0."""
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(wages_ytd=50_000.0, ltcg_ytd=40_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        # ltcg_start=$50K, ltcg_end=$90K — entirely below $94,050
+        # ltcg_start=$50K, ltcg_end=$90K — entirely below $96,700
         assert result.ltcg_tax == pytest.approx(0.0)
 
     def test_ltcg_tax_crosses_20pct_threshold(self):
@@ -4094,10 +4094,24 @@ class TestEstimateYtdFederalTax:
         ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=500_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
         # ltcg_start=$200K, ltcg_end=$700K
-        # ltcg_at_15 = min($700K, $583,750) - max($200K, $94,050) = $583,750 - $200,000 = $383,750
-        # ltcg_at_20 = $700K - max($200K, $583,750) = $700,000 - $583,750 = $116,250
-        # ltcg_tax = $383,750 × 0.15 + $116,250 × 0.20 = $57,562.50 + $23,250 = $80,812.50
-        assert result.ltcg_tax == pytest.approx(80_812.50, abs=0.01)
+        # ltcg_at_15 = min($700K, $600,050) - max($200K, $96,700) = $600,050 - $200,000 = $400,050
+        # ltcg_at_20 = $700K - max($200K, $600,050) = $700,000 - $600,050 = $99,950
+        # ltcg_tax = $400,050 × 0.15 + $99,950 × 0.20 = $60,007.50 + $19,990 = $79,997.50
+        assert result.ltcg_tax == pytest.approx(79_997.50, abs=0.01)
+
+    def test_ltcg_new_threshold_boundary_0pct_to_15pct(self):
+        """2026 threshold boundary: $90K ordinary + $10K LTCG crosses $96,700, partial 15%."""
+        from engine.tax import estimate_ytd_federal_tax
+        from models.ytd_income import YTDSnapshot
+
+        # ltcg_start=$90K, ltcg_end=$100K
+        # Stack crosses 2026 threshold ($96,700): only $3,300 in 15% band.
+        # Old 2025 threshold ($94,050) would have put $5,950 at 15% — confirms new value is used.
+        ytd = YTDSnapshot(wages_ytd=90_000.0, ltcg_ytd=10_000.0)
+        result = estimate_ytd_federal_tax(ytd, self._hh())
+        # ltcg_at_15 = min($100K, $600,050) - max($90K, $96,700) = $100,000 - $96,700 = $3,300
+        # ltcg_tax = $3,300 × 0.15 = $495.00
+        assert result.ltcg_tax == pytest.approx(3_300.0 * 0.15, abs=0.01)
 
 
 class TestSafeHarborPayment:
