@@ -253,6 +253,7 @@ def get_household() -> Household:
                     strike=strike,
                     shares=g.outstanding,
                     expiry_year=expires,
+                    grant_id=g.grant_id,
                 )
             )
         if merged_grants:

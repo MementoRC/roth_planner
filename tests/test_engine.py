@@ -1328,6 +1328,57 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.planned_option_income == approx(192_000)
         assert result.realized_option_income_ytd == approx(0.0)
 
+    def test_per_grant_subtract_when_matched(self):
+        """Per-grant lookup used when grant_id matches by_grant key."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            txn_price_now=200.0,
+        )
+        # planned option income = (200 - 104) * 2000 = 192_000; realized per-grant = 80_000
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
+        ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
+        result = compute_headroom(hh, ytd, early_exercise=True)
+        assert result.realized_option_income_ytd == approx(80_000)
+        assert result.planned_option_income == approx(192_000 - 80_000)
+
+    def test_per_grant_subtract_unmatched_falls_back_to_total(self):
+        """Falls back to total when by_grant has different grant_id."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            txn_price_now=200.0,
+        )
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
+        # by_grant has a different id — no match → fall back to nqo_exercise_ytd total
+        ytd._option_exercises_by_grant = {"GR-OTHER": 80_000}  # noqa: SLF001
+        result = compute_headroom(hh, ytd, early_exercise=True)
+        assert result.realized_option_income_ytd == approx(80_000)
+        assert result.planned_option_income == approx(192_000 - 80_000)
+
+    def test_per_grant_subtract_grant_id_empty_falls_back(self):
+        """Falls back to total when StockGrant.grant_id is empty (legacy fixture)."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="")],
+            txn_price_now=200.0,
+        )
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
+        ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
+        result = compute_headroom(hh, ytd, early_exercise=True)
+        # grant_id="" → condition fails → fall back to ytd.nqo_exercise_ytd
+        assert result.realized_option_income_ytd == approx(80_000)
+        assert result.planned_option_income == approx(192_000 - 80_000)
+
 
 class TestScenarioWithYTD:
     """Test scenario engine with YTD injection."""
