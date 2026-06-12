@@ -70,7 +70,7 @@ def render(hh: Household):
             }
         )
 
-    st.dataframe(pd.DataFrame(acct_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(acct_rows), hide_index=True, width="stretch")
 
     total_val = snap.total_portfolio_value
     total_eq = sum(a.equity_value for a in snap.accounts) + snap.txn_shares_value
@@ -115,7 +115,7 @@ def render(hh: Household):
                 }
             )
 
-    st.dataframe(pd.DataFrame(holdings_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(holdings_rows), hide_index=True, width="stretch")
 
     # --- Allocation Pie ---
     st.markdown("### Allocation by Account")
@@ -163,7 +163,7 @@ def render(hh: Household):
         )
     )
     fig_alloc.update_layout(height=400, showlegend=False)
-    st.plotly_chart(fig_alloc, use_container_width=True)
+    st.plotly_chart(fig_alloc, width="stretch")
 
     # --- Active Equity Grants ---
     if snap.equity_grants:
@@ -182,7 +182,7 @@ def render(hh: Household):
                 }
             )
 
-        st.dataframe(pd.DataFrame(grant_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(grant_rows), hide_index=True, width="stretch")
 
         # Compare with planner defaults
         st.markdown("#### vs. Planner Defaults")
@@ -208,7 +208,7 @@ def render(hh: Household):
                     }
                 )
 
-        st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(comp_rows), hide_index=True, width="stretch")
 
     # --- TXN Shares ---
     if snap.txn_shares_held > 0:
@@ -284,7 +284,7 @@ def render(hh: Household):
                 }
             )
 
-    st.dataframe(pd.DataFrame(rate_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(rate_rows), hide_index=True, width="stretch")
 
     st.info(
         "**Auto-sync**: Your pre-tax IRA balance and growth rate are computed from "

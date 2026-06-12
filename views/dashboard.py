@@ -123,7 +123,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_ira, use_container_width=True)
+    st.plotly_chart(fig_ira, width="stretch")
 
     # --- Charts 2 & 3 side by side ---
     col_left, col_right = st.columns(2)
@@ -160,7 +160,7 @@ def render(hh: Household):
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
         )
-        st.plotly_chart(fig_tax, use_container_width=True)
+        st.plotly_chart(fig_tax, width="stretch")
 
     with col_right:
         # Cumulative tax
@@ -193,7 +193,7 @@ def render(hh: Household):
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
         )
-        st.plotly_chart(fig_cum, use_container_width=True)
+        st.plotly_chart(fig_cum, width="stretch")
 
     # --- Chart 4: Net Benefit Over Time ---
     net_benefit = []
@@ -249,7 +249,7 @@ def render(hh: Household):
         yaxis_tickformat="$,.0s",
         height=400,
     )
-    st.plotly_chart(fig_net, use_container_width=True)
+    st.plotly_chart(fig_net, width="stretch")
 
     # --- Summary table ---
     st.markdown("### Key Age Milestones")
@@ -321,7 +321,7 @@ def render(hh: Household):
                         "Room 22%": "${:,.0f}",
                     }
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -360,6 +360,6 @@ def render(hh: Household):
                         "Tax Saved": "${:,.0f}",
                     }
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )

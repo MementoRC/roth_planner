@@ -358,7 +358,7 @@ def render(hh: Household):
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_m, use_container_width=True)
+    st.plotly_chart(fig_m, width="stretch")
 
     # --- Sweet spots ---
     sweet_spots = _find_sweet_spots(results)
@@ -478,7 +478,7 @@ def render(hh: Household):
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_c, use_container_width=True)
+    st.plotly_chart(fig_c, width="stretch")
 
     # --- Multi-year comparison ---
     st.markdown("### Multi-Year Sweet Spot Summary")
@@ -512,7 +512,7 @@ def render(hh: Household):
     import pandas as pd
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
 
     # --- Guidance ---
     st.markdown("---")
