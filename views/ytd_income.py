@@ -73,11 +73,18 @@ def render(hh: Household):
                 save_ytd_snapshot(ytd_snap)
                 with col_status:
                     st.success(f"Synced YTD data ({len(ytd_snap.gain_events)} gain events)")
+                # Auto-deselect manual entry so the page switches to synced-data display
+                st.session_state["ytd_manual_entry"] = False
+                st.rerun()
             else:
                 with col_status:
                     st.warning("FinExtract unavailable — use manual entry below")
 
-    manual = st.checkbox("Manual entry", value=True)
+    manual = st.checkbox(
+        "Manual entry",
+        value=st.session_state.get("ytd_manual_entry", True),
+        key="ytd_manual_entry",
+    )
 
     # Get existing snapshot or create empty
     ytd: YTDSnapshot = st.session_state.get("ytd_snapshot", YTDSnapshot())
