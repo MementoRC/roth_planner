@@ -3697,6 +3697,45 @@ class TestEstimateYtdFederalTax:
         # Room to top of 12% bracket = 100_800 - 60_000 = 40_800
         assert result.room_to_next_bracket == pytest.approx(BRACKETS_MFJ[1][0] - wages)
 
+    def test_ltcg_tax_when_stack_crosses_15pct_threshold(self):
+        """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div → ~$32,842 LTCG tax."""
+        from engine.tax import estimate_ytd_federal_tax
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(
+            wages_ytd=27_000.0,
+            ltcg_ytd=283_000.0,
+            qualified_dividends_ytd=2_977.0,
+        )
+        result = estimate_ytd_federal_tax(ytd, self._hh())
+        # ltcg_start=$27K, ltcg_end=$312,977
+        # ltcg_at_15 = min($312,977, $583,750) - max($27K, $94,050) = $312,977 - $94,050 = $218,927
+        # ltcg_tax = $218,927 × 0.15 = $32,839.05
+        assert result.ltcg_tax == pytest.approx(218_927.0 * 0.15, abs=50)
+
+    def test_ltcg_tax_all_in_0pct_bracket(self):
+        """Stack entirely under $94,050 threshold → LTCG tax = $0."""
+        from engine.tax import estimate_ytd_federal_tax
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=50_000.0, ltcg_ytd=40_000.0)
+        result = estimate_ytd_federal_tax(ytd, self._hh())
+        # ltcg_start=$50K, ltcg_end=$90K — entirely below $94,050
+        assert result.ltcg_tax == pytest.approx(0.0)
+
+    def test_ltcg_tax_crosses_20pct_threshold(self):
+        """Stack crosses into 20% bracket: $200K ordinary + $500K LTCG."""
+        from engine.tax import estimate_ytd_federal_tax
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=500_000.0)
+        result = estimate_ytd_federal_tax(ytd, self._hh())
+        # ltcg_start=$200K, ltcg_end=$700K
+        # ltcg_at_15 = min($700K, $583,750) - max($200K, $94,050) = $583,750 - $200,000 = $383,750
+        # ltcg_at_20 = $700K - max($200K, $583,750) = $700,000 - $583,750 = $116,250
+        # ltcg_tax = $383,750 × 0.15 + $116,250 × 0.20 = $57,562.50 + $23,250 = $80,812.50
+        assert result.ltcg_tax == pytest.approx(80_812.50, abs=0.01)
+
 
 class TestSafeHarborPayment:
     """Tests for engine.tax.safe_harbor_payment."""

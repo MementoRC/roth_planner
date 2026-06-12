@@ -246,16 +246,18 @@ def estimate_ytd_federal_tax(
     ordinary_income = ytd.total_ordinary_income
     ordinary_tax = federal_tax(ordinary_income)
 
-    # LTCG + qualified dividends taxed at preferential rate
+    # LTCG + qualified dividends taxed at preferential rate.
+    # LTCG stacks ON TOP of ordinary income; walk the stack across brackets.
     ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
-    ltcg_rate: float
-    if ordinary_income <= LTCG_THRESHOLDS_MFJ[0]:
-        ltcg_rate = LTCG_RATES_MFJ[0]
-    elif ordinary_income <= LTCG_THRESHOLDS_MFJ[1]:
-        ltcg_rate = LTCG_RATES_MFJ[1]
-    else:
-        ltcg_rate = LTCG_RATES_MFJ[2]
-    ltcg_tax = ltcg_taxable * ltcg_rate
+    ltcg_start = ordinary_income
+    ltcg_end = ordinary_income + ltcg_taxable
+    # 0%-rate portion (below threshold[0]) contributes $0 tax; 15% and 20% portions taxed
+    ltcg_at_15 = max(
+        0.0,
+        min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+    )
+    ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
+    ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
 
     # NIIT: 3.8% on lesser of NII or MAGI excess over threshold
     net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
