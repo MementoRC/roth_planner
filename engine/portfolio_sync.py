@@ -656,7 +656,7 @@ def fetch_tax_return() -> TaxReturnSnapshot:
             timeout=5,
         )
         resp.raise_for_status()
-        income_rows = resp.json().get("rows", [])
+        income_rows = _flatten_query_rows(resp.json())
     except (requests.RequestException, ValueError):
         pass
 
@@ -670,7 +670,7 @@ def fetch_tax_return() -> TaxReturnSnapshot:
             timeout=5,
         )
         resp.raise_for_status()
-        deduction_rows = resp.json().get("rows", [])
+        deduction_rows = _flatten_query_rows(resp.json())
     except (requests.RequestException, ValueError):
         pass
 
@@ -743,7 +743,7 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         captured_at = data.get("captured_at", "")
         # Extract date portion from ISO timestamp (e.g. "2026-03-17T16:47:58.063Z" → "2026-03-17")
         captured_date = captured_at[:10] if captured_at else ""
-        rows = data.get("rows", [])
+        rows = _flatten_query_rows(data)
         for row in rows:
             if "long_term_gain" in row or "short_term_gain" in row:
                 # Schwab aggregated summary format (schwab-realized-gains-v2)
@@ -800,7 +800,7 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
             timeout=5,
         )
         resp.raise_for_status()
-        rows = resp.json().get("rows", [])
+        rows = _flatten_query_rows(resp.json())
         for row in rows:
             ytd.ordinary_dividends_ytd += row.get("received_dividends", 0.0) or 0.0
             ytd.interest_ytd += row.get("received_interest", 0.0) or 0.0
@@ -816,7 +816,7 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
             timeout=5,
         )
         resp.raise_for_status()
-        rows = resp.json().get("rows", [])
+        rows = _flatten_query_rows(resp.json())
         parsed = _parse_ytd_income_rows(rows)
         ytd.wages_ytd = parsed.get("wages", 0.0)
         ytd.nec_income_ytd = parsed.get("nec_income", 0.0)
@@ -1034,6 +1034,7 @@ class OptionExercisesSnapshot:
     warnings: list[str] = field(default_factory=list)
     rows_count: int = 0
     captured_at: str = ""
+    sale_info_by_grant: dict[str, dict[str, Any]] = field(default_factory=dict)  # grant_id -> {grant_year, strike, shares_ytd}
 
 
 def fetch_option_exercises() -> OptionExercisesSnapshot:
@@ -1117,6 +1118,15 @@ def _parse_option_exercises_rows(
         grant_id = str(row.get("grant_number") or "").strip()
         if grant_id:
             snap.by_grant_id[grant_id] = snap.by_grant_id.get(grant_id, 0.0) + spread
+            # Accumulate sale auxiliary info for display fallback when HH join fails
+            raw_date = str(row.get("grant_date") or "")
+            grant_year = int(raw_date[:4]) if len(raw_date) >= 4 and raw_date[:4].isdigit() else 0
+            existing = snap.sale_info_by_grant.get(grant_id, {})
+            snap.sale_info_by_grant[grant_id] = {
+                "grant_year": existing.get("grant_year") or grant_year,
+                "strike": existing.get("strike") or grant_price,
+                "shares_ytd": existing.get("shares_ytd", 0) + int(qty),
+            }
     return snap
 
 
@@ -1157,6 +1167,15 @@ def _parse_equity_sales_lots(
         grant_id = str(lot.get("grant_number") or "").strip()
         if grant_id:
             snap.by_grant_id[grant_id] = snap.by_grant_id.get(grant_id, 0.0) + spread
+            # Accumulate sale auxiliary info for display fallback when HH join fails
+            raw_date = str(lot.get("grant_date") or "")
+            grant_year = int(raw_date[:4]) if len(raw_date) >= 4 and raw_date[:4].isdigit() else 0
+            existing = snap.sale_info_by_grant.get(grant_id, {})
+            snap.sale_info_by_grant[grant_id] = {
+                "grant_year": existing.get("grant_year") or grant_year,
+                "strike": existing.get("strike") or grant_price,
+                "shares_ytd": existing.get("shares_ytd", 0) + qty,
+            }
     return snap
 
 
@@ -1257,8 +1276,9 @@ def apply_option_exercises(
                     f"grant_id {raw_gid} not matched in household grants (normalized: {norm})"
                 )
         exercises.by_grant_id = remapped
-    # Stash for PR2 consumption; not a dataclass field to avoid breaking PR1 save/load
-    ytd._option_exercises_by_grant = dict(exercises.by_grant_id)  # type: ignore[attr-defined]  # noqa: SLF001 — PR2 will promote to dataclass field
+    # Stash for consumption by views; not dataclass fields to avoid breaking save/load
+    ytd._option_exercises_by_grant = dict(exercises.by_grant_id)  # type: ignore[attr-defined]  # noqa: SLF001
+    ytd._option_exercises_sale_info = dict(exercises.sale_info_by_grant)  # type: ignore[attr-defined]  # noqa: SLF001
     return ytd
 
 
