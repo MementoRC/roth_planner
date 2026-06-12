@@ -15,6 +15,7 @@ from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
 from engine.tax import (
     BRACKETS_SINGLE,
+    LTCG_THRESHOLDS_MFJ,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
@@ -558,7 +559,18 @@ def run_scenario(
         yr.brokerage_balance = brokerage
         yr.brokerage_growth = brokerage * brok_appreciation_rate
         realized_gains = yr.brokerage_growth * hh.brok_turnover
-        yr.brokerage_gain_tax = realized_gains * hh.ltcg_rate
+        # Stack-walk LTCG brackets: ordinary taxable income sets the starting
+        # point; realized gains walk up through 0% / 15% / 20% bands.
+        _ltcg_ord = yr.taxable_income - realized_gains  # ordinary taxable income
+        _ltcg_start = max(0.0, _ltcg_ord)
+        _ltcg_end = _ltcg_start + max(0.0, realized_gains)
+        _ltcg_at_15 = max(
+            0.0,
+            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
+            - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+        )
+        _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
+        yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20
         total_div = qual_div_this_year + ord_div_this_year
 
         brokerage = (
