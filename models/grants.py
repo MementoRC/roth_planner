@@ -15,6 +15,7 @@ class StockGrant:
     strike: float  # strike price per share
     shares: int  # exercisable shares
     expiry_year: int  # expiration year
+    grant_id: str = ""  # FinExtract grant identifier for per-grant attribution
 
     def spread(self, price: float) -> float:
         return max(price - self.strike, 0) * self.shares

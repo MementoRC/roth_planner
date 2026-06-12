@@ -196,25 +196,37 @@ def render(hh: Household):
         by_grant: dict[str, float] = getattr(ytd, "_option_exercises_by_grant", {}) or {}
         if by_grant:
             with st.expander("Per-grant breakdown"):
-                grant_rows = [
-                    {"Grant #": gid, "YTD spread": f"${spread:,.0f}"}
-                    for gid, spread in by_grant.items()
-                ]
-                st.dataframe(grant_rows, use_container_width=True, hide_index=True)
-                if hh.grants:
-                    household_rows = [
-                        {
+                rows = []
+                # Build lookup: grant_id -> StockGrant
+                grants_by_id = {
+                    g.grant_id: g for g in (hh.grants or []) if getattr(g, "grant_id", "")
+                }
+                for grant_id, spread in by_grant.items():
+                    g = grants_by_id.get(grant_id)
+                    if g:
+                        rows.append({
+                            "Grant #": grant_id,
+                            "YTD spread": f"${spread:,.0f}",
                             "Year": g.year,
                             "Strike": f"${g.strike:.2f}",
                             "Shares": g.shares,
                             "Expiry": g.expiry_year,
-                        }
-                        for g in hh.grants
-                    ]
-                    st.dataframe(household_rows, use_container_width=True, hide_index=True)
+                        })
+                    else:
+                        rows.append({
+                            "Grant #": grant_id,
+                            "YTD spread": f"${spread:,.0f}",
+                            "Year": "—",
+                            "Strike": "—",
+                            "Shares": "—",
+                            "Expiry": "—",
+                        })
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+                unmatched = sum(1 for r in rows if r["Year"] == "—")
+                if unmatched:
                     st.caption(
-                        "Household grants (for reference; matching by grant_number requires "
-                        "StockGrant.grant_id extension — future work)."
+                        f"⚠️ {unmatched} grant(s) could not be matched to household StockGrant by grant_id. "
+                        "Sync portfolio to refresh equity_awards from FinExtract."
                     )
 
     if headroom.planned_option_income > 0:
