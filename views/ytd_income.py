@@ -190,6 +190,28 @@ def render(hh: Household):
     m2.metric("of which LTCG", f"${headroom.ytd_ltcg:,.0f}")
     m3.metric("Conversions Done", f"${headroom.conversions_done:,.0f}")
 
+    # Surface dividend/interest impact on conversion headroom (PR #95).
+    # Qualified divs hit MAGI only (IRMAA/NIIT/ACA); ordinary divs + interest
+    # hit BOTH ordinary brackets AND MAGI.
+    if ytd.qualified_dividends_ytd or ytd.ordinary_dividends_ytd or ytd.interest_ytd:
+        st.caption("Investment income impacting headroom")
+        dq, do, di = st.columns(3)
+        dq.metric(
+            "Qualified dividends (YTD)",
+            f"${ytd.qualified_dividends_ytd:,.0f}",
+            help="LTCG-rate taxed. Reduces MAGI room (IRMAA / NIIT / ACA) but NOT ordinary-bracket conversion room.",
+        )
+        do.metric(
+            "Ordinary dividends (YTD)",
+            f"${ytd.ordinary_dividends_ytd:,.0f}",
+            help="Ordinary-rate taxed. Reduces BOTH ordinary-bracket AND MAGI conversion room.",
+        )
+        di.metric(
+            "Interest (YTD)",
+            f"${ytd.interest_ytd:,.0f}",
+            help="Ordinary-rate taxed. Reduces BOTH ordinary-bracket AND MAGI conversion room.",
+        )
+
     # NQO exercises YTD (FinExtract sync, PR3 of finextract-nqo-exercises)
     if ytd.nqo_exercise_ytd or getattr(ytd, "_option_exercises_by_grant", None):
         st.metric(

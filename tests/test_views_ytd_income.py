@@ -182,6 +182,103 @@ class TestYtdIncomeNqoDisplay:
         assert row["Expiry"] == "2029"
 
 
+class TestInvestmentIncomeDisplay:
+    """View-layer smoke tests for dividend/interest metrics in the YTD Position block."""
+
+    def test_renders_dividend_interest_metrics_when_nonzero(self):
+        """All three investment-income metrics appear when any value is non-zero."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            qualified_dividends_ytd=5_000.0,
+            ordinary_dividends_ytd=2_000.0,
+            interest_ytd=1_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+        # Track every column mock returned so we can inspect .metric calls on them
+        col_mocks: list[MagicMock] = []
+        _orig_columns = mock_st.columns.side_effect
+
+        def _tracking_columns(arg):
+            cols = _orig_columns(arg)
+            col_mocks.extend(cols)
+            return cols
+
+        mock_st.columns.side_effect = _tracking_columns
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        # Collect all metric labels: direct st.metric + column.metric calls
+        all_metric_calls = list(mock_st.metric.call_args_list)
+        for col in col_mocks:
+            all_metric_calls.extend(col.metric.call_args_list)
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in all_metric_calls
+        ]
+        assert any("Qualified dividends" in lbl for lbl in metric_labels), (
+            f"Expected 'Qualified dividends (YTD)' metric; got: {metric_labels}"
+        )
+        assert any("Ordinary dividends" in lbl for lbl in metric_labels), (
+            f"Expected 'Ordinary dividends (YTD)' metric; got: {metric_labels}"
+        )
+        assert any("Interest" in lbl for lbl in metric_labels), (
+            f"Expected 'Interest (YTD)' metric; got: {metric_labels}"
+        )
+        caption_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.caption.call_args_list
+        ]
+        assert any("Investment income impacting headroom" in c for c in caption_calls), (
+            f"Expected caption 'Investment income impacting headroom'; got: {caption_calls}"
+        )
+
+    def test_skips_dividend_interest_block_when_all_zero(self):
+        """No dividend/interest metrics rendered when all three fields are 0.0."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            qualified_dividends_ytd=0.0,
+            ordinary_dividends_ytd=0.0,
+            interest_ytd=0.0,
+        )
+        mock_st = _make_mock_st(ytd)
+        col_mocks: list[MagicMock] = []
+        _orig_columns = mock_st.columns.side_effect
+
+        def _tracking_columns(arg):
+            cols = _orig_columns(arg)
+            col_mocks.extend(cols)
+            return cols
+
+        mock_st.columns.side_effect = _tracking_columns
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        all_metric_calls = list(mock_st.metric.call_args_list)
+        for col in col_mocks:
+            all_metric_calls.extend(col.metric.call_args_list)
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in all_metric_calls
+        ]
+        assert not any("Qualified dividends" in lbl for lbl in metric_labels), (
+            "Qualified dividends metric should not appear when value is 0"
+        )
+        assert not any("Ordinary dividends" in lbl for lbl in metric_labels), (
+            "Ordinary dividends metric should not appear when value is 0"
+        )
+        assert not any("Interest" in lbl for lbl in metric_labels), (
+            "Interest metric should not appear when value is 0"
+        )
+
+
 class TestManualEntryAutoDeselect:
     """Tests for auto-deselect of manual-entry checkbox on successful YTD sync."""
 
