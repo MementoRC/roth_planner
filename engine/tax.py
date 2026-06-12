@@ -1,5 +1,14 @@
 """Federal tax calculations — TCJA/OBBBA permanent brackets, SS taxation."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.household import Household
+    from models.ytd_income import YTDSnapshot
+
 # 2025 MFJ brackets (TCJA/OBBBA permanent)
 # (upper_bound_of_taxable_income, marginal_rate)
 BRACKETS_MFJ = [
@@ -47,6 +56,10 @@ SS_TIER_2_SINGLE = 34_000
 
 # Federal long-term capital gains / qualified dividend rates (MFJ statutory tiers)
 LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
+
+# LTCG bracket thresholds for MFJ (taxable income upper bounds, 2025 TCJA)
+# 0% up to $94,050; 15% up to $583,750; 20% above
+LTCG_THRESHOLDS_MFJ = (94_050, 583_750)
 
 # LTCG bracket thresholds for Single filer (taxable income upper bounds)
 # 0% up to $48,350; 15% up to $533,400; 20% above
@@ -197,3 +210,209 @@ def marginal_rate_single(taxable_income: float) -> float:
         if taxable_income <= ceil:
             return rate
     return 0.37
+
+
+# ---------------------------------------------------------------------------
+# YTD federal tax estimate
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class YTDTaxEstimate:
+    """Year-to-date federal tax estimate as if today were Dec 31."""
+
+    ordinary_tax: float = 0.0
+    ltcg_tax: float = 0.0
+    niit: float = 0.0
+    total: float = 0.0
+    effective_rate: float = 0.0
+    marginal_bracket_pct: float = 0.0
+    room_to_next_bracket: float = 0.0
+
+
+def estimate_ytd_federal_tax(
+    ytd: YTDSnapshot,
+    hh: Household,
+) -> YTDTaxEstimate:
+    """Estimate federal tax owed YTD as if today were Dec 31.
+
+    Stacks ordinary income through brackets, then applies preferential rates
+    on LTCG/qualified dividends. NIIT applied per net investment income vs
+    MAGI threshold. Does NOT include state tax, IRMAA premiums, or quarterly
+    underpayment penalties. Standard deduction is NOT applied (gross liability).
+    """
+    from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ
+
+    ordinary_income = ytd.total_ordinary_income
+    ordinary_tax = federal_tax(ordinary_income)
+
+    # LTCG + qualified dividends taxed at preferential rate
+    ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
+    ltcg_rate: float
+    if ordinary_income <= LTCG_THRESHOLDS_MFJ[0]:
+        ltcg_rate = LTCG_RATES_MFJ[0]
+    elif ordinary_income <= LTCG_THRESHOLDS_MFJ[1]:
+        ltcg_rate = LTCG_RATES_MFJ[1]
+    else:
+        ltcg_rate = LTCG_RATES_MFJ[2]
+    ltcg_tax = ltcg_taxable * ltcg_rate
+
+    # NIIT: 3.8% on lesser of NII or MAGI excess over threshold
+    net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
+    magi = ytd.magi_ytd
+    magi_excess = max(0.0, magi - NIIT_THRESHOLD_MFJ)
+    niit_amount = NIIT_RATE * min(net_investment_income, magi_excess)
+
+    total = ordinary_tax + ltcg_tax + niit_amount
+    effective_rate = total / magi if magi > 0 else 0.0
+
+    # Marginal bracket for ordinary income
+    marginal = marginal_rate(ordinary_income)
+
+    # Room to next bracket ceiling
+    room_next = 0.0
+    for ceil, _rate in BRACKETS_MFJ:
+        if ordinary_income <= ceil:
+            room_next = ceil - ordinary_income
+            break
+
+    return YTDTaxEstimate(
+        ordinary_tax=ordinary_tax,
+        ltcg_tax=ltcg_tax,
+        niit=niit_amount,
+        total=total,
+        effective_rate=effective_rate,
+        marginal_bracket_pct=marginal,
+        room_to_next_bracket=room_next,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Safe-harbor payment guidance
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SafeHarborGuidance:
+    """Mid-year safe-harbor payment guidance to avoid underpayment penalty."""
+
+    prior_year_tax: float = 0.0
+    current_year_estimate: float = 0.0
+    safe_harbor_target: float = 0.0
+    already_paid_ytd: float = 0.0
+    remaining_to_pay: float = 0.0
+    next_quarterly_due: str = ""
+    rule_used: str = ""
+
+
+def _next_quarterly_due(payment_date: str) -> str:
+    """Return ISO date of the next quarterly estimated-tax due date.
+
+    Q1: Apr 15  (Jan 1 – Apr 15)
+    Q2: Jun 15  (Apr 16 – Jun 15)
+    Q3: Sep 15  (Jun 16 – Sep 15)
+    Q4: Jan 15 next year  (Sep 16 – Dec 31)
+    """
+    from datetime import date
+
+    try:
+        d = date.fromisoformat(payment_date)
+    except ValueError:
+        d = date.today()
+
+    year = d.year
+    month, day = d.month, d.day
+
+    if (month, day) <= (4, 15):
+        return f"{year}-04-15"
+    if (month, day) <= (6, 15):
+        return f"{year}-06-15"
+    if (month, day) <= (9, 15):
+        return f"{year}-09-15"
+    return f"{year + 1}-01-15"
+
+
+def safe_harbor_payment(
+    prior_year_tax: float,
+    current_year_estimate: float,
+    already_paid_ytd: float,
+    payment_date: str,
+) -> SafeHarborGuidance:
+    """Compute remaining safe-harbor payment to avoid underpayment penalty.
+
+    IRS Form 2210 safe harbor: pay LESSER of:
+    - 110% of prior year tax (high-income, AGI > $150K)
+    - current year tax estimate (90% rule approximated as 100% here)
+
+    If prior_year_tax is 0 (no data), uses current-year estimate only.
+    """
+    next_due = _next_quarterly_due(payment_date)
+
+    if prior_year_tax <= 0:
+        safe_harbor_target = current_year_estimate
+        rule_used = "100% current estimate (prior year unknown)"
+    else:
+        prior_110 = 1.10 * prior_year_tax
+        if prior_110 <= current_year_estimate:
+            safe_harbor_target = prior_110
+            rule_used = "110% prior year"
+        else:
+            safe_harbor_target = current_year_estimate
+            rule_used = "100% current estimate"
+
+    remaining = max(0.0, safe_harbor_target - already_paid_ytd)
+
+    return SafeHarborGuidance(
+        prior_year_tax=prior_year_tax,
+        current_year_estimate=current_year_estimate,
+        safe_harbor_target=safe_harbor_target,
+        already_paid_ytd=already_paid_ytd,
+        remaining_to_pay=remaining,
+        next_quarterly_due=next_due,
+        rule_used=rule_used,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prior year federal tax from PDF cache
+# ---------------------------------------------------------------------------
+
+
+def load_prior_year_federal_tax() -> float:
+    """Read prior year total federal tax (Form 1040 Line 24) from .tax_pdf_cache.json.
+
+    Returns 0.0 if no PDF has been parsed or the field isn't present.
+    The PDF cache currently stores MAGI components but not total_federal_tax;
+    this function is forward-compatible once that field is added.
+    """
+    import json
+    from pathlib import Path
+
+    cache_path = Path(__file__).resolve().parent.parent / ".tax_pdf_cache.json"
+    if not cache_path.exists():
+        return 0.0
+    try:
+        data = json.loads(cache_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return 0.0
+    # data is keyed by tax year; try most-recent year first
+    if isinstance(data, dict):
+        for year_key in sorted(data.keys(), reverse=True):
+            entry = data[year_key]
+            if isinstance(entry, dict):
+                for key in ("total_federal_tax", "total_tax", "line_24"):
+                    val = entry.get(key)
+                    if val:
+                        try:
+                            return float(val)
+                        except (TypeError, ValueError):
+                            continue
+    # Flat dict fallback (single-year cache)
+    for key in ("total_federal_tax", "total_tax", "line_24"):
+        val = data.get(key)
+        if val:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    return 0.0

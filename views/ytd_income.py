@@ -7,6 +7,8 @@ IRMAA, NIIT, and ACA thresholds.
 Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
+from datetime import date as _date
+
 import pandas as pd
 import streamlit as st
 
@@ -14,7 +16,14 @@ from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
 from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
 from engine.niit import NIIT_THRESHOLD_MFJ
-from engine.tax import LTCG_RATES_MFJ
+from engine.tax import (
+    LTCG_RATES_MFJ,
+    SafeHarborGuidance,
+    YTDTaxEstimate,
+    estimate_ytd_federal_tax,
+    load_prior_year_federal_tax,
+    safe_harbor_payment,
+)
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -274,6 +283,114 @@ def render(hh: Household):
                 f"(of ${headroom.planned_option_income + headroom.realized_option_income_ytd:,.0f} "
                 "originally planned)."
             )
+
+    # --- Section A: Realized Capital Gains ---
+    st.markdown("---")
+    st.subheader("Realized Capital Gains (YTD)")
+    if not ytd.gain_events:
+        st.caption("No realized gains synced yet. Sync from FinExtract to populate.")
+    else:
+        cg1, cg2 = st.columns(2)
+        cg1.metric(
+            "Long-term gains",
+            f"${ytd.ltcg_ytd:,.0f}",
+            help="Preferential rate (0/15/20%)",
+        )
+        cg2.metric(
+            "Short-term gains",
+            f"${ytd.stcg_ytd:,.0f}",
+            help="Ordinary-income rate; stacks into brackets",
+        )
+        by_source: dict[str, dict[str, float]] = {}
+        for e in ytd.gain_events:
+            src = e.account_name or "unknown"
+            by_source.setdefault(src, {"long": 0.0, "short": 0.0})
+            if e.is_ltcg:
+                by_source[src]["long"] += e.gain_loss
+            else:
+                by_source[src]["short"] += e.gain_loss
+        if by_source:
+            with st.expander("Breakdown by source"):
+                gain_rows = [
+                    {
+                        "Source": str(src),
+                        "Long-term": f"${v['long']:,.0f}",
+                        "Short-term": f"${v['short']:,.0f}",
+                    }
+                    for src, v in sorted(by_source.items())
+                ]
+                st.dataframe(gain_rows, use_container_width=True, hide_index=True)
+
+    # --- Section B: Tax Bracket Position ---
+    # --- Section C: Estimated YTD Federal Tax ---
+    estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh)
+
+    st.markdown("---")
+    st.subheader("Tax Bracket Position")
+    b1, b2, b3 = st.columns(3)
+    b1.metric(
+        "Current bracket",
+        f"{estimate.marginal_bracket_pct * 100:.0f}%",
+        help="Marginal MFJ tax bracket your next dollar of ordinary income falls into.",
+    )
+    b2.metric(
+        "Room to next bracket",
+        f"${estimate.room_to_next_bracket:,.0f}",
+        help="Additional ordinary income before pushing into the next bracket.",
+    )
+    b3.metric(
+        "Effective rate (so far)",
+        f"{estimate.effective_rate * 100:.1f}%",
+        help=(
+            "Estimated total tax divided by MAGI. "
+            "Lower than marginal because preferential LTCG rate is averaged in."
+        ),
+    )
+
+    st.markdown("---")
+    st.subheader("Estimated YTD Federal Tax")
+    t1, t2, t3, t4 = st.columns(4)
+    t1.metric("Ordinary bracket tax", f"${estimate.ordinary_tax:,.0f}")
+    t2.metric("LTCG / qualified div tax", f"${estimate.ltcg_tax:,.0f}")
+    t3.metric("NIIT (3.8%)", f"${estimate.niit:,.0f}")
+    t4.metric("Total federal", f"${estimate.total:,.0f}")
+    st.caption(
+        "Estimate assumes today were Dec 31 (current YTD income only — not annualized). "
+        "Excludes state tax, IRMAA premium impact, and quarterly underpayment penalties. "
+        "MFJ standard deduction NOT applied — figures represent gross liability before deductions."
+    )
+
+    # --- Section D: Mid-Year Safe-Harbor Payment ---
+    st.markdown("---")
+    st.subheader("Mid-Year Safe-Harbor Payment Guidance")
+    prior_year_tax = load_prior_year_federal_tax()
+    # federal_withholding_ytd not yet on YTDSnapshot — treat as 0 until added
+    # TODO: add federal_withholding_ytd field to YTDSnapshot
+    already_paid = float(getattr(ytd, "federal_withholding_ytd", 0.0))
+    guidance: SafeHarborGuidance = safe_harbor_payment(
+        prior_year_tax=prior_year_tax,
+        current_year_estimate=estimate.total,
+        already_paid_ytd=already_paid,
+        payment_date=_date.today().isoformat(),
+    )
+    if prior_year_tax == 0:
+        st.warning(
+            "Prior year tax unknown — only current-year estimate path active. "
+            "Upload your prior year 1040 PDF in Setup → Parameters → Joint to unlock "
+            "the 110% safe-harbor rule."
+        )
+    g1, g2, g3 = st.columns(3)
+    g1.metric(
+        "Safe-harbor target",
+        f"${guidance.safe_harbor_target:,.0f}",
+        help=guidance.rule_used,
+    )
+    g2.metric("Already paid YTD", f"${guidance.already_paid_ytd:,.0f}")
+    g3.metric(
+        f"Remaining to pay by {guidance.next_quarterly_due}",
+        f"${guidance.remaining_to_pay:,.0f}",
+        help="Pay this before the next quarterly deadline to maintain safe-harbor protection.",
+    )
 
     st.markdown("#### Room for Conversions (from locked income only)")
 
