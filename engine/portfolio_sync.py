@@ -173,6 +173,10 @@ class PortfolioSnapshot:
     txn_shares_value: float = 0.0
     server_available: bool = False
     error: str | None = None
+    # FinExtract PRs #19/#20/#21: equity_sales from .portfolio_cache.json
+    equity_sales_lots: list[dict[str, Any]] = field(default_factory=list)
+    equity_sales_executions: list[dict[str, Any]] = field(default_factory=list)
+    order_detail_summary_captured_at: str = ""
 
     def account_by_type(self, acct_type: str) -> AccountSummary | None:
         """Find first account matching type."""
@@ -1116,6 +1120,62 @@ def _parse_option_exercises_rows(
     return snap
 
 
+def _parse_equity_sales_lots(
+    lots: list[dict[str, Any]], captured_at: str = ""
+) -> OptionExercisesSnapshot:
+    """Parse equity_sales.lots from .portfolio_cache.json (FinExtract PRs #19/#20/#21).
+
+    Each lot is one (sale, tax-lot) tuple. lots[*].execution_quantity is a
+    numeric string (must cast); other numeric fields are already numbers.
+    Math identical to _parse_option_exercises_rows:
+    spread = gross_proceeds - (grant_price * execution_quantity).
+    """
+    snap = OptionExercisesSnapshot(server_available=True, captured_at=captured_at)
+    for lot in lots:
+        try:
+            grant_price = float(lot.get("grant_price") or 0)
+            qty_raw = lot.get("execution_quantity") or 0
+            # Cast string numerics; tolerate int/float too
+            qty = int(float(qty_raw)) if qty_raw not in ("", None) else 0
+            gross = float(lot.get("gross_proceeds") or 0)
+        except (TypeError, ValueError):
+            snap.warnings.append(
+                f"lot skipped: non-numeric fields in {lot.get('grant_number', '?')}"
+            )
+            continue
+        if qty <= 0 or grant_price <= 0:
+            continue
+        spread = gross - (grant_price * qty)
+        if spread < 0:
+            snap.warnings.append(
+                f"negative spread for grant {lot.get('grant_number', '?')}: "
+                f"gross={gross}, strike*qty={grant_price * qty}"
+            )
+            continue
+        snap.total_spread += spread
+        snap.rows_count += 1
+        grant_id = str(lot.get("grant_number") or "").strip()
+        if grant_id:
+            snap.by_grant_id[grant_id] = snap.by_grant_id.get(grant_id, 0.0) + spread
+    return snap
+
+
+def fetch_option_exercises_with_cache(
+    snapshot: PortfolioSnapshot | None = None,
+) -> OptionExercisesSnapshot:
+    """Read equity_sales from portfolio cache first (FinExtract PRs #19/#20/#21);
+    fall back to /query?mode=history for legacy caches missing equity_sales.
+    """
+    # Primary path: cache-based equity_sales
+    if snapshot is not None:
+        lots = getattr(snapshot, "equity_sales_lots", None) or []
+        if lots:
+            captured_at = getattr(snapshot, "order_detail_summary_captured_at", "") or ""
+            return _parse_equity_sales_lots(lots, captured_at=captured_at)
+    # Fallback: legacy cache without equity_sales — hit /query
+    return fetch_option_exercises()
+
+
 def _normalize_grant_id(gid: str) -> str:
     """Normalize grant_id for tolerant matching: strip whitespace, uppercase, drop non-alphanumeric."""
     if not gid:
@@ -1383,8 +1443,35 @@ _CACHE_PATH = Path(__file__).resolve().parent.parent / ".portfolio_cache.json"
 
 
 def save_snapshot(snap: PortfolioSnapshot) -> None:
-    """Save portfolio snapshot to disk as JSON."""
-    _CACHE_PATH.write_text(json.dumps(asdict(snap), indent=2))
+    """Save portfolio snapshot to disk as JSON.
+
+    FinExtract-owned fields (equity_sales_lots, equity_sales_executions,
+    order_detail_summary_captured_at) are never serialized from the in-memory
+    snapshot — live HTTP sync has no equivalent source for these.  Instead,
+    the existing on-disk equity_sales and sources sections are preserved so
+    FinExtract's rebuild writes are not clobbered.
+    """
+    existing: dict[str, Any] = {}
+    if _CACHE_PATH.exists():
+        try:
+            existing = json.loads(_CACHE_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    data = asdict(snap)
+    # Drop the fields that only FinExtract populates; they live under
+    # "equity_sales" and "sources.order_detail_summary" in the JSON schema.
+    data.pop("equity_sales_lots", None)
+    data.pop("equity_sales_executions", None)
+    data.pop("order_detail_summary_captured_at", None)
+
+    # Preserve FinExtract-owned sections already on disk.
+    if "equity_sales" in existing:
+        data["equity_sales"] = existing["equity_sales"]
+    if "sources" in existing:
+        data["sources"] = existing["sources"]
+
+    _CACHE_PATH.write_text(json.dumps(data, indent=2))
 
 
 def load_snapshot() -> PortfolioSnapshot | None:
@@ -1396,11 +1483,17 @@ def load_snapshot() -> PortfolioSnapshot | None:
     except (json.JSONDecodeError, OSError):
         return None
 
+    equity_sales = data.get("equity_sales") or {"lots": [], "executions": []}
+    sources = data.get("sources") or {}
+    ods_meta = sources.get("order_detail_summary")
     snap = PortfolioSnapshot(
         txn_shares_held=data.get("txn_shares_held", 0),
         txn_shares_value=data.get("txn_shares_value", 0.0),
         server_available=data.get("server_available", False),
         error=data.get("error"),
+        equity_sales_lots=equity_sales.get("lots") or [],
+        equity_sales_executions=equity_sales.get("executions") or [],
+        order_detail_summary_captured_at=(ods_meta or {}).get("captured_at", "") or "",
     )
     for a in data.get("accounts", []):
         holdings = [Holding(**h) for h in a.pop("holdings", [])]

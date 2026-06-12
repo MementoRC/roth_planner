@@ -1,5 +1,7 @@
 """Test suite — validates engine against known verified numbers from spreadsheets."""
 
+import json
+
 import pytest
 
 from config.defaults import DEFAULTS
@@ -2658,6 +2660,166 @@ class TestOptionExercisesFetchAndApply:
         result = load_ytd_snapshot()
         assert result is not None
         assert result.nqo_exercise_ytd == 0.0
+
+
+class TestEquitySalesCacheConsumer:
+    """Verify _parse_equity_sales_lots + fetch_option_exercises_with_cache."""
+
+    def _lot(
+        self,
+        grant_number: str = "N0000197825",
+        grant_price: float = 169.0,
+        execution_quantity: str = "100",
+        gross_proceeds: float = 24400.0,
+    ) -> dict:
+        return {
+            "grant_number": grant_number,
+            "grant_price": grant_price,
+            "execution_quantity": execution_quantity,
+            "gross_proceeds": gross_proceeds,
+        }
+
+    def test_parses_lots_with_string_quantities(self):
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        lots = [self._lot()]
+        snap = _parse_equity_sales_lots(lots)
+        assert snap.server_available is True
+        assert snap.rows_count == 1
+        # 24400 - 169 * 100 = 7500
+        assert abs(snap.total_spread - 7500.0) < 0.01
+        assert abs(snap.by_grant_id["N0000197825"] - 7500.0) < 0.01
+
+    def test_parses_multiple_lots_per_execution(self):
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        # 3 lots sharing same grant_number — handoff doc: lots >= executions
+        lots = [
+            self._lot(execution_quantity="50", gross_proceeds=12200.0),
+            self._lot(execution_quantity="30", gross_proceeds=7320.0),
+            self._lot(execution_quantity="20", gross_proceeds=4880.0),
+        ]
+        snap = _parse_equity_sales_lots(lots)
+        assert snap.rows_count == 3
+        # spreads: 12200-8450=3750, 7320-5070=2250, 4880-3380=1500 → total 7500
+        assert abs(snap.total_spread - 7500.0) < 0.01
+        assert abs(snap.by_grant_id["N0000197825"] - 7500.0) < 0.01
+
+    def test_empty_lots_returns_empty_snapshot(self):
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        snap = _parse_equity_sales_lots([])
+        assert snap.total_spread == 0.0
+        assert snap.rows_count == 0
+        assert snap.server_available is True
+        assert snap.by_grant_id == {}
+
+    def test_skips_zero_quantity_lots(self):
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        lots = [self._lot(execution_quantity="0")]
+        snap = _parse_equity_sales_lots(lots)
+        assert snap.total_spread == 0.0
+        assert snap.rows_count == 0
+        assert snap.warnings == []
+
+    def test_skips_negative_spread_with_warning(self):
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        # gross < strike * qty → negative spread
+        lots = [self._lot(grant_price=200.0, execution_quantity="100", gross_proceeds=1000.0)]
+        snap = _parse_equity_sales_lots(lots)
+        assert snap.total_spread == 0.0
+        assert snap.rows_count == 0
+        assert len(snap.warnings) == 1
+        assert "negative spread" in snap.warnings[0]
+
+    def test_fallback_to_query_when_no_lots(self, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            PortfolioSnapshot,
+            fetch_option_exercises_with_cache,
+        )
+
+        fallback_snap = OptionExercisesSnapshot(server_available=True, total_spread=99.0)
+        called = []
+
+        def fake_fetch_option_exercises():
+            called.append(True)
+            return fallback_snap
+
+        monkeypatch.setattr(portfolio_sync, "fetch_option_exercises", fake_fetch_option_exercises)
+
+        snapshot = PortfolioSnapshot(equity_sales_lots=[])
+        result = fetch_option_exercises_with_cache(snapshot)
+        assert called == [True]
+        assert result.total_spread == 99.0
+
+    def test_uses_captured_at_from_snapshot(self):
+        from engine.portfolio_sync import (
+            PortfolioSnapshot,
+            fetch_option_exercises_with_cache,
+        )
+
+        ts = "2026-06-11T22:30Z"
+        snapshot = PortfolioSnapshot(
+            equity_sales_lots=[self._lot()],
+            order_detail_summary_captured_at=ts,
+        )
+        result = fetch_option_exercises_with_cache(snapshot)
+        assert result.captured_at == ts
+
+    def test_save_snapshot_preserves_existing_equity_sales(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import PortfolioSnapshot, save_snapshot
+
+        cache = tmp_path / ".portfolio_cache.json"
+        monkeypatch.setattr(portfolio_sync, "_CACHE_PATH", cache)
+
+        # Simulate FinExtract's rebuild write — equity_sales and sources on disk.
+        finextract_data = {
+            "equity_sales": {
+                "lots": [{"grant_number": "N0000197825", "grant_price": 169.0}],
+                "executions": [{"id": "E001"}],
+            },
+            "sources": {
+                "order_detail_summary": {"captured_at": "2026-06-10T12:00Z"},
+            },
+        }
+        cache.write_text(json.dumps(finextract_data))
+
+        # Live HTTP sync produces a snap with empty equity_sales_lots.
+        snap = PortfolioSnapshot(equity_sales_lots=[], equity_sales_executions=[])
+        save_snapshot(snap)
+
+        result = json.loads(cache.read_text())
+        assert "equity_sales" in result
+        assert result["equity_sales"]["lots"] == [
+            {"grant_number": "N0000197825", "grant_price": 169.0}
+        ]
+        assert result["equity_sales"]["executions"] == [{"id": "E001"}]
+        assert result["sources"]["order_detail_summary"]["captured_at"] == "2026-06-10T12:00Z"
+
+    def test_save_snapshot_no_equity_sales_keys_in_new_file(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import PortfolioSnapshot, save_snapshot
+
+        cache = tmp_path / ".portfolio_cache.json"
+        monkeypatch.setattr(portfolio_sync, "_CACHE_PATH", cache)
+
+        # No pre-existing file — fresh save should not write equity_sales or sources.
+        snap = PortfolioSnapshot(equity_sales_lots=[], equity_sales_executions=[])
+        save_snapshot(snap)
+
+        result = json.loads(cache.read_text())
+        assert "equity_sales" not in result
+        assert "equity_sales_lots" not in result
+        assert "equity_sales_executions" not in result
+        assert "order_detail_summary_captured_at" not in result
+        # sources may be absent or present but must not contain order_detail_summary
+        sources = result.get("sources", {})
+        assert "order_detail_summary" not in sources
 
 
 class TestInheritedIRA:
