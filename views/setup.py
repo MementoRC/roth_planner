@@ -32,7 +32,7 @@ from engine.portfolio_sync import (
     apply_option_exercises,
     fetch_dividends_rollup,
     fetch_magi,
-    fetch_option_exercises,
+    fetch_option_exercises_with_cache,
     fetch_portfolio,
     fetch_tax_return,
     fetch_ytd_snapshot,
@@ -1122,8 +1122,8 @@ def render(hh: Household) -> None:
                         pass
                     # Also sync YTD income data
                     ytd_snap = fetch_ytd_snapshot()
-                    # Phase: option exercises — fetch + apply before saving YTD snapshot
-                    exercises = fetch_option_exercises()
+                    # Phase: option exercises — prefer cache equity_sales, fall back to /query
+                    exercises = fetch_option_exercises_with_cache(snap)
                     if exercises.server_available:
                         ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
                         if exercises.captured_at:
