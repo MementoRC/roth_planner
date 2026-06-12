@@ -180,3 +180,95 @@ class TestYtdIncomeNqoDisplay:
         assert row["Year"] == "2019"
         assert row["Shares"] == "1000"
         assert row["Expiry"] == "2029"
+
+
+class TestManualEntryAutoDeselect:
+    """Tests for auto-deselect of manual-entry checkbox on successful YTD sync."""
+
+    def test_successful_sync_clears_manual_entry_state(self):
+        """On successful YTD sync, manual entry is auto-deselected and page reruns."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+
+        # Setup: sync button clicked, checkbox initially checked
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        # Create synced snapshot with data
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            ltcg_ytd=50_000.0,
+            snapshot_date="2026-06-12",  # Mark as synced
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            # Mock fetch_option_exercises to return unavailable result
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            ytd_income_mod.render(hh)
+
+        # Assert: session_state["ytd_manual_entry"] was set to False
+        # MagicMock tracks __setitem__ calls automatically
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry set to False; got calls: {setitem_calls}"
+        )
+        # Assert: rerun was called
+        assert mock_st.rerun.called, (
+            "Expected st.rerun() to be called on successful sync"
+        )
+
+    def test_failed_sync_does_not_clear_manual_entry(self):
+        """On failed YTD sync, manual entry remains unchanged and page does not rerun."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+
+        # Setup: sync button clicked
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        # Create failed snapshot (no snapshot_date)
+        failed_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=0.0,
+        )
+        # snapshot_date stays empty (falsy)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=failed_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            # Mock fetch_option_exercises
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            ytd_income_mod.render(hh)
+
+        # Assert: ytd_manual_entry was NOT set to False in the success branch
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry" and call[0][1] is False
+        ]
+        assert not setitem_calls, (
+            "On failed sync, ytd_manual_entry should not be set to False"
+        )
+        # Assert: rerun was NOT called
+        assert not mock_st.rerun.called, (
+            "On failed sync, st.rerun() should not be called"
+        )
