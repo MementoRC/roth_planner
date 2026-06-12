@@ -1494,6 +1494,101 @@ class TestScenarioWithYTD:
         # Planned $100K minus $30K already done = $70K
         assert yr2026.your_conversion == approx(70_000)
 
+    def test_run_scenario_includes_ytd_conversions_in_base_magi(self):
+        """ira_conversions_ytd must appear in base-year MAGI even though it
+        reduces the remaining planned conversion amount."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        conversions_done = 35_000
+        ytd = YTDSnapshot(tax_year=2026, ira_conversions_ytd=conversions_done)
+        # Plan more than what's already done so yr.your_conversion > 0
+        plan = ConversionPlan(your_conversions={2026: 100_000})
+        result_with = run_scenario(hh, plan, "with_conv", end_age=65, ytd=ytd)
+        result_without = run_scenario(hh, plan, "without_conv", end_age=65, ytd=None)
+
+        yr_with = result_with.years[0]
+        yr_without = result_without.years[0]
+
+        # Invariant: both scenarios plan the same $100K total conversion; ira_conversions_ytd
+        # merely shifts income from yr.your_conversion (planned remaining) to magi_ytd (already
+        # done). The SUM must be equal — the absolute value depends on default Household
+        # option_income which varies with tax-year defaults (e.g. TXN NQO grants in 2026).
+        assert yr_with.magi == approx(yr_without.magi)
+
+    def test_run_scenario_includes_nec_in_base_magi(self):
+        """nec_income_ytd (1099-NEC) must appear in base-year MAGI."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        nec = 28_000
+        ytd_with = YTDSnapshot(tax_year=2026, nec_income_ytd=nec)
+        ytd_none = YTDSnapshot(tax_year=2026)
+        plan = ConversionPlan()
+
+        yr_with = run_scenario(hh, plan, "nec", end_age=65, ytd=ytd_with).years[0]
+        yr_none = run_scenario(hh, plan, "no_nec", end_age=65, ytd=ytd_none).years[0]
+
+        assert yr_with.magi - yr_none.magi == approx(nec)
+
+    def test_run_scenario_includes_distributions_in_base_magi(self):
+        """ira_distributions_ytd (non-conversion IRA withdrawals) must appear
+        in base-year MAGI."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        distrib = 42_000
+        ytd_with = YTDSnapshot(tax_year=2026, ira_distributions_ytd=distrib)
+        ytd_none = YTDSnapshot(tax_year=2026)
+        plan = ConversionPlan()
+
+        yr_with = run_scenario(hh, plan, "dist", end_age=65, ytd=ytd_with).years[0]
+        yr_none = run_scenario(hh, plan, "no_dist", end_age=65, ytd=ytd_none).years[0]
+
+        assert yr_with.magi - yr_none.magi == approx(distrib)
+
+    def test_run_scenario_matches_canonical_magi_ytd(self):
+        """Base-year MAGI must equal canonical YTDSnapshot.magi_ytd plus the
+        projected income components (remaining planned conversion, option
+        income, SS, RMD) — verifying parity with _auto_fill_core."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=60_000,
+            nec_income_ytd=10_000,
+            ira_conversions_ytd=25_000,
+            ira_distributions_ytd=15_000,
+            ltcg_ytd=50_000,
+            stcg_ytd=5_000,
+            qualified_dividends_ytd=3_000,
+            ordinary_dividends_ytd=2_000,
+            interest_ytd=1_000,
+        )
+        planned_conversion = 80_000
+        plan = ConversionPlan(your_conversions={2026: planned_conversion})
+        result = run_scenario(hh, plan, "canonical", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        # Projected components not in magi_ytd
+        projected_components = (
+            yr2026.option_income
+            + yr2026.your_conversion  # remaining after subtracting ira_conversions_ytd
+            + yr2026.spouse_conversion
+            + yr2026.taxable_rmd
+            + yr2026.spouse_taxable_rmd
+            + yr2026.extra_withdrawal
+            + yr2026.spouse_extra_withdrawal
+            + yr2026.combined_ss
+            + yr2026.your_inherited_distribution
+            + yr2026.spouse_inherited_distribution
+            + yr2026.brokerage_qual_div
+            + yr2026.brokerage_ord_div
+        )
+        expected_magi = projected_components + ytd.magi_ytd
+        assert yr2026.magi == approx(expected_magi)
+
     def test_ytd_save_load_roundtrip(self, tmp_path, monkeypatch):
         from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot

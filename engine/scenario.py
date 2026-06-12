@@ -358,15 +358,12 @@ def run_scenario(
             + yr.your_inherited_distribution
             + yr.spouse_inherited_distribution
         )
-        # YTD: add wages, LTCG, STCG, dividends, interest to MAGI
+        # YTD: add all MAGI components via the canonical magi_ytd property.
+        # Using the property ensures parity with _auto_fill_core and avoids
+        # missing fields (nec_income_ytd, ira_conversions_ytd,
+        # ira_distributions_ytd were absent in the prior manual enumeration).
         if ytd_year is not None:
-            yr.magi += (
-                ytd_year.wages_ytd
-                + ytd_year.ltcg_ytd
-                + ytd_year.stcg_ytd
-                + ytd_year.dividends_ytd
-                + ytd_year.interest_ytd
-            )
+            yr.magi += ytd_year.magi_ytd
         # Forecast brokerage dividends: both qual and ord affect MAGI
         yr.magi += qual_div_this_year + ord_div_this_year
 
@@ -383,9 +380,20 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.spouse_extra_withdrawal
         )
-        # YTD ordinary income affects SS taxation
+        # YTD ordinary income affects SS taxation.
+        # Includes wages, NEC, STCG, ordinary dividends, conversions already
+        # done, and IRA distributions — matching total_ordinary_income minus
+        # nqo_exercise_ytd (NQO spread is captured in option_income for the
+        # base year, not double-counted here).
         if ytd_year is not None:
-            other_inc += ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
+            other_inc += (
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.stcg_ytd
+                + ytd_year.ordinary_dividends_ytd
+                + ytd_year.ira_conversions_ytd
+                + ytd_year.ira_distributions_ytd
+            )
         yr.taxable_ss_amt = taxable_ss(
             yr.combined_ss, other_inc, filing_status=current_filing_status
         )
@@ -404,10 +412,20 @@ def run_scenario(
             + yr.your_inherited_distribution
             + yr.spouse_inherited_distribution
         )
-        # YTD: add wages + STCG + ordinary dividends to gross (ordinary), but NOT LTCG/qualified dividends
+        # YTD: add all ordinary income components to gross.
+        # LTCG and qualified dividends are excluded (taxed at preferential rate).
+        # nec_income_ytd and ira_distributions_ytd are ordinary income; include them.
+        # ira_conversions_ytd: yr.your_conversion was already reduced by this amount
+        # (line 281), so adding it back here makes the full planned conversion stack
+        # into combined_gross correctly.
         if ytd_year is not None:
             yr.combined_gross += (
-                ytd_year.wages_ytd + ytd_year.stcg_ytd + ytd_year.ordinary_dividends_ytd
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.stcg_ytd
+                + ytd_year.ordinary_dividends_ytd
+                + ytd_year.ira_conversions_ytd
+                + ytd_year.ira_distributions_ytd
             )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
