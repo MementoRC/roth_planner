@@ -2565,6 +2565,68 @@ class TestOptionExercisesFetchAndApply:
         assert "GR-OTHER" in exercises.warnings[0]
         assert ytd_snap.nqo_exercise_ytd == 50_000.0
 
+    def test_grant_id_prefix_substring_match(self):
+        """Household grant_id 'N0000197825'; UBS sends '197825' — tier 3 substring match."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[StockGrant(year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825")])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=75_000.0,
+            by_grant_id={"197825": 75_000.0},
+        )
+        ytd_snap = apply_option_exercises(YTDSnapshot(), exercises, hh)
+        assert "N0000197825" in exercises.by_grant_id
+        assert "197825" not in exercises.by_grant_id
+        assert exercises.warnings == []
+        assert ytd_snap.nqo_exercise_ytd == 75_000.0
+
+    def test_grant_id_substring_picks_longest_on_ambiguity(self):
+        """Two grants 'N1234' and 'N00001234' both contain '1234'; UBS sends '1234' — picks longer."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[
+            StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
+            StockGrant(year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"),
+        ])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=40_000.0,
+            by_grant_id={"1234": 40_000.0},
+        )
+        apply_option_exercises(YTDSnapshot(), exercises, hh)
+        # Longest normalized match: "N00001234" (9 chars) beats "N1234" (5 chars)
+        assert "N00001234" in exercises.by_grant_id
+        assert "N1234" not in exercises.by_grant_id
+        assert "1234" not in exercises.by_grant_id
+
+    def test_grant_id_short_substring_does_not_match(self):
+        """UBS sends '19' (2 chars after normalization) — below 3-char threshold, no substring match."""
+        from engine.portfolio_sync import (
+            OptionExercisesSnapshot,
+            apply_option_exercises,
+        )
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        exercises = OptionExercisesSnapshot(
+            server_available=True,
+            total_spread=20_000.0,
+            by_grant_id={"19": 20_000.0},
+        )
+        apply_option_exercises(YTDSnapshot(), exercises, hh)
+        assert "19" in exercises.by_grant_id
+        assert len(exercises.warnings) == 1
+        assert "19" in exercises.warnings[0]
+
     def test_load_path_migration_legacy_cache(self, tmp_path, monkeypatch):
         import json
 

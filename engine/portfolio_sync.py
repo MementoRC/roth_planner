@@ -1123,6 +1123,34 @@ def _normalize_grant_id(gid: str) -> str:
     return "".join(ch for ch in str(gid).strip().upper() if ch.isalnum())
 
 
+def _grant_id_substring_match(
+    raw_norm: str, known_norm: dict[str, str]
+) -> str | None:
+    """Bidirectional substring match for grant_id prefix/suffix mismatches.
+
+    Handles cases like UBS 'grant_number=197825' vs FinExtract
+    'equity_awards.grant_id=N0000197825' (numeric core same, alpha-zero
+    prefix differs). Returns the household grant_id whose normalized form
+    contains (or is contained in) raw_norm. Picks the LONGEST match to
+    avoid spurious collisions.
+
+    Skips matches when EITHER side is shorter than 3 chars (too risky).
+    """
+    if not raw_norm or len(raw_norm) < 3:
+        return None
+    best_original: str | None = None
+    best_len = 0
+    for norm, original in known_norm.items():
+        if not norm or len(norm) < 3:
+            continue
+        if raw_norm in norm or norm in raw_norm:
+            score = max(len(norm), len(raw_norm))
+            if score > best_len:
+                best_original = original
+                best_len = score
+    return best_original
+
+
 def apply_option_exercises(
     ytd: YTDSnapshot,
     exercises: OptionExercisesSnapshot,
@@ -1157,6 +1185,11 @@ def apply_option_exercises(
             if norm and norm in known_norm:
                 household_gid = known_norm[norm]
                 remapped[household_gid] = remapped.get(household_gid, 0.0) + spread
+                continue
+            # Tier 3: bidirectional substring match (handles prefix/suffix mismatches)
+            fallback = _grant_id_substring_match(norm, known_norm)
+            if fallback:
+                remapped[fallback] = remapped.get(fallback, 0.0) + spread
             else:
                 # Genuinely unmatched — keep raw key and warn
                 remapped[raw_gid] = remapped.get(raw_gid, 0.0) + spread
