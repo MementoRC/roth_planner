@@ -369,3 +369,103 @@ class TestManualEntryAutoDeselect:
         assert not mock_st.rerun.called, (
             "On failed sync, st.rerun() should not be called"
         )
+
+
+class TestTaxBracketAndSafeHarborSections:
+    """Smoke tests for the new tax-bracket, estimated-tax, and safe-harbor sections."""
+
+    def test_renders_tax_bracket_section(self):
+        """Tax Bracket Position section renders without exception."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=120_000.0, ltcg_ytd=15_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        # At least one subheader call with bracket-related text
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Tax Bracket" in s for s in subheader_calls), (
+            f"Expected 'Tax Bracket Position' subheader; got: {subheader_calls}"
+        )
+
+    def test_renders_estimated_tax_section(self):
+        """Estimated YTD Federal Tax section renders without exception."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=20_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Federal Tax" in s for s in subheader_calls), (
+            f"Expected 'Estimated YTD Federal Tax' subheader; got: {subheader_calls}"
+        )
+
+    def test_renders_safe_harbor_warning_when_no_prior_year(self):
+        """Safe-harbor section shows warning when prior year tax is unknown (returns 0)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=180_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch("views.ytd_income.load_prior_year_federal_tax", return_value=0.0),
+        ):
+            ytd_income_mod.render(hh)
+
+        # st.warning should have been called (prior year unknown)
+        assert mock_st.warning.called, "Expected st.warning() when prior year tax is unknown"
+        warning_msgs = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.warning.call_args_list
+        ]
+        assert any("Prior year tax unknown" in m for m in warning_msgs), (
+            f"Expected 'Prior year tax unknown' warning; got: {warning_msgs}"
+        )
+
+    def test_renders_capital_gains_section_with_events(self):
+        """Realized Capital Gains section renders breakdown when gain_events present."""
+        from models.ytd_income import RealizedGainEvent
+
+        hh = _stub_hh()
+        events = [
+            RealizedGainEvent(
+                date="2026-03-15",
+                description="AAPL sale",
+                proceeds=15_000.0,
+                cost_basis=10_000.0,
+                holding_period="long",
+                account_name="Brokerage",
+            )
+        ]
+        ytd = YTDSnapshot(ltcg_ytd=5_000.0, gain_events=events)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Capital Gains" in s for s in subheader_calls), (
+            f"Expected 'Realized Capital Gains' subheader; got: {subheader_calls}"
+        )
