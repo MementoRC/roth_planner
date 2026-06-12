@@ -193,6 +193,9 @@ def render(hh: Household):
                 "Subtracted from planned option income in the conversion-room calc."
             ),
         )
+        captured = st.session_state.get("exercises_captured_at", "")
+        if captured:
+            st.caption(f"Exercises last captured: {captured}")
         by_grant: dict[str, float] = getattr(ytd, "_option_exercises_by_grant", {}) or {}
         if by_grant:
             with st.expander("Per-grant breakdown"):
