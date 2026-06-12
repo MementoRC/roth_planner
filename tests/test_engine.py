@@ -1330,8 +1330,8 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.planned_option_income == approx(192_000)
         assert result.realized_option_income_ytd == approx(0.0)
 
-    def test_per_grant_subtract_when_matched(self):
-        """Per-grant lookup used when grant_id matches by_grant key."""
+    def test_total_subtract_uses_nqo_exercise_ytd(self):
+        """Total realized always comes from nqo_exercise_ytd (not per-grant)."""
         from engine.headroom import compute_headroom
         from models.ytd_income import YTDSnapshot
 
@@ -1340,15 +1340,15 @@ class TestHeadroomOptionIncomeSubtract:
             grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
             txn_price_now=200.0,
         )
-        # planned option income = (200 - 104) * 2000 = 192_000; realized per-grant = 80_000
+        # planned option income = (200 - 104) * 2000 = 192_000; realized total = 80_000
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
         ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
         result = compute_headroom(hh, ytd, early_exercise=True)
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
-    def test_per_grant_subtract_unmatched_falls_back_to_total(self):
-        """Falls back to total when by_grant has different grant_id."""
+    def test_total_subtract_ignores_by_grant_contents(self):
+        """by_grant breakdown does not affect headroom math; only nqo_exercise_ytd does."""
         from engine.headroom import compute_headroom
         from models.ytd_income import YTDSnapshot
 
@@ -1358,14 +1358,14 @@ class TestHeadroomOptionIncomeSubtract:
             txn_price_now=200.0,
         )
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
-        # by_grant has a different id — no match → fall back to nqo_exercise_ytd total
+        # by_grant has a different id — with total subtract, headroom only sees nqo_exercise_ytd
         ytd._option_exercises_by_grant = {"GR-OTHER": 80_000}  # noqa: SLF001
         result = compute_headroom(hh, ytd, early_exercise=True)
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
-    def test_per_grant_subtract_grant_id_empty_falls_back(self):
-        """Falls back to total when StockGrant.grant_id is empty (legacy fixture)."""
+    def test_total_subtract_grant_id_empty_uses_total(self):
+        """Total subtract applies even when StockGrant.grant_id is empty (legacy fixture)."""
         from engine.headroom import compute_headroom
         from models.ytd_income import YTDSnapshot
 
@@ -1377,7 +1377,7 @@ class TestHeadroomOptionIncomeSubtract:
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
         ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
         result = compute_headroom(hh, ytd, early_exercise=True)
-        # grant_id="" → condition fails → fall back to ytd.nqo_exercise_ytd
+        # Total subtract: realized = ytd.nqo_exercise_ytd regardless of grant_id
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
@@ -2661,6 +2661,32 @@ class TestOptionExercisesFetchAndApply:
         assert result is not None
         assert result.nqo_exercise_ytd == 0.0
 
+    def test_sale_info_by_grant_populated_from_rows(self):
+        """_parse_option_exercises_rows populates sale_info_by_grant with grant_year/strike/shares_ytd."""
+        from engine.portfolio_sync import _parse_option_exercises_rows
+
+        rows = [
+            {
+                "grant_number": "G2019",
+                "grant_price": 104.0,
+                "execution_quantity": 500.0,
+                "gross_proceeds": 100_000.0,
+                "grant_date": "2019-03-10",
+            },
+            {
+                "grant_number": "G2019",
+                "grant_price": 104.0,
+                "execution_quantity": 300.0,
+                "gross_proceeds": 60_000.0,
+                "grant_date": "2019-03-10",
+            },
+        ]
+        snap = _parse_option_exercises_rows(rows)
+        info = snap.sale_info_by_grant.get("G2019", {})
+        assert info.get("grant_year") == 2019
+        assert abs(info.get("strike", 0) - 104.0) < 0.01
+        assert info.get("shares_ytd") == 800  # 500 + 300
+
 
 class TestEquitySalesCacheConsumer:
     """Verify _parse_equity_sales_lots + fetch_option_exercises_with_cache."""
@@ -2820,6 +2846,32 @@ class TestEquitySalesCacheConsumer:
         # sources may be absent or present but must not contain order_detail_summary
         sources = result.get("sources", {})
         assert "order_detail_summary" not in sources
+
+    def test_sale_info_by_grant_populated_per_lot(self):
+        """sale_info_by_grant carries grant_year, strike, and cumulative shares_ytd per grant."""
+        from engine.portfolio_sync import _parse_equity_sales_lots
+
+        lots = [
+            {
+                "grant_number": "N0000197825",
+                "grant_price": 169.0,
+                "execution_quantity": "100",
+                "gross_proceeds": 24400.0,
+                "grant_date": "2021-01-15",
+            },
+            {
+                "grant_number": "N0000197825",
+                "grant_price": 169.0,
+                "execution_quantity": "50",
+                "gross_proceeds": 12200.0,
+                "grant_date": "2021-01-15",
+            },
+        ]
+        snap = _parse_equity_sales_lots(lots)
+        info = snap.sale_info_by_grant.get("N0000197825", {})
+        assert info.get("grant_year") == 2021
+        assert abs(info.get("strike", 0) - 169.0) < 0.01
+        assert info.get("shares_ytd") == 150  # 100 + 50
 
 
 class TestInheritedIRA:
@@ -3391,6 +3443,130 @@ class TestFetchMagi:
 
         monkeypatch.setattr(req, "get", lambda *a, **kw: _FakeList())
         assert fetch_magi(2024) is None
+
+
+class TestFetchMultiInstitutionShape:
+    """Verify fetch_tax_return and fetch_ytd_snapshot handle multi-institution response shape."""
+
+    def _fake_resp(self, status_code: int, payload: dict):
+        class _Resp:
+            def __init__(self, code, data):
+                self.status_code = code
+                self._data = data
+
+            def json(self):
+                return self._data
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise Exception(f"HTTP {self.status_code}")
+
+        return _Resp(status_code, payload)
+
+    def test_fetch_tax_return_multi_institution_income(self, monkeypatch):
+        """fetch_tax_return income endpoint: multi-institution shape rows are flattened."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_tax_return
+
+        income_payload = {
+            "institutions": {
+                "turbotax": {
+                    "rows": [{"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}]
+                }
+            }
+        }
+        deduction_payload = {"rows": []}
+        responses = [
+            self._fake_resp(200, {}),  # /status check
+            self._fake_resp(200, income_payload),
+            self._fake_resp(200, deduction_payload),
+        ]
+        call_iter = iter(responses)
+        monkeypatch.setattr(req, "get", lambda *a, **kw: next(call_iter))
+        snap = fetch_tax_return()
+        assert snap.wages == 120_000
+
+    def test_fetch_tax_return_multi_institution_deductions(self, monkeypatch):
+        """fetch_tax_return deductions endpoint: multi-institution shape rows are flattened."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_tax_return
+
+        income_payload = {"rows": []}
+        deduction_payload = {
+            "institutions": {
+                "turbotax": {
+                    "rows": [{"form_label": "hsa contribution", "amount_current": 8_300, "amount_prior": 0}]
+                }
+            }
+        }
+        responses = [
+            self._fake_resp(200, {}),  # /status check
+            self._fake_resp(200, income_payload),
+            self._fake_resp(200, deduction_payload),
+        ]
+        call_iter = iter(responses)
+        monkeypatch.setattr(req, "get", lambda *a, **kw: next(call_iter))
+        snap = fetch_tax_return()
+        assert snap.hsa_contributions == 8_300
+
+    def test_fetch_ytd_snapshot_multi_institution_investment_income(self, monkeypatch):
+        """fetch_ytd_snapshot investment_income endpoint: multi-institution shape rows are flattened."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        def _resp_for(url, params=None, **kw):
+            data_type = (params or {}).get("data_type", "")
+            if "status" in url:
+                return self._fake_resp(200, {})
+            if data_type == "realized_gains":
+                return self._fake_resp(200, {"rows": []})
+            if data_type == "investment_income":
+                return self._fake_resp(200, {
+                    "institutions": {
+                        "fidelity": {
+                            "rows": [{"received_dividends": 3_500.0, "received_interest": 200.0}]
+                        }
+                    }
+                })
+            if data_type == "ytd_income":
+                return self._fake_resp(200, {"rows": []})
+            return self._fake_resp(200, {})
+
+        monkeypatch.setattr(req, "get", _resp_for)
+        snap = fetch_ytd_snapshot()
+        assert snap.ordinary_dividends_ytd == 3_500.0
+        assert snap.interest_ytd == 200.0
+
+    def test_fetch_ytd_snapshot_multi_institution_ytd_income(self, monkeypatch):
+        """fetch_ytd_snapshot ytd_income endpoint: multi-institution shape rows are flattened."""
+        import requests as req
+
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        def _resp_for(url, params=None, **kw):
+            data_type = (params or {}).get("data_type", "")
+            if "status" in url:
+                return self._fake_resp(200, {})
+            if data_type == "realized_gains":
+                return self._fake_resp(200, {"rows": []})
+            if data_type == "investment_income":
+                return self._fake_resp(200, {"rows": []})
+            if data_type == "ytd_income":
+                return self._fake_resp(200, {
+                    "institutions": {
+                        "turbotax": {
+                            "rows": [{"label": "wages", "amount": 95_000.0}]
+                        }
+                    }
+                })
+            return self._fake_resp(200, {})
+
+        monkeypatch.setattr(req, "get", _resp_for)
+        snap = fetch_ytd_snapshot()
+        assert snap.wages_ytd == 95_000.0
 
     # ------------------------------------------------------------------
     # apply_magi tests

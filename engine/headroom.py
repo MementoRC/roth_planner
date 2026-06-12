@@ -95,25 +95,10 @@ def compute_headroom(
 
     # --- Planned income (still a choice) ---
     opt = hh.option_income(year, early_exercise)
-    # Per-grant subtract when grant_id is available (post-StockGrant grant_id extension);
-    # falls back to total subtract when grant_id is empty or unmatched (PR2 behavior preserved).
-    by_grant: dict[str, float] = getattr(ytd, "_option_exercises_by_grant", {}) or {}
-    realized = 0.0
-    # Find the grant for this year using the same index math as hh.option_income
-    target_grant = None
-    if early_exercise:
-        idx = year - hh.base_year
-        if 0 <= idx < len(hh.grants):
-            target_grant = hh.grants[idx]
-    else:
-        for g in hh.grants:
-            if g.expiry_year == year:
-                target_grant = g
-                break
-    if target_grant is not None and target_grant.grant_id and target_grant.grant_id in by_grant:
-        realized = by_grant[target_grant.grant_id]
-    else:
-        realized = ytd.nqo_exercise_ytd
+    # Total subtract: all NQO exercises hit the same income buckets (ordinary income, MAGI),
+    # so total realized is the correct lever-reduction regardless of which grant was exercised.
+    # Per-grant attribution is useful for the YTD display table but NOT for headroom math.
+    realized = ytd.nqo_exercise_ytd
     result.realized_option_income_ytd = realized
     result.planned_option_income = max(0.0, opt - realized)
 

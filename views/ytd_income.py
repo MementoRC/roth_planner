@@ -233,6 +233,7 @@ def render(hh: Household):
                 grants_by_id = {
                     g.grant_id: g for g in (hh.grants or []) if getattr(g, "grant_id", "")
                 }
+                sale_info_map: dict = getattr(ytd, "_option_exercises_sale_info", {}) or {}
                 for grant_id, spread in by_grant.items():
                     g = grants_by_id.get(grant_id)
                     if g:
@@ -245,20 +246,21 @@ def render(hh: Household):
                             "Expiry": str(g.expiry_year),
                         })
                     else:
+                        sale_info = sale_info_map.get(grant_id, {})
                         rows.append({
                             "Grant #": grant_id,
                             "YTD spread": f"${spread:,.0f}",
-                            "Year": "—",
-                            "Strike": "—",
-                            "Shares": "—",
+                            "Year": str(sale_info.get("grant_year") or "—"),
+                            "Strike": f"${sale_info['strike']:.2f}" if sale_info.get("strike") else "—",
+                            "Shares": str(sale_info.get("shares_ytd") or "—"),
                             "Expiry": "—",
                         })
                 st.dataframe(rows, width="stretch", hide_index=True)
-                unmatched = sum(1 for r in rows if r["Year"] == "—")
+                unmatched = sum(1 for r in rows if r["Expiry"] == "—")
                 if unmatched:
                     st.caption(
-                        f"⚠️ {unmatched} grant(s) could not be matched to household StockGrant by grant_id. "
-                        "Sync portfolio to refresh equity_awards from FinExtract."
+                        f"⚠️ {unmatched} grant(s) shown from sale data only; not joined to household "
+                        "StockGrant (check .user_defaults.json grant strikes)."
                     )
 
     if headroom.planned_option_income > 0:
