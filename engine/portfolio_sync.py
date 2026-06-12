@@ -1037,13 +1037,16 @@ def fetch_option_exercises() -> OptionExercisesSnapshot:
 
     Returns OptionExercisesSnapshot with server_available=False on transport error.
     404 (no batches yet) returns server_available=True with empty fields.
-    Uses _flatten_query_rows since both shapes {rows:[...]} and {institutions:{...}}
-    are possible.
+
+    Requests mode=history to aggregate ALL scrape batches. Each UBS order-detail-modal
+    scrape = one batch; without mode=history only the latest batch is returned.
+    Falls back to legacy _flatten_query_rows when the server does not return batches
+    (older FinExtract builds that do not honour mode=history).
     """
     try:
         resp = requests.get(
             f"{BASE_URL}/query/equity_compensation",
-            params={"data_type": "order_detail_summary"},
+            params={"data_type": "order_detail_summary", "mode": "history"},
             headers=_headers(),
             timeout=5,
         )
@@ -1052,8 +1055,23 @@ def fetch_option_exercises() -> OptionExercisesSnapshot:
         if resp.status_code != 200:
             return OptionExercisesSnapshot(server_available=False, error=f"HTTP {resp.status_code}")
         data = resp.json()
+        # Prefer mode=history shape: {"batches": [{batch_id, captured_at, rows: [...]}, ...]}
+        batches = data.get("batches") if isinstance(data, dict) else None
+        if isinstance(batches, list) and batches:
+            all_rows: list[dict[str, Any]] = []
+            latest_captured_at = ""
+            for batch in batches:
+                if not isinstance(batch, dict):
+                    continue
+                batch_rows = batch.get("rows") or []
+                if isinstance(batch_rows, list):
+                    all_rows.extend(r for r in batch_rows if isinstance(r, dict))
+                ts = batch.get("captured_at") or ""
+                if isinstance(ts, str) and ts > latest_captured_at:
+                    latest_captured_at = ts
+            return _parse_option_exercises_rows(all_rows, captured_at=latest_captured_at)
+        # Fallback: legacy single-batch shape ({rows:[...]} or {institutions:{...}})
         rows = _flatten_query_rows(data)
-        # captured_at: best-effort pull from first institution batch
         captured_at = ""
         if isinstance(data.get("institutions"), dict):
             for batch in data["institutions"].values():
@@ -1098,6 +1116,13 @@ def _parse_option_exercises_rows(
     return snap
 
 
+def _normalize_grant_id(gid: str) -> str:
+    """Normalize grant_id for tolerant matching: strip whitespace, uppercase, drop non-alphanumeric."""
+    if not gid:
+        return ""
+    return "".join(ch for ch in str(gid).strip().upper() if ch.isalnum())
+
+
 def apply_option_exercises(
     ytd: YTDSnapshot,
     exercises: OptionExercisesSnapshot,
@@ -1107,24 +1132,40 @@ def apply_option_exercises(
 
     Sets ytd.nqo_exercise_ytd to the total spread. Stashes per-grant-id breakdown on
     a new attribute ytd._option_exercises_by_grant (consumed by PR2 headroom subtract).
-    Performs grant_id -> EquityGrant join with grant_date-year fallback; unmatched
-    rows still flow into the total but emit a warning.
+    Performs grant_id -> EquityGrant join with normalized tolerant matching; remaps
+    by_grant_id keys to household grant_id format when a normalized match exists.
+    Genuinely unmatched grant_ids emit a warning and retain their raw key.
     """
     if not exercises.server_available:
         return ytd
     ytd.nqo_exercise_ytd = exercises.total_spread
-    # Stash for PR2 consumption; not a dataclass field to avoid breaking PR1 save/load
-    ytd._option_exercises_by_grant = dict(exercises.by_grant_id)  # type: ignore[attr-defined]  # noqa: SLF001 — PR2 will promote to dataclass field
-    # Validate grant_id matches against hh.grants (best-effort warning only)
     if hh and hh.grants:
-        known_ids: set[str] = set()
+        # Build normalized lookup: normalized_id -> household grant_id
+        known_norm: dict[str, str] = {}
         for g in hh.grants:
             gid_val = getattr(g, "grant_id", None)
             if gid_val:
-                known_ids.add(str(gid_val))
-        for gid in exercises.by_grant_id:
-            if known_ids and gid not in known_ids:
-                exercises.warnings.append(f"grant_id {gid} not matched in household grants")
+                known_norm[_normalize_grant_id(str(gid_val))] = str(gid_val)
+        # Remap by_grant_id keys to household format where a normalized match exists
+        remapped: dict[str, float] = {}
+        for raw_gid, spread in exercises.by_grant_id.items():
+            if raw_gid in known_norm.values():
+                # Literal match — use raw_gid as-is
+                remapped[raw_gid] = remapped.get(raw_gid, 0.0) + spread
+                continue
+            norm = _normalize_grant_id(raw_gid)
+            if norm and norm in known_norm:
+                household_gid = known_norm[norm]
+                remapped[household_gid] = remapped.get(household_gid, 0.0) + spread
+            else:
+                # Genuinely unmatched — keep raw key and warn
+                remapped[raw_gid] = remapped.get(raw_gid, 0.0) + spread
+                exercises.warnings.append(
+                    f"grant_id {raw_gid} not matched in household grants (normalized: {norm})"
+                )
+        exercises.by_grant_id = remapped
+    # Stash for PR2 consumption; not a dataclass field to avoid breaking PR1 save/load
+    ytd._option_exercises_by_grant = dict(exercises.by_grant_id)  # type: ignore[attr-defined]  # noqa: SLF001 — PR2 will promote to dataclass field
     return ytd
 
 
