@@ -195,6 +195,10 @@ class TestIRMAA:
 
         The fallback branch is reached because income_year = base_year - 2 is neither
         in prior_year_magi nor in magi_history (which only accumulates during the loop).
+
+        At age 63 (Medicare year) the income-year age is 61; +2 → 63 < 65, so IRMAA = 0
+        even with high MAGI.  IRMAA only applies starting Medicare year when income-year
+        age >= 63 (i.e., ya >= 65 in the projection year).
         """
         from engine.irmaa import irmaa_for_year
 
@@ -203,15 +207,16 @@ class TestIRMAA:
         result = run_scenario(hh, plan, end_age=66)
         yr0 = result.years[0]
 
-        # Compute expected IRMAA using yr0.magi directly (old-engine behaviour)
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_cost, _ = irmaa_for_year(
             yr0.magi,
-            yr0.your_age,
-            yr0.spouse_age,
+            yr0.your_age - 2,
+            yr0.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr0.irmaa_cost == approx(expected_cost)
-        assert yr0.irmaa_cost > 0, "Sanity: high-MAGI year 0 must produce nonzero IRMAA"
+        # age 63 projection year → income-year age 61 → Medicare age 63 < 65 → no IRMAA
+        assert yr0.irmaa_cost == approx(0.0), "Age-63 year-0 must produce zero IRMAA"
 
     def test_irmaa_year_2_uses_year_0_magi(self):
         """Year-2 IRMAA is anchored to year-0 MAGI (2-year lookback), not year-2 MAGI.
@@ -231,18 +236,20 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1)
+        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1).
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
+        # yr2.your_age = 65 → income-year age = 63 → Medicare age = 65 → on Medicare.
         expected_from_yr0, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         # Year-2 MAGI (no conversion) should produce a lower IRMAA
         expected_from_yr2, _ = irmaa_for_year(
             yr2.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0), (
@@ -257,29 +264,33 @@ class TestIRMAA:
 
         When the user provides an actual filed MAGI for the lookback year the
         engine must use it instead of the same-year fallback.
+
+        Use age 65 so income-year age is 63 → Medicare age 65 → on Medicare,
+        making the anchor observable in year-0 output.
         """
         from engine.irmaa import irmaa_for_year
 
         base_year = 2026
         filed_magi = 300_000.0  # above IRMAA Tier 1 ($218K)
 
-        hh_no_anchor = Household(your_age=63, spouse_age=63)
+        hh_no_anchor = Household(your_age=65, spouse_age=65)
         hh_anchored = Household(
-            your_age=63,
-            spouse_age=63,
+            your_age=65,
+            spouse_age=65,
             prior_year_magi={base_year - 2: filed_magi},
         )
         plan = ConversionPlan()  # no conversions — year-0 MAGI low without anchor
-        r_no = run_scenario(hh_no_anchor, plan, end_age=66)
-        r_anc = run_scenario(hh_anchored, plan, end_age=66)
+        r_no = run_scenario(hh_no_anchor, plan, end_age=68)
+        r_anc = run_scenario(hh_anchored, plan, end_age=68)
 
         yr0_no = r_no.years[0]
         yr0_anc = r_anc.years[0]
 
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_anchored, _ = irmaa_for_year(
             filed_magi,
-            yr0_anc.your_age,
-            yr0_anc.spouse_age,
+            yr0_anc.your_age - 2,
+            yr0_anc.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr0_anc.irmaa_cost == approx(expected_anchored), (
@@ -310,15 +321,41 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history
+        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history.
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
         expected_from_yr0_magi, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
             "Year-2 IRMAA must use year-0 projected MAGI, not prior_year_magi"
+        )
+
+    def test_no_irmaa_before_medicare_eligibility(self):
+        """Ages 63/61 must produce zero IRMAA even when MAGI is well above Tier-1 ($218K).
+
+        Regression for B-1/E-1: scenario.py was passing current-year ages (ya, sa) to
+        irmaa_for_year(), which adds +2 internally.  A 63-year-old was treated as 65 →
+        IRMAA charged 2 years before Medicare eligibility.
+
+        With the fix, income-year ages (ya-2, sa-2) are passed; the function adds +2,
+        yielding the correct Medicare-year ages (63, 61) which are both < 65 → no IRMAA.
+        """
+        # MAGI well above 2026 Tier-1 threshold ($218K) — use prior_year_magi anchor
+        # so year-0 IRMAA is driven by that filed value rather than the same-year fallback.
+        hh_anchored = Household(
+            your_age=63,
+            spouse_age=61,
+            prior_year_magi={2024: 280_000.0},  # above $218K Tier-1; lookback for 2026
+        )
+        plan = ConversionPlan()  # no conversion — keep it minimal
+        result = run_scenario(hh_anchored, plan, end_age=65)
+
+        yr0 = result.years[0]  # year 2026, ya=63, sa=61 — both < Medicare eligibility age
+        assert yr0.irmaa_cost == approx(0.0), (
+            "IRMAA must be zero at age 63/61: Medicare eligibility requires age 65"
         )
 
 
@@ -1174,9 +1211,7 @@ class TestYTDSnapshot:
         ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
         result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
         # ltcg_at_15 = min(110_000, 600_050) - max(90_000, 96_700) = 110_000 - 96_700 = 13_300
-        assert result_no_interest.ltcg_tax == approx(
-            (wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
-        )
+        assert result_no_interest.ltcg_tax == approx((wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15)
         assert result_no_interest.ltcg_tax < result.ltcg_tax
 
 
@@ -1380,7 +1415,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         # planned option income = (200 - 104) * 2000 = 192_000; realized total = 80_000
@@ -1397,7 +1434,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
@@ -1525,7 +1564,6 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         # Total subtract: realized = ytd.nqo_exercise_ytd regardless of grant_id
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
-
 
     def test_magi_ytd_includes_tax_exempt_interest(self):
         """Tax-exempt (muni) interest must appear in IRMAA MAGI even though it is federally exempt."""
@@ -2197,16 +2235,12 @@ class TestFetchYTDSnapshotNoDoubleCount:
                            ira_conversions_ytd, ira_distributions_ytd
     """
 
-    def _make_investment_income_response(
-        self, dividends: float, interest: float
-    ) -> dict:
+    def _make_investment_income_response(self, dividends: float, interest: float) -> dict:
         """Simulate /query/brokerage?data_type=investment_income multi-institution shape."""
         return {
             "institutions": {
                 "fidelity": {
-                    "rows": [
-                        {"received_dividends": dividends, "received_interest": interest}
-                    ]
+                    "rows": [{"received_dividends": dividends, "received_interest": interest}]
                 }
             }
         }
@@ -2226,9 +2260,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
         if total_dividends:
             rows.append({"label": "1099-DIV dividends", "amount": total_dividends})
         if qualified_dividends:
-            rows.append(
-                {"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends}
-            )
+            rows.append({"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends})
         if interest:
             rows.append({"label": "Interest income (1099-INT)", "amount": interest})
         if conversions:
@@ -2305,9 +2337,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
                     self._make_investment_income_response(dividends=0.0, interest=3_000.0)
                 )
             if data_type == "ytd_income":
-                return _FakeResp(
-                    self._make_ytd_income_response(interest=3_000.0, wages=80_000.0)
-                )
+                return _FakeResp(self._make_ytd_income_response(interest=3_000.0, wages=80_000.0))
             return _FakeResp({"rows": []})
 
         monkeypatch.setattr(requests, "get", _fake_get)
@@ -2997,7 +3027,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3018,7 +3054,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3037,7 +3079,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=50_000.0,
@@ -3057,7 +3105,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=75_000.0,
@@ -3077,10 +3131,14 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[
-            StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
-            StockGrant(year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"),
-        ])
+        hh = Household(
+            grants=[
+                StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
+                StockGrant(
+                    year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"
+                ),
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=40_000.0,
@@ -3100,7 +3158,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=20_000.0,
@@ -3971,7 +4035,9 @@ class TestFetchMultiInstitutionShape:
         income_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}]
+                    "rows": [
+                        {"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}
+                    ]
                 }
             }
         }
@@ -3996,7 +4062,13 @@ class TestFetchMultiInstitutionShape:
         deduction_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "hsa contribution", "amount_current": 8_300, "amount_prior": 0}]
+                    "rows": [
+                        {
+                            "form_label": "hsa contribution",
+                            "amount_current": 8_300,
+                            "amount_prior": 0,
+                        }
+                    ]
                 }
             }
         }
@@ -4023,13 +4095,18 @@ class TestFetchMultiInstitutionShape:
             if data_type == "realized_gains":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "investment_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "fidelity": {
-                            "rows": [{"received_dividends": 3_500.0, "received_interest": 200.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "fidelity": {
+                                "rows": [
+                                    {"received_dividends": 3_500.0, "received_interest": 200.0}
+                                ]
+                            }
                         }
-                    }
-                })
+                    },
+                )
             if data_type == "ytd_income":
                 return self._fake_resp(200, {"rows": []})
             return self._fake_resp(200, {})
@@ -4054,13 +4131,14 @@ class TestFetchMultiInstitutionShape:
             if data_type == "investment_income":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "ytd_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "turbotax": {
-                            "rows": [{"label": "wages", "amount": 95_000.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "turbotax": {"rows": [{"label": "wages", "amount": 95_000.0}]}
                         }
-                    }
-                })
+                    },
+                )
             return self._fake_resp(200, {})
 
         monkeypatch.setattr(req, "get", _resp_for)
@@ -4509,8 +4587,7 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_end = ltcg_start + max(0.0, realized_gains)
         ltcg_at_15 = max(
             0.0,
-            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         return ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20

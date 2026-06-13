@@ -486,10 +486,12 @@ def run_scenario(
             # Use this year's projected MAGI as a same-year approximation
             # (only reached for yr_idx < 2 when prior_year_magi is empty).
             magi_for_irmaa = yr.magi
+        # irmaa_for_year() adds +2 internally for the 2-year MAGI lookback;
+        # pass income-year ages (ya - 2, sa - 2) so Medicare-year ages come out correctly.
         irmaa_cost, _ = irmaa_for_year(
             magi_for_irmaa,
-            ya,
-            sa,
+            ya - 2,
+            sa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
         )
@@ -570,8 +572,7 @@ def run_scenario(
         _ltcg_end = _ltcg_start + max(0.0, realized_gains)
         _ltcg_at_15 = max(
             0.0,
-            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20
