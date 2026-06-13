@@ -388,9 +388,9 @@ def run_scenario(
         )
         # YTD ordinary income affects SS taxation.
         # Includes wages, NEC, STCG, ordinary dividends, conversions already
-        # done, and IRA distributions — matching total_ordinary_income minus
-        # nqo_exercise_ytd (NQO spread is captured in option_income for the
-        # base year, not double-counted here).
+        # done, IRA distributions, and interest — matching total_ordinary_income
+        # minus nqo_exercise_ytd (NQO spread is captured in option_income for
+        # the base year, not double-counted here).
         if ytd_year is not None:
             other_inc += (
                 ytd_year.wages_ytd
@@ -399,7 +399,12 @@ def run_scenario(
                 + ytd_year.ordinary_dividends_ytd
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
+                + ytd_year.interest_ytd  # C-3: fully taxable ordinary interest (IRC §86(b)(2))
             )
+        # A-3: inherited IRA distributions are AGI → required in provisional income (IRC §86(b)(2))
+        other_inc += yr.your_inherited_distribution + yr.spouse_inherited_distribution
+        # B-3: forecast ordinary brokerage dividends are ordinary income → provisional income
+        other_inc += ord_div_this_year
         yr.taxable_ss_amt = taxable_ss(
             yr.combined_ss, other_inc, filing_status=current_filing_status
         )
