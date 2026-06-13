@@ -486,10 +486,12 @@ def run_scenario(
             # Use this year's projected MAGI as a same-year approximation
             # (only reached for yr_idx < 2 when prior_year_magi is empty).
             magi_for_irmaa = yr.magi
+        # irmaa_for_year() adds +2 internally for the 2-year MAGI lookback;
+        # pass income-year ages (ya - 2, sa - 2) so Medicare-year ages come out correctly.
         irmaa_cost, _ = irmaa_for_year(
             magi_for_irmaa,
-            ya,
-            sa,
+            ya - 2,
+            sa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
         )
