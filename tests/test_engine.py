@@ -1854,6 +1854,28 @@ class TestScenarioWithYTD:
         assert len(loaded.gain_events) == 1
         assert loaded.gain_events[0].gain_loss == approx(200_000)
 
+    def test_ytd_ltcg_bracket_walk_zero_percent_band(self):
+        """YTD LTCG fully inside the 0% band must produce zero LTCG tax.
+
+        Regression for audit A-5/D-5: flat-rate hh.ltcg_rate was applied,
+        yielding $6,000 instead of $0 for a household with taxable_ordinary
+        well below the MFJ 0%-band ceiling (~$96,700 for 2026).
+        """
+        from models.ytd_income import YTDSnapshot
+
+        # Wages $30K → std deduction $30,000 (MFJ both <65) → taxable ~$0,
+        # well below LTCG_THRESHOLDS_MFJ[0] (~$96,700). $40K LTCG stays in 0% band.
+        hh = Household(your_age=61, spouse_age=55, base_year=2026)
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=30_000, ltcg_ytd=40_000)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, "ltcg_bracket", end_age=62, ytd=ytd)
+        yr2026 = result.years[0]
+
+        # taxable_income (ordinary) should be well below ~$96,700 threshold
+        assert yr2026.taxable_income < 96_700
+        # All $40K LTCG sits in the 0% band — no LTCG tax owed
+        assert yr2026.ytd_ltcg_tax == approx(0.0)
+
 
 class TestTaxReturnParsing:
     """Test parsing of TurboTax income/deduction rows from FinExtract."""
