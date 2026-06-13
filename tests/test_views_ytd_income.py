@@ -30,6 +30,7 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
     mock_st.number_input.return_value = 0
     # checkbox returns False so the manual-entry block is skipped
     mock_st.checkbox.return_value = False
+
     # columns returns MagicMocks that support context-manager and attribute access
     def _columns_side_effect(arg):
         n = arg if isinstance(arg, int) else len(arg)
@@ -111,10 +112,16 @@ class TestYtdIncomeNqoDisplay:
         # All rows show Year="—" since grants have no grant_id to match
         dataframe_calls = mock_st.dataframe.call_args_list
         joined_call = next(
-            (c for c in dataframe_calls if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)),
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
             None,
         )
-        assert joined_call is not None, "Expected at least one st.dataframe call with a list of rows"
+        assert joined_call is not None, (
+            "Expected at least one st.dataframe call with a list of rows"
+        )
         rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
         assert all(r["Year"] == "—" for r in rows), (
             f"All rows should be unmatched (Year='—') since grants have no grant_id; got: {rows}"
@@ -138,13 +145,19 @@ class TestYtdIncomeNqoDisplay:
 
         dataframe_calls = mock_st.dataframe.call_args_list
         joined_call = next(
-            (c for c in dataframe_calls if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)),
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
             None,
         )
         assert joined_call is not None, "Expected st.dataframe call with list of rows"
         rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
         assert len(rows) == 1
-        assert rows[0]["Year"] == "2019", f"Matched row should show Year='2019' (str); got: {rows[0]}"
+        assert rows[0]["Year"] == "2019", (
+            f"Matched row should show Year='2019' (str); got: {rows[0]}"
+        )
         assert rows[0]["Strike"] == "$104.00"
         assert rows[0]["Grant #"] == "GR-2019"
 
@@ -166,7 +179,11 @@ class TestYtdIncomeNqoDisplay:
 
         dataframe_calls = mock_st.dataframe.call_args_list
         joined_call = next(
-            (c for c in dataframe_calls if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)),
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
             None,
         )
         assert joined_call is not None
@@ -174,9 +191,15 @@ class TestYtdIncomeNqoDisplay:
         assert len(rows) == 1
         row = rows[0]
         # Verify Year, Shares, Expiry are all strings (not int)
-        assert isinstance(row["Year"], str), f"Year should be str, got {type(row['Year'])}: {row['Year']}"
-        assert isinstance(row["Shares"], str), f"Shares should be str, got {type(row['Shares'])}: {row['Shares']}"
-        assert isinstance(row["Expiry"], str), f"Expiry should be str, got {type(row['Expiry'])}: {row['Expiry']}"
+        assert isinstance(row["Year"], str), (
+            f"Year should be str, got {type(row['Year'])}: {row['Year']}"
+        )
+        assert isinstance(row["Shares"], str), (
+            f"Shares should be str, got {type(row['Shares'])}: {row['Shares']}"
+        )
+        assert isinstance(row["Expiry"], str), (
+            f"Expiry should be str, got {type(row['Expiry'])}: {row['Expiry']}"
+        )
         assert row["Year"] == "2019"
         assert row["Shares"] == "1000"
         assert row["Expiry"] == "2029"
@@ -316,16 +339,15 @@ class TestManualEntryAutoDeselect:
         # Assert: session_state["ytd_manual_entry"] was set to False
         # MagicMock tracks __setitem__ calls automatically
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
             if call[0][0] == "ytd_manual_entry"
         ]
         assert any(call[0][1] is False for call in setitem_calls), (
             f"Expected ytd_manual_entry set to False; got calls: {setitem_calls}"
         )
         # Assert: rerun was called
-        assert mock_st.rerun.called, (
-            "Expected st.rerun() to be called on successful sync"
-        )
+        assert mock_st.rerun.called, "Expected st.rerun() to be called on successful sync"
 
     def test_failed_sync_does_not_clear_manual_entry(self):
         """On failed YTD sync, manual entry remains unchanged and page does not rerun."""
@@ -359,16 +381,13 @@ class TestManualEntryAutoDeselect:
 
         # Assert: ytd_manual_entry was NOT set to False in the success branch
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
             if call[0][0] == "ytd_manual_entry" and call[0][1] is False
         ]
-        assert not setitem_calls, (
-            "On failed sync, ytd_manual_entry should not be set to False"
-        )
+        assert not setitem_calls, "On failed sync, ytd_manual_entry should not be set to False"
         # Assert: rerun was NOT called
-        assert not mock_st.rerun.called, (
-            "On failed sync, st.rerun() should not be called"
-        )
+        assert not mock_st.rerun.called, "On failed sync, st.rerun() should not be called"
 
 
 class TestTaxBracketAndSafeHarborSections:

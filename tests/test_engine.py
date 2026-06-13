@@ -5541,8 +5541,8 @@ class TestSSProvisionalIncomeRegression:
         from engine.tax import taxable_ss
 
         combined_ss = 30_000.0
-        base_other = 25_000.0   # provisional = 40K → partial-tax tier-1
-        ord_div = 6_000.0       # provisional with div = 46K → partial-tax tier-2
+        base_other = 25_000.0  # provisional = 40K → partial-tax tier-1
+        ord_div = 6_000.0  # provisional with div = 46K → partial-tax tier-2
 
         taxable_without = taxable_ss(combined_ss, base_other)
         taxable_with = taxable_ss(combined_ss, base_other + ord_div)
