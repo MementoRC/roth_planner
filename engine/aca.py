@@ -28,13 +28,14 @@ ACA_ENHANCED_SCHEDULE = [
 ]
 
 # Pre-ARP schedule (reverted Jan 1, 2026 — subsidies only up to 400% FPL)
+# Rates per IRS Rev. Proc. 2025-32 for tax year 2026.
 ACA_PRE_ARP_SCHEDULE = [
-    (1.33, 0.021),  # Below 133% FPL: 2.1%
-    (1.50, 0.040),  # 133-150%: 4.0%
-    (2.00, 0.064),  # 150-200%: 6.4%
-    (2.50, 0.081),  # 200-250%: 8.1%
-    (3.00, 0.096),  # 250-300%: 9.6%
-    (4.00, 0.096),  # 300-400%: 9.6% (capped)
+    (1.33, 0.021),   # Below 133% FPL: 2.1%
+    (1.50, 0.040),   # 133-150%: 4.0%
+    (2.00, 0.064),   # 150-200%: 6.4%
+    (2.50, 0.081),   # 200-250%: 8.1%
+    (3.00, 0.096),   # 250-300%: 9.6%
+    (4.00, 0.0978),  # 300-400%: 9.78% per Rev. Proc. 2025-32
 ]
 
 # Approximate annual benchmark silver plan premium for couple age ~60-64
@@ -62,7 +63,10 @@ def aca_premium_cap_rate(
     for upper_fpl, cap_rate in _aca_cap_schedule(enhanced_subsidies_active):
         if fpl_ratio <= upper_fpl:
             return cap_rate
-    return 0.085
+    # Unreachable for pre-ARP: aca_subsidy() enforces the 400% FPL cliff before
+    # calling this function, so fpl_ratio never exceeds the schedule's final entry.
+    # For enhanced schedule the final entry is (inf, 0.085) which always matches.
+    raise AssertionError(f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}")
 
 
 def aca_subsidy(
