@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from models.household import Household
     from models.ytd_income import YTDSnapshot
 
-# 2025 MFJ brackets (TCJA/OBBBA permanent)
+# 2026 MFJ brackets (TCJA/OBBBA permanent — IRS Rev. Proc. 2025-32)
 # (upper_bound_of_taxable_income, marginal_rate)
 BRACKETS_MFJ = [
     (24_800, 0.10),
@@ -21,18 +21,18 @@ BRACKETS_MFJ = [
     (float("inf"), 0.37),
 ]
 
-# 2025 Single brackets (for surviving spouse analysis)
+# 2026 Single brackets (for surviving spouse analysis — IRS Rev. Proc. 2025-32)
 BRACKETS_SINGLE = [
     (12_400, 0.10),
     (50_400, 0.12),
     (105_700, 0.22),
-    (201_750, 0.24),
-    (256_200, 0.32),
-    (384_350, 0.35),
+    (201_775, 0.24),
+    (256_225, 0.32),
+    (640_600, 0.35),
     (float("inf"), 0.37),
 ]
 
-# Standard deduction — Single
+# Standard deduction — Single (2026 — IRS Rev. Proc. 2025-32)
 STD_DEDUCTION_SINGLE = 16_100
 SENIOR_EXTRA_SINGLE = 1_850  # single filer 65+
 
@@ -62,7 +62,7 @@ LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
 # OBBBA did NOT modify LTCG thresholds; they follow the inflation-adjusted Rev. Proc. schedule.
 LTCG_THRESHOLDS_MFJ = (96_700, 600_050)
 
-# LTCG bracket thresholds for Single filer (taxable income upper bounds)
+# LTCG bracket thresholds for Single filer (taxable income upper bounds, 2026 — IRS Rev. Proc. 2025-32)
 # 0% up to $48,350; 15% up to $533,400; 20% above
 LTCG_THRESHOLDS_SINGLE = (48_350, 533_400)
 
