@@ -2837,6 +2837,165 @@ class TestDividendsRollupFetchAndMap:
         assert holding.dividends_by_year == {"2024": 423.5}
 
 
+class TestDeriveTtmDividendsMostRecentYear:
+    """Regression for audit E-5: _derive_ttm_dividends must use the most-recent
+    prior year's value, not the highest value across all years."""
+
+    def test_derive_ttm_dividends_returns_most_recent_year(self):
+        """Declining dividend stream: returns 2024 value (1_400), not max (2_400)."""
+        from engine.portfolio_sync import Holding, _derive_ttm_dividends
+
+        h = Holding(
+            symbol="T",
+            description="AT&T",
+            quantity=100.0,
+            market_value=10_000.0,
+            account_name="Brokerage",
+            asset_class="equity",
+            dividends_by_year={"2022": 2_400.0, "2023": 1_800.0, "2024": 1_400.0},
+            dividends_window=None,
+        )
+        # Buggy code returned max(values) = 2_400; correct is prior[max(keys)] = 1_400
+        result = _derive_ttm_dividends(h)
+        assert result == 1_400.0, f"Expected 1400.0 (most recent year), got {result}"
+
+    def test_derive_ttm_dividends_empty_prior_returns_zero(self):
+        """No prior-year data at all → 0.0 (unchanged behaviour)."""
+        from engine.portfolio_sync import Holding, _derive_ttm_dividends
+
+        h = Holding(
+            symbol="T",
+            description="AT&T",
+            quantity=100.0,
+            market_value=10_000.0,
+            account_name="Brokerage",
+            asset_class="equity",
+            dividends_by_year={},
+            dividends_window=None,
+        )
+        assert _derive_ttm_dividends(h) == 0.0
+
+
+class TestFetchYTDSnapshotOrdinaryDivFallback:
+    """Regression for audit D-4: ordinary_dividends_ytd must be populated from
+    1099-DIV box 1a when the investment_income endpoint is unavailable."""
+
+    def test_fetch_ytd_snapshot_fallback_total_dividends(self, monkeypatch):
+        """investment_income unavailable → ordinary_dividends_ytd = total_div - qual_div."""
+        import warnings
+
+        import requests
+
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            if data_type == "investment_income":
+                # Simulate unavailable endpoint
+                raise requests.exceptions.ConnectionError("refused")
+            if data_type == "ytd_income":
+                return _FakeResp(
+                    {
+                        "rows": [
+                            {"label": "1099-DIV dividends", "amount": 8_000.0},
+                            {
+                                "label": "Qualified dividends (1099-DIV)",
+                                "amount": 3_000.0,
+                            },
+                        ]
+                    }
+                )
+            # All other endpoints (realized_gains, etc.) raise to skip cleanly
+            raise requests.exceptions.ConnectionError("refused")
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ytd = fetch_ytd_snapshot()
+
+        assert ytd.ordinary_dividends_ytd == 5_000.0  # 8_000 - 3_000
+        assert ytd.qualified_dividends_ytd == 3_000.0
+        # Fallback warning must be emitted
+        messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
+        assert any("1099-DIV box 1a" in m for m in messages)
+
+    def test_fetch_ytd_snapshot_no_fallback_when_investment_income_available(self, monkeypatch):
+        """investment_income endpoint succeeds → ordinary_dividends_ytd is NOT
+        overwritten by the 1099-DIV box 1a fallback."""
+        import warnings
+
+        import requests
+
+        from engine.portfolio_sync import fetch_ytd_snapshot
+
+        class _FakeResp:
+            status_code = 200
+
+            def __init__(self, data: dict) -> None:
+                self._data = data
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return self._data
+
+        def _fake_get(url: str, params: dict | None = None, **kwargs) -> _FakeResp:
+            data_type = (params or {}).get("data_type", "")
+            if data_type == "investment_income":
+                return _FakeResp(
+                    {
+                        "institutions": {
+                            "fidelity": {
+                                "rows": [
+                                    {
+                                        "received_dividends": 6_000.0,
+                                        "received_interest": 0.0,
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                )
+            if data_type == "ytd_income":
+                return _FakeResp(
+                    {
+                        "rows": [
+                            {"label": "1099-DIV dividends", "amount": 8_000.0},
+                            {
+                                "label": "Qualified dividends (1099-DIV)",
+                                "amount": 3_000.0,
+                            },
+                        ]
+                    }
+                )
+            raise requests.exceptions.ConnectionError("refused")
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ytd = fetch_ytd_snapshot()
+
+        # investment_income was available → its value wins; no fallback applied
+        assert ytd.ordinary_dividends_ytd == 6_000.0
+        messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
+        assert not any("1099-DIV box 1a" in m for m in messages)
+
+
 class TestOptionExercisesFetchAndApply:
     """Verify fetch_option_exercises + apply_option_exercises end-to-end."""
 
