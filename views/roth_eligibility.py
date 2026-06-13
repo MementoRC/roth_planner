@@ -12,21 +12,22 @@ import streamlit as st
 
 from models.household import Household
 
-# --- 2025 limits ---
-CONTRIB_LIMIT = 7_000
-CATCHUP_50 = 1_000  # additional if age 50+
+# --- 2026 limits ---
+# Source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025)
+CONTRIB_LIMIT = 7_500
+CATCHUP_50 = 1_100  # additional if age 50+; total 50+ = $8,600
 
-# Roth MAGI phase-out (2025)
+# Roth MAGI phase-out (2026)
 ROTH_PHASEOUT = {
-    "MFJ": (236_000, 246_000),
-    "Single": (150_000, 165_000),
+    "MFJ": (242_000, 252_000),
+    "Single": (153_000, 168_000),
 }
 
-# Traditional IRA deduction phase-out when covered by workplace plan (2025)
+# Traditional IRA deduction phase-out when covered by workplace plan (2026)
 TRAD_DEDUCTION_PHASEOUT = {
-    "MFJ_active": (126_000, 146_000),  # you have a workplace plan
-    "MFJ_spouse_only": (236_000, 246_000),  # only spouse has workplace plan
-    "Single": (79_000, 99_000),
+    "MFJ_active": (129_000, 149_000),  # you have a workplace plan
+    "MFJ_spouse_only": (242_000, 252_000),  # only spouse has workplace plan
+    "Single": (81_000, 91_000),
 }
 
 
@@ -307,7 +308,7 @@ def render(hh: Household):
         remaining = max(0, limit - trad_contrib)
 
         st.write(
-            f"**IRA contribution limit**: ${limit:,} ({'includes $1,000 catch-up' if age >= 50 else 'under 50'})"
+            f"**IRA contribution limit**: ${limit:,} ({'includes $1,100 catch-up' if age >= 50 else 'under 50'})"
         )
         if trad_contrib > 0:
             st.write(
