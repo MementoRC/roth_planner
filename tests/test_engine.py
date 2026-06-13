@@ -195,6 +195,10 @@ class TestIRMAA:
 
         The fallback branch is reached because income_year = base_year - 2 is neither
         in prior_year_magi nor in magi_history (which only accumulates during the loop).
+
+        At age 63 (Medicare year) the income-year age is 61; +2 → 63 < 65, so IRMAA = 0
+        even with high MAGI.  IRMAA only applies starting Medicare year when income-year
+        age >= 63 (i.e., ya >= 65 in the projection year).
         """
         from engine.irmaa import irmaa_for_year
 
@@ -203,15 +207,16 @@ class TestIRMAA:
         result = run_scenario(hh, plan, end_age=66)
         yr0 = result.years[0]
 
-        # Compute expected IRMAA using yr0.magi directly (old-engine behaviour)
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_cost, _ = irmaa_for_year(
             yr0.magi,
-            yr0.your_age,
-            yr0.spouse_age,
+            yr0.your_age - 2,
+            yr0.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr0.irmaa_cost == approx(expected_cost)
-        assert yr0.irmaa_cost > 0, "Sanity: high-MAGI year 0 must produce nonzero IRMAA"
+        # age 63 projection year → income-year age 61 → Medicare age 63 < 65 → no IRMAA
+        assert yr0.irmaa_cost == approx(0.0), "Age-63 year-0 must produce zero IRMAA"
 
     def test_irmaa_year_2_uses_year_0_magi(self):
         """Year-2 IRMAA is anchored to year-0 MAGI (2-year lookback), not year-2 MAGI.
@@ -231,18 +236,20 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1)
+        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1).
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
+        # yr2.your_age = 65 → income-year age = 63 → Medicare age = 65 → on Medicare.
         expected_from_yr0, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         # Year-2 MAGI (no conversion) should produce a lower IRMAA
         expected_from_yr2, _ = irmaa_for_year(
             yr2.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0), (
@@ -257,29 +264,33 @@ class TestIRMAA:
 
         When the user provides an actual filed MAGI for the lookback year the
         engine must use it instead of the same-year fallback.
+
+        Use age 65 so income-year age is 63 → Medicare age 65 → on Medicare,
+        making the anchor observable in year-0 output.
         """
         from engine.irmaa import irmaa_for_year
 
         base_year = 2026
         filed_magi = 300_000.0  # above IRMAA Tier 1 ($218K)
 
-        hh_no_anchor = Household(your_age=63, spouse_age=63)
+        hh_no_anchor = Household(your_age=65, spouse_age=65)
         hh_anchored = Household(
-            your_age=63,
-            spouse_age=63,
+            your_age=65,
+            spouse_age=65,
             prior_year_magi={base_year - 2: filed_magi},
         )
         plan = ConversionPlan()  # no conversions — year-0 MAGI low without anchor
-        r_no = run_scenario(hh_no_anchor, plan, end_age=66)
-        r_anc = run_scenario(hh_anchored, plan, end_age=66)
+        r_no = run_scenario(hh_no_anchor, plan, end_age=68)
+        r_anc = run_scenario(hh_anchored, plan, end_age=68)
 
         yr0_no = r_no.years[0]
         yr0_anc = r_anc.years[0]
 
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_anchored, _ = irmaa_for_year(
             filed_magi,
-            yr0_anc.your_age,
-            yr0_anc.spouse_age,
+            yr0_anc.your_age - 2,
+            yr0_anc.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr0_anc.irmaa_cost == approx(expected_anchored), (
@@ -310,15 +321,41 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history
+        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history.
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
         expected_from_yr0_magi, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
             "Year-2 IRMAA must use year-0 projected MAGI, not prior_year_magi"
+        )
+
+    def test_no_irmaa_before_medicare_eligibility(self):
+        """Ages 63/61 must produce zero IRMAA even when MAGI is well above Tier-1 ($218K).
+
+        Regression for B-1/E-1: scenario.py was passing current-year ages (ya, sa) to
+        irmaa_for_year(), which adds +2 internally.  A 63-year-old was treated as 65 →
+        IRMAA charged 2 years before Medicare eligibility.
+
+        With the fix, income-year ages (ya-2, sa-2) are passed; the function adds +2,
+        yielding the correct Medicare-year ages (63, 61) which are both < 65 → no IRMAA.
+        """
+        # MAGI well above 2026 Tier-1 threshold ($218K) — use prior_year_magi anchor
+        # so year-0 IRMAA is driven by that filed value rather than the same-year fallback.
+        hh_anchored = Household(
+            your_age=63,
+            spouse_age=61,
+            prior_year_magi={2024: 280_000.0},  # above $218K Tier-1; lookback for 2026
+        )
+        plan = ConversionPlan()  # no conversion — keep it minimal
+        result = run_scenario(hh_anchored, plan, end_age=65)
+
+        yr0 = result.years[0]  # year 2026, ya=63, sa=61 — both < Medicare eligibility age
+        assert yr0.irmaa_cost == approx(0.0), (
+            "IRMAA must be zero at age 63/61: Medicare eligibility requires age 65"
         )
 
 
@@ -1144,37 +1181,53 @@ class TestYTDSnapshot:
         assert ytd.total_ordinary_income == approx(53_000)
 
     def test_ltcg_stack_walk_uses_interest_inclusive_base(self):
-        """Regression: interest_ytd shifts the LTCG bracket boundary.
+        """Regression: interest_ytd shifts the LTCG bracket boundary AFTER std-ded subtraction.
 
-        With wages=90_000 and interest=10_000, ordinary base=100_000 — which is
-        above the 0%-LTCG threshold (96_700). Any LTCG should therefore be taxed
-        at 15%. Without interest in the base, ordinary=90_000 < 96_700, and $6,700
-        of LTCG would incorrectly land in the 0%-rate band.
+        The fix to estimate_ytd_federal_tax subtracts the standard deduction from ordinary
+        income before stack-walking LTCG brackets.  interest_ytd must therefore be included
+        in the pre-deduction ordinary base so it survives the subtraction and still pushes
+        taxable_ordinary above the 0%-LTCG threshold.
+
+        Arithmetic (both spouses <65, STD_DEDUCTION_MFJ=32_200, LTCG_THRESHOLDS_MFJ[0]=96_700):
+          wages chosen so that:
+            without interest: taxable_ordinary = wages - STD_DEDUCTION_MFJ = threshold - 5_000
+            with    interest: taxable_ordinary = wages + interest - STD_DEDUCTION_MFJ = threshold + 5_000
+
+          With interest: ltcg_start=threshold+5_000, ltcg_end=threshold+25_000
+            ltcg_at_15 = (threshold+25_000) - (threshold+5_000) = 20_000  → tax = 3_000
+          Without interest: ltcg_start=threshold-5_000, ltcg_end=threshold+15_000
+            ltcg_at_15 = (threshold+15_000) - threshold = 15_000  → tax = 2_250
+
+        The interest is the discriminator: it pushes more LTCG out of the 0%-band.
         """
-        from engine.tax import LTCG_THRESHOLDS_MFJ, estimate_ytd_federal_tax
+        from engine.tax import LTCG_THRESHOLDS_MFJ, STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.household import Household
         from models.ytd_income import YTDSnapshot
 
         hh = Household(your_age=61, spouse_age=55, your_ira=500_000, spouse_ira=500_000)
 
-        # ordinary base = 90_000 + 10_000 = 100_000 > LTCG 0%-threshold (96_700)
-        # → all 20_000 LTCG should be taxed at 15%
-        wages = 90_000.0
+        # wages chosen so taxable_ordinary without interest = threshold - 5_000
+        wages = STD_DEDUCTION_MFJ + LTCG_THRESHOLDS_MFJ[0] - 5_000
         interest = 10_000.0
         ltcg = 20_000.0
+
+        # --- with interest ---
+        # taxable_ordinary = wages + interest - STD_DEDUCTION_MFJ = LTCG_THRESHOLDS_MFJ[0] + 5_000
+        # ltcg_start = threshold+5_000, ltcg_end = threshold+25_000
+        # ltcg_at_15 = 20_000 → tax = 3_000
         ytd = YTDSnapshot(wages_ytd=wages, interest_ytd=interest, ltcg_ytd=ltcg)
-
         result = estimate_ytd_federal_tax(ytd, hh)
-
-        # ltcg_start = 100_000, ltcg_end = 120_000
-        # ltcg_at_15 = min(120_000, 600_050) - max(100_000, 96_700) = 120_000 - 100_000 = 20_000
         assert result.ltcg_tax == approx(ltcg * 0.15)
 
-        # Sanity: without interest, ordinary=90_000 < threshold → part lands in 0%-band
+        # --- anchor: without interest ---
+        # taxable_ordinary = wages - STD_DEDUCTION_MFJ = LTCG_THRESHOLDS_MFJ[0] - 5_000
+        # ltcg_start = threshold-5_000, ltcg_end = threshold+15_000
+        # ltcg_at_15 = (threshold+15_000) - threshold = 15_000 → tax = 2_250
         ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
         result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
-        # ltcg_at_15 = min(110_000, 600_050) - max(90_000, 96_700) = 110_000 - 96_700 = 13_300
-        assert result_no_interest.ltcg_tax == approx((wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15)
+        taxable_ord_no_int = wages - STD_DEDUCTION_MFJ
+        expected_ltcg_at_15_no_int = (taxable_ord_no_int + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
+        assert result_no_interest.ltcg_tax == approx(expected_ltcg_at_15_no_int)
         assert result_no_interest.ltcg_tax < result.ltcg_tax
 
 
@@ -2148,6 +2201,27 @@ class TestEngineConstantsCharacterization:
         # MAGI=500_000: reduction=(500_000-150_000)*0.06=21_000 > 12_000
         # result = max(12_000 - 21_000, 0) = 0.0
         assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
+
+    # --- senior_bonus_deduction() filing-status phaseout regression (audit A-4/E-6) ---
+
+    def test_senior_bonus_mfj_below_threshold_full_bonus(self):
+        # MFJ, both 65+, MAGI=120_000 < 150_000 → full $12,000
+        assert senior_bonus_deduction(65, 65, magi=120_000, filing_status="MFJ") == approx(12_000)
+
+    def test_senior_bonus_single_partial_phaseout(self):
+        # Single survivor, age 68, MAGI=120_000: threshold=$75,000
+        # reduction = (120_000 - 75_000) * 0.06 = 45_000 * 0.06 = 2_700
+        # result = max(6_000 - 2_700, 0) = 3_300
+        assert senior_bonus_deduction(68, 0, magi=120_000, filing_status="Single") == approx(3_300)
+
+    def test_senior_bonus_single_above_phaseout_cap(self):
+        # Single survivor, age 68, MAGI=200_000 > 175_000 (full phase-out)
+        # reduction = (200_000 - 75_000) * 0.06 = 7_500 > 6_000 → 0
+        assert senior_bonus_deduction(68, 0, magi=200_000, filing_status="Single") == approx(0.0)
+
+    def test_senior_bonus_mfs_ineligible(self):
+        # MFS: ineligible regardless of age or MAGI
+        assert senior_bonus_deduction(70, 70, magi=50_000, filing_status="MFS") == approx(0.0)
 
     # --- taxable_ss() ---
 
@@ -4261,17 +4335,22 @@ class TestEstimateYtdFederalTax:
         assert result.total == pytest.approx(result.ordinary_tax)
 
     def test_mix_wages_and_ltcg_uses_preferential_rate(self):
-        """Wages below LTCG 0%-threshold → LTCG taxed at 0%; above threshold → 15%."""
-        from engine.tax import LTCG_THRESHOLDS_MFJ, estimate_ytd_federal_tax
+        """Taxable ordinary below LTCG 0%-threshold → LTCG at 0%; above → 15%.
+
+        Standard deduction ($32,200 MFJ, no seniors) is subtracted before the
+        LTCG stack-walk per IRC §1(h)(1). ltcg_start = max(wages - std_ded, 0).
+        """
+        from engine.tax import STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
-        # Wages well below 0%-threshold ($96,700) → LTCG rate is 0%
+        # taxable_ordinary = 50,000 - 32,200 = 17,800 → ltcg_end = 27,800 < 96,700 → 0%
         ytd_zero = YTDSnapshot(wages_ytd=50_000.0, ltcg_ytd=10_000.0)
         r_zero = estimate_ytd_federal_tax(ytd_zero, self._hh())
         assert r_zero.ltcg_tax == pytest.approx(0.0)
 
-        # Wages above 0%-threshold but below 15%-threshold → LTCG rate is 15%
-        ytd_15 = YTDSnapshot(wages_ytd=LTCG_THRESHOLDS_MFJ[0] + 1_000, ltcg_ytd=20_000.0)
+        # wages = 32,200 + 97,800 = 130,000 → taxable_ordinary = 97,800 > 96,700 threshold
+        # ltcg_end = 97,800 + 20,000 = 117,800 → all $20K at 15%
+        ytd_15 = YTDSnapshot(wages_ytd=STD_DEDUCTION_MFJ + 97_800, ltcg_ytd=20_000.0)
         r_15 = estimate_ytd_federal_tax(ytd_15, self._hh())
         assert r_15.ltcg_tax == pytest.approx(20_000.0 * 0.15)
 
@@ -4302,7 +4381,13 @@ class TestEstimateYtdFederalTax:
         assert result.room_to_next_bracket == pytest.approx(BRACKETS_MFJ[1][0] - wages)
 
     def test_ltcg_tax_when_stack_crosses_15pct_threshold(self):
-        """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div → ~$32,442 LTCG tax."""
+        """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div.
+
+        std_ded = $32,200 (MFJ, no seniors). taxable_ordinary = max(27K - 32.2K, 0) = $0.
+        ltcg_start = $0, ltcg_end = $285,977.
+        ltcg_at_15 = min($285,977, $600,050) - max($0, $96,700) = $285,977 - $96,700 = $189,277.
+        ltcg_tax = $189,277 x 0.15 = $28,391.55.
+        """
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
@@ -4312,10 +4397,7 @@ class TestEstimateYtdFederalTax:
             qualified_dividends_ytd=2_977.0,
         )
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        # ltcg_start=$27K, ltcg_end=$312,977
-        # ltcg_at_15 = min($312,977, $600,050) - max($27K, $96,700) = $312,977 - $96,700 = $216,277
-        # ltcg_tax = $216,277 × 0.15 = $32,441.55
-        assert result.ltcg_tax == pytest.approx(216_277.0 * 0.15, abs=50)
+        assert result.ltcg_tax == pytest.approx(189_277.0 * 0.15, abs=1.0)
 
     def test_ltcg_tax_all_in_0pct_bracket(self):
         """Stack entirely under $96,700 threshold → LTCG tax = $0."""
@@ -4328,31 +4410,98 @@ class TestEstimateYtdFederalTax:
         assert result.ltcg_tax == pytest.approx(0.0)
 
     def test_ltcg_tax_crosses_20pct_threshold(self):
-        """Stack crosses into 20% bracket: $200K ordinary + $500K LTCG."""
+        """Stack crosses into 20% bracket: $200K ordinary + $500K LTCG.
+
+        std_ded = $32,200 (MFJ, no seniors). taxable_ordinary = $167,800.
+        ltcg_start = $167,800, ltcg_end = $667,800.
+        ltcg_at_15 = min($667,800, $600,050) - max($167,800, $96,700) = $600,050 - $167,800 = $432,250.
+        ltcg_at_20 = $667,800 - $600,050 = $67,750.
+        ltcg_tax = $432,250 x 0.15 + $67,750 x 0.20 = $64,837.50 + $13,550 = $78,387.50.
+        """
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=500_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        # ltcg_start=$200K, ltcg_end=$700K
-        # ltcg_at_15 = min($700K, $600,050) - max($200K, $96,700) = $600,050 - $200,000 = $400,050
-        # ltcg_at_20 = $700K - max($200K, $600,050) = $700,000 - $600,050 = $99,950
-        # ltcg_tax = $400,050 × 0.15 + $99,950 × 0.20 = $60,007.50 + $19,990 = $79,997.50
-        assert result.ltcg_tax == pytest.approx(79_997.50, abs=0.01)
+        assert result.ltcg_tax == pytest.approx(78_387.50, abs=0.01)
 
     def test_ltcg_new_threshold_boundary_0pct_to_15pct(self):
-        """2026 threshold boundary: $90K ordinary + $10K LTCG crosses $96,700, partial 15%."""
-        from engine.tax import estimate_ytd_federal_tax
+        """2026 threshold boundary: stack crosses $96,700 yielding partial 15%.
+
+        std_ded = $32,200 (MFJ, no seniors).
+        wages = $32,200 + $90,700 = $122,900 → taxable_ordinary = $90,700.
+        ltcg_end = $90,700 + $10,000 = $100,700.
+        Stack crosses 2026 threshold ($96,700): $4,000 in 15% band.
+        Old 2025 threshold ($94,050) would have put $6,650 at 15% — confirms new value is used.
+        """
+        from engine.tax import STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
-        # ltcg_start=$90K, ltcg_end=$100K
-        # Stack crosses 2026 threshold ($96,700): only $3,300 in 15% band.
-        # Old 2025 threshold ($94,050) would have put $5,950 at 15% — confirms new value is used.
-        ytd = YTDSnapshot(wages_ytd=90_000.0, ltcg_ytd=10_000.0)
+        ytd = YTDSnapshot(wages_ytd=STD_DEDUCTION_MFJ + 90_700, ltcg_ytd=10_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        # ltcg_at_15 = min($100K, $600,050) - max($90K, $96,700) = $100,000 - $96,700 = $3,300
-        # ltcg_tax = $3,300 × 0.15 = $495.00
-        assert result.ltcg_tax == pytest.approx(3_300.0 * 0.15, abs=0.01)
+        # ltcg_at_15 = min($100,700, $600,050) - max($90,700, $96,700) = $100,700 - $96,700 = $4,000
+        # ltcg_tax = $4,000 x 0.15 = $600.00
+        assert result.ltcg_tax == pytest.approx(4_000.0 * 0.15, abs=0.01)
+
+    def test_ltcg_std_ded_both_seniors_mfj_all_zero_pct(self):
+        """Regression A-2/E-7: MFJ both 65+, modest ordinary → all LTCG at 0%.
+
+        std_ded = $32,200 + 2 x $1,650 = $35,500.
+        ordinary = $80,000 → taxable_ordinary = $44,500.
+        LTCG 0%-threshold ($96,700) headroom = $52,200 > $40,000 LTCG → 0% rate.
+
+        Pre-fix (gross as stack base): ltcg_start=$80K, ltcg_end=$120K,
+        ltcg_at_15 = $120K - $96,700 = $23,300 → tax $3,495 (wrong).
+        """
+        from engine.tax import estimate_ytd_federal_tax
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(your_age=65, spouse_age=65, your_ira=500_000, spouse_ira=500_000)
+        ytd = YTDSnapshot(wages_ytd=80_000.0, ltcg_ytd=40_000.0)
+        result = estimate_ytd_federal_tax(ytd, hh)
+        assert result.ltcg_tax == pytest.approx(0.0)
+
+    def test_ltcg_std_ded_neither_senior_mfj_all_zero_pct(self):
+        """Regression A-2/E-7: MFJ neither 65+, ordinary=$120K, LTCG=$10K → 0% LTCG.
+
+        std_ded = $32,200.  taxable_ordinary = $87,800.
+        LTCG 0%-threshold headroom = $96,700 - $87,800 = $8,900 < $10,000 LTCG.
+        Wait — $10K > $8,900 headroom, so $1,100 spills into 15%.
+        Use $8,000 LTCG to stay fully in 0% band.
+
+        ordinary=$120K, LTCG=$8K → taxable_ordinary=$87,800.
+        ltcg_end=$95,800 < $96,700 → all at 0%.
+        """
+        from engine.tax import estimate_ytd_federal_tax
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(your_age=55, spouse_age=52, your_ira=500_000, spouse_ira=500_000)
+        ytd = YTDSnapshot(wages_ytd=120_000.0, ltcg_ytd=8_000.0)
+        result = estimate_ytd_federal_tax(ytd, hh)
+        assert result.ltcg_tax == pytest.approx(0.0)
+
+    def test_ltcg_std_ded_single_senior_all_zero_pct(self):
+        """Regression A-2/E-7: Single 65+, ordinary=$40K, LTCG=$30K → all LTCG at 0%.
+
+        std_ded = $16,100 + $1,850 = $17,950.
+        taxable_ordinary = $40,000 - $17,950 = $22,050.
+        Single 0%-threshold = $48,350; headroom = $26,300 > $30,000? No — $26,300 < $30,000.
+        Use $25,000 LTCG to keep entirely in 0% band.
+
+        taxable_ordinary=$22,050; ltcg_end=$47,050 < $48,350 → 0%.
+        """
+        from engine.tax import estimate_ytd_federal_tax
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=65, spouse_age=55, your_ira=500_000, spouse_ira=0, filing_status="Single"
+        )
+        ytd = YTDSnapshot(wages_ytd=40_000.0, ltcg_ytd=25_000.0)
+        result = estimate_ytd_federal_tax(ytd, hh)
+        assert result.ltcg_tax == pytest.approx(0.0)
 
 
 class TestSafeHarborPayment:
@@ -4652,3 +4801,47 @@ class TestBrokerageGainTaxStackWalk:
         # Confirm this would have been wrong under the old flat-rate approach
         old_flat_rate_tax = gain * 0.15
         assert result > old_flat_rate_tax
+
+    def test_ltcg_stack_start_is_ordinary_income_not_reduced(self):
+        """Regression: stack-walk start must be yr.taxable_income, not
+        yr.taxable_income - realized_gains.
+
+        Scenario: ordinary_taxable = 80_000, realized_gains = 30_000.
+        2026 MFJ 0%-LTCG threshold is LTCG_THRESHOLDS_MFJ[0] (≈98_900).
+
+        Buggy formula:  ltcg_start = 80_000 - 30_000 = 50_000
+                        ltcg_end   = 50_000 + 30_000 = 80_000
+                        → entire $30K below threshold → tax = $0.
+
+        Fixed formula:  ltcg_start = 80_000
+                        ltcg_end   = 80_000 + 30_000 = 110_000
+                        → $18_900 in 0% band, $11_100 at 15% → tax = $1_665.
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ
+
+        ordinary = 80_000.0
+        gain = 30_000.0
+        threshold_0 = LTCG_THRESHOLDS_MFJ[0]  # ≈98_900 for 2026 MFJ
+
+        # Fixed result via helper (mirrors corrected scenario.py arithmetic)
+        result = self._single_year_brokerage_gain_tax(ordinary, gain)
+
+        # The $30K gain straddles the 0%→15% boundary:
+        # gain_in_15pct = (ordinary + gain) - threshold_0 = 110_000 - 98_900 = 11_100
+        gain_taxed_at_15 = (ordinary + gain) - threshold_0
+        expected = gain_taxed_at_15 * 0.15
+        assert result == pytest.approx(expected, rel=1e-9)
+        assert result > 0.0, "Fixed formula must produce non-zero LTCG tax here"
+
+        # Demonstrate what the buggy formula would have returned ($0)
+        buggy_ltcg_start = max(0.0, ordinary - gain)  # 50_000
+        buggy_ltcg_end = buggy_ltcg_start + gain  # 80_000
+        buggy_at_15 = max(
+            0.0,
+            min(buggy_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(buggy_ltcg_start, threshold_0),
+        )
+        buggy_result = buggy_at_15 * 0.15
+        assert buggy_result == pytest.approx(0.0), (
+            "Buggy formula should yield $0 (regression anchor)"
+        )
+        assert result > buggy_result, "Fix must increase LTCG tax vs buggy formula"
