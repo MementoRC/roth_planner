@@ -726,6 +726,7 @@ def _auto_fill_core(
                 + ytd_year.nec_income_ytd
                 + ytd_year.stcg_ytd
                 + ytd_year.ordinary_dividends_ytd
+                + ytd_year.interest_ytd
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
             )
@@ -741,6 +742,7 @@ def _auto_fill_core(
                 + ytd_year.nec_income_ytd
                 + ytd_year.stcg_ytd
                 + ytd_year.ordinary_dividends_ytd
+                + ytd_year.interest_ytd
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
             )

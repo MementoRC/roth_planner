@@ -1650,6 +1650,34 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         # ordinary income = wages only; muni interest is excluded
         assert ytd.total_ordinary_income == approx(80_000)
 
+    def test_interest_ytd_reduces_room_base_year(self):
+        """Regression C-4: interest_ytd must reduce base-year bracket room and conversion amount.
+
+        Prior to the fix, _auto_fill_core omitted interest_ytd from both other_fixed
+        (provisional income for SS taxability) and fixed_gross (bracket math), causing
+        conversion room to be overstated by the full interest amount.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+
+        ytd_no_int = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_with_int = YTDSnapshot(tax_year=2026, wages_ytd=50_000, interest_ytd=12_000)
+
+        plan_no_int = auto_fill_22(hh, ytd=ytd_no_int)
+        plan_with_int = auto_fill_22(hh, ytd=ytd_with_int)
+
+        base_conv = plan_no_int.your_conversions.get(2026, 0.0)
+        int_conv = plan_with_int.your_conversions.get(2026, 0.0)
+
+        # interest_ytd is fully taxable ordinary income → consumes bracket room → fewer conversions
+        assert int_conv < base_conv, (
+            f"Expected interest_ytd=12_000 to reduce base-year conversion, "
+            f"got no_int={base_conv:.0f} vs with_int={int_conv:.0f}"
+        )
+        # Difference should be approximately the interest amount
+        assert base_conv - int_conv == approx(12_000, tol=300)
+
 
 class TestScenarioWithYTD:
     """Test scenario engine with YTD injection."""
