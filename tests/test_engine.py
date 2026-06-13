@@ -541,19 +541,76 @@ class TestACA:
             spouse_ss_start_age=70,
             aca_enhanced_subsidies_active=False,
         )
-        # Conversion of 200k pushes MAGI well above 400% FPL ($84,600).
+        # Conversion of 100k pushes MAGI above 400% FPL ($84,600).
         # base_magi (0) is below cliff so pre-ARP subsidy(base) > 0,
-        # but new_magi (200k) is above cliff so pre-ARP subsidy(new) = 0 → loss > 0.
-        # With enhanced=True, subsidy(new) uses 8.5% cap → smaller loss.
-        plan = ConversionPlan(your_conversions={2026: 200_000})
+        # but new_magi (100k) is above cliff so pre-ARP subsidy(new) = 0 → loss = $10,800.
+        # With enhanced=True at MAGI=$100K: 8.5%×$100K=$8,500 < $10,800 benchmark
+        # → enhanced subsidy(new) = $2,300 > 0 → loss = $8,500 < $10,800 → smaller loss.
+        plan = ConversionPlan(your_conversions={2026: 100_000})
         result_pre_arp = run_scenario(hh_base, plan)
         result_enhanced = run_scenario(replace(hh_base, aca_enhanced_subsidies_active=True), plan)
 
         loss_pre_arp = result_pre_arp.years[0].aca_loss
         loss_enhanced = result_enhanced.years[0].aca_loss
-        # Pre-ARP: new_magi above cliff → subsidy(new) = 0 → loss = subsidy(base_magi=0)
-        # Enhanced: subsidy(new) > 0 (8.5% cap) → loss is smaller
+        # Pre-ARP: new_magi above cliff → subsidy(new) = 0 → loss = benchmark/2 = $10,800
+        # Enhanced: subsidy(new) > 0 (8.5% cap, partial) → loss is smaller ($8,500)
         assert loss_pre_arp > loss_enhanced
+
+
+class TestACAMedicareSplit:
+    """Regression for audit B-4: benchmark scales when one spouse transitions to Medicare."""
+
+    def _make_hh(self, your_age: int, spouse_age: int) -> "Household":
+        return Household(
+            your_age=your_age,
+            spouse_age=spouse_age,
+            your_ira=200_000,
+            spouse_ira=200_000,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+            aca_benchmark_premium_annual=21_600.0,
+            aca_enhanced_subsidies_active=False,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+
+    def test_solo_aca_benchmark_halved_vs_couple(self):
+        """ages 65/61: you on Medicare, spouse on ACA — benchmark halved, subsidy ~50% of couple."""
+        # Couple household (both pre-Medicare): ages 61/61
+        hh_couple = self._make_hh(your_age=61, spouse_age=61)
+        # Solo household (you on Medicare, spouse on ACA): ages 65/61
+        hh_solo = self._make_hh(your_age=65, spouse_age=61)
+
+        # A $100K conversion pushes MAGI ~$100K, above 400% FPL cliff ($84,600 MFJ
+        # pre-ARP) → subsidy(new) = 0 → loss = subsidy(base_magi=0) = benchmark.
+        # Couple benchmark $21,600, solo halved benchmark $10,800.
+        plan = ConversionPlan(your_conversions={2026: 100_000})
+        result_couple = run_scenario(hh_couple, plan)
+        result_solo = run_scenario(hh_solo, plan)
+
+        loss_couple = result_couple.years[0].aca_loss
+        loss_solo = result_solo.years[0].aca_loss
+
+        # Solo loss must be strictly less than couple loss (benchmark is halved).
+        assert loss_solo < loss_couple, (
+            f"Solo ACA loss ({loss_solo:.0f}) should be < couple loss ({loss_couple:.0f})"
+        )
+        # Solo loss should be approximately half the couple loss (within 20% tolerance
+        # to account for FPL-based contribution differences at each benchmark level).
+        assert loss_solo == pytest.approx(loss_couple / 2, rel=0.20), (
+            f"Expected solo loss ~{loss_couple / 2:.0f}, got {loss_solo:.0f}"
+        )
+
+    def test_both_on_medicare_no_aca_loss(self):
+        """ages 65/65: both on Medicare — ACA loss must be zero."""
+        hh = self._make_hh(your_age=65, spouse_age=65)
+        result = run_scenario(hh, ConversionPlan())
+        assert result.years[0].aca_loss == 0.0
 
 
 class TestHouseholdProperties:

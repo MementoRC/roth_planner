@@ -502,16 +502,20 @@ def run_scenario(
         yr.irmaa_room = irmaa_next_threshold(yr.magi)
 
         # === ACA subsidy loss ===
-        # ACA applies if anyone in household is enrolled and pre-Medicare
-        anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(
-            sa, hh.spouse_aca_enrolled
+        # ACA applies if anyone in household is enrolled and pre-Medicare.
+        # Audit B-4: scale the couple benchmark when only one spouse is on ACA.
+        # When one spouse turns 65 and moves to Medicare the solo SLCSP is roughly
+        # 50-60% of the couple value; halving is the documented approximation.
+        num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
+            1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
         )
-        if anyone_on_aca:
+        if num_on_aca > 0:
+            effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
             base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
             yr.aca_loss = aca_subsidy_loss(
                 base_magi,
                 yr.magi,
-                hh.aca_benchmark_premium_annual,
+                effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
             )
         else:
