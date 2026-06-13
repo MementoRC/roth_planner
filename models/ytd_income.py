@@ -122,6 +122,16 @@ class YTDSnapshot:
             + self.nqo_exercise_ytd
         )
 
+    @property
+    def niit_magi_ytd(self) -> float:
+        """MAGI variant for NIIT (IRC §1411(d)(3)): excludes tax-exempt interest.
+
+        NIIT MAGI differs from IRMAA MAGI in one respect: tax-exempt (muni bond)
+        interest is excluded per §1411(d)(3). Use this when computing NIIT liability;
+        use magi_ytd for IRMAA/ACA threshold checks.
+        """
+        return self.magi_ytd - self.tax_exempt_interest_ytd
+
     def with_snapshot_date(self) -> YTDSnapshot:
         """Return copy with snapshot_date set to today."""
         self.snapshot_date = date.today().isoformat()
