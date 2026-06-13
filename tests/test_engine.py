@@ -1174,9 +1174,7 @@ class TestYTDSnapshot:
         ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
         result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
         # ltcg_at_15 = min(110_000, 600_050) - max(90_000, 96_700) = 110_000 - 96_700 = 13_300
-        assert result_no_interest.ltcg_tax == approx(
-            (wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
-        )
+        assert result_no_interest.ltcg_tax == approx((wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15)
         assert result_no_interest.ltcg_tax < result.ltcg_tax
 
 
@@ -1380,7 +1378,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         # planned option income = (200 - 104) * 2000 = 192_000; realized total = 80_000
@@ -1397,7 +1397,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
@@ -1525,7 +1527,6 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         # Total subtract: realized = ytd.nqo_exercise_ytd regardless of grant_id
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
-
 
     def test_magi_ytd_includes_tax_exempt_interest(self):
         """Tax-exempt (muni) interest must appear in IRMAA MAGI even though it is federally exempt."""
@@ -2197,16 +2198,12 @@ class TestFetchYTDSnapshotNoDoubleCount:
                            ira_conversions_ytd, ira_distributions_ytd
     """
 
-    def _make_investment_income_response(
-        self, dividends: float, interest: float
-    ) -> dict:
+    def _make_investment_income_response(self, dividends: float, interest: float) -> dict:
         """Simulate /query/brokerage?data_type=investment_income multi-institution shape."""
         return {
             "institutions": {
                 "fidelity": {
-                    "rows": [
-                        {"received_dividends": dividends, "received_interest": interest}
-                    ]
+                    "rows": [{"received_dividends": dividends, "received_interest": interest}]
                 }
             }
         }
@@ -2226,9 +2223,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
         if total_dividends:
             rows.append({"label": "1099-DIV dividends", "amount": total_dividends})
         if qualified_dividends:
-            rows.append(
-                {"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends}
-            )
+            rows.append({"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends})
         if interest:
             rows.append({"label": "Interest income (1099-INT)", "amount": interest})
         if conversions:
@@ -2305,9 +2300,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
                     self._make_investment_income_response(dividends=0.0, interest=3_000.0)
                 )
             if data_type == "ytd_income":
-                return _FakeResp(
-                    self._make_ytd_income_response(interest=3_000.0, wages=80_000.0)
-                )
+                return _FakeResp(self._make_ytd_income_response(interest=3_000.0, wages=80_000.0))
             return _FakeResp({"rows": []})
 
         monkeypatch.setattr(requests, "get", _fake_get)
@@ -2997,7 +2990,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3018,7 +3017,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3037,7 +3042,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=50_000.0,
@@ -3057,7 +3068,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=75_000.0,
@@ -3077,10 +3094,14 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[
-            StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
-            StockGrant(year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"),
-        ])
+        hh = Household(
+            grants=[
+                StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
+                StockGrant(
+                    year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"
+                ),
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=40_000.0,
@@ -3100,7 +3121,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=20_000.0,
@@ -3644,22 +3671,86 @@ class TestSingleFilerFoundations:
 
         assert aca_premium_cap_rate(60_000) == aca_premium_cap_rate(60_000, filing_status="MFJ")
 
-    def test_pre_arp_300_400_fpl_band_uses_9_78_pct(self):
-        """Pre-ARP 300-400% FPL band rate is 9.78% per IRS Rev. Proc. 2025-32.
+    def test_pre_arp_300_400_fpl_band_uses_9_96_pct(self):
+        """Pre-ARP 300-400% FPL band rate is 9.96% per Rev. Proc. 2025-25 (IRB 2025-32).
 
         MFJ FPL_2 = $21,150. 300-400% band is $63,450 – $84,600.
         At MAGI = $70,000: 70_000 / 21_150 ≈ 3.31 → falls in 300-400% band.
+        Updated from 9.78% (stale 2024 value) to 9.96% (2026 IRS value).
         """
         from engine.aca import ACA_PRE_ARP_SCHEDULE, FPL_2, aca_premium_cap_rate
 
         # Verify the schedule constant directly
         pre_arp_300_400_rate = next(rate for fpl, rate in ACA_PRE_ARP_SCHEDULE if fpl == 4.00)
-        assert pre_arp_300_400_rate == pytest.approx(0.0978)
+        assert pre_arp_300_400_rate == pytest.approx(0.0996)
 
         # Verify via the public function at a MAGI squarely in the 300-400% band
         magi_in_band = 3.31 * FPL_2  # ~$70,002 — above 300% ($63,450), below 400% ($84,600)
         rate = aca_premium_cap_rate(magi_in_band, enhanced_subsidies_active=False)
-        assert rate == pytest.approx(0.0978)
+        assert rate == pytest.approx(0.0996)
+
+
+class TestACA2026:
+    """Regression tests locking in 2026 IRS values from Rev. Proc. 2025-25 (IRB 2025-32)."""
+
+    def test_aca_2026_133pct_fpl_flat_rate(self):
+        """At exactly 133% FPL, applicable_pct == 2.10% (flat bottom bracket)."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 1.33 * FPL_2  # exactly at the 133% upper bound
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0210)
+
+    def test_aca_2026_150pct_fpl_ramp_start(self):
+        """Just above 150% FPL, applicable_pct == 4.19% (start of 150-200% ramp).
+
+        At exactly 150% the lookup still hits the 133-150 bracket (3.14%).
+        At 150.01% it enters the 150-200 bracket whose bracket-start rate is 4.19%.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 1.5001 * FPL_2  # just above 150% — enters the 150-200% ramp bracket
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0419)
+
+    def test_aca_2026_300pct_fpl_flat_rate(self):
+        """Just above 300% FPL, applicable_pct == 9.96% (flat 300-400% bracket).
+
+        At exactly 300% the lookup still hits the 250-300 bracket (8.44%).
+        At 300.01% it enters the flat 300-400% bracket whose rate is 9.96%.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 3.0001 * FPL_2  # just above 300% — enters the flat 300-400% bracket
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0996)
+
+    def test_aca_2026_400pct_fpl_flat_rate(self):
+        """At exactly 400% FPL, applicable_pct == 9.96% (top of flat bracket)."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 4.00 * FPL_2  # exactly at the 400% cliff boundary
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0996)
+
+    def test_aca_2026_above_400pct_no_subsidy(self):
+        """Above 400% FPL, cap rate returns 0 (cliff — no subsidy) without raising."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 4.01 * FPL_2  # just above the cliff
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == 0.0
+
+    def test_aca_2026_no_assert_on_high_magi(self):
+        """Direct call with fpl_ratio ~9.46 (magi=200K, FPL_2=21150) does NOT raise.
+
+        Regression for audit finding B-5: AssertionError when loop exhausts schedule entries.
+        fpl_ratio = 200_000 / 21_150 ≈ 9.46 — well above the 4.0 cliff.
+        """
+        from engine.aca import aca_premium_cap_rate
+
+        rate = aca_premium_cap_rate(200_000, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == 0.0
 
 
 class TestSurvivorScenario:
@@ -3971,7 +4062,9 @@ class TestFetchMultiInstitutionShape:
         income_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}]
+                    "rows": [
+                        {"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}
+                    ]
                 }
             }
         }
@@ -3996,7 +4089,13 @@ class TestFetchMultiInstitutionShape:
         deduction_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "hsa contribution", "amount_current": 8_300, "amount_prior": 0}]
+                    "rows": [
+                        {
+                            "form_label": "hsa contribution",
+                            "amount_current": 8_300,
+                            "amount_prior": 0,
+                        }
+                    ]
                 }
             }
         }
@@ -4023,13 +4122,18 @@ class TestFetchMultiInstitutionShape:
             if data_type == "realized_gains":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "investment_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "fidelity": {
-                            "rows": [{"received_dividends": 3_500.0, "received_interest": 200.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "fidelity": {
+                                "rows": [
+                                    {"received_dividends": 3_500.0, "received_interest": 200.0}
+                                ]
+                            }
                         }
-                    }
-                })
+                    },
+                )
             if data_type == "ytd_income":
                 return self._fake_resp(200, {"rows": []})
             return self._fake_resp(200, {})
@@ -4054,13 +4158,14 @@ class TestFetchMultiInstitutionShape:
             if data_type == "investment_income":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "ytd_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "turbotax": {
-                            "rows": [{"label": "wages", "amount": 95_000.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "turbotax": {"rows": [{"label": "wages", "amount": 95_000.0}]}
                         }
-                    }
-                })
+                    },
+                )
             return self._fake_resp(200, {})
 
         monkeypatch.setattr(req, "get", _resp_for)
@@ -4509,8 +4614,7 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_end = ltcg_start + max(0.0, realized_gains)
         ltcg_at_15 = max(
             0.0,
-            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         return ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
