@@ -16,6 +16,7 @@ from engine.niit import niit
 from engine.tax import (
     BRACKETS_SINGLE,
     LTCG_THRESHOLDS_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
@@ -568,15 +569,19 @@ def run_scenario(
         yr.brokerage_growth = brokerage * brok_appreciation_rate
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
-        # point; realized gains walk up through 0% / 15% / 20% bands.
+        # point; realized gains + qualified dividends (IRC §1(h)(11)) walk up
+        # through 0% / 15% / 20% bands.
         # yr.taxable_income is already ordinary-only; do NOT subtract realized_gains.
+        # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
+        ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+        ltcg_eligible = realized_gains + qual_div_this_year
         _ltcg_start = max(0.0, yr.taxable_income)
-        _ltcg_end = _ltcg_start + max(0.0, realized_gains)
+        _ltcg_end = _ltcg_start + max(0.0, ltcg_eligible)
         _ltcg_at_15 = max(
             0.0,
-            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(_ltcg_end, ltcg_thresholds[1]) - max(_ltcg_start, ltcg_thresholds[0]),
         )
-        _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
+        _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, ltcg_thresholds[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20
         total_div = qual_div_this_year + ord_div_this_year
 

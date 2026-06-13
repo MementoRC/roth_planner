@@ -5086,6 +5086,108 @@ class TestBrokerageGainTaxStackWalk:
         )
         assert result > buggy_result, "Fix must increase LTCG tax vs buggy formula"
 
+    def test_qual_div_included_in_ltcg_stack_mfj(self):
+        """C-5 regression: qualified dividends taxed at LTCG preferential rates (IRC §1(h)(11)).
+
+        MFJ ordinary taxable $100K, realized_gains $0, qual_div $10K.
+        Pre-fix: $0 LTCG tax (qual_div not in stack).
+        Post-fix: stack walks $100K → $110K; LTCG_THRESHOLDS_MFJ[0]=96_700 so
+        $10K is entirely above 0%-band → 15% = $1_500.
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ
+
+        ltcg_thresholds = LTCG_THRESHOLDS_MFJ
+        ordinary = 100_000.0
+        realized_gains = 0.0
+        qual_div = 10_000.0
+        ltcg_eligible = realized_gains + qual_div
+        ltcg_start = max(0.0, ordinary)
+        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
+        ltcg_at_15 = max(
+            0.0,
+            min(ltcg_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
+        )
+        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
+        result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
+
+        # $10K above 96_700 threshold → taxed at 15%
+        assert result == pytest.approx(1_500.0, rel=1e-9)
+
+        # Pre-fix (no qual_div in stack) would have returned $0
+        pre_fix_end = ltcg_start + max(0.0, realized_gains)
+        pre_fix_at_15 = max(
+            0.0,
+            min(pre_fix_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
+        )
+        pre_fix_result = pre_fix_at_15 * 0.15
+        assert pre_fix_result == pytest.approx(0.0), "Pre-fix must yield $0 (anchor)"
+        assert result > pre_fix_result, "Fix must increase LTCG tax when qual_div present"
+
+    def test_single_survivor_uses_single_thresholds(self):
+        """C-6 regression: survivor (Single) uses LTCG_THRESHOLDS_SINGLE not MFJ.
+
+        Single ordinary taxable $60K, realized_gains $30K, qual_div $0.
+        MFJ 0%-ceiling ($96_700): stack $60K→$90K entirely below → $0 tax (pre-fix).
+        Single 0%-ceiling ($48_350): stack starts $60K (above ceiling) → all $30K at 15%
+        = $4_500 (post-fix).
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE
+
+        ordinary = 60_000.0
+        realized_gains = 30_000.0
+        qual_div = 0.0
+        ltcg_eligible = realized_gains + qual_div
+        ltcg_start = max(0.0, ordinary)
+        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
+
+        # Post-fix: Single thresholds
+        single_thresh = LTCG_THRESHOLDS_SINGLE
+        at_15_single = max(
+            0.0,
+            min(ltcg_end, single_thresh[1]) - max(ltcg_start, single_thresh[0]),
+        )
+        at_20_single = max(0.0, ltcg_end - max(ltcg_start, single_thresh[1]))
+        result_single = at_15_single * 0.15 + at_20_single * 0.20
+        assert result_single == pytest.approx(4_500.0, rel=1e-9)
+
+        # Pre-fix: MFJ thresholds would have returned $0
+        mfj_thresh = LTCG_THRESHOLDS_MFJ
+        at_15_mfj = max(
+            0.0,
+            min(ltcg_end, mfj_thresh[1]) - max(ltcg_start, mfj_thresh[0]),
+        )
+        result_mfj = at_15_mfj * 0.15
+        assert result_mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
+        assert result_single > result_mfj
+
+    def test_qual_div_and_single_thresholds_compose(self):
+        """C-5 + C-6 combined: Single survivor with both qual_div and realized_gains.
+
+        Single ordinary taxable $40K, realized_gains $5K, qual_div $8K.
+        Single 0%-ceiling = LTCG_THRESHOLDS_SINGLE[0] = 48_350.
+        ltcg_eligible = $13K; stack: $40K → $53K.
+        $53K - $48_350 = $4_650 above 0%-band → all at 15% = $697.50.
+        """
+        from engine.tax import LTCG_THRESHOLDS_SINGLE
+
+        ltcg_thresholds = LTCG_THRESHOLDS_SINGLE
+        ordinary = 40_000.0
+        realized_gains = 5_000.0
+        qual_div = 8_000.0
+        ltcg_eligible = realized_gains + qual_div
+        ltcg_start = max(0.0, ordinary)
+        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
+        ltcg_at_15 = max(
+            0.0,
+            min(ltcg_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
+        )
+        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
+        result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
+
+        expected_taxed = ltcg_end - ltcg_thresholds[0]  # 53_000 - 48_350 = 4_650
+        assert result == pytest.approx(expected_taxed * 0.15, rel=1e-9)
+        assert result == pytest.approx(697.50, rel=1e-9)
+
 
 class TestRothEligibility2026Constants:
     """Regression tests pinning 2026 IRA phase-out and contribution constants.
