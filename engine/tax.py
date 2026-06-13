@@ -66,6 +66,11 @@ LTCG_THRESHOLDS_MFJ = (96_700, 600_050)
 # 0% up to $48,350; 15% up to $533,400; 20% above
 LTCG_THRESHOLDS_SINGLE = (48_350, 533_400)
 
+# IRS safe-harbor threshold: prior-year AGI > $150K MFJ ($75K Single) requires 110% safe harbor;
+# below threshold qualifies for 100% safe harbor. Source: IRC §6654(d)(1)(C).
+SAFE_HARBOR_AGI_THRESHOLD_MFJ = 150_000.0
+SAFE_HARBOR_AGI_THRESHOLD_SINGLE = 75_000.0
+
 
 def federal_tax(taxable_income: float) -> float:
     """Compute federal income tax on taxable income (MFJ)."""
@@ -181,11 +186,11 @@ def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceili
 
 
 def room_to_12(current_gross: float, total_deductions: float) -> float:
-    return room_to_bracket(current_gross, total_deductions, 100_800)
+    return room_to_bracket(current_gross, total_deductions, BRACKETS_MFJ[1][0])
 
 
 def room_to_22(current_gross: float, total_deductions: float) -> float:
-    return room_to_bracket(current_gross, total_deductions, 211_400)
+    return room_to_bracket(current_gross, total_deductions, BRACKETS_MFJ[2][0])
 
 
 def federal_tax_single(taxable_income: float) -> float:
@@ -315,8 +320,11 @@ def _next_quarterly_due(payment_date: str) -> str:
     Q2: Jun 15  (Apr 16 – Jun 15)
     Q3: Sep 15  (Jun 16 – Sep 15)
     Q4: Jan 15 next year  (Sep 16 – Dec 31)
+
+    Per IRS rules, if the nominal due date falls on a Saturday or Sunday
+    it rolls forward to the following Monday.
     """
-    from datetime import date
+    from datetime import date, timedelta
 
     try:
         d = date.fromisoformat(payment_date)
@@ -327,12 +335,21 @@ def _next_quarterly_due(payment_date: str) -> str:
     month, day = d.month, d.day
 
     if (month, day) <= (4, 15):
-        return f"{year}-04-15"
-    if (month, day) <= (6, 15):
-        return f"{year}-06-15"
-    if (month, day) <= (9, 15):
-        return f"{year}-09-15"
-    return f"{year + 1}-01-15"
+        due = date(year, 4, 15)
+    elif (month, day) <= (6, 15):
+        due = date(year, 6, 15)
+    elif (month, day) <= (9, 15):
+        due = date(year, 9, 15)
+    else:
+        due = date(year + 1, 1, 15)
+
+    # Roll Saturday (weekday 5) → Monday (+2), Sunday (weekday 6) → Monday (+1)
+    if due.weekday() == 5:
+        due += timedelta(days=2)
+    elif due.weekday() == 6:
+        due += timedelta(days=1)
+
+    return due.isoformat()
 
 
 def safe_harbor_payment(
@@ -340,25 +357,35 @@ def safe_harbor_payment(
     current_year_estimate: float,
     already_paid_ytd: float,
     payment_date: str,
+    prior_year_agi: float = 200_000.0,
 ) -> SafeHarborGuidance:
     """Compute remaining safe-harbor payment to avoid underpayment penalty.
 
     IRS Form 2210 safe harbor: pay LESSER of:
-    - 110% of prior year tax (high-income, AGI > $150K)
+    - 100% of prior year tax  (when prior-year AGI ≤ $150K MFJ / $75K Single)
+    - 110% of prior year tax  (when prior-year AGI > $150K MFJ / $75K Single)
     - current year tax estimate (90% rule approximated as 100% here)
+
+    The AGI threshold used here is $150,000 MFJ (IRS Rev. Proc., Form 2210).
+    ``prior_year_agi`` defaults to 200,000 so callers that don't supply it
+    continue to receive the 110% rule (preserves pre-fix behaviour).
 
     If prior_year_tax is 0 (no data), uses current-year estimate only.
     """
     next_due = _next_quarterly_due(payment_date)
 
+    # IRS threshold: $150K MFJ (or $75K Single) → 110%; at or below → 100%
+    prior_multiplier = 1.10 if prior_year_agi > SAFE_HARBOR_AGI_THRESHOLD_MFJ else 1.00
+
     if prior_year_tax <= 0:
         safe_harbor_target = current_year_estimate
         rule_used = "100% current estimate (prior year unknown)"
     else:
-        prior_110 = 1.10 * prior_year_tax
-        if prior_110 <= current_year_estimate:
-            safe_harbor_target = prior_110
-            rule_used = "110% prior year"
+        prior_safe = prior_multiplier * prior_year_tax
+        pct_label = "110%" if prior_multiplier > 1.0 else "100%"
+        if prior_safe <= current_year_estimate:
+            safe_harbor_target = prior_safe
+            rule_used = f"{pct_label} prior year"
         else:
             safe_harbor_target = current_year_estimate
             rule_used = "100% current estimate"

@@ -4190,6 +4190,71 @@ class TestSafeHarborPayment:
                 f"payment_date={payment_date}: expected {expected_due}, got {g.next_quarterly_due}"
             )
 
+    def test_safe_harbor_uses_100pct_when_agi_low(self):
+        """Prior-year AGI ≤ $150K → 100% prior-year rule (not 110%)."""
+        from engine.tax import safe_harbor_payment
+
+        # prior=$80K, AGI=$100K (≤ $150K threshold) → safe harbor = 100% × $80K = $80K
+        g = safe_harbor_payment(
+            prior_year_tax=80_000.0,
+            current_year_estimate=120_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=100_000.0,
+        )
+        assert g.safe_harbor_target == pytest.approx(80_000.0)
+        assert "100% prior year" in g.rule_used
+
+    def test_safe_harbor_uses_110pct_when_agi_high(self):
+        """Prior-year AGI > $150K → 110% prior-year rule."""
+        from engine.tax import safe_harbor_payment
+
+        # prior=$80K, AGI=$200K (> $150K threshold) → safe harbor = 110% × $80K = $88K
+        g = safe_harbor_payment(
+            prior_year_tax=80_000.0,
+            current_year_estimate=120_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=200_000.0,
+        )
+        assert g.safe_harbor_target == pytest.approx(88_000.0)
+        assert "110% prior year" in g.rule_used
+
+    def test_next_quarterly_due_rolls_saturday_to_monday(self):
+        """Quarterly due dates that fall on Saturday must advance to Monday."""
+        from engine.tax import _next_quarterly_due
+
+        # Apr 15, 2023 is a Saturday → should roll to Monday Apr 17, 2023
+        result = _next_quarterly_due("2023-01-01")
+        assert result == "2023-04-17"
+
+    def test_next_quarterly_due_rolls_sunday_to_monday(self):
+        """Quarterly due dates that fall on Sunday must advance to Monday."""
+        from engine.tax import _next_quarterly_due
+
+        # Sep 15, 2024 is a Sunday → should roll to Monday Sep 16, 2024
+        result = _next_quarterly_due("2024-06-16")
+        assert result == "2024-09-16"
+
+    def test_room_to_12_uses_brackets_constant(self):
+        """room_to_12 must derive its ceiling from BRACKETS_MFJ, not a hardcoded literal."""
+        from engine.tax import BRACKETS_MFJ, room_to_12
+
+        # The 12% bracket ceiling is BRACKETS_MFJ[1][0]
+        bracket_12_ceiling = BRACKETS_MFJ[1][0]
+        # room_to_12(0, 0) == bracket_12_ceiling (no deductions, no income)
+        assert room_to_12(0, 0) == pytest.approx(bracket_12_ceiling)
+        # room_to_12(0, 32_200) == bracket_12_ceiling + 32_200
+        assert room_to_12(0, 32_200) == pytest.approx(bracket_12_ceiling + 32_200)
+
+    def test_room_to_22_uses_brackets_constant(self):
+        """room_to_22 must derive its ceiling from BRACKETS_MFJ, not a hardcoded literal."""
+        from engine.tax import BRACKETS_MFJ, room_to_22
+
+        bracket_22_ceiling = BRACKETS_MFJ[2][0]
+        assert room_to_22(0, 0) == pytest.approx(bracket_22_ceiling)
+        assert room_to_22(0, 32_200) == pytest.approx(bracket_22_ceiling + 32_200)
+
 
 class TestLoadPriorYearFederalTax:
     """Tests for engine.tax.load_prior_year_federal_tax.
