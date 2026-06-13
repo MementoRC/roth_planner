@@ -295,8 +295,9 @@ def estimate_ytd_federal_tax(
     ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
 
     # NIIT: 3.8% on lesser of NII or MAGI excess over threshold
+    # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
     net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
-    magi = ytd.magi_ytd
+    magi = ytd.niit_magi_ytd
     magi_excess = max(0.0, magi - NIIT_THRESHOLD_MFJ)
     niit_amount = NIIT_RATE * min(net_investment_income, magi_excess)
 
