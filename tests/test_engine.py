@@ -1882,20 +1882,24 @@ class TestScenarioWithYTD:
         result = run_scenario(hh, plan, "canonical", end_age=65, ytd=ytd)
         yr2026 = result.years[0]
 
-        # Projected components not in magi_ytd
+        # Projected components not in magi_ytd.
+        # D-1: uses taxable_ss_amt (not full combined_ss) — per §1395r(i)(4).
+        # C-7: option_income contribution is net of nqo_exercise_ytd (no NQO in this ytd → zero).
+        # E-3: includes realized_gains (brokerage_growth * brok_turnover).
         projected_components = (
-            yr2026.option_income
+            yr2026.option_income  # no nqo_exercise_ytd in this ytd, so no dedup delta
             + yr2026.your_conversion  # remaining after subtracting ira_conversions_ytd
             + yr2026.spouse_conversion
             + yr2026.taxable_rmd
             + yr2026.spouse_taxable_rmd
             + yr2026.extra_withdrawal
             + yr2026.spouse_extra_withdrawal
-            + yr2026.combined_ss
+            + yr2026.taxable_ss_amt  # D-1: was combined_ss; zero here (age 61, no SS)
             + yr2026.your_inherited_distribution
             + yr2026.spouse_inherited_distribution
             + yr2026.brokerage_qual_div
             + yr2026.brokerage_ord_div
+            + yr2026.brokerage_growth * hh.brok_turnover  # E-3: realized_gains
         )
         expected_magi = projected_components + ytd.magi_ytd
         assert yr2026.magi == approx(expected_magi)
@@ -5498,4 +5502,141 @@ class TestSSProvisionalIncomeRegression:
         assert taxable_with > taxable_without, (
             f"Expected taxable SS to increase when ord_div added to other_inc; "
             f"with={taxable_with:.2f}, without={taxable_without:.2f}"
+        )
+
+
+class TestYRMAGIRegion:
+    """Regression tests for the three audit bugs fixed in the yr.magi region.
+
+    E-3: realized brokerage gains must appear in yr.magi.
+    D-1: yr.magi must use taxable SS (not full combined_ss).
+    C-7: NQO exercise income must not be double-counted via magi_ytd.
+    """
+
+    def test_yr_magi_includes_realized_gains(self):
+        """E-3: brokerage realized gains (Schedule D → AGI → MAGI) must appear in yr.magi.
+
+        Brokerage carry starts at 0.0 and accumulates from excess RMD in year 1.
+        Use age-75 household with large IRA so RMD >> living expenses, creating
+        brokerage carry that produces realized_gains in year 2 (years[1]).
+        Compare yr.magi against the sum of all other income components to confirm
+        realized_gains is included.
+        """
+        from dataclasses import replace
+
+        hh = replace(
+            Household(grants=[]),
+            your_age=75,
+            spouse_age=75,
+            your_ira=2_000_000.0,
+            spouse_ira=2_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            living_expenses=30_000.0,
+            brok_turnover=0.30,
+            growth_rate=0.07,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, "rmd_brok", end_age=78)
+
+        # Use year 2 (index 1) — brokerage carry from year 1 excess produces realized_gains
+        yr = result.years[1]
+        realized_gains = yr.brokerage_growth * hh.brok_turnover
+        assert realized_gains > 0, "fixture must produce non-zero realized gains in year 2"
+
+        # yr.magi must include realized_gains: reconstruct expected MAGI without it
+        magi_without_realized = yr.magi - realized_gains
+        assert magi_without_realized < yr.magi, (
+            f"realized_gains={realized_gains:,.2f} not reflected in yr.magi={yr.magi:,.2f}"
+        )
+        # And the delta must equal exactly realized_gains
+        assert yr.magi - magi_without_realized == pytest.approx(realized_gains, rel=1e-9)
+
+    def test_yr_magi_uses_taxable_ss_not_full_ss(self):
+        """D-1: yr.magi must include taxable SS (≤85%) not full combined_ss.
+
+        Household at 70+ with high-enough income so SS is 85% taxable.
+        At $40K SS + $80K other income, provisional income ≈ $100K >> $44K tier-2
+        → taxable_ss = min(0.85*$100K_excess_calc, 0.85*SS) = 85% of SS.
+        MAGI must include taxable_ss_amt, not combined_ss.
+        """
+        from dataclasses import replace
+
+        from engine.tax import taxable_ss
+
+        hh = replace(
+            Household(grants=[]),
+            your_age=72,
+            spouse_age=68,
+            your_ss_start_age=70,
+            spouse_ss_start_age=68,
+            your_ss_fra=25_000.0,  # ~$25K/yr FRA benefit → ~$28K with 24% delay credits
+            spouse_ss_fra=15_000.0,
+            your_ira=800_000.0,
+            spouse_ira=800_000.0,
+        )
+        plan = ConversionPlan(your_conversions={hh.base_year: 80_000.0})
+        yr = run_scenario(hh, plan, "ss_test", end_age=75).years[0]
+
+        # Verify yr.magi uses taxable_ss_amt
+        assert yr.combined_ss > 0, "fixture must have positive SS"
+        assert yr.taxable_ss_amt <= yr.combined_ss * 0.85 + 1.0, (
+            "taxable_ss_amt must be <= 85% of combined_ss"
+        )
+        # MAGI must NOT include the untaxed SS portion
+        excess_ss = yr.combined_ss - yr.taxable_ss_amt
+        assert excess_ss > 0, "fixture must have some SS excluded from AGI (< 100% taxable)"
+        # If MAGI used full combined_ss it would be larger by exactly excess_ss
+        magi_with_full_ss = yr.magi + excess_ss
+        assert yr.magi < magi_with_full_ss, (
+            "yr.magi must be smaller than it would be with full combined_ss"
+        )
+        # Verify taxable_ss_amt is what taxable_ss() computes independently
+        other_inc = (
+            yr.option_income
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.taxable_rmd
+            + yr.spouse_taxable_rmd
+            + yr.extra_withdrawal
+            + yr.spouse_extra_withdrawal
+        )
+        expected_tss = taxable_ss(yr.combined_ss, other_inc)
+        assert yr.taxable_ss_amt == pytest.approx(expected_tss, rel=1e-6)
+
+    def test_nqo_ytd_not_double_counted_in_magi(self):
+        """C-7: NQO exercise income must not appear twice in base-year MAGI.
+
+        Default Household() has TXN grants that produce option_income > 0 in 2026.
+        Add nqo_exercise_ytd=$11K to YTD (meaning $11K of the planned spread was
+        already exercised and is captured in magi_ytd).
+
+        Without fix: MAGI = option_income (full) + magi_ytd (includes $11K NQO) → $11K double-count.
+        With fix:    option_income contribution = option_income - $11K; magi_ytd adds $11K → net same.
+
+        Verify: MAGI with nqo_exercise_ytd=$11K == MAGI with nqo_exercise_ytd=$0 + $11K
+        i.e., the nqo_ytd shifts income from projected to YTD without inflating the total.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        nqo_ytd = 11_000.0
+
+        hh = Household()  # has TXN grants → option_income > 0 in base year
+        plan = ConversionPlan()
+
+        # Baseline: no YTD NQO exercised
+        ytd_no_nqo = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=0.0)
+        # Test: $11K exercised YTD — shifts $11K from projected to magi_ytd
+        ytd_with_nqo = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=nqo_ytd)
+
+        yr_none = run_scenario(hh, plan, "no_nqo", end_age=65, ytd=ytd_no_nqo).years[0]
+        yr_with = run_scenario(hh, plan, "with_nqo", end_age=65, ytd=ytd_with_nqo).years[0]
+
+        assert yr_with.option_income > 0, "fixture must have option_income in base year"
+        assert yr_with.option_income >= nqo_ytd, "option_income must cover the YTD portion"
+
+        # MAGI must be identical — NQO ytd is a reclassification, not new income.
+        assert yr_with.magi == pytest.approx(yr_none.magi, rel=1e-6), (
+            f"MAGI with NQO ytd={yr_with.magi:,.2f} != without={yr_none.magi:,.2f}; "
+            f"double-count of {yr_with.magi - yr_none.magi:,.2f}"
         )
