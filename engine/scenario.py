@@ -565,13 +565,12 @@ def run_scenario(
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
         # point; realized gains walk up through 0% / 15% / 20% bands.
-        _ltcg_ord = yr.taxable_income - realized_gains  # ordinary taxable income
-        _ltcg_start = max(0.0, _ltcg_ord)
+        # yr.taxable_income is already ordinary-only; do NOT subtract realized_gains.
+        _ltcg_start = max(0.0, yr.taxable_income)
         _ltcg_end = _ltcg_start + max(0.0, realized_gains)
         _ltcg_at_15 = max(
             0.0,
-            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20
