@@ -445,7 +445,9 @@ def run_scenario(
             yr.total_deductions = deductions(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
             )
-            yr.total_deductions += senior_bonus_deduction(ya_eff, sa_eff, yr.magi)
+            yr.total_deductions += senior_bonus_deduction(
+                ya_eff, sa_eff, yr.magi, filing_status="Single"
+            )
         else:
             yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
             yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
@@ -570,8 +572,7 @@ def run_scenario(
         _ltcg_end = _ltcg_start + max(0.0, realized_gains)
         _ltcg_at_15 = max(
             0.0,
-            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20

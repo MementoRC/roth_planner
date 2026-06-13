@@ -1174,9 +1174,7 @@ class TestYTDSnapshot:
         ytd_no_interest = YTDSnapshot(wages_ytd=wages, ltcg_ytd=ltcg)
         result_no_interest = estimate_ytd_federal_tax(ytd_no_interest, hh)
         # ltcg_at_15 = min(110_000, 600_050) - max(90_000, 96_700) = 110_000 - 96_700 = 13_300
-        assert result_no_interest.ltcg_tax == approx(
-            (wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15
-        )
+        assert result_no_interest.ltcg_tax == approx((wages + ltcg - LTCG_THRESHOLDS_MFJ[0]) * 0.15)
         assert result_no_interest.ltcg_tax < result.ltcg_tax
 
 
@@ -1380,7 +1378,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         # planned option income = (200 - 104) * 2000 = 192_000; realized total = 80_000
@@ -1397,7 +1397,9 @@ class TestHeadroomOptionIncomeSubtract:
 
         hh = Household(
             base_year=2026,
-            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")],
+            grants=[
+                StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026, grant_id="GR-2019")
+            ],
             txn_price_now=200.0,
         )
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
@@ -1525,7 +1527,6 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         # Total subtract: realized = ytd.nqo_exercise_ytd regardless of grant_id
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
-
 
     def test_magi_ytd_includes_tax_exempt_interest(self):
         """Tax-exempt (muni) interest must appear in IRMAA MAGI even though it is federally exempt."""
@@ -2148,6 +2149,27 @@ class TestEngineConstantsCharacterization:
         # result = max(12_000 - 21_000, 0) = 0.0
         assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
 
+    # --- senior_bonus_deduction() filing-status phaseout regression (audit A-4/E-6) ---
+
+    def test_senior_bonus_mfj_below_threshold_full_bonus(self):
+        # MFJ, both 65+, MAGI=120_000 < 150_000 → full $12,000
+        assert senior_bonus_deduction(65, 65, magi=120_000, filing_status="MFJ") == approx(12_000)
+
+    def test_senior_bonus_single_partial_phaseout(self):
+        # Single survivor, age 68, MAGI=120_000: threshold=$75,000
+        # reduction = (120_000 - 75_000) * 0.06 = 45_000 * 0.06 = 2_700
+        # result = max(6_000 - 2_700, 0) = 3_300
+        assert senior_bonus_deduction(68, 0, magi=120_000, filing_status="Single") == approx(3_300)
+
+    def test_senior_bonus_single_above_phaseout_cap(self):
+        # Single survivor, age 68, MAGI=200_000 > 175_000 (full phase-out)
+        # reduction = (200_000 - 75_000) * 0.06 = 7_500 > 6_000 → 0
+        assert senior_bonus_deduction(68, 0, magi=200_000, filing_status="Single") == approx(0.0)
+
+    def test_senior_bonus_mfs_ineligible(self):
+        # MFS: ineligible regardless of age or MAGI
+        assert senior_bonus_deduction(70, 70, magi=50_000, filing_status="MFS") == approx(0.0)
+
     # --- taxable_ss() ---
 
     def test_taxable_ss_zero_ss(self):
@@ -2197,16 +2219,12 @@ class TestFetchYTDSnapshotNoDoubleCount:
                            ira_conversions_ytd, ira_distributions_ytd
     """
 
-    def _make_investment_income_response(
-        self, dividends: float, interest: float
-    ) -> dict:
+    def _make_investment_income_response(self, dividends: float, interest: float) -> dict:
         """Simulate /query/brokerage?data_type=investment_income multi-institution shape."""
         return {
             "institutions": {
                 "fidelity": {
-                    "rows": [
-                        {"received_dividends": dividends, "received_interest": interest}
-                    ]
+                    "rows": [{"received_dividends": dividends, "received_interest": interest}]
                 }
             }
         }
@@ -2226,9 +2244,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
         if total_dividends:
             rows.append({"label": "1099-DIV dividends", "amount": total_dividends})
         if qualified_dividends:
-            rows.append(
-                {"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends}
-            )
+            rows.append({"label": "Qualified dividends (1099-DIV)", "amount": qualified_dividends})
         if interest:
             rows.append({"label": "Interest income (1099-INT)", "amount": interest})
         if conversions:
@@ -2305,9 +2321,7 @@ class TestFetchYTDSnapshotNoDoubleCount:
                     self._make_investment_income_response(dividends=0.0, interest=3_000.0)
                 )
             if data_type == "ytd_income":
-                return _FakeResp(
-                    self._make_ytd_income_response(interest=3_000.0, wages=80_000.0)
-                )
+                return _FakeResp(self._make_ytd_income_response(interest=3_000.0, wages=80_000.0))
             return _FakeResp({"rows": []})
 
         monkeypatch.setattr(requests, "get", _fake_get)
@@ -2997,7 +3011,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3018,7 +3038,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=96_000.0,
@@ -3037,7 +3063,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=50_000.0,
@@ -3057,7 +3089,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2021, strike=169.0, shares=500, expiry_year=2031, grant_id="N0000197825"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=75_000.0,
@@ -3077,10 +3115,14 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[
-            StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
-            StockGrant(year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"),
-        ])
+        hh = Household(
+            grants=[
+                StockGrant(year=2020, strike=130.0, shares=300, expiry_year=2030, grant_id="N1234"),
+                StockGrant(
+                    year=2021, strike=169.0, shares=400, expiry_year=2031, grant_id="N00001234"
+                ),
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=40_000.0,
@@ -3100,7 +3142,13 @@ class TestOptionExercisesFetchAndApply:
         )
         from models.ytd_income import YTDSnapshot
 
-        hh = Household(grants=[StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019")])
+        hh = Household(
+            grants=[
+                StockGrant(
+                    year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="GR-2019"
+                )
+            ]
+        )
         exercises = OptionExercisesSnapshot(
             server_available=True,
             total_spread=20_000.0,
@@ -3971,7 +4019,9 @@ class TestFetchMultiInstitutionShape:
         income_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}]
+                    "rows": [
+                        {"form_label": "wages/w-2", "amount_current": 120_000, "amount_prior": 0}
+                    ]
                 }
             }
         }
@@ -3996,7 +4046,13 @@ class TestFetchMultiInstitutionShape:
         deduction_payload = {
             "institutions": {
                 "turbotax": {
-                    "rows": [{"form_label": "hsa contribution", "amount_current": 8_300, "amount_prior": 0}]
+                    "rows": [
+                        {
+                            "form_label": "hsa contribution",
+                            "amount_current": 8_300,
+                            "amount_prior": 0,
+                        }
+                    ]
                 }
             }
         }
@@ -4023,13 +4079,18 @@ class TestFetchMultiInstitutionShape:
             if data_type == "realized_gains":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "investment_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "fidelity": {
-                            "rows": [{"received_dividends": 3_500.0, "received_interest": 200.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "fidelity": {
+                                "rows": [
+                                    {"received_dividends": 3_500.0, "received_interest": 200.0}
+                                ]
+                            }
                         }
-                    }
-                })
+                    },
+                )
             if data_type == "ytd_income":
                 return self._fake_resp(200, {"rows": []})
             return self._fake_resp(200, {})
@@ -4054,13 +4115,14 @@ class TestFetchMultiInstitutionShape:
             if data_type == "investment_income":
                 return self._fake_resp(200, {"rows": []})
             if data_type == "ytd_income":
-                return self._fake_resp(200, {
-                    "institutions": {
-                        "turbotax": {
-                            "rows": [{"label": "wages", "amount": 95_000.0}]
+                return self._fake_resp(
+                    200,
+                    {
+                        "institutions": {
+                            "turbotax": {"rows": [{"label": "wages", "amount": 95_000.0}]}
                         }
-                    }
-                })
+                    },
+                )
             return self._fake_resp(200, {})
 
         monkeypatch.setattr(req, "get", _resp_for)
@@ -4509,8 +4571,7 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_end = ltcg_start + max(0.0, realized_gains)
         ltcg_at_15 = max(
             0.0,
-            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         return ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
