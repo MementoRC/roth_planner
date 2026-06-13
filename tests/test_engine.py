@@ -2447,6 +2447,28 @@ class TestEngineConstantsCharacterization:
         # cap=0.85*10_000=8_500 → result=8_500
         assert taxable_ss(combined_ss=10_000, other_income=200_000) == approx(8_500)
 
+    # --- 2026 IRS constant pins (Rev. Proc. 2025-32) ---
+
+    def test_senior_extra_single_2026_value(self):
+        """Pin SENIOR_EXTRA_SINGLE to 2026 IRS value per Rev. Proc. 2025-32.
+
+        IRC §63(f) additional standard deduction for age 65+ or blind, Single/HoH filer.
+        2026 value: $2,050 per qualifying condition.
+        """
+        from engine.tax import SENIOR_EXTRA_SINGLE
+
+        assert SENIOR_EXTRA_SINGLE == 2_050
+
+    def test_ltcg_thresholds_single_2026_values(self):
+        """Pin LTCG_THRESHOLDS_SINGLE to 2026 IRS values per Rev. Proc. 2025-32.
+
+        0% up to $49,450; 15% up to $545,500; 20% above.
+        Regression: any future year-bump is a deliberate, visible change.
+        """
+        from engine.tax import LTCG_THRESHOLDS_SINGLE
+
+        assert LTCG_THRESHOLDS_SINGLE == (49_450, 545_500)
+
 
 class TestFetchYTDSnapshotNoDoubleCount:
     """Guard against double-count when both YTD endpoints respond with dividend/interest data.
@@ -5237,7 +5259,7 @@ class TestBrokerageGainTaxStackWalk:
 
         Single ordinary taxable $60K, realized_gains $30K, qual_div $0.
         MFJ 0%-ceiling ($96_700): stack $60K→$90K entirely below → $0 tax (pre-fix).
-        Single 0%-ceiling ($48_350): stack starts $60K (above ceiling) → all $30K at 15%
+        Single 0%-ceiling ($49_450, 2026 Rev. Proc. 2025-32): stack starts $60K (above ceiling) → all $30K at 15%
         = $4_500 (post-fix).
         """
         from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE
@@ -5273,9 +5295,9 @@ class TestBrokerageGainTaxStackWalk:
         """C-5 + C-6 combined: Single survivor with both qual_div and realized_gains.
 
         Single ordinary taxable $40K, realized_gains $5K, qual_div $8K.
-        Single 0%-ceiling = LTCG_THRESHOLDS_SINGLE[0] = 48_350.
+        Single 0%-ceiling = LTCG_THRESHOLDS_SINGLE[0] = 49_450 (2026 Rev. Proc. 2025-32).
         ltcg_eligible = $13K; stack: $40K → $53K.
-        $53K - $48_350 = $4_650 above 0%-band → all at 15% = $697.50.
+        $53K - $49_450 = $3_550 above 0%-band → all at 15% = $532.50.
         """
         from engine.tax import LTCG_THRESHOLDS_SINGLE
 
@@ -5293,9 +5315,9 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
         result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
 
-        expected_taxed = ltcg_end - ltcg_thresholds[0]  # 53_000 - 48_350 = 4_650
+        expected_taxed = ltcg_end - ltcg_thresholds[0]  # 53_000 - 49_450 = 3_550
         assert result == pytest.approx(expected_taxed * 0.15, rel=1e-9)
-        assert result == pytest.approx(697.50, rel=1e-9)
+        assert result == pytest.approx(532.50, rel=1e-9)
 
 
 class TestRothEligibility2026Constants:

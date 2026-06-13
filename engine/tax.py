@@ -34,7 +34,7 @@ BRACKETS_SINGLE = [
 
 # Standard deduction — Single (2026 — IRS Rev. Proc. 2025-32)
 STD_DEDUCTION_SINGLE = 16_100
-SENIOR_EXTRA_SINGLE = 1_850  # single filer 65+
+SENIOR_EXTRA_SINGLE = 2_050  # single filer 65+ — IRC §63(f), Rev. Proc. 2025-32
 
 # Standard deduction — MFJ (2026)
 STD_DEDUCTION_MFJ = 32_200
@@ -64,8 +64,8 @@ LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
 LTCG_THRESHOLDS_MFJ = (96_700, 600_050)
 
 # LTCG bracket thresholds for Single filer (taxable income upper bounds, 2026 — IRS Rev. Proc. 2025-32)
-# 0% up to $48,350; 15% up to $533,400; 20% above
-LTCG_THRESHOLDS_SINGLE = (48_350, 533_400)
+# 0% up to $49,450; 15% up to $545,500; 20% above
+LTCG_THRESHOLDS_SINGLE = (49_450, 545_500)
 
 # IRS safe-harbor threshold: prior-year AGI > $150K MFJ ($75K Single) requires 110% safe harbor;
 # below threshold qualifies for 100% safe harbor. Source: IRC §6654(d)(1)(C).
