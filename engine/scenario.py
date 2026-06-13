@@ -179,6 +179,10 @@ def run_scenario(
     results = []
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
+    # TODO(math-audit-2026-06-12 P3): Brokerage starting balance not initialized from YTD
+    # snapshot. Projection always starts at 0.0, ignoring any brokerage balance already
+    # accumulated by the snapshot date. Fix requires adding a brokerage_balance field to
+    # YTDSnapshot (model extension deferred — see ai_docs/MATH_AUDIT_2026-06-12.md P3).
     brokerage = 0.0
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
@@ -708,9 +712,20 @@ def _auto_fill_core(
 
         # Taxable SS (need to estimate with current other income)
         other_fixed = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
-        # YTD ordinary income affects SS taxation
+        # YTD ordinary income affects SS taxation.
+        # Mirrors run_scenario's combined_gross YTD block: wages, NEC, STCG,
+        # ordinary dividends, conversions done, and IRA distributions all stack
+        # into ordinary income. ordinary_dividends_ytd was previously omitted here
+        # (math audit 2026-06-12 Priority 3), overstating bracket room by that amount.
         if ytd_year is not None:
-            other_fixed += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            other_fixed += (
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.stcg_ytd
+                + ytd_year.ordinary_dividends_ytd
+                + ytd_year.ira_conversions_ytd
+                + ytd_year.ira_distributions_ytd
+            )
         tss = taxable_ss(combined_ss, other_fixed)
 
         # Fixed gross (ordinary income — no LTCG)
@@ -718,7 +733,14 @@ def _auto_fill_core(
             opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd + tss
         )
         if ytd_year is not None:
-            fixed_gross += ytd_year.wages_ytd + ytd_year.stcg_ytd
+            fixed_gross += (
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.stcg_ytd
+                + ytd_year.ordinary_dividends_ytd
+                + ytd_year.ira_conversions_ytd
+                + ytd_year.ira_distributions_ytd
+            )
 
         # Deductions
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)

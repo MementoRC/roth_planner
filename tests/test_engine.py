@@ -1407,6 +1407,108 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
+
+class TestAutoFillCoreOrdinaryDividendsYTD:
+    """Regression tests: _auto_fill_core must include ordinary_dividends_ytd in fixed_gross.
+
+    Prior to the fix (math audit 2026-06-12 Priority 3), _auto_fill_core added only
+    wages_ytd and stcg_ytd from the YTD snapshot, omitting ordinary_dividends_ytd
+    (and nec_income_ytd, ira_conversions_ytd, ira_distributions_ytd). This caused
+    bracket room to be overstated by the omitted ordinary income amount.
+    """
+
+    def _base_hh(self) -> Household:
+        return Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=1_700_000,
+            spouse_ira=1_700_000,
+        )
+
+    def test_ordinary_dividends_reduce_room_base_year(self):
+        """ordinary_dividends_ytd must reduce base-year bracket room and conversion amount."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+
+        ytd_no_div = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_with_div = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=50_000,
+            ordinary_dividends_ytd=10_000,
+        )
+
+        plan_no_div = auto_fill_12(hh, ytd=ytd_no_div)
+        plan_with_div = auto_fill_12(hh, ytd=ytd_with_div)
+
+        base_conv = plan_no_div.your_conversions.get(2026, 0.0)
+        div_conv = plan_with_div.your_conversions.get(2026, 0.0)
+
+        # ordinary_dividends_ytd consumes bracket room → fewer conversions in base year
+        assert div_conv < base_conv, (
+            f"Expected ordinary_dividends_ytd to reduce base-year conversion, "
+            f"got no_div={base_conv:.0f} vs with_div={div_conv:.0f}"
+        )
+        # Difference should match the dividend amount (ordinary income fills bracket space)
+        assert base_conv - div_conv == approx(10_000, tol=200)
+
+    def test_nec_income_reduces_room_base_year(self):
+        """nec_income_ytd (1099-NEC) must also reduce base-year bracket room."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+
+        ytd_no_nec = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_with_nec = YTDSnapshot(tax_year=2026, wages_ytd=50_000, nec_income_ytd=8_000)
+
+        plan_no_nec = auto_fill_12(hh, ytd=ytd_no_nec)
+        plan_with_nec = auto_fill_12(hh, ytd=ytd_with_nec)
+
+        base_conv = plan_no_nec.your_conversions.get(2026, 0.0)
+        nec_conv = plan_with_nec.your_conversions.get(2026, 0.0)
+
+        assert nec_conv < base_conv
+        assert base_conv - nec_conv == approx(8_000, tol=200)
+
+    def test_ira_conversions_done_reduce_room_base_year(self):
+        """ira_conversions_ytd already done must reduce remaining planned room."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+
+        ytd_no_done = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_done = YTDSnapshot(tax_year=2026, wages_ytd=50_000, ira_conversions_ytd=15_000)
+
+        plan_no_done = auto_fill_12(hh, ytd=ytd_no_done)
+        plan_done = auto_fill_12(hh, ytd=ytd_done)
+
+        base_conv = plan_no_done.your_conversions.get(2026, 0.0)
+        done_conv = plan_done.your_conversions.get(2026, 0.0)
+
+        assert done_conv < base_conv
+        assert base_conv - done_conv == approx(15_000, tol=200)
+
+    def test_future_years_unaffected(self):
+        """YTD snapshot only applies to base year; future years must be identical."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=50_000,
+            ordinary_dividends_ytd=10_000,
+        )
+
+        plan_no_ytd = auto_fill_12(hh)
+        plan_with_ytd = auto_fill_12(hh, ytd=ytd)
+
+        # All years after 2026 must be identical
+        future_years_no = {y: v for y, v in plan_no_ytd.your_conversions.items() if y > 2026}
+        future_years_with = {y: v for y, v in plan_with_ytd.your_conversions.items() if y > 2026}
+        assert future_years_no == pytest.approx(future_years_with, abs=1.0)
+
     def test_total_subtract_grant_id_empty_uses_total(self):
         """Total subtract applies even when StockGrant.grant_id is empty (legacy fixture)."""
         from engine.headroom import compute_headroom
