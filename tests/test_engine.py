@@ -358,6 +358,59 @@ class TestIRMAA:
             "IRMAA must be zero at age 63/61: Medicare eligibility requires age 65"
         )
 
+    # --- Fix A: filing_status parameter on irmaa_next_threshold ---
+
+    def test_irmaa_next_threshold_mfj_unchanged_default(self):
+        """Backward-compat: omitting filing_status defaults to MFJ table.
+
+        MFJ MAGI $200K is below Tier-1 threshold ($218K) → room = $18K.
+        Must be identical when filing_status='MFJ' is passed explicitly.
+        """
+        assert irmaa_next_threshold(200_000) == approx(18_000)
+        assert irmaa_next_threshold(200_000, filing_status="MFJ") == approx(18_000)
+
+    def test_irmaa_next_threshold_single_filer_uses_single_tiers(self):
+        """Single filer MAGI $150K: above Single Tier-2 ($137K), below Tier-3 ($171K).
+
+        Next un-crossed threshold is $171K → room = $21K.
+        MFJ at same MAGI has room to Tier-1 ($218K) → $68K — confirms different table used.
+        """
+        single_room = irmaa_next_threshold(150_000, filing_status="Single")
+        mfj_room = irmaa_next_threshold(150_000, filing_status="MFJ")
+        assert single_room == approx(21_000)
+        assert mfj_room == approx(68_000)
+
+    def test_irmaa_for_year_single_filer_uses_single_tiers(self):
+        """Single filer MAGI $150K with income-year ages so medicare-year age >= 65.
+
+        $150K is above Single Tier-2 threshold ($137K), below Tier-3 ($171K).
+        Annual surcharge per person:
+          Part B total $405.80/mo → annual $4,869.60; minus base $202.90/mo * 12 = $2,434.80
+          Part B surcharge = $4,869.60 - $2,434.80 = $2,434.80
+          Part D surcharge = $37.50 * 12 = $450.00
+          Total per person = $2,884.80; 1 person on Medicare → $2,884.80.
+        """
+        from engine.irmaa import irmaa_for_year
+
+        # income_year ages: 63/55 → medicare-year ages 65/57; 1 person on Medicare
+        surcharge, medicare_year = irmaa_for_year(
+            150_000,
+            your_age_income_year=63,
+            spouse_age_income_year=55,
+            filing_status="Single",
+        )
+        assert medicare_year == 65
+        assert surcharge == approx((405.80 - 202.90) * 12 + 37.50 * 12)
+
+        # Same MAGI under MFJ: $150K < Tier-1 MFJ threshold $218K → no surcharge
+        mfj_surcharge, _ = irmaa_for_year(
+            150_000,
+            your_age_income_year=63,
+            spouse_age_income_year=55,
+            filing_status="MFJ",
+        )
+        assert mfj_surcharge == 0.0
+
 
 class TestNIIT:
     def test_below_threshold(self):

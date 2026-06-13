@@ -95,9 +95,19 @@ def irmaa_for_year(
     return surcharge, your_age_income_year + 2
 
 
-def irmaa_next_threshold(magi: float) -> float:
-    """How much room before hitting the next IRMAA tier."""
-    for threshold, _, _ in IRMAA_TIERS_MFJ:
+def irmaa_next_threshold(magi: float, filing_status: str = "MFJ") -> float:
+    """How much room before hitting the next IRMAA tier.
+
+    Args:
+        magi: Modified Adjusted Gross Income for the income year.
+        filing_status: "MFJ" (default) or "Single" — selects threshold table.
+
+    Returns:
+        Dollar distance to the next un-crossed tier threshold, or 0.0 if already
+        above the highest tier.
+    """
+    tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    for threshold, _, _ in tiers:
         if magi <= threshold:
             return threshold - magi
     return 0.0
