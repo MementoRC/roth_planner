@@ -445,7 +445,9 @@ def run_scenario(
             yr.total_deductions = deductions(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
             )
-            yr.total_deductions += senior_bonus_deduction(ya_eff, sa_eff, yr.magi)
+            yr.total_deductions += senior_bonus_deduction(
+                ya_eff, sa_eff, yr.magi, filing_status="Single"
+            )
         else:
             yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
             yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)

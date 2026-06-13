@@ -2186,6 +2186,27 @@ class TestEngineConstantsCharacterization:
         # result = max(12_000 - 21_000, 0) = 0.0
         assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
 
+    # --- senior_bonus_deduction() filing-status phaseout regression (audit A-4/E-6) ---
+
+    def test_senior_bonus_mfj_below_threshold_full_bonus(self):
+        # MFJ, both 65+, MAGI=120_000 < 150_000 → full $12,000
+        assert senior_bonus_deduction(65, 65, magi=120_000, filing_status="MFJ") == approx(12_000)
+
+    def test_senior_bonus_single_partial_phaseout(self):
+        # Single survivor, age 68, MAGI=120_000: threshold=$75,000
+        # reduction = (120_000 - 75_000) * 0.06 = 45_000 * 0.06 = 2_700
+        # result = max(6_000 - 2_700, 0) = 3_300
+        assert senior_bonus_deduction(68, 0, magi=120_000, filing_status="Single") == approx(3_300)
+
+    def test_senior_bonus_single_above_phaseout_cap(self):
+        # Single survivor, age 68, MAGI=200_000 > 175_000 (full phase-out)
+        # reduction = (200_000 - 75_000) * 0.06 = 7_500 > 6_000 → 0
+        assert senior_bonus_deduction(68, 0, magi=200_000, filing_status="Single") == approx(0.0)
+
+    def test_senior_bonus_mfs_ineligible(self):
+        # MFS: ineligible regardless of age or MAGI
+        assert senior_bonus_deduction(70, 70, magi=50_000, filing_status="MFS") == approx(0.0)
+
     # --- taxable_ss() ---
 
     def test_taxable_ss_zero_ss(self):
