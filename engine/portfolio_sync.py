@@ -315,9 +315,12 @@ def _derive_ttm_dividends(h: Holding) -> float:
         except (KeyError, ValueError):
             pass
 
+    # Audit E-5: use most-recent prior year, not the highest value across all years.
+    # max(prior.values()) overstates yield for declining dividend streams; we want
+    # the value from the highest year-key (i.e. most recent completed year).
     current_year = str(date.today().year)
     prior = {k: v for k, v in h.dividends_by_year.items() if k < current_year}
-    return max(prior.values()) if prior else 0.0
+    return prior[max(prior.keys())] if prior else 0.0
 
 
 def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
@@ -720,14 +723,14 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     """
     ytd = YTDSnapshot()
 
-    # Check server
+    # Check server availability; skip the early-return so individual endpoint
+    # try/except blocks can still succeed even when /status is unreachable.
     try:
         resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
         resp.raise_for_status()
+        ytd.manually_entered = False
     except requests.RequestException:
-        return ytd
-
-    ytd.manually_entered = False
+        pass
 
     # Realized gains
     try:
@@ -844,6 +847,18 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         ytd.qualified_dividends_ytd = parsed.get("qualified_dividends", 0.0)
         ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
         ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
+        # Audit D-4: investment_income endpoint is the preferred owner of
+        # ordinary_dividends_ytd; only fall back to 1099-DIV box 1a here when
+        # that endpoint was unavailable (field still zero after its try-block).
+        total_div = parsed.get("total_dividends", 0.0)
+        if total_div and ytd.ordinary_dividends_ytd == 0.0:
+            ytd.ordinary_dividends_ytd = max(total_div - ytd.qualified_dividends_ytd, 0.0)
+            warnings.warn(
+                "Falling back to 1099-DIV box 1a minus qualified_dividends for "
+                "ordinary_dividends_ytd; investment_income endpoint preferred",
+                UserWarning,
+                stacklevel=2,
+            )
     except (requests.RequestException, ValueError):
         pass
 
@@ -1050,7 +1065,9 @@ class OptionExercisesSnapshot:
     warnings: list[str] = field(default_factory=list)
     rows_count: int = 0
     captured_at: str = ""
-    sale_info_by_grant: dict[str, dict[str, Any]] = field(default_factory=dict)  # grant_id -> {grant_year, strike, shares_ytd}
+    sale_info_by_grant: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )  # grant_id -> {grant_year, strike, shares_ytd}
 
 
 def fetch_option_exercises() -> OptionExercisesSnapshot:
@@ -1218,9 +1235,7 @@ def _normalize_grant_id(gid: str) -> str:
     return "".join(ch for ch in str(gid).strip().upper() if ch.isalnum())
 
 
-def _grant_id_substring_match(
-    raw_norm: str, known_norm: dict[str, str]
-) -> str | None:
+def _grant_id_substring_match(raw_norm: str, known_norm: dict[str, str]) -> str | None:
     """Bidirectional substring match for grant_id prefix/suffix mismatches.
 
     Handles cases like UBS 'grant_number=197825' vs FinExtract
