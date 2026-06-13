@@ -15,6 +15,7 @@ import streamlit as st
 from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
 from engine.tax import BRACKETS_MFJ
 from models.household import Household
+from views._format import fmt_dollars
 
 PHASE_COLORS = {
     "options": "#7c3aed",  # purple
@@ -136,8 +137,8 @@ def render(hh: Household):
         cols[0].markdown(f"{phase_emoji} {yr.year}")
         cols[1].markdown(f"**{ya}**")
         cols[2].markdown(f"**{sa}**")
-        cols[3].markdown(f"${yr.your_ira_begin:,.0f}")
-        cols[4].markdown(f"${yr.option_income:,.0f}" if yr.option_income > 0 else "—")
+        cols[3].markdown(fmt_dollars(yr.your_ira_begin))
+        cols[4].markdown(fmt_dollars(yr.option_income) if yr.option_income > 0 else "—")
 
         # Your conversion input
         if you_can_conv:
@@ -211,23 +212,23 @@ def render(hh: Household):
             cols[8].markdown("—")
 
         # Computed columns
-        cols[9].markdown(f"${yr.combined_gross:,.0f}")
+        cols[9].markdown(fmt_dollars(yr.combined_gross))
 
         # Bracket with color
         br_pct = yr.marginal_bracket * 100
         br_color = "green" if br_pct <= 12 else ("orange" if br_pct <= 22 else "red")
         cols[10].markdown(f":{br_color}[**{br_pct:.0f}%**]")
 
-        cols[11].markdown(f"${yr.conversion_tax:,.0f}" if yr.conversion_tax > 0 else "—")
+        cols[11].markdown(fmt_dollars(yr.conversion_tax) if yr.conversion_tax > 0 else "—")
 
         # Room with color
         r12 = yr.room_12
         r12_color = "green" if r12 > 50_000 else ("orange" if r12 > 0 else "red")
-        cols[12].markdown(f":{r12_color}[${r12:,.0f}]")
+        cols[12].markdown(f":{r12_color}[{fmt_dollars(r12)}]")
 
         r22 = yr.room_22
         r22_color = "green" if r22 > 50_000 else ("orange" if r22 > 0 else "red")
-        cols[13].markdown(f":{r22_color}[${r22:,.0f}]")
+        cols[13].markdown(f":{r22_color}[{fmt_dollars(r22)}]")
 
     # --- Totals ---
     st.markdown("---")
@@ -236,12 +237,12 @@ def render(hh: Household):
     total_tax = sum(yr.conversion_tax for yr in conv_window)
 
     tcol1, tcol2, tcol3, tcol4 = st.columns(4)
-    tcol1.metric("Your Total Conv", f"${total_yc:,.0f}")
-    tcol2.metric("Spouse Total Conv", f"${total_sc:,.0f}")
-    tcol3.metric("Combined Conv", f"${total_yc + total_sc:,.0f}")
+    tcol1.metric("Your Total Conv", fmt_dollars(total_yc))
+    tcol2.metric("Spouse Total Conv", fmt_dollars(total_sc))
+    tcol3.metric("Combined Conv", fmt_dollars(total_yc + total_sc))
     tcol4.metric(
         "Total Conv Tax",
-        f"${total_tax:,.0f}",
+        fmt_dollars(total_tax),
         f"Avg rate: {total_tax / max(total_yc + total_sc, 1) * 100:.1f}%",
     )
 

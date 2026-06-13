@@ -22,6 +22,7 @@ from engine.scenario import (
     run_scenario,
 )
 from models.household import Household, SurvivorScenario
+from views._format import fmt_dollars
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -141,7 +142,7 @@ def _compute_survivor_snapshot(
             bracket = marginal_rate_single(taxable)
 
             row[f"{s.name} Inherited IRA"] = f"${inherited_ira / 1e6:.2f}M"
-            row[f"{s.name} Survivor Tax"] = f"${tax:,.0f}/yr"
+            row[f"{s.name} Survivor Tax"] = f"{fmt_dollars(tax)}/yr"
             row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
 
         rows.append(row)
@@ -233,14 +234,22 @@ def render(hh: Household):
         summary_rows.append(
             {
                 "Scenario": s.name,
-                "Total Converted": f"${total_conv:,.0f}",
-                "Conv Tax Paid": f"${s.total_conv_tax:,.0f}",
+                "Total Converted": fmt_dollars(total_conv),
+                "Conv Tax Paid": fmt_dollars(s.total_conv_tax),
                 "Avg Conv Rate": f"{s.total_conv_tax / max(total_conv, 1) * 100:.1f}%",
-                "Lifetime Tax": f"${lifetime_tax:,.0f}",
-                "Lifetime IRMAA": f"${lifetime_irmaa:,.0f}",
-                "Lifetime Brok Tax": f"${lifetime_brok:,.0f}",
-                "Total All-In Cost": f"${total_cost:,.0f}",
-                "vs Baseline": f"${total_cost - (_lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)):+,.0f}",
+                "Lifetime Tax": fmt_dollars(lifetime_tax),
+                "Lifetime IRMAA": fmt_dollars(lifetime_irmaa),
+                "Lifetime Brok Tax": fmt_dollars(lifetime_brok),
+                "Total All-In Cost": fmt_dollars(total_cost),
+                "vs Baseline": fmt_dollars(
+                    total_cost
+                    - (
+                        _lifetime_tax(baseline)
+                        + _lifetime_irmaa(baseline)
+                        + _lifetime_brok_tax(baseline)
+                    ),
+                    sign=True,
+                ),
                 "IRA at 75": f"${_ira_at_age(s, 75) / 1e6:.2f}M",
                 "IRA at 85": f"${_ira_at_age(s, 85) / 1e6:.2f}M",
                 "IRA at 95": f"${_ira_at_age(s, 95) / 1e6:.2f}M",
@@ -417,7 +426,7 @@ def render(hh: Household):
                 ira = yr.your_ira_begin + yr.spouse_ira_begin
                 row[f"{s.name} IRA"] = f"${ira / 1e6:.2f}M"
                 total_rmd = yr.your_rmd + yr.spouse_rmd
-                row[f"{s.name} RMD"] = f"${total_rmd:,.0f}" if total_rmd > 0 else "---"
+                row[f"{s.name} RMD"] = fmt_dollars(total_rmd) if total_rmd > 0 else "---"
                 row[f"{s.name} Bracket"] = f"{yr.marginal_bracket * 100:.0f}%"
             else:
                 row[f"{s.name} IRA"] = "---"
@@ -441,11 +450,11 @@ def render(hh: Household):
                         {
                             "Year": str(yr.year),
                             "You/Sp": f"{yr.your_age}/{yr.spouse_age}",
-                            "Your Conv": f"${yr.your_conversion:,.0f}",
-                            "Sp Conv": f"${yr.spouse_conversion:,.0f}",
+                            "Your Conv": fmt_dollars(yr.your_conversion),
+                            "Sp Conv": fmt_dollars(yr.spouse_conversion),
                             "Bracket": f"{yr.marginal_bracket * 100:.0f}%",
-                            "Conv Tax": f"${yr.conversion_tax:,.0f}",
-                            "IRMAA": f"${yr.irmaa_cost:,.0f}",
+                            "Conv Tax": fmt_dollars(yr.conversion_tax),
+                            "IRMAA": fmt_dollars(yr.irmaa_cost),
                         }
                     )
             if conv_rows:

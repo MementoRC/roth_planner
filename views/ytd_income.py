@@ -26,6 +26,7 @@ from engine.tax import (
 )
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+from views._format import fmt_dollars
 
 
 def _color_for_room(room: float) -> str:
@@ -178,9 +179,9 @@ def render(hh: Household):
                         "Date": e.date,
                         "Description": e.description,
                         "Account": e.account_name,
-                        "Proceeds": f"${e.proceeds:,.0f}",
-                        "Basis": f"${e.cost_basis:,.0f}",
-                        "Gain/Loss": f"${e.gain_loss:,.0f}",
+                        "Proceeds": fmt_dollars(e.proceeds),
+                        "Basis": fmt_dollars(e.cost_basis),
+                        "Gain/Loss": fmt_dollars(e.gain_loss),
                         "Type": "LTCG" if e.is_ltcg else "STCG",
                     }
                 )
@@ -195,9 +196,9 @@ def render(hh: Household):
     # Summary metrics
     st.markdown("#### Current YTD Position (Locked In)")
     m1, m2, m3 = st.columns(3)
-    m1.metric("Locked MAGI (YTD actuals)", f"${headroom.locked_magi:,.0f}")
-    m2.metric("of which LTCG", f"${headroom.ytd_ltcg:,.0f}")
-    m3.metric("Conversions Done", f"${headroom.conversions_done:,.0f}")
+    m1.metric("Locked MAGI (YTD actuals)", fmt_dollars(headroom.locked_magi))
+    m2.metric("of which LTCG", fmt_dollars(headroom.ytd_ltcg))
+    m3.metric("Conversions Done", fmt_dollars(headroom.conversions_done))
 
     # Surface dividend/interest impact on conversion headroom (PR #95).
     # Qualified divs hit MAGI only (IRMAA/NIIT/ACA); ordinary divs + interest
@@ -207,17 +208,17 @@ def render(hh: Household):
         dq, do, di = st.columns(3)
         dq.metric(
             "Qualified dividends (YTD)",
-            f"${ytd.qualified_dividends_ytd:,.0f}",
+            fmt_dollars(ytd.qualified_dividends_ytd),
             help="LTCG-rate taxed. Reduces MAGI room (IRMAA / NIIT / ACA) but NOT ordinary-bracket conversion room.",
         )
         do.metric(
             "Ordinary dividends (YTD)",
-            f"${ytd.ordinary_dividends_ytd:,.0f}",
+            fmt_dollars(ytd.ordinary_dividends_ytd),
             help="Ordinary-rate taxed. Reduces BOTH ordinary-bracket AND MAGI conversion room.",
         )
         di.metric(
             "Interest (YTD)",
-            f"${ytd.interest_ytd:,.0f}",
+            fmt_dollars(ytd.interest_ytd),
             help="Ordinary-rate taxed. Reduces BOTH ordinary-bracket AND MAGI conversion room.",
         )
 
@@ -225,7 +226,7 @@ def render(hh: Household):
     if ytd.nqo_exercise_ytd or getattr(ytd, "_option_exercises_by_grant", None):
         st.metric(
             "NQO exercises (YTD)",
-            f"${ytd.nqo_exercise_ytd:,.0f}",
+            fmt_dollars(ytd.nqo_exercise_ytd),
             help=(
                 "Realized NQO ordinary-income spread from FinExtract equity_compensation. "
                 "Subtracted from planned option income in the conversion-room calc."
@@ -246,24 +247,30 @@ def render(hh: Household):
                 for grant_id, spread in by_grant.items():
                     g = grants_by_id.get(grant_id)
                     if g:
-                        rows.append({
-                            "Grant #": grant_id,
-                            "YTD spread": f"${spread:,.0f}",
-                            "Year": str(g.year),
-                            "Strike": f"${g.strike:.2f}",
-                            "Shares": str(g.shares),
-                            "Expiry": str(g.expiry_year),
-                        })
+                        rows.append(
+                            {
+                                "Grant #": grant_id,
+                                "YTD spread": fmt_dollars(spread),
+                                "Year": str(g.year),
+                                "Strike": fmt_dollars(g.strike, decimals=2),
+                                "Shares": str(g.shares),
+                                "Expiry": str(g.expiry_year),
+                            }
+                        )
                     else:
                         sale_info = sale_info_map.get(grant_id, {})
-                        rows.append({
-                            "Grant #": grant_id,
-                            "YTD spread": f"${spread:,.0f}",
-                            "Year": str(sale_info.get("grant_year") or "—"),
-                            "Strike": f"${sale_info['strike']:.2f}" if sale_info.get("strike") else "—",
-                            "Shares": str(sale_info.get("shares_ytd") or "—"),
-                            "Expiry": "—",
-                        })
+                        rows.append(
+                            {
+                                "Grant #": grant_id,
+                                "YTD spread": fmt_dollars(spread),
+                                "Year": str(sale_info.get("grant_year") or "—"),
+                                "Strike": fmt_dollars(sale_info["strike"], decimals=2)
+                                if sale_info.get("strike")
+                                else "—",
+                                "Shares": str(sale_info.get("shares_ytd") or "—"),
+                                "Expiry": "—",
+                            }
+                        )
                 st.dataframe(rows, width="stretch", hide_index=True)
                 unmatched = sum(1 for r in rows if r["Expiry"] == "—")
                 if unmatched:
@@ -274,13 +281,13 @@ def render(hh: Household):
 
     if headroom.planned_option_income > 0:
         st.caption(
-            f"Option exercise ({hh.base_year}): **${headroom.planned_option_income:,.0f}** — "
+            f"Option exercise ({hh.base_year}): **{fmt_dollars(headroom.planned_option_income)}** — "
             "this is a choice, not locked in. Headroom shown below excludes it."
         )
         if headroom.realized_option_income_ytd:
             st.caption(
-                f"Planned reflects ${headroom.realized_option_income_ytd:,.0f} already realized YTD "
-                f"(of ${headroom.planned_option_income + headroom.realized_option_income_ytd:,.0f} "
+                f"Planned reflects {fmt_dollars(headroom.realized_option_income_ytd)} already realized YTD "
+                f"(of {fmt_dollars(headroom.planned_option_income + headroom.realized_option_income_ytd)} "
                 "originally planned)."
             )
 
@@ -293,12 +300,12 @@ def render(hh: Household):
         cg1, cg2 = st.columns(2)
         cg1.metric(
             "Long-term gains",
-            f"${ytd.ltcg_ytd:,.0f}",
+            fmt_dollars(ytd.ltcg_ytd),
             help="Preferential rate (0/15/20%)",
         )
         cg2.metric(
             "Short-term gains",
-            f"${ytd.stcg_ytd:,.0f}",
+            fmt_dollars(ytd.stcg_ytd),
             help="Ordinary-income rate; stacks into brackets",
         )
         by_source: dict[str, dict[str, float]] = {}
@@ -314,8 +321,8 @@ def render(hh: Household):
                 gain_rows = [
                     {
                         "Source": str(src),
-                        "Long-term": f"${v['long']:,.0f}",
-                        "Short-term": f"${v['short']:,.0f}",
+                        "Long-term": fmt_dollars(v["long"]),
+                        "Short-term": fmt_dollars(v["short"]),
                     }
                     for src, v in sorted(by_source.items())
                 ]
@@ -335,7 +342,7 @@ def render(hh: Household):
     )
     b2.metric(
         "Room to next bracket",
-        f"${estimate.room_to_next_bracket:,.0f}",
+        fmt_dollars(estimate.room_to_next_bracket),
         help="Additional ordinary income before pushing into the next bracket.",
     )
     b3.metric(
@@ -350,10 +357,10 @@ def render(hh: Household):
     st.markdown("---")
     st.subheader("Estimated YTD Federal Tax")
     t1, t2, t3, t4 = st.columns(4)
-    t1.metric("Ordinary bracket tax", f"${estimate.ordinary_tax:,.0f}")
-    t2.metric("LTCG / qualified div tax", f"${estimate.ltcg_tax:,.0f}")
-    t3.metric("NIIT (3.8%)", f"${estimate.niit:,.0f}")
-    t4.metric("Total federal", f"${estimate.total:,.0f}")
+    t1.metric("Ordinary bracket tax", fmt_dollars(estimate.ordinary_tax))
+    t2.metric("LTCG / qualified div tax", fmt_dollars(estimate.ltcg_tax))
+    t3.metric("NIIT (3.8%)", fmt_dollars(estimate.niit))
+    t4.metric("Total federal", fmt_dollars(estimate.total))
     st.caption(
         "Estimate assumes today were Dec 31 (current YTD income only — not annualized). "
         "Excludes state tax, IRMAA premium impact, and quarterly underpayment penalties. "
@@ -382,13 +389,13 @@ def render(hh: Household):
     g1, g2, g3 = st.columns(3)
     g1.metric(
         "Safe-harbor target",
-        f"${guidance.safe_harbor_target:,.0f}",
+        fmt_dollars(guidance.safe_harbor_target),
         help=guidance.rule_used,
     )
-    g2.metric("Already paid YTD", f"${guidance.already_paid_ytd:,.0f}")
+    g2.metric("Already paid YTD", fmt_dollars(guidance.already_paid_ytd))
     g3.metric(
         f"Remaining to pay by {guidance.next_quarterly_due}",
-        f"${guidance.remaining_to_pay:,.0f}",
+        fmt_dollars(guidance.remaining_to_pay),
         help="Pay this before the next quarterly deadline to maintain safe-harbor protection.",
     )
 
@@ -397,12 +404,12 @@ def render(hh: Household):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Room to 12%",
-        f"${headroom.room_to_12pct:,.0f}",
+        fmt_dollars(headroom.room_to_12pct),
         help="Ordinary bracket room — LTCG does NOT consume this",
     )
     c2.metric(
         "Room to 22%",
-        f"${headroom.room_to_22pct:,.0f}",
+        fmt_dollars(headroom.room_to_22pct),
         help="Ordinary bracket room — LTCG does NOT consume this",
     )
 
@@ -412,7 +419,7 @@ def render(hh: Household):
         sorted_years = sorted(prior_magi.keys(), reverse=True)
         most_recent = sorted_years[0]
         st.caption(
-            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi[most_recent]:,.0f}"
+            f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi[most_recent])}"
             " — used for IRMAA 2-year lookback"
         )
 
@@ -422,7 +429,7 @@ def render(hh: Household):
         irmaa_label += f" (matters from {headroom.irmaa_first_relevant_year})"
     c3.metric(
         irmaa_label,
-        f"${headroom.room_to_irmaa_t1:,.0f}",
+        fmt_dollars(headroom.room_to_irmaa_t1),
         delta="TRIGGERED" if headroom.irmaa_already_triggered else None,
         delta_color="inverse" if headroom.irmaa_already_triggered else "off",
         help="MAGI-based — LTCG DOES consume this. "
@@ -435,7 +442,7 @@ def render(hh: Household):
     )
     c4.metric(
         "Room to NIIT",
-        f"${headroom.room_to_niit:,.0f}",
+        fmt_dollars(headroom.room_to_niit),
         help=f"MAGI-based (${NIIT_THRESHOLD_MFJ // 1000:.0f}K) — LTCG DOES consume this",
     )
 
@@ -451,10 +458,10 @@ def render(hh: Household):
     if headroom.planned_option_income > 0:
         with st.expander("If you also exercise options this year"):
             p1, p2, p3, p4 = st.columns(4)
-            p1.metric("Room to 12%", f"${headroom.room_to_12pct_with_planned:,.0f}")
-            p2.metric("Room to 22%", f"${headroom.room_to_22pct_with_planned:,.0f}")
-            p3.metric("Room to IRMAA", f"${headroom.room_to_irmaa_t1_with_planned:,.0f}")
-            p4.metric("Room to NIIT", f"${headroom.room_to_niit_with_planned:,.0f}")
+            p1.metric("Room to 12%", fmt_dollars(headroom.room_to_12pct_with_planned))
+            p2.metric("Room to 22%", fmt_dollars(headroom.room_to_22pct_with_planned))
+            p3.metric("Room to IRMAA", fmt_dollars(headroom.room_to_irmaa_t1_with_planned))
+            p4.metric("Room to NIIT", fmt_dollars(headroom.room_to_niit_with_planned))
 
     # Visual explanation
     st.info(
@@ -470,7 +477,7 @@ def render(hh: Household):
         st.markdown("### IRMAA Impact Warning")
         st.error(
             f"**IRMAA Tier {headroom.irmaa_tier_current} already triggered** "
-            f"with projected MAGI of ${headroom.projected_magi_base:,.0f}.\n\n"
+            f"with projected MAGI of {fmt_dollars(headroom.projected_magi_base)}.\n\n"
             f"This means 2-year lookback will affect **{hh.base_year + 2} Medicare premiums**."
         )
 
@@ -481,11 +488,11 @@ def render(hh: Household):
         s1, s2 = st.columns(2)
         s1.metric(
             "Annual Surcharge (1 person on Medicare)",
-            f"${surcharge_1p:,.0f}",
+            fmt_dollars(surcharge_1p),
         )
         s2.metric(
             "Annual Surcharge (2 people on Medicare)",
-            f"${surcharge_2p:,.0f}",
+            fmt_dollars(surcharge_2p),
         )
 
         # Tier table
@@ -495,9 +502,9 @@ def render(hh: Household):
                 tier_data.append(
                     {
                         "Tier": i,
-                        "MAGI Threshold": f"${threshold:,.0f}",
-                        "Part B (annual/person)": f"${part_b:,.0f}",
-                        "Part D Surcharge (annual/person)": f"${part_d:,.0f}",
+                        "MAGI Threshold": fmt_dollars(threshold),
+                        "Part B (annual/person)": fmt_dollars(part_b),
+                        "Part D Surcharge (annual/person)": fmt_dollars(part_d),
                     }
                 )
             st.dataframe(pd.DataFrame(tier_data), width="stretch")

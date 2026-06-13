@@ -49,6 +49,7 @@ from engine.tax_return_pdf import (
 )
 from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
 from models.household import Household
+from views._format import fmt_dollars
 
 
 def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
@@ -663,11 +664,11 @@ def _render_pdf_1040_import() -> None:
         st.write("**Parsed values — please confirm:**")
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Tax Year", str(rec.tax_year))
-        col_b.metric("AGI", f"${rec.agi:,.0f}")
-        col_c.metric("MAGI", f"${rec.magi:,.0f}")
+        col_b.metric("AGI", fmt_dollars(rec.agi))
+        col_c.metric("MAGI", fmt_dollars(rec.magi))
         col_d, col_e = st.columns(2)
-        col_d.metric("Tax-Exempt Interest", f"${rec.tax_exempt_interest:,.0f}")
-        col_e.metric("FEIE", f"${rec.feie:,.0f}")
+        col_d.metric("Tax-Exempt Interest", fmt_dollars(rec.tax_exempt_interest))
+        col_e.metric("FEIE", fmt_dollars(rec.feie))
 
         status_idx = (
             _FILING_STATUS_OPTIONS.index(rec.filing_status)
@@ -697,7 +698,7 @@ def _render_pdf_1040_import() -> None:
             st.session_state.pop(cache_key, None)
             st.success(
                 f"Saved {rec.tax_year} 1040 record "
-                f"(MAGI ${rec.magi:,.0f}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
+                f"(MAGI {fmt_dollars(rec.magi)}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
                 "Rerunning…"
             )
             st.rerun()

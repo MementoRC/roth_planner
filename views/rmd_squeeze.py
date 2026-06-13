@@ -20,6 +20,7 @@ from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import BRACKETS_MFJ
 from models.household import Household
+from views._format import fmt_dollars
 
 
 def render(hh: Household):
@@ -130,8 +131,8 @@ def render(hh: Household):
         total_tax_wc = sum(yr.federal_tax_amt for yr in rmd_wc)
         st.metric(
             "Total RMD-Era Tax",
-            f"${total_tax_nc:,.0f}",
-            f"Conv: ${total_tax_wc:,.0f} (save ${total_tax_nc - total_tax_wc:,.0f})",
+            fmt_dollars(total_tax_nc),
+            f"Conv: {fmt_dollars(total_tax_wc)} (save {fmt_dollars(total_tax_nc - total_tax_wc)})",
         )
 
     st.markdown("---")
@@ -412,18 +413,18 @@ def render(hh: Household):
                 "You/Sp": f"{nc.your_age}/{nc.spouse_age}",
                 "IRA (NC)": f"${(nc.your_ira_begin + nc.spouse_ira_begin) / 1e6:.2f}M",
                 "IRA (WC)": f"${(wc.your_ira_begin + wc.spouse_ira_begin) / 1e6:.2f}M",
-                "RMD (NC)": f"${nc.your_rmd + nc.spouse_rmd:,.0f}",
-                "RMD (WC)": f"${wc.your_rmd + wc.spouse_rmd:,.0f}",
-                "SS": f"${nc.combined_ss:,.0f}",
+                "RMD (NC)": fmt_dollars(nc.your_rmd + nc.spouse_rmd),
+                "RMD (WC)": fmt_dollars(wc.your_rmd + wc.spouse_rmd),
+                "SS": fmt_dollars(nc.combined_ss),
                 "Bracket (NC)": f"{nc.marginal_bracket * 100:.0f}%",
                 "Bracket (WC)": f"{wc.marginal_bracket * 100:.0f}%",
-                "Tax (NC)": f"${nc.federal_tax_amt:,.0f}",
-                "Tax (WC)": f"${wc.federal_tax_amt:,.0f}",
-                "Saved": f"${nc.federal_tax_amt - wc.federal_tax_amt:,.0f}",
-                "IRMAA (NC)": f"${nc.irmaa_cost:,.0f}",
-                "IRMAA (WC)": f"${wc.irmaa_cost:,.0f}",
-                "Excess RMD": f"${nc.excess_rmd:,.0f}",
-                "Brok (NC)": f"${nc.brokerage_balance:,.0f}",
+                "Tax (NC)": fmt_dollars(nc.federal_tax_amt),
+                "Tax (WC)": fmt_dollars(wc.federal_tax_amt),
+                "Saved": fmt_dollars(nc.federal_tax_amt - wc.federal_tax_amt),
+                "IRMAA (NC)": fmt_dollars(nc.irmaa_cost),
+                "IRMAA (WC)": fmt_dollars(wc.irmaa_cost),
+                "Excess RMD": fmt_dollars(nc.excess_rmd),
+                "Brok (NC)": fmt_dollars(nc.brokerage_balance),
             }
         )
 

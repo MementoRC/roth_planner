@@ -11,6 +11,7 @@ figures and IRA contribution amounts.
 import streamlit as st
 
 from models.household import Household
+from views._format import fmt_dollars
 
 # --- 2026 limits ---
 # Source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025)
@@ -59,10 +60,10 @@ def _render_recharacterization(
 
     st.markdown("#### Recharacterization Opportunity")
     st.warning(
-        f"**{person} contributed ${trad_contrib:,} to Traditional IRA but was eligible for Roth!**\n\n"
-        f"MAGI ${magi:,} is {'below' if magi <= phase_out_lower else 'in'} the "
-        f"{filing} Roth phase-out range (${phase_out_lower:,} – ${phase_out_upper:,}).\n\n"
-        f"You can recharacterize **${rechar_amount:,}** to Roth IRA before **{rechar_deadline}**."
+        f"**{person} contributed {fmt_dollars(trad_contrib)} to Traditional IRA but was eligible for Roth!**\n\n"
+        f"MAGI {fmt_dollars(magi)} is {'below' if magi <= phase_out_lower else 'in'} the "
+        f"{filing} Roth phase-out range ({fmt_dollars(phase_out_lower)} – {fmt_dollars(phase_out_upper)}).\n\n"
+        f"You can recharacterize **{fmt_dollars(rechar_amount)}** to Roth IRA before **{rechar_deadline}**."
     )
 
     with st.expander("Recharacterization Action Plan", expanded=True):
@@ -93,7 +94,7 @@ conversion, so the pro-rata rule does NOT apply.
         ):
             st.markdown(
                 f"   - Your Traditional contribution was **not deductible** anyway "
-                f"(MAGI ${magi:,} exceeds the ${filing} deduction limit with a workplace plan), "
+                f"(MAGI {fmt_dollars(magi)} exceeds the {filing} deduction limit with a workplace plan), "
                 f"so the 1040-X amendment is straightforward — remove Form 8606 non-deductible "
                 f"reporting and report as a Roth contribution instead."
             )
@@ -176,15 +177,19 @@ def render(hh: Household):
     if tax_snap and tax_snap.server_available:
         st.markdown("### Income Summary (from TurboTax)")
         inc_cols = st.columns(4)
-        inc_cols[0].metric("W-2 Wages", f"${tax_snap.wages:,.0f}")
-        inc_cols[1].metric("1099-NEC", f"${tax_snap.nec_income:,.0f}")
-        inc_cols[2].metric("Investments", f"${tax_snap.investment_income:,.0f}")
-        inc_cols[3].metric("Est. MAGI", f"${tax_snap.estimated_magi:,.0f}")
+        inc_cols[0].metric("W-2 Wages", fmt_dollars(tax_snap.wages))
+        inc_cols[1].metric("1099-NEC", fmt_dollars(tax_snap.nec_income))
+        inc_cols[2].metric("Investments", fmt_dollars(tax_snap.investment_income))
+        inc_cols[3].metric("Est. MAGI", fmt_dollars(tax_snap.estimated_magi))
 
         if tax_snap.ira_distributions > 0:
-            st.write(f"IRA/Pension Distributions (1099-R): **${tax_snap.ira_distributions:,.0f}**")
+            st.write(
+                f"IRA/Pension Distributions (1099-R): **{fmt_dollars(tax_snap.ira_distributions)}**"
+            )
         if tax_snap.ira_contributions > 0:
-            st.write(f"IRA Contributions (Form 5498): **${tax_snap.ira_contributions:,.0f}**")
+            st.write(
+                f"IRA Contributions (Form 5498): **{fmt_dollars(tax_snap.ira_contributions)}**"
+            )
         st.markdown("---")
 
     # --- Inputs ---
@@ -219,7 +224,7 @@ def render(hh: Household):
         sorted_years = sorted(prior_magi_anchor.keys(), reverse=True)
         most_recent = sorted_years[0]
         st.caption(
-            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi_anchor[most_recent]:,.0f}"
+            f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi_anchor[most_recent])}"
             " — used for IRMAA 2-year lookback"
         )
 
@@ -269,7 +274,7 @@ def render(hh: Household):
 
     if tax_snap and tax_snap.server_available and default_ira_contrib > 0:
         st.caption(
-            f"\\* TurboTax reports ${default_ira_contrib:,} total IRA contributions (Form 5498). "
+            f"\\* TurboTax reports {fmt_dollars(default_ira_contrib)} total IRA contributions (Form 5498). "
             "This includes both Traditional and Roth — adjust above to reflect only Traditional contributions."
         )
 
@@ -308,11 +313,11 @@ def render(hh: Household):
         remaining = max(0, limit - trad_contrib)
 
         st.write(
-            f"**IRA contribution limit**: ${limit:,} ({'includes $1,100 catch-up' if age >= 50 else 'under 50'})"
+            f"**IRA contribution limit**: {fmt_dollars(limit)} ({'includes $1,100 catch-up' if age >= 50 else 'under 50'})"
         )
         if trad_contrib > 0:
             st.write(
-                f"**Already contributed to Trad IRA**: ${trad_contrib:,} → **${remaining:,} remaining** for Roth"
+                f"**Already contributed to Trad IRA**: {fmt_dollars(trad_contrib)} → **{fmt_dollars(remaining)} remaining** for Roth"
             )
 
         if remaining == 0:
@@ -320,7 +325,9 @@ def render(hh: Household):
             lower, upper = ROTH_PHASEOUT.get(filing, ROTH_PHASEOUT["MFJ"])
             roth_allowed = _phase_out(magi, lower, upper, float(limit))
             if roth_allowed > 0:
-                st.error(f"No room left — full ${limit:,} already contributed to Traditional IRA.")
+                st.error(
+                    f"No room left — full {fmt_dollars(limit)} already contributed to Traditional IRA."
+                )
                 _render_recharacterization(
                     person,
                     tax_year,
@@ -333,7 +340,9 @@ def render(hh: Household):
                     workplace,
                 )
             else:
-                st.error(f"No room left — full ${limit:,} already contributed to Traditional IRA.")
+                st.error(
+                    f"No room left — full {fmt_dollars(limit)} already contributed to Traditional IRA."
+                )
             continue
 
         # Direct Roth eligibility
@@ -341,14 +350,18 @@ def render(hh: Household):
         allowed = _phase_out(magi, lower, upper, float(remaining))
 
         if allowed >= remaining:
-            st.success(f"**Eligible for full direct Roth contribution**: ${remaining:,}")
-            st.write(f"MAGI ${magi:,} is below ${filing} phase-out start (${lower:,})")
+            st.success(f"**Eligible for full direct Roth contribution**: {fmt_dollars(remaining)}")
+            st.write(
+                f"MAGI {fmt_dollars(magi)} is below {filing} phase-out start ({fmt_dollars(lower)})"
+            )
         elif allowed > 0:
-            st.warning(f"**Partial Roth contribution allowed**: ${allowed:,.0f}")
-            st.write(f"MAGI ${magi:,} is in phase-out range (${lower:,} – ${upper:,})")
+            st.warning(f"**Partial Roth contribution allowed**: {fmt_dollars(allowed)}")
+            st.write(
+                f"MAGI {fmt_dollars(magi)} is in phase-out range ({fmt_dollars(lower)} – {fmt_dollars(upper)})"
+            )
         else:
             st.error(
-                f"**No direct Roth contribution** — MAGI ${magi:,} exceeds ${filing} limit (${upper:,})"
+                f"**No direct Roth contribution** — MAGI {fmt_dollars(magi)} exceeds {filing} limit ({fmt_dollars(upper)})"
             )
 
         # Backdoor Roth analysis
@@ -362,7 +375,7 @@ def render(hh: Household):
             if allowed < remaining:
                 backdoor_amount = remaining - int(allowed)
                 st.write(
-                    f"Recommended: contribute ${backdoor_amount:,} non-deductible to Trad IRA, convert to Roth."
+                    f"Recommended: contribute {fmt_dollars(backdoor_amount)} non-deductible to Trad IRA, convert to Roth."
                 )
         else:
             # Pro-rata calculation
@@ -374,17 +387,17 @@ def render(hh: Household):
 
             st.error(
                 f"**Pro-rata rule makes backdoor Roth expensive.**\n\n"
-                f"Your Traditional IRA balance: **${trad_balance:,}**\n\n"
-                f"If you contribute ${nondeductible:,} non-deductible and convert:"
+                f"Your Traditional IRA balance: **{fmt_dollars(trad_balance)}**\n\n"
+                f"If you contribute {fmt_dollars(nondeductible)} non-deductible and convert:"
             )
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Taxable %", f"{taxable_pct * 100:.1f}%")
-            col2.metric("Tax on Conversion", f"${tax_on_convert:,.0f}")
-            col3.metric("Tax-Free Portion", f"${nondeductible - tax_on_convert:,.0f}")
+            col2.metric("Tax on Conversion", fmt_dollars(tax_on_convert))
+            col3.metric("Tax-Free Portion", fmt_dollars(nondeductible - tax_on_convert))
 
             st.write(
-                f"Of the ${nondeductible:,} converted, **${tax_on_convert:,.0f}** would be taxable "
+                f"Of the {fmt_dollars(nondeductible)} converted, **{fmt_dollars(tax_on_convert)}** would be taxable "
                 f"because {taxable_pct * 100:.1f}% of your total IRA is pre-tax money."
             )
 
@@ -402,15 +415,15 @@ def render(hh: Household):
             deductible = _phase_out(magi, ded_lower, ded_upper, float(limit))
             if deductible >= limit:
                 st.write(
-                    f"Traditional IRA contributions are **fully deductible** (MAGI below ${ded_lower:,})"
+                    f"Traditional IRA contributions are **fully deductible** (MAGI below {fmt_dollars(ded_lower)})"
                 )
             elif deductible > 0:
                 st.write(
-                    f"Partial deduction: **${deductible:,.0f}** of ${limit:,} (MAGI in phase-out)"
+                    f"Partial deduction: **{fmt_dollars(deductible)}** of {fmt_dollars(limit)} (MAGI in phase-out)"
                 )
             else:
                 st.write(
-                    f"**Not deductible** — MAGI ${magi:,} exceeds ${filing} limit with workplace plan (${ded_upper:,})"
+                    f"**Not deductible** — MAGI {fmt_dollars(magi)} exceeds {filing} limit with workplace plan ({fmt_dollars(ded_upper)})"
                 )
         elif filing == "MFJ" and spouse_workplace:
             ded_lower, ded_upper = TRAD_DEDUCTION_PHASEOUT["MFJ_spouse_only"]
@@ -420,9 +433,13 @@ def render(hh: Household):
                     "Traditional IRA contributions are **fully deductible** (spouse has plan, your MAGI OK)"
                 )
             elif deductible > 0:
-                st.write(f"Partial deduction: **${deductible:,.0f}** (spouse-plan phase-out)")
+                st.write(
+                    f"Partial deduction: **{fmt_dollars(deductible)}** (spouse-plan phase-out)"
+                )
             else:
-                st.write(f"**Not deductible** — MAGI exceeds spouse-plan limit (${ded_upper:,})")
+                st.write(
+                    f"**Not deductible** — MAGI exceeds spouse-plan limit ({fmt_dollars(ded_upper)})"
+                )
         else:
             st.write("Traditional IRA contributions are **fully deductible** (no workplace plan)")
 
