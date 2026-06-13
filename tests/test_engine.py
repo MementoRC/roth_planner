@@ -1425,6 +1425,23 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.planned_option_income == approx(192_000 - 80_000)
 
 
+    def test_magi_ytd_includes_tax_exempt_interest(self):
+        """Tax-exempt (muni) interest must appear in IRMAA MAGI even though it is federally exempt."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=80_000, tax_exempt_interest_ytd=5_000)
+        # MAGI = wages + tax_exempt_interest
+        assert ytd.magi_ytd == approx(85_000)
+
+    def test_tax_exempt_interest_not_in_total_ordinary_income(self):
+        """Tax-exempt interest is federally exempt — it must NOT stack into ordinary brackets."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=80_000, tax_exempt_interest_ytd=5_000)
+        # ordinary income = wages only; muni interest is excluded
+        assert ytd.total_ordinary_income == approx(80_000)
+
+
 class TestScenarioWithYTD:
     """Test scenario engine with YTD injection."""
 

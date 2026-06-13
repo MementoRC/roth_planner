@@ -57,6 +57,7 @@ class YTDSnapshot:
     qualified_dividends_ytd: float = 0.0
     ordinary_dividends_ytd: float = 0.0
     interest_ytd: float = 0.0
+    tax_exempt_interest_ytd: float = 0.0  # muni bond interest: in MAGI, NOT in ordinary brackets
     nqo_exercise_ytd: float = 0.0  # NQO ordinary-income spread from realized exercises
 
     # Drill-down events
@@ -105,6 +106,8 @@ class YTDSnapshot:
 
         Includes ALL income: ordinary + LTCG + dividends + interest.
         LTCG is in MAGI even though it's not in ordinary brackets.
+        Tax-exempt interest (muni bonds) is included: IRMAA MAGI = AGI +
+        tax-exempt interest + non-taxable SS + foreign earned income exclusion.
         """
         return (
             self.wages_ytd
@@ -115,6 +118,7 @@ class YTDSnapshot:
             + self.ltcg_ytd
             + self.dividends_ytd
             + self.interest_ytd
+            + self.tax_exempt_interest_ytd
             + self.nqo_exercise_ytd
         )
 
