@@ -22,7 +22,7 @@ from engine.scenario import (
     run_scenario,
 )
 from models.household import Household, SurvivorScenario
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_dollars_short
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -141,7 +141,7 @@ def _compute_survivor_snapshot(
             tax = federal_tax_single(taxable)
             bracket = marginal_rate_single(taxable)
 
-            row[f"{s.name} Inherited IRA"] = f"${inherited_ira / 1e6:.2f}M"
+            row[f"{s.name} Inherited IRA"] = fmt_dollars_short(inherited_ira, decimals=2)
             row[f"{s.name} Survivor Tax"] = f"{fmt_dollars(tax)}/yr"
             row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
 
@@ -250,9 +250,9 @@ def render(hh: Household):
                     ),
                     sign=True,
                 ),
-                "IRA at 75": f"${_ira_at_age(s, 75) / 1e6:.2f}M",
-                "IRA at 85": f"${_ira_at_age(s, 85) / 1e6:.2f}M",
-                "IRA at 95": f"${_ira_at_age(s, 95) / 1e6:.2f}M",
+                "IRA at 75": fmt_dollars_short(_ira_at_age(s, 75), decimals=2),
+                "IRA at 85": fmt_dollars_short(_ira_at_age(s, 85), decimals=2),
+                "IRA at 95": fmt_dollars_short(_ira_at_age(s, 95), decimals=2),
             }
         )
 
@@ -424,7 +424,7 @@ def render(hh: Household):
             yr = next((y for y in s.years if y.your_age == age), None)
             if yr:
                 ira = yr.your_ira_begin + yr.spouse_ira_begin
-                row[f"{s.name} IRA"] = f"${ira / 1e6:.2f}M"
+                row[f"{s.name} IRA"] = fmt_dollars_short(ira, decimals=2)
                 total_rmd = yr.your_rmd + yr.spouse_rmd
                 row[f"{s.name} RMD"] = fmt_dollars(total_rmd) if total_rmd > 0 else "---"
                 row[f"{s.name} Bracket"] = f"{yr.marginal_bracket * 100:.0f}%"

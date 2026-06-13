@@ -12,14 +12,14 @@ import streamlit as st
 
 from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_dollars_short
 
 
 def render(hh: Household):
     st.title("📊 Dashboard — Is Converting Worth It?")
     st.caption(
         f"You {hh.your_age} / Spouse {hh.spouse_age} · "
-        f"IRAs ${hh.your_ira / 1e6:.1f}M + ${hh.spouse_ira / 1e6:.1f}M · "
+        f"IRAs {fmt_dollars_short(hh.your_ira)} + {fmt_dollars_short(hh.spouse_ira)} · "
         f"{hh.growth_rate * 100:.0f}% growth · "
         f"RMD at {hh.your_rmd_start_age}"
         + (
@@ -66,8 +66,8 @@ def render(hh: Household):
         conv_total = with_conv.total_your_conv + with_conv.total_spouse_conv
         st.metric(
             "Total Converted",
-            f"${conv_total / 1e6:.2f}M",
-            f"You ${with_conv.total_your_conv / 1e6:.2f}M + Sp ${with_conv.total_spouse_conv / 1e6:.2f}M",
+            fmt_dollars_short(conv_total, decimals=2),
+            f"You {fmt_dollars_short(with_conv.total_your_conv, decimals=2)} + Sp {fmt_dollars_short(with_conv.total_spouse_conv, decimals=2)}",
         )
 
     with col2:
@@ -272,10 +272,10 @@ def render(hh: Household):
             st.caption(label)
             if yr_nc and yr_wc:
                 st.markdown(
-                    f"IRA (NC): **${(yr_nc.your_ira_begin + yr_nc.spouse_ira_begin) / 1e6:.1f}M**"
+                    f"IRA (NC): **{fmt_dollars_short(yr_nc.your_ira_begin + yr_nc.spouse_ira_begin)}**"
                 )
                 st.markdown(
-                    f"IRA (WC): **${(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin) / 1e6:.1f}M**"
+                    f"IRA (WC): **{fmt_dollars_short(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin)}**"
                 )
                 st.markdown(f"RMD (NC): {fmt_dollars(yr_nc.your_rmd + yr_nc.spouse_rmd)}")
                 st.markdown(f"RMD (WC): {fmt_dollars(yr_wc.your_rmd + yr_wc.spouse_rmd)}")

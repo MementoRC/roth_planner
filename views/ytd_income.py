@@ -26,7 +26,7 @@ from engine.tax import (
 )
 from models.household import Household
 from models.ytd_income import YTDSnapshot
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_dollars_short
 
 
 def _color_for_room(room: float) -> str:
@@ -443,7 +443,7 @@ def render(hh: Household):
     c4.metric(
         "Room to NIIT",
         fmt_dollars(headroom.room_to_niit),
-        help=f"MAGI-based (${NIIT_THRESHOLD_MFJ // 1000:.0f}K) — LTCG DOES consume this",
+        help=f"MAGI-based ({fmt_dollars_short(NIIT_THRESHOLD_MFJ, decimals=0, suffix='K')}) — LTCG DOES consume this",
     )
 
     if not headroom.irmaa_relevant:
