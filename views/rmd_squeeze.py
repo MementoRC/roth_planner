@@ -20,7 +20,7 @@ from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import BRACKETS_MFJ
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_dollars_short
 
 
 def render(hh: Household):
@@ -110,21 +110,27 @@ def render(hh: Household):
     with c1:
         st.metric(
             "IRA at 75 (No Conv)",
-            f"${(yr75_nc.your_ira_begin + yr75_nc.spouse_ira_begin) / 1e6:.2f}M",
+            fmt_dollars_short(yr75_nc.your_ira_begin + yr75_nc.spouse_ira_begin, decimals=2),
         )
     with c2:
         st.metric(
             "IRA at 75 (With Conv)",
-            f"${(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin) / 1e6:.2f}M",
-            f"{(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin - yr75_nc.your_ira_begin - yr75_nc.spouse_ira_begin) / 1e6:+.2f}M",
+            fmt_dollars_short(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin, decimals=2),
+            fmt_dollars_short(
+                yr75_wc.your_ira_begin
+                + yr75_wc.spouse_ira_begin
+                - yr75_nc.your_ira_begin
+                - yr75_nc.spouse_ira_begin,
+                decimals=2,
+            ),
         )
     with c3:
         total_rmd_nc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_nc)
         total_rmd_wc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_wc)
         st.metric(
             "Total RMDs (75-95)",
-            f"${total_rmd_nc / 1e6:.1f}M",
-            f"Conv: ${total_rmd_wc / 1e6:.1f}M ({(total_rmd_wc - total_rmd_nc) / total_rmd_nc * 100:+.0f}%)",
+            fmt_dollars_short(total_rmd_nc),
+            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({(total_rmd_wc - total_rmd_nc) / total_rmd_nc * 100:+.0f}%)",
         )
     with c4:
         total_tax_nc = sum(yr.federal_tax_amt for yr in rmd_nc)
@@ -411,8 +417,8 @@ def render(hh: Household):
             {
                 "Year": str(nc.year),
                 "You/Sp": f"{nc.your_age}/{nc.spouse_age}",
-                "IRA (NC)": f"${(nc.your_ira_begin + nc.spouse_ira_begin) / 1e6:.2f}M",
-                "IRA (WC)": f"${(wc.your_ira_begin + wc.spouse_ira_begin) / 1e6:.2f}M",
+                "IRA (NC)": fmt_dollars_short(nc.your_ira_begin + nc.spouse_ira_begin, decimals=2),
+                "IRA (WC)": fmt_dollars_short(wc.your_ira_begin + wc.spouse_ira_begin, decimals=2),
                 "RMD (NC)": fmt_dollars(nc.your_rmd + nc.spouse_rmd),
                 "RMD (WC)": fmt_dollars(wc.your_rmd + wc.spouse_rmd),
                 "SS": fmt_dollars(nc.combined_ss),
