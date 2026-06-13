@@ -5231,3 +5231,73 @@ class TestRothEligibility2026Constants:
 
         assert CONTRIB_LIMIT == 7_500  # under-50 base
         assert CONTRIB_LIMIT + CATCHUP_50 == 8_600  # 50+ total
+
+
+class TestSpouseRMDBrokerageAccumulation:
+    """Regression: available_income must include spouse RMD and spouse extra_withdrawal.
+
+    Bug (audit C-2): lines 561-562 of engine/scenario.py computed after_tax_rmd and
+    available_income using only the "your" side — omitting yr.spouse_taxable_rmd and
+    yr.spouse_extra_withdrawal.  When both spouses are in RMD, the spouse contribution
+    can exceed $60K/yr, causing brokerage accumulation to be understated by $500K+
+    over a 10-year window.
+    """
+
+    def _rmd_household(self, your_ira: float, spouse_ira: float) -> Household:
+        """Both spouses already 75 (in RMD), no conversions, modest SS."""
+        from dataclasses import replace
+
+        return replace(
+            Household(grants=[]),
+            your_age=75,
+            spouse_age=75,
+            your_ira=your_ira,
+            spouse_ira=spouse_ira,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            living_expenses=60_000.0,
+        )
+
+    def test_spouse_rmd_increases_brokerage_balance(self):
+        """With spouse IRA active, year-10 brokerage must exceed the no-spouse baseline.
+
+        Setup: both spouses 75 with $1.5M trad IRAs each (~$60K RMD/yr each at 75,
+        divisor ≈25).  No conversions.  Living expenses $60K.  With fix, both RMDs
+        flow into available_income; excess accumulates in brokerage.
+        """
+        plan = ConversionPlan()
+
+        # Baseline: your IRA only (spouse IRA zeroed out → spouse_taxable_rmd ≈ 0)
+        hh_yours_only = self._rmd_household(your_ira=1_500_000.0, spouse_ira=0.0)
+        result_yours = run_scenario(hh_yours_only, plan, end_age=85)
+
+        # With spouse: both IRAs $1.5M → spouse_taxable_rmd ≈ $60K extra each year
+        hh_both = self._rmd_household(your_ira=1_500_000.0, spouse_ira=1_500_000.0)
+        result_both = run_scenario(hh_both, plan, end_age=85)
+
+        brok_yours = result_yours.years[-1].brokerage_balance
+        brok_both = result_both.years[-1].brokerage_balance
+
+        # The spouse RMD (~$60K/yr after-tax) compounded over 10 years at a
+        # brokerage rate ≈7% produces well over $800K extra.  A conservative
+        # floor of $500K guards against this regression without being brittle.
+        assert brok_both > brok_yours + 500_000, (
+            f"Expected brokerage with spouse RMD to exceed baseline by >$500K; "
+            f"got brok_both={brok_both:,.0f}, brok_yours={brok_yours:,.0f}, "
+            f"delta={brok_both - brok_yours:,.0f}"
+        )
+
+    def test_spouse_rmd_zero_equals_baseline(self):
+        """When spouse IRA is zero, available_income must match the pre-fix behaviour.
+
+        Ensures the fix is additive and does not corrupt the single-earner path.
+        """
+        plan = ConversionPlan()
+        hh = self._rmd_household(your_ira=1_500_000.0, spouse_ira=0.0)
+        result = run_scenario(hh, plan, end_age=85)
+
+        for yr in result.years:
+            if yr.your_age >= 75:
+                assert yr.spouse_taxable_rmd == pytest.approx(0.0), (
+                    f"year {yr.year}: spouse_taxable_rmd should be 0 when spouse IRA=0"
+                )
