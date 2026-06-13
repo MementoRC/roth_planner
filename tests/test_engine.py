@@ -3745,22 +3745,86 @@ class TestSingleFilerFoundations:
 
         assert aca_premium_cap_rate(60_000) == aca_premium_cap_rate(60_000, filing_status="MFJ")
 
-    def test_pre_arp_300_400_fpl_band_uses_9_78_pct(self):
-        """Pre-ARP 300-400% FPL band rate is 9.78% per IRS Rev. Proc. 2025-32.
+    def test_pre_arp_300_400_fpl_band_uses_9_96_pct(self):
+        """Pre-ARP 300-400% FPL band rate is 9.96% per Rev. Proc. 2025-25 (IRB 2025-32).
 
         MFJ FPL_2 = $21,150. 300-400% band is $63,450 – $84,600.
         At MAGI = $70,000: 70_000 / 21_150 ≈ 3.31 → falls in 300-400% band.
+        Updated from 9.78% (stale 2024 value) to 9.96% (2026 IRS value).
         """
         from engine.aca import ACA_PRE_ARP_SCHEDULE, FPL_2, aca_premium_cap_rate
 
         # Verify the schedule constant directly
         pre_arp_300_400_rate = next(rate for fpl, rate in ACA_PRE_ARP_SCHEDULE if fpl == 4.00)
-        assert pre_arp_300_400_rate == pytest.approx(0.0978)
+        assert pre_arp_300_400_rate == pytest.approx(0.0996)
 
         # Verify via the public function at a MAGI squarely in the 300-400% band
         magi_in_band = 3.31 * FPL_2  # ~$70,002 — above 300% ($63,450), below 400% ($84,600)
         rate = aca_premium_cap_rate(magi_in_band, enhanced_subsidies_active=False)
-        assert rate == pytest.approx(0.0978)
+        assert rate == pytest.approx(0.0996)
+
+
+class TestACA2026:
+    """Regression tests locking in 2026 IRS values from Rev. Proc. 2025-25 (IRB 2025-32)."""
+
+    def test_aca_2026_133pct_fpl_flat_rate(self):
+        """At exactly 133% FPL, applicable_pct == 2.10% (flat bottom bracket)."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 1.33 * FPL_2  # exactly at the 133% upper bound
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0210)
+
+    def test_aca_2026_150pct_fpl_ramp_start(self):
+        """Just above 150% FPL, applicable_pct == 4.19% (start of 150-200% ramp).
+
+        At exactly 150% the lookup still hits the 133-150 bracket (3.14%).
+        At 150.01% it enters the 150-200 bracket whose bracket-start rate is 4.19%.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 1.5001 * FPL_2  # just above 150% — enters the 150-200% ramp bracket
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0419)
+
+    def test_aca_2026_300pct_fpl_flat_rate(self):
+        """Just above 300% FPL, applicable_pct == 9.96% (flat 300-400% bracket).
+
+        At exactly 300% the lookup still hits the 250-300 bracket (8.44%).
+        At 300.01% it enters the flat 300-400% bracket whose rate is 9.96%.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 3.0001 * FPL_2  # just above 300% — enters the flat 300-400% bracket
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0996)
+
+    def test_aca_2026_400pct_fpl_flat_rate(self):
+        """At exactly 400% FPL, applicable_pct == 9.96% (top of flat bracket)."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 4.00 * FPL_2  # exactly at the 400% cliff boundary
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == pytest.approx(0.0996)
+
+    def test_aca_2026_above_400pct_no_subsidy(self):
+        """Above 400% FPL, cap rate returns 0 (cliff — no subsidy) without raising."""
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 4.01 * FPL_2  # just above the cliff
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == 0.0
+
+    def test_aca_2026_no_assert_on_high_magi(self):
+        """Direct call with fpl_ratio ~9.46 (magi=200K, FPL_2=21150) does NOT raise.
+
+        Regression for audit finding B-5: AssertionError when loop exhausts schedule entries.
+        fpl_ratio = 200_000 / 21_150 ≈ 9.46 — well above the 4.0 cliff.
+        """
+        from engine.aca import aca_premium_cap_rate
+
+        rate = aca_premium_cap_rate(200_000, enhanced_subsidies_active=False, filing_status="MFJ")
+        assert rate == 0.0
 
 
 class TestSurvivorScenario:

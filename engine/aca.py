@@ -28,14 +28,17 @@ ACA_ENHANCED_SCHEDULE = [
 ]
 
 # Pre-ARP schedule (reverted Jan 1, 2026 — subsidies only up to 400% FPL)
-# Rates per IRS Rev. Proc. 2025-32 for tax year 2026.
+# Source: Rev. Proc. 2025-25 (IRB 2025-32, Aug 4 2025)
+# Each tuple is (upper_fpl_multiple, applicable_pct_at_bracket_start).
+# The IRS table defines linear ramps within each bracket; these entries capture
+# the rate at the START of each bracket (i.e. the lower-bound applicable %).
 ACA_PRE_ARP_SCHEDULE = [
-    (1.33, 0.021),   # Below 133% FPL: 2.1%
-    (1.50, 0.040),   # 133-150%: 4.0%
-    (2.00, 0.064),   # 150-200%: 6.4%
-    (2.50, 0.081),   # 200-250%: 8.1%
-    (3.00, 0.096),   # 250-300%: 9.6%
-    (4.00, 0.0978),  # 300-400%: 9.78% per Rev. Proc. 2025-32
+    (1.33, 0.0210),  # 100-133% FPL: 2.10% flat
+    (1.50, 0.0314),  # 133-150%: ramp 3.14% → 4.19%
+    (2.00, 0.0419),  # 150-200%: ramp 4.19% → 6.60%
+    (2.50, 0.0660),  # 200-250%: ramp 6.60% → 8.44%
+    (3.00, 0.0844),  # 250-300%: ramp 8.44% → 9.96%
+    (4.00, 0.0996),  # 300-400%: 9.96% flat
 ]
 
 # Approximate annual benchmark silver plan premium for couple age ~60-64
@@ -60,13 +63,18 @@ def aca_premium_cap_rate(
 ) -> float:
     """Premium cap as fraction of income based on FPL multiple."""
     fpl_ratio = magi / _fpl(filing_status)
+    # Pre-ARP cliff: above 400% FPL there is no subsidy, so cap rate is irrelevant.
+    # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
+    if not enhanced_subsidies_active and fpl_ratio > 4.0:
+        return 0.0
     for upper_fpl, cap_rate in _aca_cap_schedule(enhanced_subsidies_active):
         if fpl_ratio <= upper_fpl:
             return cap_rate
-    # Unreachable for pre-ARP: aca_subsidy() enforces the 400% FPL cliff before
-    # calling this function, so fpl_ratio never exceeds the schedule's final entry.
+    # Unreachable for pre-ARP: guard above handles fpl_ratio > 4.0.
     # For enhanced schedule the final entry is (inf, 0.085) which always matches.
-    raise AssertionError(f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}")
+    raise AssertionError(
+        f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}"
+    )
 
 
 def aca_subsidy(
