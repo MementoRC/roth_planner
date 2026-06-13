@@ -258,18 +258,34 @@ def estimate_ytd_federal_tax(
     Stacks ordinary income through brackets, then applies preferential rates
     on LTCG/qualified dividends. NIIT applied per net investment income vs
     MAGI threshold. Does NOT include state tax, IRMAA premiums, or quarterly
-    underpayment penalties. Standard deduction is NOT applied (gross liability).
+    underpayment penalties.
+
+    Standard deduction IS applied for the LTCG stack-walk base (taxable_ordinary)
+    so that LTCG thresholds — which are taxable-income thresholds per IRC §1(h)(1)
+    — are evaluated correctly. The ordinary-income bracket call (federal_tax) still
+    receives gross ordinary income as a conservative estimate (no deduction applied).
     """
     from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ
 
     ordinary_income = ytd.total_ordinary_income
     ordinary_tax = federal_tax(ordinary_income)
 
+    # Compute standard deduction to find taxable ordinary income for LTCG stack-walk.
+    # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds (IRC §1(h)(1));
+    # using gross income shifts the 0%-band upward by the std deduction amount.
+    if hh.filing_status == "MFJ":
+        senior_count = (1 if hh.your_age >= 65 else 0) + (1 if hh.spouse_age >= 65 else 0)
+        std_ded = STD_DEDUCTION_MFJ + senior_count * SENIOR_EXTRA_MFJ
+    else:
+        senior_count = 1 if hh.your_age >= 65 else 0
+        std_ded = STD_DEDUCTION_SINGLE + senior_count * SENIOR_EXTRA_SINGLE
+    taxable_ordinary = max(ordinary_income - std_ded, 0.0)
+
     # LTCG + qualified dividends taxed at preferential rate.
-    # LTCG stacks ON TOP of ordinary income; walk the stack across brackets.
+    # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
     ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
-    ltcg_start = ordinary_income
-    ltcg_end = ordinary_income + ltcg_taxable
+    ltcg_start = taxable_ordinary
+    ltcg_end = taxable_ordinary + ltcg_taxable
     # 0%-rate portion (below threshold[0]) contributes $0 tax; 15% and 20% portions taxed
     ltcg_at_15 = max(
         0.0,
