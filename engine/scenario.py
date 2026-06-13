@@ -350,33 +350,9 @@ def run_scenario(
                 yr.spouse_ss = 0.0
         yr.combined_ss = yr.your_ss + yr.spouse_ss
 
-        # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
-        # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd
-        yr.magi = (
-            yr.option_income
-            + yr.your_conversion
-            + yr.spouse_conversion
-            + yr.taxable_rmd
-            + yr.spouse_taxable_rmd
-            + yr.extra_withdrawal
-            + yr.spouse_extra_withdrawal
-            + yr.combined_ss
-            + yr.your_inherited_distribution
-            + yr.spouse_inherited_distribution
-        )
-        # YTD: add all MAGI components via the canonical magi_ytd property.
-        # Using the property ensures parity with _auto_fill_core and avoids
-        # missing fields (nec_income_ytd, ira_conversions_ytd,
-        # ira_distributions_ytd were absent in the prior manual enumeration).
-        if ytd_year is not None:
-            yr.magi += ytd_year.magi_ytd
-        # Forecast brokerage dividends: both qual and ord affect MAGI
-        yr.magi += qual_div_this_year + ord_div_this_year
-
-        # Accumulate projected MAGI for future IRMAA lookback resolution
-        magi_history[year] = yr.magi
-
-        # === SS taxation ===
+        # === SS taxation (computed before MAGI — D-1: MAGI uses taxable SS, not full SS) ===
+        # other_inc excludes SS itself (provisional income formula adds 50% SS separately
+        # inside taxable_ss()). All non-SS ordinary income sources are included.
         other_inc = (
             yr.option_income
             + yr.your_conversion
@@ -408,6 +384,40 @@ def run_scenario(
         yr.taxable_ss_amt = taxable_ss(
             yr.combined_ss, other_inc, filing_status=current_filing_status
         )
+
+        # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
+        # D-1: use taxable_ss_amt (up to 85% of SS) not full combined_ss — per §1395r(i)(4)
+        #      AGI includes only the taxable portion of SS (IRC §86), not the gross benefit.
+        # C-7: subtract nqo_exercise_ytd from option_income contribution when ytd is present —
+        #      magi_ytd already includes nqo_exercise_ytd, so using full option_income would
+        #      double-count the exercised portion.
+        # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
+        option_income_for_magi = yr.option_income - (
+            ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
+        )
+        yr.magi = (
+            option_income_for_magi
+            + yr.your_conversion
+            + yr.spouse_conversion
+            + yr.taxable_rmd
+            + yr.spouse_taxable_rmd
+            + yr.extra_withdrawal
+            + yr.spouse_extra_withdrawal
+            + yr.taxable_ss_amt
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution
+        )
+        # YTD: add all MAGI components via the canonical magi_ytd property.
+        # Using the property ensures parity with _auto_fill_core and avoids
+        # missing fields (nec_income_ytd, ira_conversions_ytd,
+        # ira_distributions_ytd were absent in the prior manual enumeration).
+        if ytd_year is not None:
+            yr.magi += ytd_year.magi_ytd
+        # Forecast brokerage dividends: both qual and ord affect MAGI
+        yr.magi += qual_div_this_year + ord_div_this_year
+
+        # Accumulate projected MAGI for future IRMAA lookback resolution
+        # (E-3: realized_gains not yet known here — added below after brokerage block)
 
         # === Combined gross (for tax) ===
         # Includes ordinary income only — LTCG taxed separately at preferential rate
@@ -593,6 +603,10 @@ def run_scenario(
         yr.brokerage_balance = brokerage
         yr.brokerage_growth = brokerage * brok_appreciation_rate
         realized_gains = yr.brokerage_growth * hh.brok_turnover
+        # E-3: realized gains (Schedule D → AGI → MAGI) were absent from yr.magi.
+        # Add here after realized_gains is known; magi_history is also updated here.
+        yr.magi += realized_gains
+        magi_history[year] = yr.magi
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
         # point; realized gains + qualified dividends (IRC §1(h)(11)) walk up
         # through 0% / 15% / 20% bands.
