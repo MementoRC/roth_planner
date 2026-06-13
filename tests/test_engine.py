@@ -3525,6 +3525,23 @@ class TestSingleFilerFoundations:
 
         assert aca_premium_cap_rate(60_000) == aca_premium_cap_rate(60_000, filing_status="MFJ")
 
+    def test_pre_arp_300_400_fpl_band_uses_9_78_pct(self):
+        """Pre-ARP 300-400% FPL band rate is 9.78% per IRS Rev. Proc. 2025-32.
+
+        MFJ FPL_2 = $21,150. 300-400% band is $63,450 – $84,600.
+        At MAGI = $70,000: 70_000 / 21_150 ≈ 3.31 → falls in 300-400% band.
+        """
+        from engine.aca import ACA_PRE_ARP_SCHEDULE, FPL_2, aca_premium_cap_rate
+
+        # Verify the schedule constant directly
+        pre_arp_300_400_rate = next(rate for fpl, rate in ACA_PRE_ARP_SCHEDULE if fpl == 4.00)
+        assert pre_arp_300_400_rate == pytest.approx(0.0978)
+
+        # Verify via the public function at a MAGI squarely in the 300-400% band
+        magi_in_band = 3.31 * FPL_2  # ~$70,002 — above 300% ($63,450), below 400% ($84,600)
+        rate = aca_premium_cap_rate(magi_in_band, enhanced_subsidies_active=False)
+        assert rate == pytest.approx(0.0978)
+
 
 class TestSurvivorScenario:
     """PR6b: SurvivorScenario dataclass + run_scenario survivor wiring."""
