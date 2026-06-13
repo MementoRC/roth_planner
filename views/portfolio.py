@@ -11,6 +11,7 @@ import streamlit as st
 from config.loader import load_defaults
 from engine.portfolio_sync import EXPECTED_RETURNS
 from models.household import Household
+from views._format import fmt_dollars
 
 
 def render(hh: Household):
@@ -48,11 +49,11 @@ def render(hh: Household):
         acct_rows.append(
             {
                 "Account": f"{label} ({acct.account_name})" if acct.account_name else label,
-                "Total Value": f"${acct.total_value:,.0f}",
-                "Equity": f"${acct.equity_value:,.0f}",
-                "Bonds": f"${acct.bond_value:,.0f}",
-                "Cash": f"${acct.cash_value:,.0f}",
-                "Crypto": f"${acct.crypto_value:,.0f}",
+                "Total Value": fmt_dollars(acct.total_value),
+                "Equity": fmt_dollars(acct.equity_value),
+                "Bonds": fmt_dollars(acct.bond_value),
+                "Cash": fmt_dollars(acct.cash_value),
+                "Crypto": fmt_dollars(acct.crypto_value),
                 "Wtd Return": f"{acct.weighted_return * 100:.1f}%",
             }
         )
@@ -62,8 +63,8 @@ def render(hh: Household):
             {
                 "Account": f"{ticker} Shares (ESPP/RSU)",
                 "Owner": "You",
-                "Total Value": f"${snap.txn_shares_value:,.0f}",
-                "Equity": f"${snap.txn_shares_value:,.0f}",
+                "Total Value": fmt_dollars(snap.txn_shares_value),
+                "Equity": fmt_dollars(snap.txn_shares_value),
                 "Bonds": "$0",
                 "Equity %": "100%",
                 "Expected Return": "—",
@@ -78,22 +79,22 @@ def render(hh: Household):
     total_cash = sum(a.cash_value for a in snap.accounts)
     total_crypto = sum(a.crypto_value for a in snap.accounts)
 
-    st.metric("Total Portfolio", f"${total_val:,.0f}")
+    st.metric("Total Portfolio", fmt_dollars(total_val))
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Equity", f"${total_eq:,.0f}")
-    c2.metric("Bonds", f"${total_bd:,.0f}")
-    c3.metric("Cash", f"${total_cash:,.0f}")
-    c4.metric("Crypto", f"${total_crypto:,.0f}")
+    c1.metric("Equity", fmt_dollars(total_eq))
+    c2.metric("Bonds", fmt_dollars(total_bd))
+    c3.metric("Cash", fmt_dollars(total_cash))
+    c4.metric("Crypto", fmt_dollars(total_crypto))
 
     # Pre-tax retirement total (this is what feeds into the planner)
     pretax = snap.pretax_total
     if pretax > 0:
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Your Pre-Tax (IRA + 403b)", f"${pretax:,.0f}")
+        c1.metric("Your Pre-Tax (IRA + 403b)", fmt_dollars(pretax))
         c2.metric("Pre-Tax Wtd Return", f"{snap.pretax_weighted_return * 100:.1f}%")
-        c3.metric("Planner IRA Balance", f"${pretax:,.0f}", help="Auto-synced to 'Your Trad IRA'")
+        c3.metric("Planner IRA Balance", fmt_dollars(pretax), help="Auto-synced to 'Your Trad IRA'")
 
     # --- Holdings Detail ---
     st.markdown("### Holdings")
@@ -107,9 +108,9 @@ def render(hh: Household):
                     "Symbol": h.symbol,
                     "Description": h.description,
                     "Shares": f"{h.quantity:,.1f}",
-                    "Value": f"${h.market_value:,.0f}",
+                    "Value": fmt_dollars(h.market_value),
                     "Class": h.asset_class.title(),
-                    "Gain/Loss": f"${h.total_gain_loss:,.0f}"
+                    "Gain/Loss": fmt_dollars(h.total_gain_loss)
                     if h.total_gain_loss is not None
                     else "—",
                 }
@@ -178,7 +179,7 @@ def render(hh: Household):
                     "Grant Date": g.grant_date,
                     "Granted": f"{g.shares_granted:,}",
                     "Outstanding": f"{g.outstanding:,}",
-                    "Current Value": f"${g.current_value:,.0f}",
+                    "Current Value": fmt_dollars(g.current_value),
                 }
             )
 
@@ -195,7 +196,7 @@ def render(hh: Household):
                     "Source": "FinExtract",
                     "Grant": g.grant_date,
                     "Outstanding": g.outstanding,
-                    "Value": f"${g.current_value:,.0f}",
+                    "Value": fmt_dollars(g.current_value),
                 }
             )
             if plan:
@@ -204,7 +205,7 @@ def render(hh: Household):
                         "Source": "Planner Default",
                         "Grant": str(plan.year),
                         "Outstanding": plan.shares,
-                        "Value": f"${plan.spread(hh.txn_price_now):,.0f}",
+                        "Value": fmt_dollars(plan.spread(hh.txn_price_now)),
                     }
                 )
 
@@ -215,7 +216,7 @@ def render(hh: Household):
         st.markdown(f"### {ticker} Shares Held (ESPP + RSU)")
         c1, c2 = st.columns(2)
         c1.metric("Shares", f"{snap.txn_shares_held:,}")
-        c2.metric("Value", f"${snap.txn_shares_value:,.0f}")
+        c2.metric("Value", fmt_dollars(snap.txn_shares_value))
 
     # --- Growth Rate Mapping ---
     st.markdown("---")
@@ -231,7 +232,7 @@ def render(hh: Household):
         rate_rows.append(
             {
                 "Account": "Your IRA (pre-tax total)",
-                "Balance": f"${pretax:,.0f}",
+                "Balance": fmt_dollars(pretax),
                 "Weighted Return": f"{snap.pretax_weighted_return * 100:.1f}%",
                 "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
                 "Status": "Synced" if hh.your_ira_growth else "Default",
@@ -241,7 +242,7 @@ def render(hh: Household):
         rate_rows.append(
             {
                 "Account": "Your IRA",
-                "Balance": f"${hh.your_ira:,.0f}",
+                "Balance": fmt_dollars(hh.your_ira),
                 "Weighted Return": "—",
                 "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
                 "Status": "Default",
@@ -251,7 +252,7 @@ def render(hh: Household):
     rate_rows.append(
         {
             "Account": "Spouse IRA",
-            "Balance": f"${hh.spouse_ira:,.0f}",
+            "Balance": fmt_dollars(hh.spouse_ira),
             "Weighted Return": "—",
             "Planner Uses": f"{hh.spouse_ira_rate(hh.base_year) * 100:.1f}%",
             "Status": "Synced" if hh.spouse_ira_growth else "Default (no data)",
@@ -263,7 +264,7 @@ def render(hh: Household):
         rate_rows.append(
             {
                 "Account": "Brokerage",
-                "Balance": f"${brok.total_value:,.0f}",
+                "Balance": fmt_dollars(brok.total_value),
                 "Weighted Return": f"{brok.weighted_return * 100:.1f}%",
                 "Planner Uses": f"{hh.brokerage_rate(hh.base_year) * 100:.1f}%",
                 "Status": "Synced" if hh.brokerage_growth else "Default",
@@ -277,7 +278,7 @@ def render(hh: Household):
             rate_rows.append(
                 {
                     "Account": label,
-                    "Balance": f"${acct.total_value:,.0f}",
+                    "Balance": fmt_dollars(acct.total_value),
                     "Weighted Return": f"{acct.weighted_return * 100:.1f}%",
                     "Planner Uses": "Not modeled",
                     "Status": "Info only",

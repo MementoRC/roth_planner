@@ -12,6 +12,7 @@ import streamlit as st
 
 from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from models.household import Household
+from views._format import fmt_dollars
 
 
 def render(hh: Household):
@@ -72,7 +73,7 @@ def render(hh: Household):
     with col2:
         st.metric(
             "Conversion Tax Paid",
-            f"${with_conv.total_conv_tax:,.0f}",
+            fmt_dollars(with_conv.total_conv_tax),
             f"Avg rate: {with_conv.total_conv_tax / max(conv_total, 1) * 100:.1f}%",
         )
 
@@ -80,15 +81,15 @@ def render(hh: Household):
         tax_saved = no_conv.total_rmd_tax - with_conv.total_rmd_tax
         st.metric(
             "RMD Tax Saved (75-95)",
-            f"${tax_saved:,.0f}",
-            f"${no_conv.total_rmd_tax:,.0f} → ${with_conv.total_rmd_tax:,.0f}",
+            fmt_dollars(tax_saved),
+            f"{fmt_dollars(no_conv.total_rmd_tax)} → {fmt_dollars(with_conv.total_rmd_tax)}",
         )
 
     with col4:
         brok_saved = no_conv.total_brok_tax - with_conv.total_brok_tax
         net = tax_saved + brok_saved - with_conv.total_conv_tax
         st.metric(
-            "Net Lifetime Benefit", f"${net:,.0f}", f"{'Positive ✓' if net > 0 else 'Negative ✗'}"
+            "Net Lifetime Benefit", fmt_dollars(net), f"{'Positive ✓' if net > 0 else 'Negative ✗'}"
         )
 
     st.markdown("---")
@@ -276,10 +277,10 @@ def render(hh: Household):
                 st.markdown(
                     f"IRA (WC): **${(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin) / 1e6:.1f}M**"
                 )
-                st.markdown(f"RMD (NC): ${yr_nc.your_rmd + yr_nc.spouse_rmd:,.0f}")
-                st.markdown(f"RMD (WC): ${yr_wc.your_rmd + yr_wc.spouse_rmd:,.0f}")
+                st.markdown(f"RMD (NC): {fmt_dollars(yr_nc.your_rmd + yr_nc.spouse_rmd)}")
+                st.markdown(f"RMD (WC): {fmt_dollars(yr_wc.your_rmd + yr_wc.spouse_rmd)}")
                 color = "green" if nb > 0 else "red"
-                st.markdown(f"Net: :{color}[**${nb:,.0f}**]")
+                st.markdown(f"Net: :{color}[**{fmt_dollars(nb)}**]")
 
     # --- Conversion detail table ---
     st.markdown("---")

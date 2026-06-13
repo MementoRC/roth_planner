@@ -10,6 +10,7 @@ import streamlit as st
 from engine.asset_location import project_asset_location
 from engine.scenario import auto_fill_12
 from models.household import Household
+from views._format import fmt_dollars
 
 STRATEGIES = {
     "equity_first": ("Equity First", "#22c55e"),
@@ -43,7 +44,7 @@ def render(hh: Household):
     }
 
     total_planned = sum(annual_conv.values())
-    st.metric("Total Planned Conversions (Fill 12%)", f"${total_planned:,.0f}")
+    st.metric("Total Planned Conversions (Fill 12%)", fmt_dollars(total_planned))
 
     # --- Run all three strategies ---
     results = {}
@@ -61,10 +62,10 @@ def render(hh: Household):
         summary_data.append(
             {
                 "Strategy": label,
-                "IRA at 75": f"${r.ira_at_75:,.0f}",
-                "IRA at 85": f"${r.ira_at_85:,.0f}",
-                "RMD at 75": f"${r.rmd_at_75:,.0f}",
-                "RMD at 85": f"${r.rmd_at_85:,.0f}",
+                "IRA at 75": fmt_dollars(r.ira_at_75),
+                "IRA at 85": fmt_dollars(r.ira_at_85),
+                "RMD at 75": fmt_dollars(r.rmd_at_75),
+                "RMD at 85": fmt_dollars(r.rmd_at_85),
                 "IRA Growth at 75": f"{r.ira_growth_at_75 * 100:.1f}%",
             }
         )
@@ -81,8 +82,8 @@ def render(hh: Household):
 
     if ira_diff_85 > 0:
         st.success(
-            f"**Equity-first saves ${ira_diff_85:,.0f} in IRA at 85** vs proportional, "
-            f"reducing RMDs by ~${rmd_diff_85:,.0f}/yr. "
+            f"**Equity-first saves {fmt_dollars(ira_diff_85)} in IRA at 85** vs proportional, "
+            f"reducing RMDs by ~{fmt_dollars(rmd_diff_85)}/yr. "
             f"After converting equities, IRA growth drops to ~{eq_r.ira_growth_at_75 * 100:.1f}% "
             f"(mostly bonds) vs {prop_r.ira_growth_at_75 * 100:.1f}% proportional."
         )

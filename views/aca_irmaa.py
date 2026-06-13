@@ -29,6 +29,7 @@ from engine.irmaa import (
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, niit
 from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
 from models.household import Household
+from views._format import fmt_dollars
 
 
 def render(hh: Household):
@@ -166,7 +167,7 @@ def render(hh: Household):
                 y=BENCHMARK_PREMIUM_ANNUAL,
                 line_dash="dot",
                 line_color="gray",
-                annotation_text=f"Full premium: ${BENCHMARK_PREMIUM_ANNUAL:,.0f}",
+                annotation_text=f"Full premium: {fmt_dollars(BENCHMARK_PREMIUM_ANNUAL)}",
             )
 
             # Mark FPL thresholds
@@ -176,7 +177,7 @@ def render(hh: Household):
                     x=cliff_magi,
                     line_dash="dash",
                     line_color="#ef4444",
-                    annotation_text=f"400% FPL cliff: ${cliff_magi:,.0f}",
+                    annotation_text=f"400% FPL cliff: {fmt_dollars(cliff_magi)}",
                 )
 
             fig_aca.update_layout(
@@ -236,7 +237,7 @@ def render(hh: Household):
     # --- Chart 3: Combined Hidden Cost ---
     st.markdown("### Total Hidden Cost of Conversion Income")
     st.caption(
-        f"Base MAGI: ${base_magi:,.0f} · Net investment income: ${net_inv_income:,.0f} — "
+        f"Base MAGI: {fmt_dollars(base_magi)} · Net investment income: {fmt_dollars(net_inv_income)} — "
         "shows ACA subsidy loss + IRMAA increase + NIIT as you add conversion income"
     )
 
@@ -366,15 +367,15 @@ def render(hh: Household):
             "Spouse": sa,
             "System": system,
             "IRMAA Tier": str(irmaa_tier(base_magi)) if medicare_count > 0 else "—",
-            "IRMAA Room": f"${irmaa_room:,.0f}" if irmaa_room is not None else "—",
+            "IRMAA Room": fmt_dollars(irmaa_room) if irmaa_room is not None else "—",
         }
 
         if you_on_aca or sp_on_aca:
-            row["ACA Subsidy"] = (
-                f"${aca_subsidy(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            row["ACA Subsidy"] = fmt_dollars(
+                aca_subsidy(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active)
             )
-            row["ACA You Pay"] = (
-                f"${aca_net_cost(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active):,.0f}"
+            row["ACA You Pay"] = fmt_dollars(
+                aca_net_cost(base_magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active)
             )
         else:
             row["ACA Subsidy"] = "—"
@@ -397,10 +398,10 @@ def render(hh: Household):
             irmaa_data.append(
                 {
                     "Tier": i + 1,
-                    "MAGI >": f"${threshold:,.0f}",
-                    "Part B/mo": f"${part_b / 12:,.2f}",
-                    "Part D/mo": f"${part_d / 12:,.2f}",
-                    "Surcharge/yr (×2)": f"${surcharge_pp * 2:,.0f}",
+                    "MAGI >": fmt_dollars(threshold),
+                    "Part B/mo": fmt_dollars(part_b / 12, decimals=2),
+                    "Part D/mo": fmt_dollars(part_d / 12, decimals=2),
+                    "Surcharge/yr (×2)": fmt_dollars(surcharge_pp * 2),
                 }
             )
         st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)
@@ -415,7 +416,7 @@ def render(hh: Household):
             aca_data.append(
                 {
                     "FPL Range": fpl_label,
-                    "MAGI ≤": f"${upper_fpl * FPL_2:,.0f}"
+                    "MAGI ≤": fmt_dollars(upper_fpl * FPL_2)
                     if upper_fpl != float("inf")
                     else "No limit",
                     "Premium Cap": f"{cap_rate:.1%} of income",
@@ -424,8 +425,8 @@ def render(hh: Household):
         st.dataframe(pd.DataFrame(aca_data), width="stretch", hide_index=True)
 
         st.caption(
-            f"FPL (family of 2): ${FPL_2:,.0f} · "
-            f"Benchmark silver plan: ${BENCHMARK_PREMIUM_ANNUAL:,.0f}/yr"
+            f"FPL (family of 2): {fmt_dollars(FPL_2)} · "
+            f"Benchmark silver plan: {fmt_dollars(BENCHMARK_PREMIUM_ANNUAL)}/yr"
         )
 
     st.markdown("---")

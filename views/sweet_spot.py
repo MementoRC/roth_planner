@@ -24,6 +24,7 @@ from engine.tax import (
     taxable_ss,
 )
 from models.household import Household
+from views._format import fmt_dollars
 
 STEP = 1_000  # sweep in $1K increments
 
@@ -151,7 +152,7 @@ def _find_sweet_spots(results: list[dict]) -> list[dict]:
             spots.append(
                 {
                     "conv": prev["conv"],
-                    "label": f"${prev['conv']:,.0f}",
+                    "label": fmt_dollars(prev["conv"]),
                     "reason": _classify_jump(prev, curr),
                     "marginal_before": prev_marginal,
                     "marginal_after": marginal,
@@ -212,12 +213,12 @@ def render(hh: Household):
 
     # --- Info bar ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Option Income", f"${base['opt']:,.0f}")
-    c2.metric("Combined SS", f"${base['combined_ss']:,.0f}")
-    c3.metric("Deductions", f"${base['total_ded']:,.0f}")
+    c1.metric("Option Income", fmt_dollars(base["opt"]))
+    c2.metric("Combined SS", fmt_dollars(base["combined_ss"]))
+    c3.metric("Deductions", fmt_dollars(base["total_ded"]))
 
     base_result = _all_in_at_conversion(hh, base, 0, net_inv_income)
-    c4.metric("Base MAGI", f"${base['base_magi']:,.0f}")
+    c4.metric("Base MAGI", fmt_dollars(base["base_magi"]))
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
     prior_magi = st.session_state.get("prior_year_magi") or {}
@@ -225,7 +226,7 @@ def render(hh: Household):
         sorted_years = sorted(prior_magi.keys(), reverse=True)
         most_recent = sorted_years[0]
         st.caption(
-            f"Prior-year MAGI anchor ({most_recent}): ${prior_magi[most_recent]:,.0f}"
+            f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi[most_recent])}"
             " — used for IRMAA 2-year lookback"
         )
 
@@ -372,27 +373,27 @@ def render(hh: Household):
     z1, z2, z3 = st.columns(3)
     with z1:
         st.markdown("#### Fill to 12%")
-        st.metric("Conversion", f"${room_12:,.0f}")
+        st.metric("Conversion", fmt_dollars(room_12))
         r12_result = _all_in_at_conversion(hh, base, room_12, net_inv_income)
         avg_rate = r12_result["all_in"] / max(room_12, 1) * 100
-        st.metric("All-In Cost", f"${r12_result['all_in']:,.0f}", f"Avg {avg_rate:.1f}%")
+        st.metric("All-In Cost", fmt_dollars(r12_result["all_in"]), f"Avg {avg_rate:.1f}%")
 
     with z2:
         st.markdown("#### Fill to 22%")
-        st.metric("Conversion", f"${room_22:,.0f}")
+        st.metric("Conversion", fmt_dollars(room_22))
         r22_result = _all_in_at_conversion(hh, base, room_22, net_inv_income)
         avg_rate_22 = r22_result["all_in"] / max(room_22, 1) * 100
-        st.metric("All-In Cost", f"${r22_result['all_in']:,.0f}", f"Avg {avg_rate_22:.1f}%")
+        st.metric("All-In Cost", fmt_dollars(r22_result["all_in"]), f"Avg {avg_rate_22:.1f}%")
 
     with z3:
         st.markdown("#### IRMAA-Safe Max")
         # Find the largest conversion that doesn't trigger IRMAA
         irmaa_safe = max(IRMAA_TIERS_MFJ[0][0] - base["base_magi"], 0)
-        st.metric("Conversion", f"${irmaa_safe:,.0f}")
+        st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
             irmaa_result = _all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
             avg_rate_i = irmaa_result["all_in"] / max(irmaa_safe, 1) * 100
-            st.metric("All-In Cost", f"${irmaa_result['all_in']:,.0f}", f"Avg {avg_rate_i:.1f}%")
+            st.metric("All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {avg_rate_i:.1f}%")
         else:
             st.metric("All-In Cost", "N/A", "Base MAGI exceeds tier 1")
 
@@ -498,14 +499,14 @@ def render(hh: Household):
         row = {
             "Year": str(yr),
             "You/Sp": f"{b['ya']}/{b['sa']}",
-            "Base MAGI": f"${b['base_magi']:,.0f}",
-            "Fill 12%": f"${r12:,.0f}",
-            "12% Cost": f"${r12_res['all_in']:,.0f}" if r12_res else "---",
+            "Base MAGI": fmt_dollars(b["base_magi"]),
+            "Fill 12%": fmt_dollars(r12),
+            "12% Cost": fmt_dollars(r12_res["all_in"]) if r12_res else "---",
             "12% Rate": f"{r12_res['all_in'] / max(r12, 1) * 100:.1f}%" if r12_res else "---",
-            "Fill 22%": f"${r22:,.0f}",
-            "22% Cost": f"${r22_res['all_in']:,.0f}" if r22_res else "---",
+            "Fill 22%": fmt_dollars(r22),
+            "22% Cost": fmt_dollars(r22_res["all_in"]) if r22_res else "---",
             "22% Rate": f"{r22_res['all_in'] / max(r22, 1) * 100:.1f}%" if r22_res else "---",
-            "IRMAA Safe": f"${irmaa_max:,.0f}",
+            "IRMAA Safe": fmt_dollars(irmaa_max),
         }
         rows.append(row)
 
