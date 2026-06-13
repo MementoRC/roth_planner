@@ -445,7 +445,9 @@ def run_scenario(
             yr.total_deductions = deductions(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
             )
-            yr.total_deductions += senior_bonus_deduction(ya_eff, sa_eff, yr.magi)
+            yr.total_deductions += senior_bonus_deduction(
+                ya_eff, sa_eff, yr.magi, filing_status="Single"
+            )
         else:
             yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
             yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
@@ -486,10 +488,12 @@ def run_scenario(
             # Use this year's projected MAGI as a same-year approximation
             # (only reached for yr_idx < 2 when prior_year_magi is empty).
             magi_for_irmaa = yr.magi
+        # irmaa_for_year() adds +2 internally for the 2-year MAGI lookback;
+        # pass income-year ages (ya - 2, sa - 2) so Medicare-year ages come out correctly.
         irmaa_cost, _ = irmaa_for_year(
             magi_for_irmaa,
-            ya,
-            sa,
+            ya - 2,
+            sa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
         )
@@ -565,13 +569,12 @@ def run_scenario(
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
         # point; realized gains walk up through 0% / 15% / 20% bands.
-        _ltcg_ord = yr.taxable_income - realized_gains  # ordinary taxable income
-        _ltcg_start = max(0.0, _ltcg_ord)
+        # yr.taxable_income is already ordinary-only; do NOT subtract realized_gains.
+        _ltcg_start = max(0.0, yr.taxable_income)
         _ltcg_end = _ltcg_start + max(0.0, realized_gains)
         _ltcg_at_15 = max(
             0.0,
-            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-            - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            min(_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20

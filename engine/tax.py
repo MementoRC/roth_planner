@@ -42,7 +42,8 @@ SENIOR_EXTRA_MFJ = 1_650  # per spouse 65+
 
 # OBBBA senior bonus deduction (2026-2028, sunsets thereafter)
 OBBBA_BONUS_PER_PERSON = 6_000
-OBBBA_PHASEOUT_START = 150_000
+OBBBA_PHASEOUT_START_MFJ = 150_000  # Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)
+OBBBA_PHASEOUT_START_SINGLE = 75_000  # Single / HoH — same citation
 OBBBA_PHASEOUT_RATE = 0.06  # per $1 of MAGI above threshold
 
 # Social Security taxation tiers (MFJ provisional-income thresholds)
@@ -146,21 +147,33 @@ def senior_bonus_deduction(
     your_age: int,
     spouse_age: int,
     magi: float,
+    filing_status: str = "MFJ",
     bonus_per_person: float = OBBBA_BONUS_PER_PERSON,
-    phaseout_start: float = OBBBA_PHASEOUT_START,
+    phaseout_start: float | None = None,
     phaseout_rate: float = OBBBA_PHASEOUT_RATE,
 ) -> float:
     """
     OBBBA Senior Bonus Deduction (2026-2028).
 
-    $6,000 per person age 65+, phases out at $150K MAGI (MFJ).
-    Reduction: $0.06 per $1 of MAGI over threshold.
-    Stacks with standard deduction and $1,650 senior extra.
+    $6,000 per person age 65+, phases out linearly at 6% per $1 above threshold.
+    Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
+      MFJ:    phase-out starts $150,000, ends $250,000
+      Single/HoH: phase-out starts $75,000, ends $175,000
+      MFS:    ineligible (returns 0)
+
+    Pass ``phaseout_start`` explicitly to override the filing-status default.
+    Stacks with standard deduction and senior extra.
     """
+    if filing_status == "MFS":
+        return 0.0
     eligible = sum(1 for age in [your_age, spouse_age] if age >= 65)
     if eligible == 0:
         return 0.0
     total_bonus = bonus_per_person * eligible
+    if phaseout_start is None:
+        phaseout_start = (
+            OBBBA_PHASEOUT_START_MFJ if filing_status == "MFJ" else OBBBA_PHASEOUT_START_SINGLE
+        )
     if magi <= phaseout_start:
         return total_bonus
     reduction = (magi - phaseout_start) * phaseout_rate

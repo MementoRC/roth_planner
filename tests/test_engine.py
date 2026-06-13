@@ -195,6 +195,10 @@ class TestIRMAA:
 
         The fallback branch is reached because income_year = base_year - 2 is neither
         in prior_year_magi nor in magi_history (which only accumulates during the loop).
+
+        At age 63 (Medicare year) the income-year age is 61; +2 → 63 < 65, so IRMAA = 0
+        even with high MAGI.  IRMAA only applies starting Medicare year when income-year
+        age >= 63 (i.e., ya >= 65 in the projection year).
         """
         from engine.irmaa import irmaa_for_year
 
@@ -203,15 +207,16 @@ class TestIRMAA:
         result = run_scenario(hh, plan, end_age=66)
         yr0 = result.years[0]
 
-        # Compute expected IRMAA using yr0.magi directly (old-engine behaviour)
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_cost, _ = irmaa_for_year(
             yr0.magi,
-            yr0.your_age,
-            yr0.spouse_age,
+            yr0.your_age - 2,
+            yr0.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr0.irmaa_cost == approx(expected_cost)
-        assert yr0.irmaa_cost > 0, "Sanity: high-MAGI year 0 must produce nonzero IRMAA"
+        # age 63 projection year → income-year age 61 → Medicare age 63 < 65 → no IRMAA
+        assert yr0.irmaa_cost == approx(0.0), "Age-63 year-0 must produce zero IRMAA"
 
     def test_irmaa_year_2_uses_year_0_magi(self):
         """Year-2 IRMAA is anchored to year-0 MAGI (2-year lookback), not year-2 MAGI.
@@ -231,18 +236,20 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1)
+        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1).
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
+        # yr2.your_age = 65 → income-year age = 63 → Medicare age = 65 → on Medicare.
         expected_from_yr0, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         # Year-2 MAGI (no conversion) should produce a lower IRMAA
         expected_from_yr2, _ = irmaa_for_year(
             yr2.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0), (
@@ -257,29 +264,33 @@ class TestIRMAA:
 
         When the user provides an actual filed MAGI for the lookback year the
         engine must use it instead of the same-year fallback.
+
+        Use age 65 so income-year age is 63 → Medicare age 65 → on Medicare,
+        making the anchor observable in year-0 output.
         """
         from engine.irmaa import irmaa_for_year
 
         base_year = 2026
         filed_magi = 300_000.0  # above IRMAA Tier 1 ($218K)
 
-        hh_no_anchor = Household(your_age=63, spouse_age=63)
+        hh_no_anchor = Household(your_age=65, spouse_age=65)
         hh_anchored = Household(
-            your_age=63,
-            spouse_age=63,
+            your_age=65,
+            spouse_age=65,
             prior_year_magi={base_year - 2: filed_magi},
         )
         plan = ConversionPlan()  # no conversions — year-0 MAGI low without anchor
-        r_no = run_scenario(hh_no_anchor, plan, end_age=66)
-        r_anc = run_scenario(hh_anchored, plan, end_age=66)
+        r_no = run_scenario(hh_no_anchor, plan, end_age=68)
+        r_anc = run_scenario(hh_anchored, plan, end_age=68)
 
         yr0_no = r_no.years[0]
         yr0_anc = r_anc.years[0]
 
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
         expected_anchored, _ = irmaa_for_year(
             filed_magi,
-            yr0_anc.your_age,
-            yr0_anc.spouse_age,
+            yr0_anc.your_age - 2,
+            yr0_anc.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr0_anc.irmaa_cost == approx(expected_anchored), (
@@ -310,15 +321,41 @@ class TestIRMAA:
         yr0 = result.years[0]
         yr2 = result.years[2]
 
-        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history
+        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history.
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
         expected_from_yr0_magi, _ = irmaa_for_year(
             yr0.magi,
-            yr2.your_age,
-            yr2.spouse_age,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
             "Year-2 IRMAA must use year-0 projected MAGI, not prior_year_magi"
+        )
+
+    def test_no_irmaa_before_medicare_eligibility(self):
+        """Ages 63/61 must produce zero IRMAA even when MAGI is well above Tier-1 ($218K).
+
+        Regression for B-1/E-1: scenario.py was passing current-year ages (ya, sa) to
+        irmaa_for_year(), which adds +2 internally.  A 63-year-old was treated as 65 →
+        IRMAA charged 2 years before Medicare eligibility.
+
+        With the fix, income-year ages (ya-2, sa-2) are passed; the function adds +2,
+        yielding the correct Medicare-year ages (63, 61) which are both < 65 → no IRMAA.
+        """
+        # MAGI well above 2026 Tier-1 threshold ($218K) — use prior_year_magi anchor
+        # so year-0 IRMAA is driven by that filed value rather than the same-year fallback.
+        hh_anchored = Household(
+            your_age=63,
+            spouse_age=61,
+            prior_year_magi={2024: 280_000.0},  # above $218K Tier-1; lookback for 2026
+        )
+        plan = ConversionPlan()  # no conversion — keep it minimal
+        result = run_scenario(hh_anchored, plan, end_age=65)
+
+        yr0 = result.years[0]  # year 2026, ya=63, sa=61 — both < Medicare eligibility age
+        assert yr0.irmaa_cost == approx(0.0), (
+            "IRMAA must be zero at age 63/61: Medicare eligibility requires age 65"
         )
 
 
@@ -2164,6 +2201,27 @@ class TestEngineConstantsCharacterization:
         # MAGI=500_000: reduction=(500_000-150_000)*0.06=21_000 > 12_000
         # result = max(12_000 - 21_000, 0) = 0.0
         assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
+
+    # --- senior_bonus_deduction() filing-status phaseout regression (audit A-4/E-6) ---
+
+    def test_senior_bonus_mfj_below_threshold_full_bonus(self):
+        # MFJ, both 65+, MAGI=120_000 < 150_000 → full $12,000
+        assert senior_bonus_deduction(65, 65, magi=120_000, filing_status="MFJ") == approx(12_000)
+
+    def test_senior_bonus_single_partial_phaseout(self):
+        # Single survivor, age 68, MAGI=120_000: threshold=$75,000
+        # reduction = (120_000 - 75_000) * 0.06 = 45_000 * 0.06 = 2_700
+        # result = max(6_000 - 2_700, 0) = 3_300
+        assert senior_bonus_deduction(68, 0, magi=120_000, filing_status="Single") == approx(3_300)
+
+    def test_senior_bonus_single_above_phaseout_cap(self):
+        # Single survivor, age 68, MAGI=200_000 > 175_000 (full phase-out)
+        # reduction = (200_000 - 75_000) * 0.06 = 7_500 > 6_000 → 0
+        assert senior_bonus_deduction(68, 0, magi=200_000, filing_status="Single") == approx(0.0)
+
+    def test_senior_bonus_mfs_ineligible(self):
+        # MFS: ineligible regardless of age or MAGI
+        assert senior_bonus_deduction(70, 70, magi=50_000, filing_status="MFS") == approx(0.0)
 
     # --- taxable_ss() ---
 
@@ -4679,3 +4737,47 @@ class TestBrokerageGainTaxStackWalk:
         # Confirm this would have been wrong under the old flat-rate approach
         old_flat_rate_tax = gain * 0.15
         assert result > old_flat_rate_tax
+
+    def test_ltcg_stack_start_is_ordinary_income_not_reduced(self):
+        """Regression: stack-walk start must be yr.taxable_income, not
+        yr.taxable_income - realized_gains.
+
+        Scenario: ordinary_taxable = 80_000, realized_gains = 30_000.
+        2026 MFJ 0%-LTCG threshold is LTCG_THRESHOLDS_MFJ[0] (≈98_900).
+
+        Buggy formula:  ltcg_start = 80_000 - 30_000 = 50_000
+                        ltcg_end   = 50_000 + 30_000 = 80_000
+                        → entire $30K below threshold → tax = $0.
+
+        Fixed formula:  ltcg_start = 80_000
+                        ltcg_end   = 80_000 + 30_000 = 110_000
+                        → $18_900 in 0% band, $11_100 at 15% → tax = $1_665.
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ
+
+        ordinary = 80_000.0
+        gain = 30_000.0
+        threshold_0 = LTCG_THRESHOLDS_MFJ[0]  # ≈98_900 for 2026 MFJ
+
+        # Fixed result via helper (mirrors corrected scenario.py arithmetic)
+        result = self._single_year_brokerage_gain_tax(ordinary, gain)
+
+        # The $30K gain straddles the 0%→15% boundary:
+        # gain_in_15pct = (ordinary + gain) - threshold_0 = 110_000 - 98_900 = 11_100
+        gain_taxed_at_15 = (ordinary + gain) - threshold_0
+        expected = gain_taxed_at_15 * 0.15
+        assert result == pytest.approx(expected, rel=1e-9)
+        assert result > 0.0, "Fixed formula must produce non-zero LTCG tax here"
+
+        # Demonstrate what the buggy formula would have returned ($0)
+        buggy_ltcg_start = max(0.0, ordinary - gain)  # 50_000
+        buggy_ltcg_end = buggy_ltcg_start + gain  # 80_000
+        buggy_at_15 = max(
+            0.0,
+            min(buggy_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(buggy_ltcg_start, threshold_0),
+        )
+        buggy_result = buggy_at_15 * 0.15
+        assert buggy_result == pytest.approx(0.0), (
+            "Buggy formula should yield $0 (regression anchor)"
+        )
+        assert result > buggy_result, "Fix must increase LTCG tax vs buggy formula"
