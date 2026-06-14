@@ -118,7 +118,7 @@ def render(hh: Household):
         niit_vals.append(niit(magi, net_inv_income))
 
         # Tax
-        bonus_ded = senior_bonus_deduction(hh.your_age, hh.spouse_age, magi)
+        bonus_ded = senior_bonus_deduction(hh.your_age, hh.spouse_age, magi, year=hh.base_year)
         taxable = max(magi - ded - bonus_ded, 0)
         fed_tax_vals.append(federal_tax(taxable))
         marginal_vals.append(marginal_rate(taxable))

@@ -832,8 +832,8 @@ class TestAutoFillCharacterization:
             (2033, 0, 133000),
             (2034, 0, 133000),
             (2035, 0, 133000),
-            (2036, 0, 140650),
-            (2037, 0, 18069),
+            (2036, 0, 134650),
+            (2037, 0, 24489),
             (2038, 0, 0),
             (2039, 0, 0),
             (2040, 0, 0),
@@ -2396,53 +2396,92 @@ class TestEngineConstantsCharacterization:
 
     def test_senior_bonus_neither_senior(self):
         # Both under 65: eligible=0 → 0.0
-        assert senior_bonus_deduction(60, 60, magi=100_000) == approx(0.0)
+        assert senior_bonus_deduction(60, 60, magi=100_000, year=2026) == approx(0.0)
 
     def test_senior_bonus_under_phaseout(self):
         # Both 65+, MAGI=100_000 < 150_000: full bonus
         # eligible=2, total_bonus=12_000, no reduction → 12_000
-        assert senior_bonus_deduction(65, 65, magi=100_000) == approx(12_000)
+        assert senior_bonus_deduction(65, 65, magi=100_000, year=2026) == approx(12_000)
 
     def test_senior_bonus_at_phaseout_start(self):
         # MAGI exactly 150_000: magi <= phaseout_start branch → full 12_000
-        assert senior_bonus_deduction(65, 65, magi=150_000) == approx(12_000)
+        assert senior_bonus_deduction(65, 65, magi=150_000, year=2026) == approx(12_000)
 
     def test_senior_bonus_partial_phaseout(self):
-        # MAGI=200_000: reduction = (200_000 - 150_000) * 0.06 = 3_000
-        # result = max(12_000 - 3_000, 0) = 9_000
-        assert senior_bonus_deduction(65, 65, magi=200_000) == approx(9_000)
+        # MAGI=200_000: per-person reduction = min(6_000, (200_000-150_000)*0.06) = 3_000
+        # deduction_per_person = 6_000 - 3_000 = 3_000; total = 3_000 * 2 = 6_000
+        assert senior_bonus_deduction(65, 65, magi=200_000, year=2026) == approx(6_000)
 
     def test_senior_bonus_one_person_partial_phaseout(self):
-        # ya=65, sa=60: eligible=1, total_bonus=6_000
-        # MAGI=200_000: reduction=(200_000-150_000)*0.06=3_000
-        # result = max(6_000 - 3_000, 0) = 3_000
-        assert senior_bonus_deduction(65, 60, magi=200_000) == approx(3_000)
+        # ya=65, sa=60: eligible=1
+        # MAGI=200_000: per_person_reduction=min(6_000,(200_000-150_000)*0.06)=3_000
+        # deduction_per_person=3_000; total=3_000*1=3_000
+        assert senior_bonus_deduction(65, 60, magi=200_000, year=2026) == approx(3_000)
 
     def test_senior_bonus_above_phaseout_cap(self):
-        # MAGI=500_000: reduction=(500_000-150_000)*0.06=21_000 > 12_000
-        # result = max(12_000 - 21_000, 0) = 0.0
-        assert senior_bonus_deduction(65, 65, magi=500_000) == approx(0.0)
+        # MAGI=500_000: per_person_reduction=min(6_000,(500_000-150_000)*0.06)=min(6_000,21_000)=6_000
+        # deduction_per_person=0; total=0*2=0.0
+        assert senior_bonus_deduction(65, 65, magi=500_000, year=2026) == approx(0.0)
 
     # --- senior_bonus_deduction() filing-status phaseout regression (audit A-4/E-6) ---
 
     def test_senior_bonus_mfj_below_threshold_full_bonus(self):
         # MFJ, both 65+, MAGI=120_000 < 150_000 → full $12,000
-        assert senior_bonus_deduction(65, 65, magi=120_000, filing_status="MFJ") == approx(12_000)
+        assert senior_bonus_deduction(
+            65, 65, magi=120_000, year=2026, filing_status="MFJ"
+        ) == approx(12_000)
 
     def test_senior_bonus_single_partial_phaseout(self):
         # Single survivor, age 68, MAGI=120_000: threshold=$75,000
-        # reduction = (120_000 - 75_000) * 0.06 = 45_000 * 0.06 = 2_700
-        # result = max(6_000 - 2_700, 0) = 3_300
-        assert senior_bonus_deduction(68, 0, magi=120_000, filing_status="Single") == approx(3_300)
+        # per_person_reduction=min(6_000,(120_000-75_000)*0.06)=min(6_000,2_700)=2_700
+        # deduction_per_person=3_300; total=3_300*1=3_300
+        assert senior_bonus_deduction(
+            68, 0, magi=120_000, year=2026, filing_status="Single"
+        ) == approx(3_300)
 
     def test_senior_bonus_single_above_phaseout_cap(self):
         # Single survivor, age 68, MAGI=200_000 > 175_000 (full phase-out)
-        # reduction = (200_000 - 75_000) * 0.06 = 7_500 > 6_000 → 0
-        assert senior_bonus_deduction(68, 0, magi=200_000, filing_status="Single") == approx(0.0)
+        # per_person_reduction=min(6_000,(200_000-75_000)*0.06)=min(6_000,7_500)=6_000 → 0
+        assert senior_bonus_deduction(
+            68, 0, magi=200_000, year=2026, filing_status="Single"
+        ) == approx(0.0)
 
     def test_senior_bonus_mfs_ineligible(self):
         # MFS: ineligible regardless of age or MAGI
-        assert senior_bonus_deduction(70, 70, magi=50_000, filing_status="MFS") == approx(0.0)
+        assert senior_bonus_deduction(
+            70, 70, magi=50_000, year=2026, filing_status="MFS"
+        ) == approx(0.0)
+
+    # --- audit regression: year gate (A1) ---
+
+    def test_senior_bonus_year_2029_sunset(self):
+        # OBBBA §70103 sunsets after 2028 → 0.0 regardless of age or MAGI
+        assert senior_bonus_deduction(70, 70, magi=50_000, year=2029) == approx(0.0)
+
+    def test_senior_bonus_year_2028_still_active(self):
+        # 2028 is the last active year; full bonus at MAGI below threshold
+        assert senior_bonus_deduction(70, 70, magi=100_000, year=2028) == approx(12_000)
+
+    # --- audit regression: dual-senior MFJ phaseout endpoint (A2) ---
+
+    def test_senior_bonus_dual_mfj_phaseout_endpoint(self):
+        # Dual-eligible MFJ, MAGI=250_000: each person fully phased out
+        # per_person_reduction=min(6_000,(250_000-150_000)*0.06)=min(6_000,6_000)=6_000
+        # deduction_per_person=0; total=0*2=0.0
+        assert senior_bonus_deduction(70, 70, magi=250_000, year=2026) == approx(0.0)
+
+    def test_senior_bonus_dual_mfj_partial_mid_range(self):
+        # Dual-eligible MFJ, MAGI=200_000: midpoint
+        # per_person_reduction=min(6_000,(200_000-150_000)*0.06)=3_000
+        # deduction_per_person=3_000; total=3_000*2=6_000
+        assert senior_bonus_deduction(70, 70, magi=200_000, year=2026) == approx(6_000)
+
+    def test_senior_bonus_single_phaseout_endpoint_preserved(self):
+        # Single, MAGI=175_000: endpoint for single filer ($75K start + $100K range at 6%)
+        # per_person_reduction=min(6_000,(175_000-75_000)*0.06)=min(6_000,6_000)=6_000 → 0
+        assert senior_bonus_deduction(
+            70, 0, magi=175_000, year=2026, filing_status="Single"
+        ) == approx(0.0)
 
     # --- taxable_ss() ---
 
@@ -4472,6 +4511,84 @@ class TestSurvivorScenario:
         single_rate = aca_premium_cap_rate(magi, filing_status="Single")
         # Single filer is further up the FPL scale → equal or higher cap rate
         assert single_rate >= mfj_rate
+
+    # --- audit regression: B1 — irmaa_room uses Single tier in survivor years ---
+
+    def test_survivor_irmaa_room_uses_single_threshold(self):
+        """Post-death year: irmaa_room must reflect Single thresholds, not MFJ.
+
+        The MFJ T1 IRMAA threshold is ~$218K; Single T1 is ~$109K.
+        A MAGI of $120K exceeds the Single threshold but not MFJ → irmaa_room
+        should be 0 (or very small) for Single, not the large MFJ gap.
+        """
+        from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        hh = Household(
+            your_age=70,
+            spouse_age=70,
+            your_ira=1_000_000,
+            spouse_ira=800_000,
+            your_ss_fra=2_400,  # $2,400/mo → ~$28,800/yr SS
+            spouse_ss_fra=2_000,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,  # no growth so we can reason about MAGI precisely
+            living_expenses=60_000,
+            survivor=surv,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=82)
+
+        yr_2031 = next(y for y in result.years if y.year == 2031)
+        # irmaa_room for Single must be less than MFJ T1 threshold
+        mfj_t1 = IRMAA_TIERS_MFJ[0][0]
+        single_t1 = IRMAA_TIERS_SINGLE[0][0]
+        # If yr.magi > single_t1, irmaa_room should reflect how far we are past that
+        if yr_2031.magi > single_t1:
+            assert yr_2031.irmaa_room == approx(0.0, abs=1.0)
+        else:
+            # irmaa_room must be bounded by Single T1, not MFJ T1
+            assert yr_2031.irmaa_room < mfj_t1
+
+    # --- audit regression: C — aca_magi includes non-taxable SS ---
+
+    def test_aca_magi_includes_nontaxable_ss(self):
+        """aca_magi must equal yr.magi + (combined_ss - taxable_ss_amt).
+
+        When combined_ss > 0 and taxable_ss_amt < combined_ss, aca_magi > magi.
+        When taxable_ss_amt == 0 (SS below provisional threshold), the full SS
+        benefit is added to aca_magi.
+        """
+        # Low-income scenario: SS provisional income below $32K → taxable_ss=0,
+        # so aca_magi = magi + combined_ss (the entire benefit is non-taxable).
+        hh = Household(
+            your_age=62,
+            spouse_age=62,
+            your_ira=200_000,
+            spouse_ira=200_000,
+            your_ss_fra=1_000,  # $1,000/mo
+            spouse_ss_fra=800,
+            your_ss_start_age=62,
+            spouse_ss_start_age=62,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=40_000,
+            your_aca_enrolled=True,
+            aca_benchmark_premium_annual=15_000,
+        )
+        plan = ConversionPlan(your_conversions={hh.base_year: 0})
+        result = run_scenario(hh, plan, end_age=63)
+
+        yr = result.years[0]
+        expected_aca_magi = yr.magi + (yr.combined_ss - yr.taxable_ss_amt)
+        assert yr.aca_magi == approx(expected_aca_magi)
+        # When some SS is non-taxable, aca_magi should exceed magi
+        if yr.combined_ss > yr.taxable_ss_amt:
+            assert yr.aca_magi > yr.magi
 
 
 class TestFetchMagi:

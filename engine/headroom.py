@@ -124,7 +124,7 @@ def compute_headroom(
     locked_magi = ytd.magi_ytd + combined_ss
     result.locked_magi = locked_magi
     ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-    ded += senior_bonus_deduction(ya, sa, locked_magi)
+    ded += senior_bonus_deduction(ya, sa, locked_magi, year=year)
 
     # === LOCKED ONLY (YTD actuals — no option exercise) ===
 
@@ -151,7 +151,7 @@ def compute_headroom(
 
     # Recalculate deductions with full planned MAGI
     ded_planned = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-    ded_planned += senior_bonus_deduction(ya, sa, planned_magi)
+    ded_planned += senior_bonus_deduction(ya, sa, planned_magi, year=year)
 
     result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned)
     result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned)

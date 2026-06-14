@@ -86,6 +86,7 @@ class YearResult:
     taxable_income: float = 0.0
     magi: float = 0.0  # for IRMAA/ACA (uses full RMD, full SS)
     niit_magi: float = 0.0  # NIIT MAGI per IRC §1411(d)(3): excludes muni interest (vs. yr.magi which is IRMAA-compatible)
+    aca_magi: float = 0.0  # ACA MAGI per IRC §36B(d)(2)(B): yr.magi + non-taxable SS portion
 
     # Tax & costs
     federal_tax_amt: float = 0.0
@@ -463,11 +464,11 @@ def run_scenario(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
             )
             yr.total_deductions += senior_bonus_deduction(
-                ya_eff, sa_eff, yr.magi, filing_status="Single"
+                ya_eff, sa_eff, yr.magi, year=year, filing_status="Single"
             )
         else:
             yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi)
+            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi, year=year)
 
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
@@ -515,7 +516,7 @@ def run_scenario(
             filing_status=current_filing_status,
         )
         yr.irmaa_cost = irmaa_cost
-        yr.irmaa_room = irmaa_next_threshold(yr.magi)
+        yr.irmaa_room = irmaa_next_threshold(yr.magi, filing_status=current_filing_status)
 
         # === ACA subsidy loss ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.
@@ -525,14 +526,19 @@ def run_scenario(
         num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
             1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
         )
+        # ACA MAGI per IRC §36B(d)(2)(B)(iii): AGI + tax-exempt interest + non-taxable SS.
+        # yr.magi already includes taxable_ss_amt; add the non-taxable remainder.
+        # Distinct from yr.magi (IRMAA §1839(i)(4)) which does NOT add non-taxable SS.
+        yr.aca_magi = yr.magi + (yr.combined_ss - yr.taxable_ss_amt)
         if num_on_aca > 0:
             effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
-            base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
+            base_aca_magi = yr.aca_magi - yr.your_conversion - yr.spouse_conversion
             yr.aca_loss = aca_subsidy_loss(
-                base_magi,
-                yr.magi,
+                base_aca_magi,
+                yr.aca_magi,
                 effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=current_filing_status,
             )
         else:
             yr.aca_loss = 0.0
@@ -542,7 +548,9 @@ def run_scenario(
         # starting point; YTD LTCG walks up through the bands.
         if ytd_year is not None and ytd_year.ltcg_ytd > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
-            _ytd_ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+            _ytd_ltcg_thresholds = (
+                LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+            )
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
             _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, ytd_year.ltcg_ytd)
             _ytd_ltcg_at_15 = max(
@@ -550,7 +558,9 @@ def run_scenario(
                 min(_ytd_ltcg_end, _ytd_ltcg_thresholds[1])
                 - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[0]),
             )
-            _ytd_ltcg_at_20 = max(0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1]))
+            _ytd_ltcg_at_20 = max(
+                0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1])
+            )
             yr.ytd_ltcg_tax = _ytd_ltcg_at_15 * 0.15 + _ytd_ltcg_at_20 * 0.20
 
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
@@ -802,7 +812,7 @@ def _auto_fill_core(
 
         # Deductions
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        ded += senior_bonus_deduction(ya, sa, base_magi)
+        ded += senior_bonus_deduction(ya, sa, base_magi, year=year)
 
         # Room — delegated to caller's room_fn
         room = room_fn(fixed_gross, ded, base_magi)

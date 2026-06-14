@@ -62,12 +62,13 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
     base_magi = opt + combined_ss
 
     # Senior bonus deduction
-    senior_bonus = senior_bonus_deduction(ya, sa, base_magi)
+    senior_bonus = senior_bonus_deduction(ya, sa, base_magi, year=year)
     total_ded = ded + senior_bonus
 
     return {
         "ya": ya,
         "sa": sa,
+        "year": year,
         "opt": opt,
         "combined_ss": combined_ss,
         "base_gross": base_gross,
@@ -80,6 +81,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
 def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income: float) -> dict:
     """Compute all-in costs at a given conversion amount."""
     ya, sa = base["ya"], base["sa"]
+    year: int = base["year"]
 
     # Recalculate taxable SS with conversion income
     other_inc = base["opt"] + conv
@@ -89,7 +91,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     magi = base["base_magi"] + conv
 
     # Recalculate senior bonus deduction at new MAGI
-    senior_bonus = senior_bonus_deduction(ya, sa, magi)
+    senior_bonus = senior_bonus_deduction(ya, sa, magi, year=year)
     total_ded = base["ded_base"] + senior_bonus
 
     taxable_inc = max(gross - total_ded, 0)
@@ -98,7 +100,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     # Base tax (no conversion)
     base_tss = taxable_ss(base["combined_ss"], base["opt"])
     base_gross = base["opt"] + base_tss
-    base_senior = senior_bonus_deduction(ya, sa, base["base_magi"])
+    base_senior = senior_bonus_deduction(ya, sa, base["base_magi"], year=year)
     base_total_ded = base["ded_base"] + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
     base_tax = federal_tax(base_taxable)
@@ -393,7 +395,9 @@ def render(hh: Household):
         if irmaa_safe > 0:
             irmaa_result = _all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
             avg_rate_i = irmaa_result["all_in"] / max(irmaa_safe, 1)
-            st.metric("All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {fmt_pct(avg_rate_i)}")
+            st.metric(
+                "All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {fmt_pct(avg_rate_i)}"
+            )
         else:
             st.metric("All-In Cost", "N/A", "Base MAGI exceeds tier 1")
 
@@ -502,10 +506,10 @@ def render(hh: Household):
             "Base MAGI": fmt_dollars(b["base_magi"]),
             "Fill 12%": fmt_dollars(r12),
             "12% Cost": fmt_dollars(r12_res["all_in"]) if r12_res else "---",
-            "12% Rate": fmt_pct(r12_res['all_in'] / max(r12, 1)) if r12_res else "---",
+            "12% Rate": fmt_pct(r12_res["all_in"] / max(r12, 1)) if r12_res else "---",
             "Fill 22%": fmt_dollars(r22),
             "22% Cost": fmt_dollars(r22_res["all_in"]) if r22_res else "---",
-            "22% Rate": fmt_pct(r22_res['all_in'] / max(r22, 1)) if r22_res else "---",
+            "22% Rate": fmt_pct(r22_res["all_in"] / max(r22, 1)) if r22_res else "---",
             "IRMAA Safe": fmt_dollars(irmaa_max),
         }
         rows.append(row)
