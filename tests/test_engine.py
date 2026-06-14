@@ -5,7 +5,7 @@ import json
 import pytest
 
 from config.defaults import DEFAULTS
-from engine.aca import aca_applies, aca_subsidy, aca_subsidy_loss
+from engine.aca import aca_applies, aca_excess_aptc_repayment, aca_subsidy, aca_subsidy_loss
 from engine.ira import (
     calc_rmd,
     inherited_ira_drain,
@@ -668,6 +668,119 @@ class TestACAMedicareSplit:
         hh = self._make_hh(your_age=65, spouse_age=65)
         result = run_scenario(hh, ConversionPlan())
         assert result.years[0].aca_loss == 0.0
+
+
+class TestACAExcessAPTCRepayment:
+    """Form 8962 excess-APTC clawback per P.L. 119-21 (uncapped for TY 2026+)."""
+
+    _BENCHMARK = 21_600.0
+
+    def test_zero_advance_aptc_returns_full_refund(self):
+        """With advance=0, the user receives the entire actual PTC as Form 1040
+        refund — returned as a negative value (negative = refund)."""
+        advance = 0.0
+        magi = 50_000.0  # low income, full PTC entitlement
+        result = aca_excess_aptc_repayment(
+            advance_aptc_annual=advance,
+            actual_magi=magi,
+            benchmark_premium_annual=self._BENCHMARK,
+            enhanced_subsidies_active=False,
+            filing_status="MFJ",
+            year=2026,
+        )
+        assert result < 0, f"Expected refund (negative), got {result}"
+        # Magnitude should equal aca_subsidy(magi, benchmark, ...)
+        expected = -aca_subsidy(
+            magi,
+            self._BENCHMARK,
+            enhanced_subsidies_active=False,
+            filing_status="MFJ",
+        )
+        assert result == approx(expected, tol=0.01)
+
+    def test_overpaid_full_clawback_no_cap_2026(self):
+        """advance > actual_ptc → full excess owed back (no cap under P.L. 119-21).
+
+        Pre-ARP without P.L. 119-21 would have capped repayment at ~$900-$3,650
+        depending on FPL band. Post-P.L. 119-21 the full excess is always owed.
+        """
+        # At MAGI = $120,000 MFJ, pre-ARP: above 400% FPL ($84,600) → PTC = 0
+        # advance=$10,000 → full $10,000 owed back (vs pre-P.L. 119-21 cap of ~$3,650)
+        result = aca_excess_aptc_repayment(
+            advance_aptc_annual=10_000.0,
+            actual_magi=120_000.0,
+            benchmark_premium_annual=self._BENCHMARK,
+            enhanced_subsidies_active=False,
+            year=2026,
+        )
+        assert result == pytest.approx(10_000.0, abs=1.0)
+
+    def test_underpaid_negative_refund(self):
+        """advance < actual_ptc → negative result (household gets additional PTC credit)."""
+        from engine.aca import aca_subsidy
+
+        actual_magi = 40_000.0
+        actual_ptc = aca_subsidy(actual_magi, self._BENCHMARK, enhanced_subsidies_active=False)
+        advance = actual_ptc - 1_000.0  # $1,000 less than entitled PTC
+        result = aca_excess_aptc_repayment(
+            advance_aptc_annual=advance,
+            actual_magi=actual_magi,
+            benchmark_premium_annual=self._BENCHMARK,
+            enhanced_subsidies_active=False,
+            year=2026,
+        )
+        assert result == pytest.approx(-1_000.0, abs=1.0)
+
+    def test_pre_2026_raises_notimplementederror(self):
+        """year=2025 → NotImplementedError (cap table not modeled, base_year=2026)."""
+        with pytest.raises(NotImplementedError, match="2025"):
+            aca_excess_aptc_repayment(
+                advance_aptc_annual=5_000.0,
+                actual_magi=60_000.0,
+                benchmark_premium_annual=self._BENCHMARK,
+                enhanced_subsidies_active=False,
+                year=2025,
+            )
+
+    def test_scenario_clawback_added_to_federal_tax(self):
+        """Integration: advance_aptc_annual > 0 → yr.aca_clawback reflected in federal_tax_amt.
+
+        At MAGI above 400% FPL cliff (pre-ARP), actual PTC = 0, so full advance is owed back.
+        The clawback is added to yr.federal_tax_amt so total federal liability increases.
+        """
+        advance = 8_000.0
+        hh_base = Household(
+            your_age=61,
+            spouse_age=60,
+            your_ira=200_000,
+            spouse_ira=0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+            aca_benchmark_premium_annual=self._BENCHMARK,
+            aca_enhanced_subsidies_active=False,
+            advance_aptc_annual=0.0,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+        # $120K conversion puts aca_magi above 400% FPL → actual PTC = 0 → full clawback
+        plan = ConversionPlan(your_conversions={2026: 120_000})
+        result_no_aptc = run_scenario(hh_base, plan)
+        from dataclasses import replace
+
+        hh_with_aptc = replace(hh_base, advance_aptc_annual=advance)
+        result_with_aptc = run_scenario(hh_with_aptc, plan)
+
+        yr_no = result_no_aptc.years[0]
+        yr_with = result_with_aptc.years[0]
+
+        assert yr_with.aca_clawback == pytest.approx(advance, abs=1.0)
+        assert yr_no.aca_clawback == 0.0
+        assert yr_with.federal_tax_amt == pytest.approx(yr_no.federal_tax_amt + advance, abs=1.0)
 
 
 class TestHouseholdProperties:

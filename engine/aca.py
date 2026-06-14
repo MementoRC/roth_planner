@@ -159,6 +159,45 @@ def aca_net_cost(
     )
 
 
+def aca_excess_aptc_repayment(
+    advance_aptc_annual: float,
+    actual_magi: float,
+    benchmark_premium_annual: float,
+    enhanced_subsidies_active: bool,
+    filing_status: str = "MFJ",
+    *,
+    year: int,
+) -> float:
+    """Compute the Form 8962 line 29 excess-APTC repayment for a tax year.
+
+    For year >= 2026, P.L. 119-21 eliminated the IRC §36B(f)(2)(B) repayment
+    limitation: the household must repay the full excess regardless of FPL band.
+
+    For year <= 2025 the pre-ARP / original cap table would apply but this
+    project's base_year is 2026, so pre-2026 is NOT MODELED — the function
+    raises NotImplementedError if called with year < 2026 to make the gap loud.
+
+    A negative return value means the household RECEIVED LESS APTC than they
+    were entitled to and will get the difference as additional PTC on Form
+    1040 line 31. A positive value is owed back as additional tax (Form 1040
+    Schedule 2 line 2).
+
+    Returns repayment in dollars: positive = owed, negative = refund.
+    """
+    if year < 2026:
+        raise NotImplementedError(
+            f"APTC cap table for tax year {year} is not modeled — base_year=2026; "
+            "see IRC §36B(f)(2)(B) cap table for pre-P.L. 119-21 years."
+        )
+    actual_ptc = aca_subsidy(
+        actual_magi,
+        benchmark_premium_annual,
+        enhanced_subsidies_active=enhanced_subsidies_active,
+        filing_status=filing_status,
+    )
+    return advance_aptc_annual - actual_ptc
+
+
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:
     """ACA marketplace only relevant if under 65 AND enrolled."""
     return your_age < 65 and enrolled

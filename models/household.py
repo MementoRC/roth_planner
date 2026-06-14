@@ -151,6 +151,7 @@ class Household:
     spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
     aca_benchmark_premium_annual: float = 21_600.0  # 2nd-lowest-cost Silver plan annual cost (household-level; varies by state/county/age)
     aca_enhanced_subsidies_active: bool = False  # law toggle for sensitivity analysis: True = ARP/IRA-style enhanced subsidies; False = current law (ARP expired Dec 31, 2025)
+    advance_aptc_annual: float = 0.0  # Annual APTC pre-paid by IRS to your insurer based on projected MAGI; reconciled on Form 8962 at year-end. Set to 0 if not enrolled in marketplace insurance or pay full premium upfront.
     medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top
 
     # IRMAA lookback anchor

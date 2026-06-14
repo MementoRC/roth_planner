@@ -97,6 +97,7 @@ def _user_defaults_from_session() -> dict:
         "stock_price_now",
         "aca_benchmark_premium_annual",
         "aca_enhanced_subsidies_active",
+        "advance_aptc_annual",
         "medicare_part_b_base_monthly",
     ]
     payload: dict = {}
@@ -173,6 +174,7 @@ def _clear_personal_session_state() -> None:
         "txn_price",
         "aca_benchmark_premium_annual",
         "aca_enhanced_subsidies_active",
+        "advance_aptc_annual",
         "medicare_part_b_base_monthly",
         "prior_year_magi",
         "survivor",
@@ -1040,6 +1042,20 @@ def render(hh: Household) -> None:
                     "Toggle for sensitivity analysis. Default OFF matches current law "
                     "(ARP enhanced subsidies expired Dec 31, 2025). Turn ON to model "
                     "what-if ARP gets extended."
+                ),
+            )
+            st.session_state["advance_aptc_annual"] = st.number_input(
+                "Advance APTC ($/yr)",
+                min_value=0,
+                max_value=60_000,
+                value=int(st.session_state.get("advance_aptc_annual", 0)),
+                step=100,
+                format="%d",
+                help=(
+                    "Annual advance APTC (total IRS pre-payments to your insurer). "
+                    "Set 0 if not on marketplace insurance. Reconciled on Form 8962 at "
+                    "year-end — conversions that raise MAGI may trigger clawback; per "
+                    "P.L. 119-21, no repayment cap applies for TY 2026+."
                 ),
             )
             st.session_state["medicare_part_b_base_monthly"] = st.number_input(
