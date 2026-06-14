@@ -541,14 +541,16 @@ def run_scenario(
         # Stack-walk 0%/15%/20% brackets: ordinary taxable income sets the
         # starting point; YTD LTCG walks up through the bands.
         if ytd_year is not None and ytd_year.ltcg_ytd > 0:
+            # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
+            _ytd_ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
             _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, ytd_year.ltcg_ytd)
             _ytd_ltcg_at_15 = max(
                 0.0,
-                min(_ytd_ltcg_end, LTCG_THRESHOLDS_MFJ[1])
-                - max(_ytd_ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+                min(_ytd_ltcg_end, _ytd_ltcg_thresholds[1])
+                - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[0]),
             )
-            _ytd_ltcg_at_20 = max(0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
+            _ytd_ltcg_at_20 = max(0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1]))
             yr.ytd_ltcg_tax = _ytd_ltcg_at_15 * 0.15 + _ytd_ltcg_at_20 * 0.20
 
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===

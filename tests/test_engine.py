@@ -5322,6 +5322,40 @@ class TestBrokerageGainTaxStackWalk:
         assert result_mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
         assert result_single > result_mfj
 
+    def test_single_survivor_ytd_uses_single_thresholds(self):
+        """YTD LTCG (b) regression: survivor (Single) uses LTCG_THRESHOLDS_SINGLE
+        in the YTD walk, mirroring the projected-LTCG fix from PR #119.
+
+        Same numerical setup as test_single_survivor_uses_single_thresholds:
+        ordinary $60K + ltcg_ytd $30K. MFJ would yield $0; Single yields $4,500.
+        """
+        from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE
+
+        ordinary = 60_000.0
+        ltcg_ytd = 30_000.0
+        ltcg_start = max(0.0, ordinary)
+        ltcg_end = ltcg_start + max(0.0, ltcg_ytd)
+
+        # Post-fix: Single thresholds
+        single_thresh = LTCG_THRESHOLDS_SINGLE
+        at_15_single = max(
+            0.0,
+            min(ltcg_end, single_thresh[1]) - max(ltcg_start, single_thresh[0]),
+        )
+        at_20_single = max(0.0, ltcg_end - max(ltcg_start, single_thresh[1]))
+        result_single = at_15_single * 0.15 + at_20_single * 0.20
+        assert result_single == pytest.approx(4_500.0, rel=1e-9)
+
+        # Pre-fix: MFJ thresholds would have returned $0
+        mfj_thresh = LTCG_THRESHOLDS_MFJ
+        at_15_mfj = max(
+            0.0,
+            min(ltcg_end, mfj_thresh[1]) - max(ltcg_start, mfj_thresh[0]),
+        )
+        result_mfj = at_15_mfj * 0.15
+        assert result_mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
+        assert result_single > result_mfj
+
     def test_qual_div_and_single_thresholds_compose(self):
         """C-5 + C-6 combined: Single survivor with both qual_div and realized_gains.
 
