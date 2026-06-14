@@ -375,15 +375,15 @@ def render(hh: Household):
         st.markdown("#### Fill to 12%")
         st.metric("Conversion", fmt_dollars(room_12))
         r12_result = _all_in_at_conversion(hh, base, room_12, net_inv_income)
-        avg_rate = r12_result["all_in"] / max(room_12, 1) * 100
-        st.metric("All-In Cost", fmt_dollars(r12_result["all_in"]), f"Avg {avg_rate:.1f}%")
+        avg_rate = r12_result["all_in"] / max(room_12, 1)
+        st.metric("All-In Cost", fmt_dollars(r12_result["all_in"]), f"Avg {fmt_pct(avg_rate)}")
 
     with z2:
         st.markdown("#### Fill to 22%")
         st.metric("Conversion", fmt_dollars(room_22))
         r22_result = _all_in_at_conversion(hh, base, room_22, net_inv_income)
-        avg_rate_22 = r22_result["all_in"] / max(room_22, 1) * 100
-        st.metric("All-In Cost", fmt_dollars(r22_result["all_in"]), f"Avg {avg_rate_22:.1f}%")
+        avg_rate_22 = r22_result["all_in"] / max(room_22, 1)
+        st.metric("All-In Cost", fmt_dollars(r22_result["all_in"]), f"Avg {fmt_pct(avg_rate_22)}")
 
     with z3:
         st.markdown("#### IRMAA-Safe Max")
@@ -392,8 +392,8 @@ def render(hh: Household):
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
             irmaa_result = _all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
-            avg_rate_i = irmaa_result["all_in"] / max(irmaa_safe, 1) * 100
-            st.metric("All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {avg_rate_i:.1f}%")
+            avg_rate_i = irmaa_result["all_in"] / max(irmaa_safe, 1)
+            st.metric("All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {fmt_pct(avg_rate_i)}")
         else:
             st.metric("All-In Cost", "N/A", "Base MAGI exceeds tier 1")
 
