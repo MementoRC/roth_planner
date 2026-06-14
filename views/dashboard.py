@@ -12,7 +12,7 @@ import streamlit as st
 
 from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from models.household import Household
-from views._format import fmt_dollars, fmt_dollars_short
+from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def render(hh: Household):
@@ -20,7 +20,7 @@ def render(hh: Household):
     st.caption(
         f"You {hh.your_age} / Spouse {hh.spouse_age} · "
         f"IRAs {fmt_dollars_short(hh.your_ira)} + {fmt_dollars_short(hh.spouse_ira)} · "
-        f"{hh.growth_rate * 100:.0f}% growth · "
+        f"{fmt_pct(hh.growth_rate, 0)} growth · "
         f"RMD at {hh.your_rmd_start_age}"
         + (
             f"/{hh.spouse_rmd_start_age}"
@@ -74,7 +74,7 @@ def render(hh: Household):
         st.metric(
             "Conversion Tax Paid",
             fmt_dollars(with_conv.total_conv_tax),
-            f"Avg rate: {with_conv.total_conv_tax / max(conv_total, 1) * 100:.1f}%",
+            f"Avg rate: {fmt_pct(with_conv.total_conv_tax / max(conv_total, 1))}",
         )
 
     with col3:
@@ -301,7 +301,7 @@ def render(hh: Household):
                         "Sp Conv": yr.spouse_conversion,
                         "Gross": yr.combined_gross,
                         "Taxable": yr.taxable_income,
-                        "Bracket": f"{yr.marginal_bracket * 100:.0f}%",
+                        "Bracket": fmt_pct(yr.marginal_bracket, 0),
                         "Conv Tax": yr.conversion_tax,
                         "Room 12%": yr.room_12,
                         "Room 22%": yr.room_22,

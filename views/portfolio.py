@@ -11,7 +11,7 @@ import streamlit as st
 from config.loader import load_defaults
 from engine.portfolio_sync import EXPECTED_RETURNS
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_pct
 
 
 def render(hh: Household):
@@ -54,7 +54,7 @@ def render(hh: Household):
                 "Bonds": fmt_dollars(acct.bond_value),
                 "Cash": fmt_dollars(acct.cash_value),
                 "Crypto": fmt_dollars(acct.crypto_value),
-                "Wtd Return": f"{acct.weighted_return * 100:.1f}%",
+                "Wtd Return": fmt_pct(acct.weighted_return),
             }
         )
 
@@ -93,7 +93,7 @@ def render(hh: Household):
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
         c1.metric("Your Pre-Tax (IRA + 403b)", fmt_dollars(pretax))
-        c2.metric("Pre-Tax Wtd Return", f"{snap.pretax_weighted_return * 100:.1f}%")
+        c2.metric("Pre-Tax Wtd Return", fmt_pct(snap.pretax_weighted_return))
         c3.metric("Planner IRA Balance", fmt_dollars(pretax), help="Auto-synced to 'Your Trad IRA'")
 
     # --- Holdings Detail ---
@@ -221,7 +221,7 @@ def render(hh: Household):
     # --- Growth Rate Mapping ---
     st.markdown("---")
     st.markdown("### Growth Rate Mapping")
-    returns_str = ", ".join(f"{k} {v * 100:.0f}%" for k, v in EXPECTED_RETURNS.items())
+    returns_str = ", ".join(f"{k} {fmt_pct(v, 0)}" for k, v in EXPECTED_RETURNS.items())
     st.caption(f"Expected returns: {returns_str}.")
 
     rate_rows = []
@@ -233,8 +233,8 @@ def render(hh: Household):
             {
                 "Account": "Your IRA (pre-tax total)",
                 "Balance": fmt_dollars(pretax),
-                "Weighted Return": f"{snap.pretax_weighted_return * 100:.1f}%",
-                "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
+                "Weighted Return": fmt_pct(snap.pretax_weighted_return),
+                "Planner Uses": fmt_pct(hh.your_ira_rate(hh.base_year)),
                 "Status": "Synced" if hh.your_ira_growth else "Default",
             }
         )
@@ -244,7 +244,7 @@ def render(hh: Household):
                 "Account": "Your IRA",
                 "Balance": fmt_dollars(hh.your_ira),
                 "Weighted Return": "—",
-                "Planner Uses": f"{hh.your_ira_rate(hh.base_year) * 100:.1f}%",
+                "Planner Uses": fmt_pct(hh.your_ira_rate(hh.base_year)),
                 "Status": "Default",
             }
         )
@@ -254,7 +254,7 @@ def render(hh: Household):
             "Account": "Spouse IRA",
             "Balance": fmt_dollars(hh.spouse_ira),
             "Weighted Return": "—",
-            "Planner Uses": f"{hh.spouse_ira_rate(hh.base_year) * 100:.1f}%",
+            "Planner Uses": fmt_pct(hh.spouse_ira_rate(hh.base_year)),
             "Status": "Synced" if hh.spouse_ira_growth else "Default (no data)",
         }
     )
@@ -265,8 +265,8 @@ def render(hh: Household):
             {
                 "Account": "Brokerage",
                 "Balance": fmt_dollars(brok.total_value),
-                "Weighted Return": f"{brok.weighted_return * 100:.1f}%",
-                "Planner Uses": f"{hh.brokerage_rate(hh.base_year) * 100:.1f}%",
+                "Weighted Return": fmt_pct(brok.weighted_return),
+                "Planner Uses": fmt_pct(hh.brokerage_rate(hh.base_year)),
                 "Status": "Synced" if hh.brokerage_growth else "Default",
             }
         )
@@ -279,7 +279,7 @@ def render(hh: Household):
                 {
                     "Account": label,
                     "Balance": fmt_dollars(acct.total_value),
-                    "Weighted Return": f"{acct.weighted_return * 100:.1f}%",
+                    "Weighted Return": fmt_pct(acct.weighted_return),
                     "Planner Uses": "Not modeled",
                     "Status": "Info only",
                 }

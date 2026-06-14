@@ -20,7 +20,7 @@ from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import BRACKETS_MFJ
 from models.household import Household
-from views._format import fmt_dollars, fmt_dollars_short
+from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def render(hh: Household):
@@ -130,7 +130,7 @@ def render(hh: Household):
         st.metric(
             "Total RMDs (75-95)",
             fmt_dollars_short(total_rmd_nc),
-            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({(total_rmd_wc - total_rmd_nc) / total_rmd_nc * 100:+.0f}%)",
+            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct((total_rmd_wc - total_rmd_nc) / total_rmd_nc, 0, sign=True)})",
         )
     with c4:
         total_tax_nc = sum(yr.federal_tax_amt for yr in rmd_nc)
@@ -422,8 +422,8 @@ def render(hh: Household):
                 "RMD (NC)": fmt_dollars(nc.your_rmd + nc.spouse_rmd),
                 "RMD (WC)": fmt_dollars(wc.your_rmd + wc.spouse_rmd),
                 "SS": fmt_dollars(nc.combined_ss),
-                "Bracket (NC)": f"{nc.marginal_bracket * 100:.0f}%",
-                "Bracket (WC)": f"{wc.marginal_bracket * 100:.0f}%",
+                "Bracket (NC)": fmt_pct(nc.marginal_bracket, 0),
+                "Bracket (WC)": fmt_pct(wc.marginal_bracket, 0),
                 "Tax (NC)": fmt_dollars(nc.federal_tax_amt),
                 "Tax (WC)": fmt_dollars(wc.federal_tax_amt),
                 "Saved": fmt_dollars(nc.federal_tax_amt - wc.federal_tax_amt),
@@ -440,7 +440,7 @@ def render(hh: Household):
     # --- RMD divisor reference ---
     with st.expander("📖 RMD Divisor Table (Uniform Lifetime)"):
         div_rows = [
-            {"Age": age, "Divisor": div, "RMD % of IRA": f"{1 / div * 100:.1f}%"}
+            {"Age": age, "Divisor": div, "RMD % of IRA": fmt_pct(1 / div)}
             for age, div in sorted(RMD_DIVISORS.items())
             if age >= 75
         ]

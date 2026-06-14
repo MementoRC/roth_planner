@@ -24,7 +24,7 @@ from engine.tax import (
     taxable_ss,
 )
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_pct
 
 STEP = 1_000  # sweep in $1K increments
 
@@ -324,7 +324,7 @@ def render(hh: Household):
                 x=boundary_conv,
                 line_dash="dot",
                 line_color="#94a3b8",
-                annotation_text=f"{rate * 100:.0f}% bracket",
+                annotation_text=f"{fmt_pct(rate, 0)} bracket",
                 annotation_position="top",
             )
 
@@ -502,10 +502,10 @@ def render(hh: Household):
             "Base MAGI": fmt_dollars(b["base_magi"]),
             "Fill 12%": fmt_dollars(r12),
             "12% Cost": fmt_dollars(r12_res["all_in"]) if r12_res else "---",
-            "12% Rate": f"{r12_res['all_in'] / max(r12, 1) * 100:.1f}%" if r12_res else "---",
+            "12% Rate": fmt_pct(r12_res['all_in'] / max(r12, 1)) if r12_res else "---",
             "Fill 22%": fmt_dollars(r22),
             "22% Cost": fmt_dollars(r22_res["all_in"]) if r22_res else "---",
-            "22% Rate": f"{r22_res['all_in'] / max(r22, 1) * 100:.1f}%" if r22_res else "---",
+            "22% Rate": fmt_pct(r22_res['all_in'] / max(r22, 1)) if r22_res else "---",
             "IRMAA Safe": fmt_dollars(irmaa_max),
         }
         rows.append(row)

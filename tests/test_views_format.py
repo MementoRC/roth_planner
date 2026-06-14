@@ -1,6 +1,6 @@
 """Tests for view-layer formatting helpers."""
 
-from views._format import fmt_dollars, fmt_dollars_short
+from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def test_fmt_dollars_zero():
@@ -69,3 +69,39 @@ def test_fmt_dollars_short_none():
 
 def test_fmt_dollars_short_nan():
     assert fmt_dollars_short(float("nan")) == "$0"
+
+
+def test_fmt_pct_zero():
+    assert fmt_pct(0.0) == "0.0%"
+
+
+def test_fmt_pct_basic_one_decimal():
+    assert fmt_pct(0.0419) == "4.2%"
+
+
+def test_fmt_pct_no_decimals():
+    assert fmt_pct(0.0419, decimals=0) == "4%"
+
+
+def test_fmt_pct_two_decimals():
+    assert fmt_pct(0.0419, decimals=2) == "4.19%"
+
+
+def test_fmt_pct_positive_with_sign():
+    assert fmt_pct(0.05, sign=True) == "+5.0%"
+
+
+def test_fmt_pct_negative_with_sign():
+    assert fmt_pct(-0.05, sign=True) == "-5.0%"
+
+
+def test_fmt_pct_none_coerces_to_zero():
+    assert fmt_pct(None) == "0.0%"
+
+
+def test_fmt_pct_nan_coerces_to_zero():
+    assert fmt_pct(float("nan")) == "0.0%"
+
+
+def test_fmt_pct_one_renders_as_hundred():
+    assert fmt_pct(1.0) == "100.0%"

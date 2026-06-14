@@ -11,7 +11,7 @@ figures and IRA contribution amounts.
 import streamlit as st
 
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_pct
 
 # --- 2026 limits ---
 # Source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025)
@@ -392,13 +392,13 @@ def render(hh: Household):
             )
 
             col1, col2, col3 = st.columns(3)
-            col1.metric("Taxable %", f"{taxable_pct * 100:.1f}%")
+            col1.metric("Taxable %", fmt_pct(taxable_pct))
             col2.metric("Tax on Conversion", fmt_dollars(tax_on_convert))
             col3.metric("Tax-Free Portion", fmt_dollars(nondeductible - tax_on_convert))
 
             st.write(
                 f"Of the {fmt_dollars(nondeductible)} converted, **{fmt_dollars(tax_on_convert)}** would be taxable "
-                f"because {taxable_pct * 100:.1f}% of your total IRA is pre-tax money."
+                f"because {fmt_pct(taxable_pct)} of your total IRA is pre-tax money."
             )
 
             st.info(

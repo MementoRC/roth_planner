@@ -26,7 +26,7 @@ from engine.tax import (
 )
 from models.household import Household
 from models.ytd_income import YTDSnapshot
-from views._format import fmt_dollars, fmt_dollars_short
+from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def _color_for_room(room: float) -> str:
@@ -129,7 +129,7 @@ def render(hh: Household):
                     value=int(ytd.qualified_dividends_ytd),
                     step=500,
                     format="%d",
-                    help=f"Taxed at LTCG rates ({LTCG_RATES_MFJ[1]:.0%}/{LTCG_RATES_MFJ[2]:.0%}); counts toward MAGI but not ordinary brackets.",
+                    help=f"Taxed at LTCG rates ({fmt_pct(LTCG_RATES_MFJ[1], 0)}/{fmt_pct(LTCG_RATES_MFJ[2], 0)}); counts toward MAGI but not ordinary brackets.",
                 )
             with div_col2:
                 ordinary_dividends = st.number_input(
@@ -337,7 +337,7 @@ def render(hh: Household):
     b1, b2, b3 = st.columns(3)
     b1.metric(
         "Current bracket",
-        f"{estimate.marginal_bracket_pct * 100:.0f}%",
+        fmt_pct(estimate.marginal_bracket_pct, 0),
         help="Marginal MFJ tax bracket your next dollar of ordinary income falls into.",
     )
     b2.metric(
@@ -347,7 +347,7 @@ def render(hh: Household):
     )
     b3.metric(
         "Effective rate (so far)",
-        f"{estimate.effective_rate * 100:.1f}%",
+        fmt_pct(estimate.effective_rate),
         help=(
             "Estimated total tax divided by MAGI. "
             "Lower than marginal because preferential LTCG rate is averaged in."
@@ -466,7 +466,7 @@ def render(hh: Household):
     # Visual explanation
     st.info(
         f"**Why bracket room differs from IRMAA/NIIT room**: Long-term capital gains are taxed at "
-        f"preferential rates ({LTCG_RATES_MFJ[1]:.0%}) and do NOT stack into ordinary brackets. But they DO count "
+        f"preferential rates ({fmt_pct(LTCG_RATES_MFJ[1], 0)}) and do NOT stack into ordinary brackets. But they DO count "
         f"toward MAGI for IRMAA surcharges and NIIT. So $200K in LTCG can consume IRMAA/NIIT "
         f"room while leaving your 12%/22% bracket room completely untouched."
     )
