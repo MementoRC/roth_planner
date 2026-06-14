@@ -15,7 +15,7 @@ import streamlit as st
 from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
 from engine.tax import BRACKETS_MFJ
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_pct
 
 PHASE_COLORS = {
     "options": "#7c3aed",  # purple
@@ -243,7 +243,7 @@ def render(hh: Household):
     tcol4.metric(
         "Total Conv Tax",
         fmt_dollars(total_tax),
-        f"Avg rate: {total_tax / max(total_yc + total_sc, 1) * 100:.1f}%",
+        f"Avg rate: {fmt_pct(total_tax / max(total_yc + total_sc, 1))}",
     )
 
     # --- IRA Trajectory Chart ---

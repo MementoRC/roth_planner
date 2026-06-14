@@ -10,7 +10,7 @@ import streamlit as st
 from engine.asset_location import project_asset_location
 from engine.scenario import auto_fill_12
 from models.household import Household
-from views._format import fmt_dollars
+from views._format import fmt_dollars, fmt_pct
 
 STRATEGIES = {
     "equity_first": ("Equity First", "#22c55e"),
@@ -66,7 +66,7 @@ def render(hh: Household):
                 "IRA at 85": fmt_dollars(r.ira_at_85),
                 "RMD at 75": fmt_dollars(r.rmd_at_75),
                 "RMD at 85": fmt_dollars(r.rmd_at_85),
-                "IRA Growth at 75": f"{r.ira_growth_at_75 * 100:.1f}%",
+                "IRA Growth at 75": fmt_pct(r.ira_growth_at_75),
             }
         )
 
@@ -84,8 +84,8 @@ def render(hh: Household):
         st.success(
             f"**Equity-first saves {fmt_dollars(ira_diff_85)} in IRA at 85** vs proportional, "
             f"reducing RMDs by ~{fmt_dollars(rmd_diff_85)}/yr. "
-            f"After converting equities, IRA growth drops to ~{eq_r.ira_growth_at_75 * 100:.1f}% "
-            f"(mostly bonds) vs {prop_r.ira_growth_at_75 * 100:.1f}% proportional."
+            f"After converting equities, IRA growth drops to ~{fmt_pct(eq_r.ira_growth_at_75)} "
+            f"(mostly bonds) vs {fmt_pct(prop_r.ira_growth_at_75)} proportional."
         )
 
     # --- IRA Trajectory Chart ---

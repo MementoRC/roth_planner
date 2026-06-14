@@ -22,7 +22,7 @@ from engine.scenario import (
     run_scenario,
 )
 from models.household import Household, SurvivorScenario
-from views._format import fmt_dollars, fmt_dollars_short
+from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -143,7 +143,7 @@ def _compute_survivor_snapshot(
 
             row[f"{s.name} Inherited IRA"] = fmt_dollars_short(inherited_ira, decimals=2)
             row[f"{s.name} Survivor Tax"] = f"{fmt_dollars(tax)}/yr"
-            row[f"{s.name} Bracket"] = f"{bracket * 100:.0f}%"
+            row[f"{s.name} Bracket"] = fmt_pct(bracket, 0)
 
         rows.append(row)
     return rows
@@ -236,7 +236,7 @@ def render(hh: Household):
                 "Scenario": s.name,
                 "Total Converted": fmt_dollars(total_conv),
                 "Conv Tax Paid": fmt_dollars(s.total_conv_tax),
-                "Avg Conv Rate": f"{s.total_conv_tax / max(total_conv, 1) * 100:.1f}%",
+                "Avg Conv Rate": fmt_pct(s.total_conv_tax / max(total_conv, 1)),
                 "Lifetime Tax": fmt_dollars(lifetime_tax),
                 "Lifetime IRMAA": fmt_dollars(lifetime_irmaa),
                 "Lifetime Brok Tax": fmt_dollars(lifetime_brok),
@@ -427,7 +427,7 @@ def render(hh: Household):
                 row[f"{s.name} IRA"] = fmt_dollars_short(ira, decimals=2)
                 total_rmd = yr.your_rmd + yr.spouse_rmd
                 row[f"{s.name} RMD"] = fmt_dollars(total_rmd) if total_rmd > 0 else "---"
-                row[f"{s.name} Bracket"] = f"{yr.marginal_bracket * 100:.0f}%"
+                row[f"{s.name} Bracket"] = fmt_pct(yr.marginal_bracket, 0)
             else:
                 row[f"{s.name} IRA"] = "---"
                 row[f"{s.name} RMD"] = "---"
@@ -452,7 +452,7 @@ def render(hh: Household):
                             "You/Sp": f"{yr.your_age}/{yr.spouse_age}",
                             "Your Conv": fmt_dollars(yr.your_conversion),
                             "Sp Conv": fmt_dollars(yr.spouse_conversion),
-                            "Bracket": f"{yr.marginal_bracket * 100:.0f}%",
+                            "Bracket": fmt_pct(yr.marginal_bracket, 0),
                             "Conv Tax": fmt_dollars(yr.conversion_tax),
                             "IRMAA": fmt_dollars(yr.irmaa_cost),
                         }

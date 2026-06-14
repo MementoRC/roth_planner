@@ -68,3 +68,22 @@ def fmt_dollars_short(
     if suffix == "K":
         return f"${v / 1_000:,.{decimals}f}K"
     return f"${v / 1_000_000:,.{decimals}f}M"
+
+
+def fmt_pct(value: float | None, decimals: int = 1, sign: bool = False) -> str:
+    """Format a fraction (0.0419) as a percent string ("4.2%").
+
+    Mirrors fmt_dollars conventions: None/NaN coerce to a zero-valued render
+    ("0.0%" with default decimals=1, or "0%" with decimals=0). The input
+    `value` is a FRACTION; the helper multiplies by 100 internally so callers
+    pass 0.0419 (not 4.19) to render "4.2%".
+
+    Args:
+        value: fraction to render (e.g., 0.0419 for 4.19%).
+        decimals: digits after the decimal point (default 1).
+        sign: include explicit + sign for non-negative values (default False).
+    """
+    if value is None or (isinstance(value, float) and value != value):
+        value = 0.0
+    fmt_spec = f"{{:+.{decimals}f}}" if sign else f"{{:.{decimals}f}}"
+    return fmt_spec.format(value * 100) + "%"
