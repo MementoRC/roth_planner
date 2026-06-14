@@ -12,8 +12,8 @@ import streamlit as st
 
 from engine.aca import aca_applies, aca_subsidy_loss
 from engine.ira import ss_benefit_at_age, ss_with_cola
-from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_for_year
-from engine.niit import NIIT_THRESHOLD_MFJ, niit
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year
+from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE, niit
 from engine.tax import (
     BRACKETS_MFJ,
     deductions,
@@ -67,7 +67,9 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
     base_magi = opt + combined_ss
 
     # Senior bonus deduction
-    senior_bonus = senior_bonus_deduction(ya, sa, base_magi, year=year)
+    senior_bonus = senior_bonus_deduction(
+        ya, sa, base_magi, year=year, filing_status=hh.filing_status
+    )
     total_ded = ded + senior_bonus
 
     return {
@@ -96,7 +98,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     magi = base["base_magi"] + conv
 
     # Recalculate senior bonus deduction at new MAGI
-    senior_bonus = senior_bonus_deduction(ya, sa, magi, year=year)
+    senior_bonus = senior_bonus_deduction(ya, sa, magi, year=year, filing_status=hh.filing_status)
     total_ded = base["ded_base"] + senior_bonus
 
     taxable_inc = max(gross - total_ded, 0)
@@ -105,7 +107,9 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     # Base tax (no conversion)
     base_tss = taxable_ss(base["combined_ss"], base["opt"])
     base_gross = base["opt"] + base_tss
-    base_senior = senior_bonus_deduction(ya, sa, base["base_magi"], year=year)
+    base_senior = senior_bonus_deduction(
+        ya, sa, base["base_magi"], year=year, filing_status=hh.filing_status
+    )
     base_total_ded = base["ded_base"] + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
     base_tax = federal_tax(base_taxable)
@@ -113,17 +117,21 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     conv_tax = tax - base_tax
 
     # IRMAA (2-year lookback)
-    irmaa_cost, _ = irmaa_for_year(magi, ya, sa)
-    base_irmaa, _ = irmaa_for_year(base["base_magi"], ya, sa)
+    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status)
+    base_irmaa, _ = irmaa_for_year(base["base_magi"], ya, sa, filing_status=hh.filing_status)
     irmaa_delta = irmaa_cost - base_irmaa
 
     # ACA
     anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
-    aca_loss = aca_subsidy_loss(base["base_magi"], magi) if anyone_on_aca else 0.0
+    aca_loss = (
+        aca_subsidy_loss(base["base_magi"], magi, filing_status=hh.filing_status)
+        if anyone_on_aca
+        else 0.0
+    )
 
     # NIIT
-    niit_with = niit(magi, net_inv_income)
-    niit_without = niit(base["base_magi"], net_inv_income)
+    niit_with = niit(magi, net_inv_income, filing_status=hh.filing_status)
+    niit_without = niit(base["base_magi"], net_inv_income, filing_status=hh.filing_status)
     niit_delta = niit_with - niit_without
 
     all_in = conv_tax + irmaa_delta + aca_loss + niit_delta
@@ -191,6 +199,10 @@ def render(hh: Household):
         "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
     )
     st.caption(_FORM_8606_CAPTION)
+
+    # Filing-status-aware constants for chart annotations
+    irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+    niit_threshold = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
 
     # --- Year selector ---
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
@@ -337,7 +349,7 @@ def render(hh: Household):
             )
 
     # IRMAA threshold lines
-    for threshold, _, _ in IRMAA_TIERS_MFJ:
+    for threshold, _, _ in irmaa_tiers:
         irmaa_conv = threshold - base["base_magi"]
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
@@ -349,13 +361,13 @@ def render(hh: Household):
             )
 
     # NIIT threshold line
-    niit_conv = NIIT_THRESHOLD_MFJ - base["base_magi"]
+    niit_conv = niit_threshold - base["base_magi"]
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
             x=niit_conv,
             line_dash="dash",
             line_color="#8b5cf6",
-            annotation_text=f"NIIT ${NIIT_THRESHOLD_MFJ // 1000:.0f}K",
+            annotation_text=f"NIIT ${niit_threshold // 1000:.0f}K",
             annotation_position="top",
         )
 
@@ -396,7 +408,7 @@ def render(hh: Household):
     with z3:
         st.markdown("#### IRMAA-Safe Max")
         # Find the largest conversion that doesn't trigger IRMAA
-        irmaa_safe = max(IRMAA_TIERS_MFJ[0][0] - base["base_magi"], 0)
+        irmaa_safe = max(irmaa_tiers[0][0] - base["base_magi"], 0)
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
             irmaa_result = _all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
@@ -501,7 +513,7 @@ def render(hh: Household):
         b_result = _all_in_at_conversion(hh, b, 0, net_inv_income)
         r12 = b_result["room_12"]
         r22 = b_result["room_22"]
-        irmaa_max = max(IRMAA_TIERS_MFJ[0][0] - b["base_magi"], 0)
+        irmaa_max = max(irmaa_tiers[0][0] - b["base_magi"], 0)
 
         r12_res = _all_in_at_conversion(hh, b, r12, net_inv_income) if r12 > 0 else None
         r22_res = _all_in_at_conversion(hh, b, r22, net_inv_income) if r22 > 0 else None

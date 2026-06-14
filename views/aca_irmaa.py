@@ -22,11 +22,12 @@ from engine.aca import (
 from engine.irmaa import (
     BASE_PART_B,
     IRMAA_TIERS_MFJ,
+    IRMAA_TIERS_SINGLE,
     irmaa_next_threshold,
     irmaa_surcharge,
     irmaa_tier,
 )
-from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, niit
+from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE, niit
 from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
@@ -66,12 +67,15 @@ def render(hh: Household):
             format="%d",
             help="Income before any Roth conversion (options, SS, RMD, etc.)",
         )
+        _niit_threshold = (
+            NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
+        )
         net_inv_income = st.number_input(
             "Net investment income ($/yr)",
             value=0,
             step=5_000,
             format="%d",
-            help=f"Capital gains + dividends + interest. NIIT = {fmt_pct(NIIT_RATE)} when MAGI > ${NIIT_THRESHOLD_MFJ // 1000:.0f}K",
+            help=f"Capital gains + dividends + interest. NIIT = {fmt_pct(NIIT_RATE)} when MAGI > ${_niit_threshold // 1000:.0f}K",
         )
 
     # --- Generate cost curves ---
@@ -109,31 +113,42 @@ def render(hh: Household):
 
         # IRMAA
         surcharge = irmaa_surcharge(
-            magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+            magi,
+            num_people=2,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+            filing_status=hh.filing_status,
         )
         irmaa_vals.append(surcharge)
         irmaa_tier_vals.append(irmaa_tier(magi))
 
         # NIIT
-        niit_vals.append(niit(magi, net_inv_income))
+        niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
 
         # Tax
-        bonus_ded = senior_bonus_deduction(hh.your_age, hh.spouse_age, magi, year=hh.base_year)
+        bonus_ded = senior_bonus_deduction(
+            hh.your_age, hh.spouse_age, magi, year=hh.base_year, filing_status=hh.filing_status
+        )
         taxable = max(magi - ded - bonus_ded, 0)
         fed_tax_vals.append(federal_tax(taxable))
         marginal_vals.append(marginal_rate(taxable))
 
         # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
         base_irmaa = irmaa_surcharge(
-            base_magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+            base_magi,
+            num_people=2,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+            filing_status=hh.filing_status,
         )
-        base_niit = niit(base_magi, net_inv_income)
+        base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
         hidden = (
             aca_subsidy_loss(
-                base_magi, magi, enhanced_subsidies_active=hh.aca_enhanced_subsidies_active
+                base_magi,
+                magi,
+                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=hh.filing_status,
             )
             + max(surcharge - base_irmaa, 0)
-            + max(niit(magi, net_inv_income) - base_niit, 0)
+            + max(niit(magi, net_inv_income, filing_status=hh.filing_status) - base_niit, 0)
         )
         total_hidden_cost.append(hidden)
 
@@ -216,7 +231,8 @@ def render(hh: Household):
         )
 
         # Mark tier thresholds
-        for threshold, _part_b, _ in IRMAA_TIERS_MFJ:
+        _irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+        for threshold, _part_b, _ in _irmaa_tiers:
             if magi_range[0] <= threshold <= magi_range[1]:
                 fig_irmaa.add_vline(
                     x=threshold,
@@ -245,9 +261,12 @@ def render(hh: Household):
 
     # Stacked area: ACA loss + IRMAA increase + NIIT increase
     base_irmaa = irmaa_surcharge(
-        base_magi, num_people=2, base_part_b=hh.medicare_part_b_base_monthly * 12
+        base_magi,
+        num_people=2,
+        base_part_b=hh.medicare_part_b_base_monthly * 12,
+        filing_status=hh.filing_status,
     )
-    base_niit = niit(base_magi, net_inv_income)
+    base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
     irmaa_increase = [max(v - base_irmaa, 0) for v in irmaa_vals]
     niit_increase = [max(v - base_niit, 0) for v in niit_vals]
 
@@ -359,7 +378,12 @@ def render(hh: Household):
             parts.append("Uninsured/Other (sp)")
         system = " + ".join(parts)
 
-        irmaa_room = irmaa_next_threshold(base_magi) if medicare_count > 0 else None
+        # TODO: per-year filing_status for survivor timeline (see comparator.py template); using hh.filing_status uniformly for now
+        irmaa_room = (
+            irmaa_next_threshold(base_magi, filing_status=hh.filing_status)
+            if medicare_count > 0
+            else None
+        )
 
         row = {
             "Year": year,
@@ -391,9 +415,11 @@ def render(hh: Household):
     col_ref1, col_ref2 = st.columns(2)
 
     with col_ref1:
-        st.markdown("### IRMAA 2026 Thresholds (MFJ)")
+        _fs_label = "Single" if hh.filing_status == "Single" else "MFJ"
+        _ref_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+        st.markdown(f"### IRMAA 2026 Thresholds ({_fs_label})")
         irmaa_data = []
-        for i, (threshold, part_b, part_d) in enumerate(IRMAA_TIERS_MFJ):
+        for i, (threshold, part_b, part_d) in enumerate(_ref_irmaa_tiers):
             surcharge_pp = (part_b - BASE_PART_B) + part_d
             irmaa_data.append(
                 {
@@ -429,11 +455,12 @@ def render(hh: Household):
             f"Benchmark silver plan: {fmt_dollars(BENCHMARK_PREMIUM_ANNUAL)}/yr"
         )
 
+    _niit_thr = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
     st.markdown("---")
     st.markdown("### NIIT — Net Investment Income Tax")
     st.markdown(
         f"**{fmt_pct(NIIT_RATE)} surtax** on the lesser of net investment income or MAGI above "
-        f"**${NIIT_THRESHOLD_MFJ:,}** (MFJ). Applies to capital gains, dividends, "
+        f"**${_niit_thr:,}** ({hh.filing_status}). Applies to capital gains, dividends, "
         "interest, and rental income. Roth conversions are *not* investment income, "
         "but they raise MAGI, which can expose more investment income to the tax."
     )
