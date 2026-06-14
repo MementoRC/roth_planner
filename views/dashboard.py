@@ -29,6 +29,11 @@ def render(hh: Household):
         )
     )
 
+    st.caption(
+        "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
+        "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
+    )
+
     # --- Run both scenarios ---
     no_conv = run_no_conversion(hh, end_age=95)
     plan_12 = auto_fill_12(hh)

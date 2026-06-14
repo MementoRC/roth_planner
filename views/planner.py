@@ -39,6 +39,10 @@ def render(hh: Household):
     st.caption(
         "Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time."
     )
+    st.caption(
+        "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
+        "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
+    )
 
     # --- Auto-fill buttons ---
     col_btn1, col_btn2 = st.columns(2)

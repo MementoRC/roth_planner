@@ -70,6 +70,14 @@ Every dollar converted at 12% saves 12-25% when it would have come out as RMDs l
 **The Squeeze**: After you hit 75, your RMDs + SS fill the bracket before your spouse
 can convert. QCDs (charitable distributions) reduce taxable RMDs to free bracket room.
 
+## Modeling Assumptions & Known Gaps
+
+- **Form 8606 (IRA non-deductible basis) — NOT MODELED**: Per IRC §408(d)(2), conversions
+  from a Traditional IRA with non-deductible basis are pro-rated — only the pretax fraction
+  is taxable. This tool assumes basis = $0 (all Trad IRA dollars are pretax). If you have
+  non-deductible contributions tracked on Form 8606, actual taxable conversion income will
+  be lower than reported here.
+
 ## Disclaimer
 
 This tool is for educational planning purposes only. It is not tax, legal, or financial
