@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from engine.aca import aca_applies, aca_subsidy_loss
+from engine.aca import aca_applies, aca_excess_aptc_repayment, aca_subsidy_loss
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
@@ -94,6 +94,7 @@ class YearResult:
     conversion_tax: float = 0.0
     irmaa_cost: float = 0.0
     aca_loss: float = 0.0
+    aca_clawback: float = 0.0  # Form 8962 excess-APTC repayment (positive = owed, negative = refund); added to federal_tax_amt
     niit_cost: float = 0.0
     all_in_cost: float = 0.0
 
@@ -549,6 +550,24 @@ def run_scenario(
             )
         else:
             yr.aca_loss = 0.0
+
+        # === ACA excess-APTC clawback (Form 8962 line 29) ===
+        # P.L. 119-21 eliminated the IRC §36B(f)(2)(B) repayment cap for TY 2026+.
+        # Only applies when household elected advance APTC payments.
+        if hh.advance_aptc_annual > 0:
+            yr.aca_clawback = aca_excess_aptc_repayment(
+                advance_aptc_annual=hh.advance_aptc_annual,
+                actual_magi=yr.aca_magi,
+                benchmark_premium_annual=hh.aca_benchmark_premium_annual,
+                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=current_filing_status,
+                year=yr.year,
+            )
+            # Positive clawback = additional tax; negative = additional refund.
+            # DO NOT subtract from aca_loss — they model different things.
+            yr.federal_tax_amt += yr.aca_clawback
+        else:
+            yr.aca_clawback = 0.0
 
         # === LTCG tax (computed separately at preferential rate) ===
         # Stack-walk 0%/15%/20% brackets: ordinary taxable income sets the
