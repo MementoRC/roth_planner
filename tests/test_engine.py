@@ -1355,7 +1355,7 @@ class TestYTDSnapshot:
         in the pre-deduction ordinary base so it survives the subtraction and still pushes
         taxable_ordinary above the 0%-LTCG threshold.
 
-        Arithmetic (both spouses <65, STD_DEDUCTION_MFJ=32_200, LTCG_THRESHOLDS_MFJ[0]=96_700):
+        Arithmetic (both spouses <65, STD_DEDUCTION_MFJ=32_200, LTCG_THRESHOLDS_MFJ[0]=98_900):
           wages chosen so that:
             without interest: taxable_ordinary = wages - STD_DEDUCTION_MFJ = threshold - 5_000
             with    interest: taxable_ordinary = wages + interest - STD_DEDUCTION_MFJ = threshold + 5_000
@@ -2017,8 +2017,8 @@ class TestScenarioWithYTD:
         result = run_scenario(hh, plan, "ltcg_bracket", end_age=62, ytd=ytd)
         yr2026 = result.years[0]
 
-        # taxable_income (ordinary) should be well below ~$96,700 threshold
-        assert yr2026.taxable_income < 96_700
+        # taxable_income (ordinary) should be well below ~$98,900 threshold
+        assert yr2026.taxable_income < 98_900
         # All $40K LTCG sits in the 0% band — no LTCG tax owed
         assert yr2026.ytd_ltcg_tax == approx(0.0)
 
@@ -4911,9 +4911,10 @@ class TestEstimateYtdFederalTax:
         r_zero = estimate_ytd_federal_tax(ytd_zero, self._hh())
         assert r_zero.ltcg_tax == pytest.approx(0.0)
 
-        # wages = 32,200 + 97,800 = 130,000 → taxable_ordinary = 97,800 > 96,700 threshold
-        # ltcg_end = 97,800 + 20,000 = 117,800 → all $20K at 15%
-        ytd_15 = YTDSnapshot(wages_ytd=STD_DEDUCTION_MFJ + 97_800, ltcg_ytd=20_000.0)
+        # Rev. Proc. 2025-32 §3.03: 0%/15% threshold = $98,900 (MFJ).
+        # wages = 32,200 + 99,900 = 132,100 → taxable_ordinary = 99,900 > 98,900 threshold
+        # ltcg_start = 99,900, ltcg_end = 119,900 → all $20K above threshold → 15%
+        ytd_15 = YTDSnapshot(wages_ytd=STD_DEDUCTION_MFJ + 99_900, ltcg_ytd=20_000.0)
         r_15 = estimate_ytd_federal_tax(ytd_15, self._hh())
         assert r_15.ltcg_tax == pytest.approx(20_000.0 * 0.15)
 
@@ -4946,10 +4947,11 @@ class TestEstimateYtdFederalTax:
     def test_ltcg_tax_when_stack_crosses_15pct_threshold(self):
         """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div.
 
+        Rev. Proc. 2025-32 §3.03: 0%/15% threshold = $98,900 (MFJ).
         std_ded = $32,200 (MFJ, no seniors). taxable_ordinary = max(27K - 32.2K, 0) = $0.
         ltcg_start = $0, ltcg_end = $285,977.
-        ltcg_at_15 = min($285,977, $600,050) - max($0, $96,700) = $285,977 - $96,700 = $189,277.
-        ltcg_tax = $189,277 x 0.15 = $28,391.55.
+        ltcg_at_15 = min($285,977, $613,700) - max($0, $98,900) = $285,977 - $98,900 = $187,077.
+        ltcg_tax = $187,077 x 0.15 = $28,061.55.
         """
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
@@ -4960,7 +4962,7 @@ class TestEstimateYtdFederalTax:
             qualified_dividends_ytd=2_977.0,
         )
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        assert result.ltcg_tax == pytest.approx(189_277.0 * 0.15, abs=1.0)
+        assert result.ltcg_tax == pytest.approx(187_077.0 * 0.15, abs=1.0)
 
     def test_ltcg_tax_all_in_0pct_bracket(self):
         """Stack entirely under $96,700 threshold → LTCG tax = $0."""
@@ -4975,36 +4977,37 @@ class TestEstimateYtdFederalTax:
     def test_ltcg_tax_crosses_20pct_threshold(self):
         """Stack crosses into 20% bracket: $200K ordinary + $500K LTCG.
 
+        Rev. Proc. 2025-32 §3.03: 0%/15% = $98,900; 15%/20% = $613,700 (MFJ).
         std_ded = $32,200 (MFJ, no seniors). taxable_ordinary = $167,800.
         ltcg_start = $167,800, ltcg_end = $667,800.
-        ltcg_at_15 = min($667,800, $600,050) - max($167,800, $96,700) = $600,050 - $167,800 = $432,250.
-        ltcg_at_20 = $667,800 - $600,050 = $67,750.
-        ltcg_tax = $432,250 x 0.15 + $67,750 x 0.20 = $64,837.50 + $13,550 = $78,387.50.
+        ltcg_at_15 = min($667,800, $613,700) - max($167,800, $98,900) = $613,700 - $167,800 = $445,900.
+        ltcg_at_20 = $667,800 - $613,700 = $54,100.
+        ltcg_tax = $445,900 x 0.15 + $54,100 x 0.20 = $66,885.00 + $10,820.00 = $77,705.00.
         """
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=500_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        assert result.ltcg_tax == pytest.approx(78_387.50, abs=0.01)
+        assert result.ltcg_tax == pytest.approx(77_705.00, abs=0.01)
 
     def test_ltcg_new_threshold_boundary_0pct_to_15pct(self):
-        """2026 threshold boundary: stack crosses $96,700 yielding partial 15%.
+        """Rev. Proc. 2025-32 §3.03 boundary: stack crosses $98,900 yielding partial 15%.
 
         std_ded = $32,200 (MFJ, no seniors).
         wages = $32,200 + $90,700 = $122,900 → taxable_ordinary = $90,700.
         ltcg_end = $90,700 + $10,000 = $100,700.
-        Stack crosses 2026 threshold ($96,700): $4,000 in 15% band.
-        Old 2025 threshold ($94,050) would have put $6,650 at 15% — confirms new value is used.
+        Stack crosses Rev. Proc. 2025-32 threshold ($98,900): $1,800 in 15% band.
+        Old Rev. Proc. 2024-40 threshold ($96,700) would have put $4,000 at 15% — confirms new value is used.
         """
         from engine.tax import STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
         ytd = YTDSnapshot(wages_ytd=STD_DEDUCTION_MFJ + 90_700, ltcg_ytd=10_000.0)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        # ltcg_at_15 = min($100,700, $600,050) - max($90,700, $96,700) = $100,700 - $96,700 = $4,000
-        # ltcg_tax = $4,000 x 0.15 = $600.00
-        assert result.ltcg_tax == pytest.approx(4_000.0 * 0.15, abs=0.01)
+        # ltcg_at_15 = min($100,700, $613,700) - max($90,700, $98,900) = $100,700 - $98,900 = $1,800
+        # ltcg_tax = $1,800 x 0.15 = $270.00
+        assert result.ltcg_tax == pytest.approx(1_800.0 * 0.15, abs=0.01)
 
     def test_ltcg_std_ded_both_seniors_mfj_all_zero_pct(self):
         """Regression A-2/E-7: MFJ both 65+, modest ordinary → all LTCG at 0%.
@@ -5345,7 +5348,7 @@ class TestBrokerageGainTaxStackWalk:
         """Ordinary income near 20% threshold + gain that pushes over → split tax."""
         from engine.tax import LTCG_THRESHOLDS_MFJ
 
-        threshold_20 = LTCG_THRESHOLDS_MFJ[1]  # 600_050
+        threshold_20 = LTCG_THRESHOLDS_MFJ[1]  # 613_700
         # Set ordinary income 10_000 below the 20% threshold
         ordinary = threshold_20 - 10_000
         gain = 30_000.0  # 10_000 in 15% band, 20_000 in 20% band
@@ -5357,7 +5360,7 @@ class TestBrokerageGainTaxStackWalk:
         """Ordinary income already above 20% threshold → all gains at 20%."""
         from engine.tax import LTCG_THRESHOLDS_MFJ
 
-        ordinary = LTCG_THRESHOLDS_MFJ[1] + 50_000  # above 600_050
+        ordinary = LTCG_THRESHOLDS_MFJ[1] + 50_000  # above 613_700
         gain = 100_000.0
         result = self._single_year_brokerage_gain_tax(ordinary, gain)
         assert result == pytest.approx(gain * 0.20, rel=1e-9)
@@ -5414,7 +5417,7 @@ class TestBrokerageGainTaxStackWalk:
 
         MFJ ordinary taxable $100K, realized_gains $0, qual_div $10K.
         Pre-fix: $0 LTCG tax (qual_div not in stack).
-        Post-fix: stack walks $100K → $110K; LTCG_THRESHOLDS_MFJ[0]=96_700 so
+        Post-fix: stack walks $100K → $110K; LTCG_THRESHOLDS_MFJ[0]=98_900 so
         $10K is entirely above 0%-band → 15% = $1_500.
         """
         from engine.tax import LTCG_THRESHOLDS_MFJ
@@ -5433,7 +5436,7 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
         result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
 
-        # $10K above 96_700 threshold → taxed at 15%
+        # $10K above 98_900 threshold → taxed at 15%
         assert result == pytest.approx(1_500.0, rel=1e-9)
 
         # Pre-fix (no qual_div in stack) would have returned $0
@@ -5450,7 +5453,7 @@ class TestBrokerageGainTaxStackWalk:
         """C-6 regression: survivor (Single) uses LTCG_THRESHOLDS_SINGLE not MFJ.
 
         Single ordinary taxable $60K, realized_gains $30K, qual_div $0.
-        MFJ 0%-ceiling ($96_700): stack $60K→$90K entirely below → $0 tax (pre-fix).
+        MFJ 0%-ceiling ($98_900): stack $60K→$90K entirely below → $0 tax (pre-fix).
         Single 0%-ceiling ($49_450, 2026 Rev. Proc. 2025-32): stack starts $60K (above ceiling) → all $30K at 15%
         = $4_500 (post-fix).
         """
