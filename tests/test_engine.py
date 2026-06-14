@@ -457,6 +457,37 @@ class TestNIIT:
         result = estimate_ytd_federal_tax(ytd, hh)
         assert result.niit == 0.0
 
+    def test_niit_magi_yearresult_excludes_tax_exempt_interest(self):
+        """yr.niit_magi must differ from yr.magi by exactly tax_exempt_interest_ytd in base year.
+
+        Mirrors PR #128's niit_magi_ytd field contract on YTDSnapshot. IRC §1411(d)(3)
+        defines NIIT-MAGI strictly as AGI + foreign earned income/housing exclusions —
+        no muni-interest add-back. yr.magi (IRMAA variant) adds muni interest back via
+        ytd_year.magi_ytd, so yr.niit_magi must subtract it.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=200_000, tax_exempt_interest_ytd=15_000)
+        plan = ConversionPlan(your_conversions={2026: 0})
+        result = run_scenario(hh, plan, "test", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        assert yr2026.magi - yr2026.niit_magi == approx(15_000)
+
+    def test_niit_magi_equals_magi_without_ytd(self):
+        """yr.niit_magi must equal yr.magi when no YTD snapshot is provided.
+
+        Forecast years have no muni-interest source (Household has no tax_exempt_interest
+        forecast field), so niit_magi == magi outside the base-year YTD path.
+        """
+        hh = Household()
+        plan = ConversionPlan(your_conversions={2026: 50_000})
+        result = run_scenario(hh, plan, "test", end_age=65)
+        yr2026 = result.years[0]
+
+        assert yr2026.niit_magi == approx(yr2026.magi)
+
 
 class TestACA:
     def test_applies_pre_medicare(self):
