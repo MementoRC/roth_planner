@@ -277,6 +277,13 @@ def run_scenario(
             yr.ytd_conversions_done = ytd_year.ira_conversions_ytd
 
         # === Conversions ===
+        # NOT MODELED: IRA non-deductible basis (Form 8606)
+        # Per IRC §408(d)(2), conversions from a Traditional IRA with non-deductible
+        # basis are pro-rated: only (pretax_balance / total_balance) of the converted
+        # amount is taxable. This tool assumes basis = $0 (i.e., all Trad IRA dollars
+        # are pretax). If you have non-deductible contributions tracked on Form 8606,
+        # the actual taxable income from a conversion will be lower than what this
+        # tool reports.
         yr.your_conversion = plan.your_conversions.get(year, 0.0)
         if ya > 74:
             yr.your_conversion = 0.0  # can't convert after 74

@@ -28,6 +28,11 @@ from views._format import fmt_dollars, fmt_pct
 
 STEP = 1_000  # sweep in $1K increments
 
+_FORM_8606_CAPTION = (
+    "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
+    "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
+)
+
 
 def _base_income_for_year(hh: Household, year: int) -> dict:
     """Compute fixed income components for a given year (no conversion)."""
@@ -185,6 +190,7 @@ def render(hh: Household):
         "Find the optimal Roth conversion amount where marginal cost jumps. "
         "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
     )
+    st.caption(_FORM_8606_CAPTION)
 
     # --- Year selector ---
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
