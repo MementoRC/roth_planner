@@ -4177,17 +4177,61 @@ class TestACA2026:
         rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
         assert rate == pytest.approx(0.0210)
 
-    def test_aca_2026_150pct_fpl_ramp_start(self):
-        """Just above 150% FPL, applicable_pct == 4.19% (start of 150-200% ramp).
+    def test_aca_2026_150pct_fpl_boundary_continuous(self):
+        """At the 150% FPL band boundary, applicable_pct is continuous at 4.19%.
 
-        At exactly 150% the lookup still hits the 133-150 bracket (3.14%).
-        At 150.01% it enters the 150-200 bracket whose bracket-start rate is 4.19%.
+        With linear ramp interpolation, the 133-150% band reaches 4.19% at its
+        upper edge (matching the next band's start rate), and the 150-200% band
+        starts at 4.19%. So values just below and just above 150% should both
+        approximate 4.19%, demonstrating ramp continuity (vs the pre-fix step
+        discontinuity from 3.14% → 4.19% at 150%).
         """
         from engine.aca import FPL_2, aca_premium_cap_rate
 
-        magi = 1.5001 * FPL_2  # just above 150% — enters the 150-200% ramp bracket
+        rate_below = aca_premium_cap_rate(
+            1.4999 * FPL_2, enhanced_subsidies_active=False, filing_status="MFJ"
+        )
+        rate_above = aca_premium_cap_rate(
+            1.5001 * FPL_2, enhanced_subsidies_active=False, filing_status="MFJ"
+        )
+        assert rate_below == pytest.approx(0.0419, abs=1e-4)
+        assert rate_above == pytest.approx(0.0419, abs=1e-4)
+
+    def test_aca_2026_175pct_fpl_ramp_midpoint(self):
+        """At 175% FPL (midpoint of 150-200% band), applicable_pct is exactly
+        midway between the band-start (4.19%) and band-end (6.60%) rates per
+        IRC §36B Table A linear ramp.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 1.75 * FPL_2
         rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
-        assert rate == pytest.approx(0.0419)
+        expected = (0.0419 + 0.0660) / 2  # 0.05395
+        assert rate == pytest.approx(expected, abs=1e-6)
+
+    def test_aca_2026_225pct_fpl_ramp_midpoint(self):
+        """At 225% FPL (midpoint of 200-250% band), applicable_pct is exactly
+        midway between the band-start (6.60%) and band-end (8.44%) rates per
+        IRC §36B Table A linear ramp.
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        magi = 2.25 * FPL_2
+        rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
+        expected = (0.0660 + 0.0844) / 2  # 0.0752
+        assert rate == pytest.approx(expected, abs=1e-6)
+
+    def test_aca_2026_enhanced_schedule_preserves_step_function(self):
+        """Enhanced (ARPA/IRA) schedule preserves step-function caps — no
+        interpolation. At 175% FPL the enhanced 150-200% band caps at 2.0%
+        flat (vs pre-ARP's smooth ramp through the same FPL range).
+        """
+        from engine.aca import FPL_2, aca_premium_cap_rate
+
+        rate = aca_premium_cap_rate(
+            1.75 * FPL_2, enhanced_subsidies_active=True, filing_status="MFJ"
+        )
+        assert rate == pytest.approx(0.02)
 
     def test_aca_2026_300pct_fpl_flat_rate(self):
         """Just above 300% FPL, applicable_pct == 9.96% (flat 300-400% bracket).
