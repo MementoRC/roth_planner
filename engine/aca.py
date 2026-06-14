@@ -61,17 +61,49 @@ def aca_premium_cap_rate(
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
     filing_status: str = "MFJ",
 ) -> float:
-    """Premium cap as fraction of income based on FPL multiple."""
+    """Premium cap as fraction of income based on FPL multiple.
+
+    Pre-ARP schedule (per IRC §36B Table A / IRS Form 8962): linearly
+    interpolates the applicable percentage within each ramp band. The
+    bottom band (100-133% FPL) and top band (300-400% FPL) are flat per
+    the IRS table; middle bands ramp from the entry's start rate at the
+    band's lower-FPL edge to the NEXT entry's start rate at the band's
+    upper-FPL edge.
+
+    Enhanced (ARPA/IRA) schedule: preserves the original step-function
+    cap semantics ("up to N%") — no interpolation.
+    """
     fpl_ratio = magi / _fpl(filing_status)
     # Pre-ARP cliff: above 400% FPL there is no subsidy, so cap rate is irrelevant.
     # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
     if not enhanced_subsidies_active and fpl_ratio > 4.0:
         return 0.0
-    for upper_fpl, cap_rate in _aca_cap_schedule(enhanced_subsidies_active):
+    schedule = _aca_cap_schedule(enhanced_subsidies_active)
+    # Enhanced schedule: original step-function lookup preserved (ARPA caps, not ramps).
+    if enhanced_subsidies_active:
+        for upper_fpl, cap_rate in schedule:
+            if fpl_ratio <= upper_fpl:
+                return cap_rate
+        raise AssertionError(
+            f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}"
+        )
+    # Pre-ARP schedule: linear interpolation within ramp bands per IRC §36B Table A.
+    band_start_fpl = 1.0  # 100% FPL — implicit lower edge of the bottom band
+    for i, (upper_fpl, start_rate) in enumerate(schedule):
         if fpl_ratio <= upper_fpl:
-            return cap_rate
-    # Unreachable for pre-ARP: guard above handles fpl_ratio > 4.0.
-    # For enhanced schedule the final entry is (inf, 0.085) which always matches.
+            # First and last bands are flat per IRS table (see schedule comments).
+            if i == 0 or i == len(schedule) - 1:
+                return start_rate
+            # Middle band: linear-interpolate from start_rate (at band_start_fpl) to
+            # next entry's start_rate (at upper_fpl).
+            end_rate = schedule[i + 1][1]
+            band_span = upper_fpl - band_start_fpl
+            if band_span <= 0:
+                return start_rate  # degenerate; should not occur in well-formed schedule
+            t = (fpl_ratio - band_start_fpl) / band_span
+            return start_rate + t * (end_rate - start_rate)
+        band_start_fpl = upper_fpl
+    # Unreachable for pre-ARP: cliff guard above handles fpl_ratio > 4.0.
     raise AssertionError(
         f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}"
     )
