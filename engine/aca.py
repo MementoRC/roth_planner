@@ -8,6 +8,8 @@ extension on Jan 8, 2026, but it has not been signed into law yet.
 Toggle ENHANCED_SUBSIDIES_ACTIVE to model either scenario.
 """
 
+from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
+
 # 2025 Federal Poverty Level guidelines (used for 2026 coverage, continental US)
 FPL_1 = 15_060  # single person
 FPL_2 = 21_150  # family of 2
@@ -51,15 +53,19 @@ def _aca_cap_schedule(enhanced: bool) -> list[tuple[float, float]]:
     return ACA_ENHANCED_SCHEDULE if enhanced else ACA_PRE_ARP_SCHEDULE
 
 
-def _fpl(filing_status: str) -> float:
-    """Return the applicable FPL for the given filing status."""
-    return FPL_1 if filing_status == "Single" else FPL_2
+def _fpl(filing_status: str, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI) -> float:
+    """Return the applicable FPL for the given filing status, indexed for year."""
+    base = FPL_1 if filing_status == "Single" else FPL_2
+    return index_value(base, year, cpi)
 
 
 def aca_premium_cap_rate(
     magi: float,
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """Premium cap as fraction of income based on FPL multiple.
 
@@ -73,7 +79,7 @@ def aca_premium_cap_rate(
     Enhanced (ARPA/IRA) schedule: preserves the original step-function
     cap semantics ("up to N%") — no interpolation.
     """
-    fpl_ratio = magi / _fpl(filing_status)
+    fpl_ratio = magi / _fpl(filing_status, year=year, cpi=cpi)
     # Pre-ARP cliff: above 400% FPL there is no subsidy, so cap rate is irrelevant.
     # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
     if not enhanced_subsidies_active and fpl_ratio > 4.0:
@@ -114,6 +120,9 @@ def aca_subsidy(
     benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """
     Calculate ACA premium tax credit (subsidy).
@@ -124,10 +133,12 @@ def aca_subsidy(
     When using pre-ARP schedule, no subsidies above 400% FPL.
     """
     # Check 400% FPL cliff for pre-ARP schedule
-    if not enhanced_subsidies_active and magi > 4.0 * _fpl(filing_status):
+    if not enhanced_subsidies_active and magi > 4.0 * _fpl(filing_status, year=year, cpi=cpi):
         return 0.0
 
-    cap_rate = aca_premium_cap_rate(magi, enhanced_subsidies_active, filing_status)
+    cap_rate = aca_premium_cap_rate(
+        magi, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+    )
     expected_contribution = magi * cap_rate
     return max(benchmark - expected_contribution, 0)
 
@@ -138,12 +149,19 @@ def aca_subsidy_loss(
     benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """
     How much ACA subsidy is lost due to additional income (e.g., conversion).
     """
-    base = aca_subsidy(base_magi, benchmark, enhanced_subsidies_active, filing_status)
-    new = aca_subsidy(new_magi, benchmark, enhanced_subsidies_active, filing_status)
+    base = aca_subsidy(
+        base_magi, benchmark, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+    )
+    new = aca_subsidy(
+        new_magi, benchmark, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+    )
     return max(base - new, 0)
 
 
@@ -152,10 +170,17 @@ def aca_net_cost(
     benchmark: float = BENCHMARK_PREMIUM_ANNUAL,
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """What you actually pay for the silver plan after subsidy."""
     return max(
-        benchmark - aca_subsidy(magi, benchmark, enhanced_subsidies_active, filing_status), 0
+        benchmark
+        - aca_subsidy(
+            magi, benchmark, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+        ),
+        0,
     )
 
 
@@ -167,6 +192,7 @@ def aca_excess_aptc_repayment(
     filing_status: str = "MFJ",
     *,
     year: int,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """Compute the Form 8962 line 29 excess-APTC repayment for a tax year.
 
@@ -194,6 +220,8 @@ def aca_excess_aptc_repayment(
         benchmark_premium_annual,
         enhanced_subsidies_active=enhanced_subsidies_active,
         filing_status=filing_status,
+        year=year,
+        cpi=cpi,
     )
     return advance_aptc_annual - actual_ptc
 

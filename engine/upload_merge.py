@@ -58,6 +58,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         "aca_enhanced_subsidies_active",
         "advance_aptc_annual",
         "medicare_part_b_base_monthly",
+        "cpi_assumption",
     ]
     for k in scalar_keys:
         if k in data:

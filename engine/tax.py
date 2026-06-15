@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_bracket_list, index_tuple, index_value
+
 if TYPE_CHECKING:
     from models.household import Household
     from models.ytd_income import YTDSnapshot
@@ -73,13 +75,14 @@ SAFE_HARBOR_AGI_THRESHOLD_MFJ = 150_000.0
 SAFE_HARBOR_AGI_THRESHOLD_SINGLE = 75_000.0
 
 
-def federal_tax(taxable_income: float) -> float:
+def federal_tax(taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI) -> float:
     """Compute federal income tax on taxable income (MFJ)."""
     if taxable_income <= 0:
         return 0.0
+    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi)
     tax = 0.0
     prev = 0.0
-    for ceil, rate in BRACKETS_MFJ:
+    for ceil, rate in brackets:
         chunk = min(taxable_income, ceil) - prev
         if chunk <= 0:
             break
@@ -88,11 +91,14 @@ def federal_tax(taxable_income: float) -> float:
     return tax
 
 
-def marginal_rate(taxable_income: float) -> float:
+def marginal_rate(
+    taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI
+) -> float:
     """Return the marginal bracket rate for given taxable income."""
     if taxable_income <= 0:
         return 0.0
-    for ceil, rate in BRACKETS_MFJ:
+    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi)
+    for ceil, rate in brackets:
         if taxable_income <= ceil:
             return rate
     return 0.37
@@ -133,14 +139,19 @@ def deductions(
     spouse_age: int,
     std_ded: float = STD_DEDUCTION_MFJ,
     senior_extra: float = SENIOR_EXTRA_MFJ,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """Total standard deduction including senior extras."""
-    senior: float = 0
+    ded = index_value(std_ded, year, cpi)
+    se = index_value(senior_extra, year, cpi)
+    senior: float = 0.0
     if your_age >= 65:
-        senior += senior_extra
+        senior += se
     if spouse_age >= 65:
-        senior += senior_extra
-    return std_ded + senior
+        senior += se
+    return ded + senior
 
 
 def senior_bonus_deduction(
@@ -149,6 +160,7 @@ def senior_bonus_deduction(
     magi: float,
     *,
     year: int,
+    cpi: float = DEFAULT_CPI,
     filing_status: str = "MFJ",
     bonus_per_person: float = OBBBA_BONUS_PER_PERSON,
     phaseout_start: float | None = None,
@@ -178,9 +190,10 @@ def senior_bonus_deduction(
     if eligible == 0:
         return 0.0
     if phaseout_start is None:
-        phaseout_start = (
+        _base_phaseout = (
             OBBBA_PHASEOUT_START_MFJ if filing_status == "MFJ" else OBBBA_PHASEOUT_START_SINGLE
         )
+        phaseout_start = index_value(_base_phaseout, year, cpi)
     if magi <= phaseout_start:
         return bonus_per_person * eligible
     per_person_reduction = min(bonus_per_person, max(0.0, magi - phaseout_start) * phaseout_rate)
@@ -188,12 +201,20 @@ def senior_bonus_deduction(
     return deduction_per_person * eligible
 
 
-def tax_on_conversion(conversion: float, other_taxable: float) -> float:
+def tax_on_conversion(
+    conversion: float,
+    other_taxable: float,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
     """
     Incremental tax caused by a Roth conversion.
     = tax(other + conversion) - tax(other)
     """
-    return federal_tax(other_taxable + conversion) - federal_tax(other_taxable)
+    return federal_tax(other_taxable + conversion, year=year, cpi=cpi) - federal_tax(
+        other_taxable, year=year, cpi=cpi
+    )
 
 
 def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceiling: float) -> float:
@@ -206,21 +227,38 @@ def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceili
     return max(total_deductions + bracket_ceiling - current_gross, 0)
 
 
-def room_to_12(current_gross: float, total_deductions: float) -> float:
-    return room_to_bracket(current_gross, total_deductions, BRACKETS_MFJ[1][0])
+def room_to_12(
+    current_gross: float,
+    total_deductions: float,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
+    ceiling = index_value(BRACKETS_MFJ[1][0], year, cpi)
+    return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
-def room_to_22(current_gross: float, total_deductions: float) -> float:
-    return room_to_bracket(current_gross, total_deductions, BRACKETS_MFJ[2][0])
+def room_to_22(
+    current_gross: float,
+    total_deductions: float,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
+    ceiling = index_value(BRACKETS_MFJ[2][0], year, cpi)
+    return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
-def federal_tax_single(taxable_income: float) -> float:
+def federal_tax_single(
+    taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI
+) -> float:
     """Compute federal income tax on taxable income (Single filer)."""
     if taxable_income <= 0:
         return 0.0
+    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi)
     tax = 0.0
     prev = 0.0
-    for ceil, rate in BRACKETS_SINGLE:
+    for ceil, rate in brackets:
         chunk = min(taxable_income, ceil) - prev
         if chunk <= 0:
             break
@@ -229,11 +267,14 @@ def federal_tax_single(taxable_income: float) -> float:
     return tax
 
 
-def marginal_rate_single(taxable_income: float) -> float:
+def marginal_rate_single(
+    taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI
+) -> float:
     """Return the marginal bracket rate for Single filer."""
     if taxable_income <= 0:
         return 0.0
-    for ceil, rate in BRACKETS_SINGLE:
+    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi)
+    for ceil, rate in brackets:
         if taxable_income <= ceil:
             return rate
     return 0.37
@@ -275,31 +316,39 @@ def estimate_ytd_federal_tax(
     """
     from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ
 
+    _year = hh.base_year
+    _cpi = hh.cpi_assumption
+
     ordinary_income = ytd.total_ordinary_income
-    ordinary_tax = federal_tax(ordinary_income)
+    ordinary_tax = federal_tax(ordinary_income, year=_year, cpi=_cpi)
 
     # Compute standard deduction to find taxable ordinary income for LTCG stack-walk.
     # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds (IRC §1(h)(1));
     # using gross income shifts the 0%-band upward by the std deduction amount.
     if hh.filing_status == "MFJ":
         senior_count = (1 if hh.your_age >= 65 else 0) + (1 if hh.spouse_age >= 65 else 0)
-        std_ded = STD_DEDUCTION_MFJ + senior_count * SENIOR_EXTRA_MFJ
+        std_ded = index_value(STD_DEDUCTION_MFJ, _year, _cpi) + senior_count * index_value(
+            SENIOR_EXTRA_MFJ, _year, _cpi
+        )
     else:
         senior_count = 1 if hh.your_age >= 65 else 0
-        std_ded = STD_DEDUCTION_SINGLE + senior_count * SENIOR_EXTRA_SINGLE
+        std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi) + senior_count * index_value(
+            SENIOR_EXTRA_SINGLE, _year, _cpi
+        )
     taxable_ordinary = max(ordinary_income - std_ded, 0.0)
 
     # LTCG + qualified dividends taxed at preferential rate.
     # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
+    _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, _year, _cpi)
     ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
     ltcg_start = taxable_ordinary
     ltcg_end = taxable_ordinary + ltcg_taxable
     # 0%-rate portion (below threshold[0]) contributes $0 tax; 15% and 20% portions taxed
     ltcg_at_15 = max(
         0.0,
-        min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+        min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
     )
-    ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
+    ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
     ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
 
     # NIIT: 3.8% on lesser of NII or MAGI excess over threshold
@@ -313,11 +362,12 @@ def estimate_ytd_federal_tax(
     effective_rate = total / magi if magi > 0 else 0.0
 
     # Marginal bracket for ordinary income
-    marginal = marginal_rate(ordinary_income)
+    marginal = marginal_rate(ordinary_income, year=_year, cpi=_cpi)
 
     # Room to next bracket ceiling
+    _indexed_brackets = index_bracket_list(BRACKETS_MFJ, _year, _cpi)
     room_next = 0.0
-    for ceil, _rate in BRACKETS_MFJ:
+    for ceil, _rate in _indexed_brackets:
         if ordinary_income <= ceil:
             room_next = ceil - ordinary_income
             break

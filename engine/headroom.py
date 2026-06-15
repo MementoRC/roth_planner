@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year, irmaa_tier
 from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import deductions, room_to_12, room_to_22, senior_bonus_deduction, taxable_ss
+from engine.tax_indexing import index_value
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -75,13 +76,18 @@ def compute_headroom(
     ytd: YTDSnapshot,
     early_exercise: bool = True,
     filing_status: str = "MFJ",
+    *,
+    year: int | None = None,
+    cpi: float | None = None,
 ) -> HeadroomResult:
     """Compute remaining conversion headroom for the base year.
 
     Separates locked YTD actuals from planned income (option exercises)
     so the user can see headroom with and without exercising options.
+    year/cpi default to hh.base_year / hh.cpi_assumption when not provided.
     """
-    year = hh.base_year
+    _year = year if year is not None else hh.base_year
+    _cpi = cpi if cpi is not None else hh.cpi_assumption
     ya = hh.your_age
     sa = hh.spouse_age
 
@@ -94,7 +100,7 @@ def compute_headroom(
     result.conversions_done = ytd.ira_conversions_ytd
 
     # --- Planned income (still a choice) ---
-    opt = hh.option_income(year, early_exercise)
+    opt = hh.option_income(_year, early_exercise)
     # Total subtract: all NQO exercises hit the same income buckets (ordinary income, MAGI),
     # so total realized is the correct lever-reduction regardless of which grant was exercised.
     # Per-grant attribution is useful for the YTD display table but NOT for headroom math.
@@ -123,8 +129,8 @@ def compute_headroom(
     # Use locked MAGI for deduction phaseout (conservative — planned income may change)
     locked_magi = ytd.magi_ytd + combined_ss
     result.locked_magi = locked_magi
-    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-    ded += senior_bonus_deduction(ya, sa, locked_magi, year=year)
+    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
+    ded += senior_bonus_deduction(ya, sa, locked_magi, year=_year, cpi=_cpi)
 
     # === LOCKED ONLY (YTD actuals — no option exercise) ===
 
@@ -133,11 +139,12 @@ def compute_headroom(
     locked_tss = taxable_ss(combined_ss, locked_other)
     locked_gross = ytd.total_ordinary_income + locked_tss
 
-    result.room_to_12pct = room_to_12(locked_gross, ded)
-    result.room_to_22pct = room_to_22(locked_gross, ded)
-    irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    result.room_to_12pct = room_to_12(locked_gross, ded, year=_year, cpi=_cpi)
+    result.room_to_22pct = room_to_22(locked_gross, ded, year=_year, cpi=_cpi)
+    base_irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    irmaa_t1 = index_value(base_irmaa_tiers[0][0], _year, _cpi)
     niit_threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
-    result.room_to_irmaa_t1 = max(irmaa_tiers[0][0] - locked_magi, 0.0)
+    result.room_to_irmaa_t1 = max(irmaa_t1 - locked_magi, 0.0)
     result.room_to_niit = max(niit_threshold - locked_magi, 0.0)
 
     # === WITH PLANNED (locked + option exercise) ===
@@ -150,17 +157,19 @@ def compute_headroom(
     planned_gross = ytd.total_ordinary_income + opt + planned_tss
 
     # Recalculate deductions with full planned MAGI
-    ded_planned = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-    ded_planned += senior_bonus_deduction(ya, sa, planned_magi, year=year)
+    ded_planned = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
+    ded_planned += senior_bonus_deduction(ya, sa, planned_magi, year=_year, cpi=_cpi)
 
-    result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned)
-    result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned)
-    result.room_to_irmaa_t1_with_planned = max(irmaa_tiers[0][0] - planned_magi, 0.0)
+    result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned, year=_year, cpi=_cpi)
+    result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned, year=_year, cpi=_cpi)
+    result.room_to_irmaa_t1_with_planned = max(irmaa_t1 - planned_magi, 0.0)
     result.room_to_niit_with_planned = max(niit_threshold - planned_magi, 0.0)
 
     # === IRMAA relevance check (age-aware) ===
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
-    irmaa_cost, _ = irmaa_for_year(planned_magi, ya, sa, filing_status=filing_status)
+    irmaa_cost, _ = irmaa_for_year(
+        planned_magi, ya, sa, filing_status=filing_status, year=_year, cpi=_cpi
+    )
     result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)
 
     # Find first income year where IRMAA actually matters
@@ -169,7 +178,7 @@ def compute_headroom(
         min(first_medicare_age - 2 - ya, first_medicare_age - 2 - sa),
         0,
     )
-    result.irmaa_first_relevant_year = year + years_until_medicare
+    result.irmaa_first_relevant_year = _year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)
     result.irmaa_tier_current = irmaa_tier(locked_magi)
@@ -180,7 +189,8 @@ def compute_headroom(
 
     anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     if anyone_on_aca:
-        fpl = FPL_1 if filing_status == "Single" else FPL_2
+        base_fpl = FPL_1 if filing_status == "Single" else FPL_2
+        fpl = index_value(base_fpl, _year, _cpi)
         aca_cliff = 4.0 * fpl  # 400% FPL
         result.room_to_aca_cliff = max(aca_cliff - locked_magi, 0.0)
 

@@ -23,6 +23,8 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
+from engine.tax_indexing import index_bracket_list as _index_brackets
+from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
@@ -38,6 +40,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
     """Compute fixed income components for a given year (no conversion)."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
+    cpi = hh.cpi_assumption
 
     opt = hh.option_income(year, early=True)
 
@@ -55,7 +58,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
     )
     combined_ss = your_ss + spouse_ss
 
-    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
+    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
 
     # Base taxable SS (without conversion)
     tss = taxable_ss(combined_ss, opt)
@@ -68,7 +71,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
 
     # Senior bonus deduction
     senior_bonus = senior_bonus_deduction(
-        ya, sa, base_magi, year=year, filing_status=hh.filing_status
+        ya, sa, base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )
     total_ded = ded + senior_bonus
 
@@ -76,6 +79,7 @@ def _base_income_for_year(hh: Household, year: int) -> dict:
         "ya": ya,
         "sa": sa,
         "year": year,
+        "cpi": cpi,
         "opt": opt,
         "combined_ss": combined_ss,
         "base_gross": base_gross,
@@ -89,6 +93,7 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     """Compute all-in costs at a given conversion amount."""
     ya, sa = base["ya"], base["sa"]
     year: int = base["year"]
+    cpi: float = base["cpi"]
 
     # Recalculate taxable SS with conversion income
     other_inc = base["opt"] + conv
@@ -98,33 +103,39 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
     magi = base["base_magi"] + conv
 
     # Recalculate senior bonus deduction at new MAGI
-    senior_bonus = senior_bonus_deduction(ya, sa, magi, year=year, filing_status=hh.filing_status)
+    senior_bonus = senior_bonus_deduction(
+        ya, sa, magi, year=year, cpi=cpi, filing_status=hh.filing_status
+    )
     total_ded = base["ded_base"] + senior_bonus
 
     taxable_inc = max(gross - total_ded, 0)
-    tax = federal_tax(taxable_inc)
+    tax = federal_tax(taxable_inc, year=year, cpi=cpi)
 
     # Base tax (no conversion)
     base_tss = taxable_ss(base["combined_ss"], base["opt"])
     base_gross = base["opt"] + base_tss
     base_senior = senior_bonus_deduction(
-        ya, sa, base["base_magi"], year=year, filing_status=hh.filing_status
+        ya, sa, base["base_magi"], year=year, cpi=cpi, filing_status=hh.filing_status
     )
     base_total_ded = base["ded_base"] + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
-    base_tax = federal_tax(base_taxable)
+    base_tax = federal_tax(base_taxable, year=year, cpi=cpi)
 
     conv_tax = tax - base_tax
 
     # IRMAA (2-year lookback)
-    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status)
-    base_irmaa, _ = irmaa_for_year(base["base_magi"], ya, sa, filing_status=hh.filing_status)
+    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi)
+    base_irmaa, _ = irmaa_for_year(
+        base["base_magi"], ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi
+    )
     irmaa_delta = irmaa_cost - base_irmaa
 
     # ACA
     anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     aca_loss = (
-        aca_subsidy_loss(base["base_magi"], magi, filing_status=hh.filing_status)
+        aca_subsidy_loss(
+            base["base_magi"], magi, filing_status=hh.filing_status, year=year, cpi=cpi
+        )
         if anyone_on_aca
         else 0.0
     )
@@ -145,8 +156,8 @@ def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income
         "all_in": all_in,
         "magi": magi,
         "taxable_inc": taxable_inc,
-        "room_12": room_to_12(gross, total_ded),
-        "room_22": room_to_22(gross, total_ded),
+        "room_12": room_to_12(gross, total_ded, year=year, cpi=cpi),
+        "room_22": room_to_22(gross, total_ded, year=year, cpi=cpi),
     }
 
 
@@ -200,9 +211,10 @@ def render(hh: Household):
     )
     st.caption(_FORM_8606_CAPTION)
 
-    # Filing-status-aware constants for chart annotations
-    irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+    # Filing-status-aware constants for chart annotations (indexed for selected year)
+    _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
     niit_threshold = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
+    # irmaa_tiers resolved after year selection below
 
     # --- Year selector ---
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
@@ -227,6 +239,13 @@ def render(hh: Household):
             help="Capital gains + dividends + interest from brokerage. "
             "Used to estimate NIIT impact.",
         )
+
+    # Index IRMAA tiers and brackets for the selected year
+    _cpi = hh.cpi_assumption
+    irmaa_tiers = [
+        (_index_value(t, selected_year, _cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers
+    ]
+    indexed_brackets_mfj = _index_brackets(BRACKETS_MFJ, selected_year, _cpi)
 
     # --- Compute base income ---
     base = _base_income_for_year(hh, selected_year)
@@ -253,7 +272,7 @@ def render(hh: Household):
     # --- Sweep conversion amounts ---
     max_conv = int(
         min(
-            base["total_ded"] + BRACKETS_MFJ[-2][0],  # up to 35% bracket
+            base["total_ded"] + indexed_brackets_mfj[-2][0],  # up to 35% bracket
             hh.your_ira + hh.spouse_ira,
         )
     )
@@ -335,7 +354,7 @@ def render(hh: Household):
 
     # Add bracket boundary lines
     bracket_boundaries = []
-    for ceil, rate in BRACKETS_MFJ[:-1]:
+    for ceil, rate in indexed_brackets_mfj[:-1]:
         boundary_conv = max(base["total_ded"] + ceil - base["base_gross"] - base["opt"], 0)
         # Adjust for the fact that conversion changes taxable SS
         if 0 < boundary_conv < max_conv:
