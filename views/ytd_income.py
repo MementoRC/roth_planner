@@ -14,8 +14,8 @@ import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
-from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
-from engine.niit import NIIT_THRESHOLD_MFJ
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_surcharge
+from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import (
     LTCG_RATES_MFJ,
     SafeHarborGuidance,
@@ -191,7 +191,7 @@ def render(hh: Household):
     st.markdown("---")
     st.markdown("### Conversion Headroom")
 
-    headroom = compute_headroom(hh, ytd)
+    headroom = compute_headroom(hh, ytd, filing_status=hh.filing_status)
 
     # Summary metrics
     st.markdown("#### Current YTD Position (Locked In)")
@@ -440,10 +440,11 @@ def render(hh: Household):
             else ""
         ),
     )
+    _niit_thr = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
     c4.metric(
         "Room to NIIT",
         fmt_dollars(headroom.room_to_niit),
-        help=f"MAGI-based ({fmt_dollars_short(NIIT_THRESHOLD_MFJ, decimals=0, suffix='K')}) — LTCG DOES consume this",
+        help=f"MAGI-based ({fmt_dollars_short(_niit_thr, decimals=0, suffix='K')}) — LTCG DOES consume this",
     )
 
     if not headroom.irmaa_relevant:
@@ -482,8 +483,12 @@ def render(hh: Household):
         )
 
         # Show surcharge amounts
-        surcharge_1p = irmaa_surcharge(headroom.projected_magi_base, 1)
-        surcharge_2p = irmaa_surcharge(headroom.projected_magi_base, 2)
+        surcharge_1p = irmaa_surcharge(
+            headroom.projected_magi_base, 1, filing_status=hh.filing_status
+        )
+        surcharge_2p = irmaa_surcharge(
+            headroom.projected_magi_base, 2, filing_status=hh.filing_status
+        )
 
         s1, s2 = st.columns(2)
         s1.metric(
@@ -497,8 +502,9 @@ def render(hh: Household):
 
         # Tier table
         with st.expander("IRMAA Tier Details"):
+            _irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
             tier_data = []
-            for i, (threshold, part_b, part_d) in enumerate(IRMAA_TIERS_MFJ, 1):
+            for i, (threshold, part_b, part_d) in enumerate(_irmaa_tiers, 1):
                 tier_data.append(
                     {
                         "Tier": i,
