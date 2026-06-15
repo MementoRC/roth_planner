@@ -154,6 +154,11 @@ class Household:
     advance_aptc_annual: float = 0.0  # Annual APTC pre-paid by IRS to your insurer based on projected MAGI; reconciled on Form 8962 at year-end. Set to 0 if not enrolled in marketplace insurance or pay full premium upfront.
     medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top
 
+    # CPI indexing assumption for tax constants (brackets, IRMAA tiers, FPL, etc.)
+    # Default 0.0 = no indexing (2026 base values frozen). Set to 0.025 in the UI
+    # via session_state seed to enable 2.5% annual inflation for live projections.
+    cpi_assumption: float = 0.0
+
     # IRMAA lookback anchor
     prior_year_magi: dict[int, float] = field(default_factory=dict)
     """Year-keyed sparse map of FILED MAGI values for IRMAA anchor.

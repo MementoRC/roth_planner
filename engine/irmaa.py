@@ -9,6 +9,8 @@ Key facts:
 
 from __future__ import annotations
 
+from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
+
 # 2026 IRMAA thresholds (MFJ) — indexed annually
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
@@ -39,6 +41,9 @@ def irmaa_surcharge(
     num_people: int = 2,
     base_part_b: float = BASE_PART_B,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> float:
     """
     Calculate total annual IRMAA surcharge for household.
@@ -48,11 +53,15 @@ def irmaa_surcharge(
         num_people: number of people on Medicare (1 or 2)
         base_part_b: annual per-person base Part B premium (default: module constant)
         filing_status: "MFJ" (default) or "Single" — selects threshold table
+        year: calendar year (used to index MAGI thresholds forward from 2026 base)
+        cpi: annual CPI rate for indexing (default 2.5%)
 
     Returns:
         Total annual surcharge above base premiums.
     """
-    tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    # Index MAGI thresholds; premiums are not indexed (CMS sets them annually)
+    tiers = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers]
     for threshold, part_b_annual, part_d_annual in reversed(tiers):
         if magi > threshold:
             surcharge_per_person = (part_b_annual - base_part_b) + (part_d_annual - BASE_PART_D)
@@ -74,6 +83,9 @@ def irmaa_for_year(
     spouse_age_income_year: int,
     base_part_b: float = BASE_PART_B,
     filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
 ) -> tuple[float, int]:
     """
     Calculate IRMAA that will be charged 2 years AFTER the income year.
@@ -83,6 +95,7 @@ def irmaa_for_year(
 
     The surcharge applies in medicare_year = income_year + 2.
     Only counts people who are 65+ in the medicare_year.
+    year/cpi: index MAGI thresholds for the income year (pre-lookback).
     """
     medicare_your_age = your_age_income_year + 2
     medicare_spouse_age = spouse_age_income_year + 2
@@ -91,22 +104,32 @@ def irmaa_for_year(
     if on_medicare == 0:
         return 0.0, 0
 
-    surcharge = irmaa_surcharge(income_year_magi, on_medicare, base_part_b, filing_status)
+    surcharge = irmaa_surcharge(
+        income_year_magi, on_medicare, base_part_b, filing_status, year=year, cpi=cpi
+    )
     return surcharge, your_age_income_year + 2
 
 
-def irmaa_next_threshold(magi: float, filing_status: str = "MFJ") -> float:
+def irmaa_next_threshold(
+    magi: float,
+    filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
     """How much room before hitting the next IRMAA tier.
 
     Args:
         magi: Modified Adjusted Gross Income for the income year.
         filing_status: "MFJ" (default) or "Single" — selects threshold table.
+        year/cpi: index MAGI thresholds forward from 2026 base.
 
     Returns:
         Dollar distance to the next un-crossed tier threshold, or 0.0 if already
         above the highest tier.
     """
-    tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    tiers = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers]
     for threshold, _, _ in tiers:
         if magi <= threshold:
             return threshold - magi

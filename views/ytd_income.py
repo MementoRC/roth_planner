@@ -484,10 +484,18 @@ def render(hh: Household):
 
         # Show surcharge amounts
         surcharge_1p = irmaa_surcharge(
-            headroom.projected_magi_base, 1, filing_status=hh.filing_status
+            headroom.projected_magi_base,
+            1,
+            filing_status=hh.filing_status,
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
         )
         surcharge_2p = irmaa_surcharge(
-            headroom.projected_magi_base, 2, filing_status=hh.filing_status
+            headroom.projected_magi_base,
+            2,
+            filing_status=hh.filing_status,
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
         )
 
         s1, s2 = st.columns(2)

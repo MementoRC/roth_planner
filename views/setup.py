@@ -99,6 +99,7 @@ def _user_defaults_from_session() -> dict:
         "aca_enhanced_subsidies_active",
         "advance_aptc_annual",
         "medicare_part_b_base_monthly",
+        "cpi_assumption",
     ]
     payload: dict = {}
     for k in scalar_keys:
@@ -176,6 +177,7 @@ def _clear_personal_session_state() -> None:
         "aca_enhanced_subsidies_active",
         "advance_aptc_annual",
         "medicare_part_b_base_monthly",
+        "cpi_assumption",
         "prior_year_magi",
         "survivor",
         "inherited_iras",
@@ -1068,6 +1070,18 @@ def render(hh: Household) -> None:
                 help=(
                     "Standard Medicare Part B monthly premium (CMS-published; $202.90 in 2026). "
                     "IRMAA surcharges are computed on top of this base."
+                ),
+            )
+            st.session_state["cpi_assumption"] = st.number_input(
+                "Annual CPI Projection Rate",
+                min_value=0.0,
+                max_value=0.06,
+                value=float(st.session_state.get("cpi_assumption", 0.025)),
+                step=0.001,
+                format="%.3f",
+                help=(
+                    "Annual CPI projection rate (default 2.5%). Tax brackets, IRMAA tiers, "
+                    "FPL, etc. are projected forward from 2026 base values using this rate."
                 ),
             )
             _render_prior_year_magi_anchor()

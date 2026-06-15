@@ -30,6 +30,8 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
+from engine.tax_indexing import index_tuple as _index_tuple
+from engine.tax_indexing import index_value as _index_value
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
@@ -181,6 +183,7 @@ def run_scenario(
     Phase 2 (your_age >= 75): RMD years — forced distributions, spouse may still convert
     """
     results = []
+    cpi = hh.cpi_assumption
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
     # TODO(math-audit-2026-06-12 P3): Brokerage starting balance not initialized from YTD
@@ -469,35 +472,39 @@ def run_scenario(
             ya_eff = 0 if surv.who_dies == "you" else ya
             sa_eff = 0 if surv.who_dies == "spouse" else sa
             yr.total_deductions = deductions(
-                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
+                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
             )
             yr.total_deductions += senior_bonus_deduction(
-                ya_eff, sa_eff, yr.magi, year=year, filing_status="Single"
+                ya_eff, sa_eff, yr.magi, year=year, cpi=cpi, filing_status="Single"
             )
         else:
-            yr.total_deductions = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi, year=year)
+            yr.total_deductions = deductions(
+                ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi
+            )
+            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi, year=year, cpi=cpi)
 
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
         # === Federal tax ===
         if survivor_active:
-            yr.federal_tax_amt = federal_tax_single(yr.taxable_income)
-            yr.marginal_bracket = marginal_rate_single(yr.taxable_income)
+            yr.federal_tax_amt = federal_tax_single(yr.taxable_income, year=year, cpi=cpi)
+            yr.marginal_bracket = marginal_rate_single(yr.taxable_income, year=year, cpi=cpi)
         else:
-            yr.federal_tax_amt = federal_tax(yr.taxable_income)
-            yr.marginal_bracket = marginal_rate(yr.taxable_income)
+            yr.federal_tax_amt = federal_tax(yr.taxable_income, year=year, cpi=cpi)
+            yr.marginal_bracket = marginal_rate(yr.taxable_income, year=year, cpi=cpi)
 
         # === Conversion tax (incremental) ===
         base_gross = yr.combined_gross - yr.your_conversion - yr.spouse_conversion
         base_taxable = max(base_gross - yr.total_deductions, 0)
         if survivor_active:
-            yr.conversion_tax = federal_tax_single(yr.taxable_income) - federal_tax_single(
-                base_taxable
-            )
+            yr.conversion_tax = federal_tax_single(
+                yr.taxable_income, year=year, cpi=cpi
+            ) - federal_tax_single(base_taxable, year=year, cpi=cpi)
         else:
-            yr.conversion_tax = federal_tax(yr.taxable_income) - federal_tax(base_taxable)
+            yr.conversion_tax = federal_tax(yr.taxable_income, year=year, cpi=cpi) - federal_tax(
+                base_taxable, year=year, cpi=cpi
+            )
 
         # === IRMAA (2-year lookback) ===
         # IRMAA paid in year Y is based on filed MAGI of year Y-2.
@@ -522,9 +529,13 @@ def run_scenario(
             sa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
+            year=income_year,
+            cpi=cpi,
         )
         yr.irmaa_cost = irmaa_cost
-        yr.irmaa_room = irmaa_next_threshold(yr.magi, filing_status=current_filing_status)
+        yr.irmaa_room = irmaa_next_threshold(
+            yr.magi, filing_status=current_filing_status, year=year, cpi=cpi
+        )
 
         # === ACA subsidy loss ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.
@@ -547,6 +558,8 @@ def run_scenario(
                 effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
+                year=year,
+                cpi=cpi,
             )
         else:
             yr.aca_loss = 0.0
@@ -562,6 +575,7 @@ def run_scenario(
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
                 year=yr.year,
+                cpi=cpi,
             )
             # Positive clawback = additional tax; negative = additional refund.
             # DO NOT subtract from aca_loss — they model different things.
@@ -574,9 +588,10 @@ def run_scenario(
         # starting point; YTD LTCG walks up through the bands.
         if ytd_year is not None and ytd_year.ltcg_ytd > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
-            _ytd_ltcg_thresholds = (
+            _base_ytd_ltcg_thresholds = (
                 LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
             )
+            _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi)
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
             _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, ytd_year.ltcg_ytd)
             _ytd_ltcg_at_15 = max(
@@ -617,16 +632,20 @@ def run_scenario(
 
         # === Bracket room ===
         if survivor_active:
-            # Single brackets: 12% ceiling = 50_400, 22% ceiling = 105_700
+            # Single brackets: index ceilings for the current year
             yr.room_12 = room_to_bracket(
-                yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[1][0]
+                yr.combined_gross,
+                yr.total_deductions,
+                _index_value(BRACKETS_SINGLE[1][0], year, cpi),
             )
             yr.room_22 = room_to_bracket(
-                yr.combined_gross, yr.total_deductions, BRACKETS_SINGLE[2][0]
+                yr.combined_gross,
+                yr.total_deductions,
+                _index_value(BRACKETS_SINGLE[2][0], year, cpi),
             )
         else:
-            yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions)
-            yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions)
+            yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions, year=year, cpi=cpi)
+            yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions, year=year, cpi=cpi)
 
         # === Living expenses & brokerage ===
         years_from_base = yr_idx
@@ -657,7 +676,8 @@ def run_scenario(
         # through 0% / 15% / 20% bands.
         # yr.taxable_income is already ordinary-only; do NOT subtract realized_gains.
         # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
-        ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+        _base_ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+        ltcg_thresholds = _index_tuple(_base_ltcg_thresholds, year, cpi)
         ltcg_eligible = realized_gains + qual_div_this_year
         _ltcg_start = max(0.0, yr.taxable_income)
         _ltcg_end = _ltcg_start + max(0.0, ltcg_eligible)
@@ -736,13 +756,13 @@ def _auto_fill_core(
     hh: Household,
     early_exercise: bool,
     ytd: YTDSnapshot | None,
-    room_fn: Callable[[float, float, float], float],
+    room_fn: Callable[[float, float, float, int, float], float],
 ) -> ConversionPlan:
     """Shared body of auto_fill_12 / auto_fill_22 / auto_fill_irmaa_safe.
 
     The only difference between those three is how ``room`` is computed each
     year. This core does everything else identically; the room calculation is
-    delegated to ``room_fn(fixed_gross, ded, base_magi) -> float``.
+    delegated to ``room_fn(fixed_gross, ded, base_magi, year, cpi) -> float``.
 
     ``base_magi`` is always computed and passed (cheap; identical expression in
     all three originals). The 12% and 22% variants ignore it; the IRMAA-safe
@@ -751,6 +771,7 @@ def _auto_fill_core(
     plan = ConversionPlan()
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
+    _cpi = hh.cpi_assumption
 
     for yr_idx in range(
         hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
@@ -837,11 +858,11 @@ def _auto_fill_core(
             )
 
         # Deductions
-        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra)
-        ded += senior_bonus_deduction(ya, sa, base_magi, year=year)
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=_cpi)
+        ded += senior_bonus_deduction(ya, sa, base_magi, year=year, cpi=_cpi)
 
         # Room — delegated to caller's room_fn
-        room = room_fn(fixed_gross, ded, base_magi)
+        room = room_fn(fixed_gross, ded, base_magi, year, _cpi)
 
         # Allocate room
         # Symmetric allocation: older pre-RMD person first (drains the IRA closest to RMD).
@@ -900,7 +921,7 @@ def auto_fill_12(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _base_magi: room_to_12(fg, ded),
+        room_fn=lambda fg, ded, _bm, yr, cpi: room_to_12(fg, ded, year=yr, cpi=cpi),
     )
 
 
@@ -917,7 +938,7 @@ def auto_fill_22(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _base_magi: room_to_22(fg, ded),
+        room_fn=lambda fg, ded, _bm, yr, cpi: room_to_22(fg, ded, year=yr, cpi=cpi),
     )
 
 
@@ -931,13 +952,15 @@ def auto_fill_irmaa_safe(
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
     """
     from engine.irmaa import IRMAA_TIERS_MFJ
+    from engine.tax_indexing import index_value as _iv
 
-    irmaa_threshold = IRMAA_TIERS_MFJ[0][0]  # tier-1 joint MAGI ceiling
+    irmaa_base_threshold = IRMAA_TIERS_MFJ[0][0]  # tier-1 joint MAGI ceiling (2026 base)
 
-    def _irmaa_room(fixed_gross: float, ded: float, base_magi: float) -> float:
-        # Room to IRMAA threshold, capped at 22% bracket room
+    def _irmaa_room(fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float) -> float:
+        # Room to IRMAA threshold (indexed), capped at 22% bracket room
+        irmaa_threshold = _iv(irmaa_base_threshold, yr, cpi)
         irmaa_room = max(irmaa_threshold - base_magi, 0.0)
-        return min(irmaa_room, room_to_22(fixed_gross, ded))
+        return min(irmaa_room, room_to_22(fixed_gross, ded, year=yr, cpi=cpi))
 
     return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
 
@@ -962,15 +985,17 @@ def add_bracket_fill_withdrawals(
         target_bracket: Fill up to this bracket (default 22%)
     """
     from engine.tax import BRACKETS_MFJ
+    from engine.tax_indexing import index_value as _iv_local
 
     # Run the base scenario first to get IRA balances and bracket room
     result = run_scenario(hh, base_plan, "temp", end_age=95, early_exercise=early_exercise)
+    _cpi_fill = hh.cpi_assumption
 
-    # Find the bracket ceiling for the target rate
-    bracket_ceiling = 0.0
+    # Find the base (2026) bracket ceiling for the target rate
+    base_bracket_ceiling = 0.0
     for ceil, rate in BRACKETS_MFJ:
         if rate <= target_bracket:
-            bracket_ceiling = ceil
+            base_bracket_ceiling = ceil
         else:
             break
 
@@ -985,6 +1010,7 @@ def add_bracket_fill_withdrawals(
         if yr.your_age < hh.your_rmd_start_age:
             continue  # only post-RMD
 
+        bracket_ceiling = _iv_local(base_bracket_ceiling, yr.year, _cpi_fill)
         # Room to fill the target bracket
         room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
         if room <= 0:
