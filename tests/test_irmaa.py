@@ -1,0 +1,279 @@
+"""Tests for engine.irmaa — Medicare premium surcharge tiers."""
+
+import pytest
+
+from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
+from engine.scenario import (
+    ConversionPlan,
+    run_scenario,
+)
+from models.household import Household
+
+
+def approx(expected, tol=1.0):
+    return pytest.approx(expected, abs=tol)
+
+
+class TestIRMAA:
+    def test_below_threshold(self):
+        assert irmaa_surcharge(200_000) == 0
+
+    def test_above_tier1(self):
+        assert irmaa_surcharge(220_000) > 0
+
+    def test_room_to_next(self):
+        assert irmaa_next_threshold(200_000) == approx(18_000)
+
+    def test_part_b_base_default_unchanged(self):
+        """Explicit default (202.90/mo) produces the same surcharge as the module constant."""
+        magi = 220_000
+        assert irmaa_surcharge(magi) == irmaa_surcharge(magi, base_part_b=202.90 * 12)
+
+    def test_part_b_base_higher_reduces_surcharge(self):
+        """Higher base_part_b → smaller surcharge: tier premium - higher_base < tier premium - lower_base."""
+        magi = 220_000  # above Tier 1 threshold
+        default_surcharge = irmaa_surcharge(magi)
+        higher_base_surcharge = irmaa_surcharge(magi, base_part_b=300.0 * 12)
+        assert higher_base_surcharge < default_surcharge
+
+    def test_household_field_wires_through_scenario(self):
+        """medicare_part_b_base_monthly on Household reaches irmaa_for_year via run_scenario.
+
+        Use a large conversion at age 63 so MAGI exceeds the $218K Tier 1 threshold.
+        Both spouses are 63, so the 2-year lookback puts them on Medicare at 65.
+        With default base ($202.90/mo) a positive surcharge is expected.
+        With a raised base ($300/mo) the per-tier delta shrinks, so total IRMAA is lower.
+        """
+        hh_default = Household(your_age=63, spouse_age=63)
+        hh_high_base = Household(your_age=63, spouse_age=63, medicare_part_b_base_monthly=300.0)
+        # Conversion large enough to push MAGI above Tier 1 ($218K)
+        plan = ConversionPlan(your_conversions={2026: 250_000})
+        r_default = run_scenario(hh_default, plan, end_age=68)
+        r_high = run_scenario(hh_high_base, plan, end_age=68)
+        irmaa_default = sum(yr.irmaa_cost for yr in r_default.years)
+        irmaa_high = sum(yr.irmaa_cost for yr in r_high.years)
+        assert irmaa_default > 0, "Sanity: default base must trigger IRMAA"
+        assert irmaa_high < irmaa_default
+
+    # --- PR5: prior_year_magi anchor + proper temporal accounting ---
+
+    def test_irmaa_default_year_0_unchanged_from_old_engine(self):
+        """With no prior_year_magi, year-0 IRMAA falls back to yr.magi (same as pre-PR5).
+
+        The fallback branch is reached because income_year = base_year - 2 is neither
+        in prior_year_magi nor in magi_history (which only accumulates during the loop).
+
+        At age 63 (Medicare year) the income-year age is 61; +2 → 63 < 65, so IRMAA = 0
+        even with high MAGI.  IRMAA only applies starting Medicare year when income-year
+        age >= 63 (i.e., ya >= 65 in the projection year).
+        """
+        from engine.irmaa import irmaa_for_year
+
+        hh = Household(your_age=63, spouse_age=63)
+        plan = ConversionPlan(your_conversions={2026: 250_000})
+        result = run_scenario(hh, plan, end_age=66)
+        yr0 = result.years[0]
+
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
+        expected_cost, _ = irmaa_for_year(
+            yr0.magi,
+            yr0.your_age - 2,
+            yr0.spouse_age - 2,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+        )
+        assert yr0.irmaa_cost == approx(expected_cost)
+        # age 63 projection year → income-year age 61 → Medicare age 63 < 65 → no IRMAA
+        assert yr0.irmaa_cost == approx(0.0), "Age-63 year-0 must produce zero IRMAA"
+
+    def test_irmaa_year_2_uses_year_0_magi(self):
+        """Year-2 IRMAA is anchored to year-0 MAGI (2-year lookback), not year-2 MAGI.
+
+        Build a scenario where year 0 has a large conversion (high MAGI) and
+        year 2 has no conversion (low MAGI).  Under the new semantics year-2
+        IRMAA must equal irmaa_for_year(year-0 MAGI) and differ from
+        irmaa_for_year(year-2 MAGI).
+        """
+        from engine.irmaa import irmaa_for_year
+
+        hh = Household(your_age=63, spouse_age=63)
+        # Large conversion in year 0 only — year 2 has no conversion
+        plan = ConversionPlan(your_conversions={2026: 300_000})
+        result = run_scenario(hh, plan, end_age=68)
+
+        yr0 = result.years[0]
+        yr2 = result.years[2]
+
+        # Year-2 IRMAA should reflect year-0 MAGI (high — above tier 1).
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
+        # yr2.your_age = 65 → income-year age = 63 → Medicare age = 65 → on Medicare.
+        expected_from_yr0, _ = irmaa_for_year(
+            yr0.magi,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+        )
+        # Year-2 MAGI (no conversion) should produce a lower IRMAA
+        expected_from_yr2, _ = irmaa_for_year(
+            yr2.magi,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+        )
+        assert yr2.irmaa_cost == approx(expected_from_yr0), (
+            "PR5: year-2 IRMAA must use year-0 projected MAGI"
+        )
+        assert expected_from_yr0 > expected_from_yr2, (
+            "Sanity: year-0 high-MAGI should produce more IRMAA than year-2 low-MAGI"
+        )
+
+    def test_prior_year_magi_anchor_drives_year_0_irmaa(self):
+        """prior_year_magi[base_year-2] anchors year-0 IRMAA.
+
+        When the user provides an actual filed MAGI for the lookback year the
+        engine must use it instead of the same-year fallback.
+
+        Use age 65 so income-year age is 63 → Medicare age 65 → on Medicare,
+        making the anchor observable in year-0 output.
+        """
+        from engine.irmaa import irmaa_for_year
+
+        base_year = 2026
+        filed_magi = 300_000.0  # above IRMAA Tier 1 ($218K)
+
+        hh_no_anchor = Household(your_age=65, spouse_age=65)
+        hh_anchored = Household(
+            your_age=65,
+            spouse_age=65,
+            prior_year_magi={base_year - 2: filed_magi},
+        )
+        plan = ConversionPlan()  # no conversions — year-0 MAGI low without anchor
+        r_no = run_scenario(hh_no_anchor, plan, end_age=68)
+        r_anc = run_scenario(hh_anchored, plan, end_age=68)
+
+        yr0_no = r_no.years[0]
+        yr0_anc = r_anc.years[0]
+
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally
+        expected_anchored, _ = irmaa_for_year(
+            filed_magi,
+            yr0_anc.your_age - 2,
+            yr0_anc.spouse_age - 2,
+            base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
+        )
+        assert yr0_anc.irmaa_cost == approx(expected_anchored), (
+            "Anchored IRMAA must equal irmaa_for_year(filed_magi)"
+        )
+        assert yr0_anc.irmaa_cost != approx(yr0_no.irmaa_cost, tol=1.0), (
+            "Anchor must change year-0 IRMAA vs no-anchor baseline"
+        )
+
+    def test_prior_year_magi_doesnt_affect_year_2_onwards(self):
+        """prior_year_magi anchor only applies to lookback years present in the dict.
+
+        Year-2 IRMAA is based on year-0 projected MAGI (magi_history), not on
+        any prior_year_magi value (which keys are base_year-2 and base_year-1,
+        both predating the projection window).
+        """
+        from engine.irmaa import irmaa_for_year
+
+        base_year = 2026
+        hh_anchored = Household(
+            your_age=63,
+            spouse_age=63,
+            prior_year_magi={base_year - 2: 300_000.0, base_year - 1: 310_000.0},
+        )
+        plan = ConversionPlan(your_conversions={2026: 250_000})
+        result = run_scenario(hh_anchored, plan, end_age=68)
+
+        yr0 = result.years[0]
+        yr2 = result.years[2]
+
+        # Year-2 income_year = 2028 - 2 = 2026 = base_year, which IS in magi_history.
+        # scenario passes income-year ages (ya - 2); irmaa_for_year adds +2 internally.
+        expected_from_yr0_magi, _ = irmaa_for_year(
+            yr0.magi,
+            yr2.your_age - 2,
+            yr2.spouse_age - 2,
+            base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
+        )
+        assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
+            "Year-2 IRMAA must use year-0 projected MAGI, not prior_year_magi"
+        )
+
+    def test_no_irmaa_before_medicare_eligibility(self):
+        """Ages 63/61 must produce zero IRMAA even when MAGI is well above Tier-1 ($218K).
+
+        Regression for B-1/E-1: scenario.py was passing current-year ages (ya, sa) to
+        irmaa_for_year(), which adds +2 internally.  A 63-year-old was treated as 65 →
+        IRMAA charged 2 years before Medicare eligibility.
+
+        With the fix, income-year ages (ya-2, sa-2) are passed; the function adds +2,
+        yielding the correct Medicare-year ages (63, 61) which are both < 65 → no IRMAA.
+        """
+        # MAGI well above 2026 Tier-1 threshold ($218K) — use prior_year_magi anchor
+        # so year-0 IRMAA is driven by that filed value rather than the same-year fallback.
+        hh_anchored = Household(
+            your_age=63,
+            spouse_age=61,
+            prior_year_magi={2024: 280_000.0},  # above $218K Tier-1; lookback for 2026
+        )
+        plan = ConversionPlan()  # no conversion — keep it minimal
+        result = run_scenario(hh_anchored, plan, end_age=65)
+
+        yr0 = result.years[0]  # year 2026, ya=63, sa=61 — both < Medicare eligibility age
+        assert yr0.irmaa_cost == approx(0.0), (
+            "IRMAA must be zero at age 63/61: Medicare eligibility requires age 65"
+        )
+
+    # --- Fix A: filing_status parameter on irmaa_next_threshold ---
+
+    def test_irmaa_next_threshold_mfj_unchanged_default(self):
+        """Backward-compat: omitting filing_status defaults to MFJ table.
+
+        MFJ MAGI $200K is below Tier-1 threshold ($218K) → room = $18K.
+        Must be identical when filing_status='MFJ' is passed explicitly.
+        """
+        assert irmaa_next_threshold(200_000) == approx(18_000)
+        assert irmaa_next_threshold(200_000, filing_status="MFJ") == approx(18_000)
+
+    def test_irmaa_next_threshold_single_filer_uses_single_tiers(self):
+        """Single filer MAGI $150K: above Single Tier-2 ($137K), below Tier-3 ($171K).
+
+        Next un-crossed threshold is $171K → room = $21K.
+        MFJ at same MAGI has room to Tier-1 ($218K) → $68K — confirms different table used.
+        """
+        single_room = irmaa_next_threshold(150_000, filing_status="Single")
+        mfj_room = irmaa_next_threshold(150_000, filing_status="MFJ")
+        assert single_room == approx(21_000)
+        assert mfj_room == approx(68_000)
+
+    def test_irmaa_for_year_single_filer_uses_single_tiers(self):
+        """Single filer MAGI $150K with income-year ages so medicare-year age >= 65.
+
+        $150K is above Single Tier-2 threshold ($137K), below Tier-3 ($171K).
+        Annual surcharge per person:
+          Part B total $405.80/mo → annual $4,869.60; minus base $202.90/mo * 12 = $2,434.80
+          Part B surcharge = $4,869.60 - $2,434.80 = $2,434.80
+          Part D surcharge = $37.50 * 12 = $450.00
+          Total per person = $2,884.80; 1 person on Medicare → $2,884.80.
+        """
+        from engine.irmaa import irmaa_for_year
+
+        # income_year ages: 63/55 → medicare-year ages 65/57; 1 person on Medicare
+        surcharge, medicare_year = irmaa_for_year(
+            150_000,
+            your_age_income_year=63,
+            spouse_age_income_year=55,
+            filing_status="Single",
+        )
+        assert medicare_year == 65
+        assert surcharge == approx((405.80 - 202.90) * 12 + 37.50 * 12)
+
+        # Same MAGI under MFJ: $150K < Tier-1 MFJ threshold $218K → no surcharge
+        mfj_surcharge, _ = irmaa_for_year(
+            150_000,
+            your_age_income_year=63,
+            spouse_age_income_year=55,
+            filing_status="MFJ",
+        )
+        assert mfj_surcharge == 0.0
