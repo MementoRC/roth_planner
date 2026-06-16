@@ -252,51 +252,51 @@ class TestSweetSpot:
         pytest.importorskip("streamlit")
 
     def test_base_income_no_ss_before_70(self):
-        from views.sweet_spot import _base_income_for_year
+        from engine.sweet_spot_compute import base_income_for_year
 
         hh = Household()
-        base = _base_income_for_year(hh, 2026)
-        assert base["ya"] == DEFAULTS["your_age"]
-        assert base["combined_ss"] == 0  # SS starts at 70
+        base = base_income_for_year(hh, 2026)
+        assert base.ya == DEFAULTS["your_age"]
+        assert base.combined_ss == 0  # SS starts at 70
 
     def test_base_income_has_options(self):
-        from views.sweet_spot import _base_income_for_year
+        from engine.sweet_spot_compute import base_income_for_year
 
         hh = Household()
-        base = _base_income_for_year(hh, 2026)
-        assert base["opt"] == approx(hh.grants[0].spread(hh.txn_price_now))
+        base = base_income_for_year(hh, 2026)
+        assert base.opt == approx(hh.grants[0].spread(hh.txn_price_now))
 
     def test_all_in_zero_conversion(self):
-        from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
+        from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
 
         hh = Household()
-        base = _base_income_for_year(hh, 2026)
-        result = _all_in_at_conversion(hh, base, 0, 0)
-        assert result["all_in"] == 0
-        assert result["conv_tax"] == 0
+        base = base_income_for_year(hh, 2026)
+        result = all_in_at_conversion(hh, base, 0, 0)
+        assert result.all_in == 0
+        assert result.conv_tax == 0
 
     def test_all_in_increases_with_conversion(self):
-        from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
+        from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
 
         hh = Household()
-        base = _base_income_for_year(hh, 2026)
-        r50k = _all_in_at_conversion(hh, base, 50_000, 0)
-        r100k = _all_in_at_conversion(hh, base, 100_000, 0)
-        assert r100k["all_in"] > r50k["all_in"]
-        assert r50k["conv_tax"] > 0
+        base = base_income_for_year(hh, 2026)
+        r50k = all_in_at_conversion(hh, base, 50_000, 0)
+        r100k = all_in_at_conversion(hh, base, 100_000, 0)
+        assert r100k.all_in > r50k.all_in
+        assert r50k.conv_tax > 0
 
     def test_irmaa_triggers_at_threshold(self):
-        from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
+        from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
 
         hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
-        base = _base_income_for_year(hh, 2029)  # age 64, no options
+        base = base_income_for_year(hh, 2029)  # age 64, no options
         # Find conversion just below and above IRMAA tier 1
-        below = max(218_000 - base["base_magi"] - 1_000, 0)
-        above = 218_000 - base["base_magi"] + 1_000
+        below = max(218_000 - base.base_magi - 1_000, 0)
+        above = 218_000 - base.base_magi + 1_000
         if below > 0 and above > 0:
-            r_below = _all_in_at_conversion(hh, base, below, 0)
-            r_above = _all_in_at_conversion(hh, base, above, 0)
-            assert r_above["irmaa_delta"] > r_below["irmaa_delta"]
+            r_below = all_in_at_conversion(hh, base, below, 0)
+            r_above = all_in_at_conversion(hh, base, above, 0)
+            assert r_above.irmaa_delta > r_below.irmaa_delta
 
 
 # ============================================================

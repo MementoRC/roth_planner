@@ -1,0 +1,336 @@
+"""Pure compute for the Sweet Spot Finder view.
+
+Functions return plain dataclasses; no Streamlit, no plotly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from engine.aca import aca_applies, aca_subsidy_loss
+from engine.ira import ss_benefit_at_age, ss_with_cola
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year
+from engine.niit import niit
+from engine.tax import (
+    deductions,
+    federal_tax,
+    room_to_12,
+    room_to_22,
+    senior_bonus_deduction,
+    taxable_ss,
+)
+from engine.tax_indexing import index_value as _index_value
+from models.household import Household
+
+STEP = 1_000  # sweep in $1K increments
+
+
+@dataclass
+class BaseIncome:
+    """Year-level fixed income components (no conversion)."""
+
+    ya: int
+    sa: int
+    year: int
+    cpi: float
+    opt: float
+    combined_ss: float
+    base_gross: float
+    base_magi: float
+    total_ded: float
+    ded_base: float
+
+
+@dataclass
+class ConversionResult:
+    """All-in cost decomposition at a given conversion amount."""
+
+    conv: float
+    conv_tax: float
+    irmaa_delta: float
+    aca_loss: float
+    niit_delta: float
+    all_in: float
+    magi: float
+    taxable_inc: float
+    room_12: float
+    room_22: float
+
+
+@dataclass
+class SweetSpotJump:
+    """A marginal-cost jump point (>2% per $1K spike)."""
+
+    conv: float
+    label: str
+    reason: str
+    marginal_before: float
+    marginal_after: float
+
+
+@dataclass
+class MarginalCosts:
+    """Per-$1K marginal cost components across the conversion sweep."""
+
+    marginals: list[float]
+    marginal_tax: list[float]
+    marginal_irmaa: list[float]
+    marginal_aca: list[float]
+    marginal_niit: list[float]
+
+
+@dataclass
+class YearSummary:
+    """One row of the multi-year sweet-spot summary table. Raw values; view formats."""
+
+    year: int
+    you_age: int
+    spouse_age: int
+    base_magi: float
+    fill_12: float
+    cost_12: float
+    rate_12: float
+    fill_22: float
+    cost_22: float
+    rate_22: float
+    irmaa_safe: float | None  # None if base MAGI already exceeds tier 1
+
+
+def _fmt_dollars_simple(v: float) -> str:
+    """Minimal dollar formatter used only for SweetSpotJump.label inside this module."""
+    return f"${v:,.0f}"
+
+
+def base_income_for_year(hh: Household, year: int) -> BaseIncome:
+    """Compute fixed income components for a given year (no conversion)."""
+    ya = hh.your_age_in(year)
+    sa = hh.spouse_age_in(year)
+    cpi = hh.cpi_assumption
+
+    opt = hh.option_income(year, early=True)
+
+    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
+    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
+    your_ss = (
+        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
+        if ya >= hh.your_ss_start_age
+        else 0.0
+    )
+    spouse_ss = (
+        ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+        if sa >= hh.spouse_ss_start_age
+        else 0.0
+    )
+    combined_ss = your_ss + spouse_ss
+
+    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
+
+    # Base taxable SS (without conversion)
+    tss = taxable_ss(combined_ss, opt)
+
+    # Base gross (without conversion)
+    base_gross = opt + tss
+
+    # MAGI base (without conversion)
+    base_magi = opt + combined_ss
+
+    # Senior bonus deduction
+    senior_bonus = senior_bonus_deduction(
+        ya, sa, base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+    )
+    total_ded = ded + senior_bonus
+
+    return BaseIncome(
+        ya=ya,
+        sa=sa,
+        year=year,
+        cpi=cpi,
+        opt=opt,
+        combined_ss=combined_ss,
+        base_gross=base_gross,
+        base_magi=base_magi,
+        total_ded=total_ded,
+        ded_base=ded,
+    )
+
+
+def all_in_at_conversion(
+    hh: Household, base: BaseIncome, conv: float, net_inv_income: float
+) -> ConversionResult:
+    """Compute all-in costs at a given conversion amount."""
+    ya, sa = base.ya, base.sa
+    year: int = base.year
+    cpi: float = base.cpi
+
+    # Recalculate taxable SS with conversion income
+    other_inc = base.opt + conv
+    tss = taxable_ss(base.combined_ss, other_inc)
+
+    gross = base.opt + conv + tss
+    magi = base.base_magi + conv
+
+    # Recalculate senior bonus deduction at new MAGI
+    senior_bonus = senior_bonus_deduction(
+        ya, sa, magi, year=year, cpi=cpi, filing_status=hh.filing_status
+    )
+    total_ded = base.ded_base + senior_bonus
+
+    taxable_inc = max(gross - total_ded, 0)
+    tax = federal_tax(taxable_inc, year=year, cpi=cpi)
+
+    # Base tax (no conversion)
+    base_tss = taxable_ss(base.combined_ss, base.opt)
+    base_gross = base.opt + base_tss
+    base_senior = senior_bonus_deduction(
+        ya, sa, base.base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+    )
+    base_total_ded = base.ded_base + base_senior
+    base_taxable = max(base_gross - base_total_ded, 0)
+    base_tax = federal_tax(base_taxable, year=year, cpi=cpi)
+
+    conv_tax = tax - base_tax
+
+    # IRMAA (2-year lookback)
+    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi)
+    base_irmaa, _ = irmaa_for_year(
+        base.base_magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi
+    )
+    irmaa_delta = irmaa_cost - base_irmaa
+
+    # ACA
+    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
+    aca_loss = (
+        aca_subsidy_loss(base.base_magi, magi, filing_status=hh.filing_status, year=year, cpi=cpi)
+        if anyone_on_aca
+        else 0.0
+    )
+
+    # NIIT
+    niit_with = niit(magi, net_inv_income, filing_status=hh.filing_status)
+    niit_without = niit(base.base_magi, net_inv_income, filing_status=hh.filing_status)
+    niit_delta = niit_with - niit_without
+
+    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta
+
+    return ConversionResult(
+        conv=conv,
+        conv_tax=conv_tax,
+        irmaa_delta=irmaa_delta,
+        aca_loss=aca_loss,
+        niit_delta=niit_delta,
+        all_in=all_in,
+        magi=magi,
+        taxable_inc=taxable_inc,
+        room_12=room_to_12(gross, total_ded, year=year, cpi=cpi),
+        room_22=room_to_22(gross, total_ded, year=year, cpi=cpi),
+    )
+
+
+def find_sweet_spots(results: list[ConversionResult]) -> list[SweetSpotJump]:
+    """Identify zones where marginal cost jumps significantly."""
+    spots: list[SweetSpotJump] = []
+    if len(results) < 2:
+        return spots
+
+    prev_marginal = 0.0
+    for i in range(1, len(results)):
+        curr = results[i]
+        prev = results[i - 1]
+        if curr.conv == 0:
+            continue
+        marginal = (curr.all_in - prev.all_in) / STEP * 100  # per $100
+        if i > 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
+            spots.append(
+                SweetSpotJump(
+                    conv=prev.conv,
+                    label=_fmt_dollars_simple(prev.conv),
+                    reason=classify_jump(prev, curr),
+                    marginal_before=prev_marginal,
+                    marginal_after=marginal,
+                )
+            )
+        prev_marginal = marginal
+
+    return spots
+
+
+def classify_jump(before: ConversionResult, after: ConversionResult) -> str:
+    """Classify what caused a marginal cost jump."""
+    reasons = []
+    if after.irmaa_delta > before.irmaa_delta + 100:
+        reasons.append("IRMAA tier")
+    if after.aca_loss > before.aca_loss + 100:
+        reasons.append("ACA cliff")
+    if after.niit_delta > before.niit_delta + 10:
+        reasons.append("NIIT threshold")
+    if not reasons:
+        reasons.append("bracket change")
+    return " + ".join(reasons)
+
+
+def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
+    """Compute per-$1K marginal cost components across a conversion sweep."""
+    marginals = [0.0]
+    marginal_tax = [0.0]
+    marginal_irmaa = [0.0]
+    marginal_aca = [0.0]
+    marginal_niit = [0.0]
+
+    for i in range(1, len(results)):
+        m = (results[i].all_in - results[i - 1].all_in) / STEP * 1000
+        marginals.append(m)
+        marginal_tax.append((results[i].conv_tax - results[i - 1].conv_tax) / STEP * 1000)
+        marginal_irmaa.append((results[i].irmaa_delta - results[i - 1].irmaa_delta) / STEP * 1000)
+        marginal_aca.append((results[i].aca_loss - results[i - 1].aca_loss) / STEP * 1000)
+        marginal_niit.append((results[i].niit_delta - results[i - 1].niit_delta) / STEP * 1000)
+
+    return MarginalCosts(
+        marginals=marginals,
+        marginal_tax=marginal_tax,
+        marginal_irmaa=marginal_irmaa,
+        marginal_aca=marginal_aca,
+        marginal_niit=marginal_niit,
+    )
+
+
+def compute_multi_year_summary(hh: Household, *, net_inv_income: float = 0.0) -> list[YearSummary]:
+    """Compute sweet-spot summary rows for all conversion years."""
+    conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
+    conv_years = list(range(hh.base_year, hh.base_year + conv_window))
+
+    _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+
+    rows: list[YearSummary] = []
+    for yr in conv_years:
+        cpi = hh.cpi_assumption
+        irmaa_tiers = [(_index_value(t, yr, cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers]
+
+        b = base_income_for_year(hh, yr)
+        b_result = all_in_at_conversion(hh, b, 0, net_inv_income)
+        r12 = b_result.room_12
+        r22 = b_result.room_22
+
+        tier1_threshold = irmaa_tiers[0][0]
+        irmaa_max = tier1_threshold - b.base_magi
+        irmaa_safe: float | None = max(irmaa_max, 0) if irmaa_max > 0 else None
+
+        r12_res = all_in_at_conversion(hh, b, r12, net_inv_income) if r12 > 0 else None
+        r22_res = all_in_at_conversion(hh, b, r22, net_inv_income) if r22 > 0 else None
+
+        rows.append(
+            YearSummary(
+                year=yr,
+                you_age=b.ya,
+                spouse_age=b.sa,
+                base_magi=b.base_magi,
+                fill_12=r12,
+                cost_12=r12_res.all_in if r12_res else 0.0,
+                rate_12=r12_res.all_in / max(r12, 1) if r12_res else 0.0,
+                fill_22=r22,
+                cost_22=r22_res.all_in if r22_res else 0.0,
+                rate_22=r22_res.all_in / max(r22, 1) if r22_res else 0.0,
+                irmaa_safe=irmaa_safe,
+            )
+        )
+
+    return rows

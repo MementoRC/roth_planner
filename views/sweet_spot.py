@@ -10,25 +10,21 @@ Sweeps conversion amounts from $0 to bracket ceiling and plots:
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.aca import aca_applies, aca_subsidy_loss
-from engine.ira import ss_benefit_at_age, ss_with_cola
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year
-from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE, niit
-from engine.tax import (
-    BRACKETS_MFJ,
-    deductions,
-    federal_tax,
-    room_to_12,
-    room_to_22,
-    senior_bonus_deduction,
-    taxable_ss,
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.sweet_spot_compute import (
+    STEP,
+    all_in_at_conversion,
+    base_income_for_year,
+    compute_marginal_costs,
+    compute_multi_year_summary,
+    find_sweet_spots,
 )
+from engine.tax import BRACKETS_MFJ
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
-
-STEP = 1_000  # sweep in $1K increments
 
 _FORM_8606_CAPTION = (
     "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
@@ -36,174 +32,7 @@ _FORM_8606_CAPTION = (
 )
 
 
-def _base_income_for_year(hh: Household, year: int) -> dict:
-    """Compute fixed income components for a given year (no conversion)."""
-    ya = hh.your_age_in(year)
-    sa = hh.spouse_age_in(year)
-    cpi = hh.cpi_assumption
-
-    opt = hh.option_income(year, early=True)
-
-    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
-    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
-    your_ss = (
-        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
-        if ya >= hh.your_ss_start_age
-        else 0.0
-    )
-    spouse_ss = (
-        ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
-        if sa >= hh.spouse_ss_start_age
-        else 0.0
-    )
-    combined_ss = your_ss + spouse_ss
-
-    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
-
-    # Base taxable SS (without conversion)
-    tss = taxable_ss(combined_ss, opt)
-
-    # Base gross (without conversion)
-    base_gross = opt + tss
-
-    # MAGI base (without conversion)
-    base_magi = opt + combined_ss
-
-    # Senior bonus deduction
-    senior_bonus = senior_bonus_deduction(
-        ya, sa, base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
-    )
-    total_ded = ded + senior_bonus
-
-    return {
-        "ya": ya,
-        "sa": sa,
-        "year": year,
-        "cpi": cpi,
-        "opt": opt,
-        "combined_ss": combined_ss,
-        "base_gross": base_gross,
-        "base_magi": base_magi,
-        "total_ded": total_ded,
-        "ded_base": ded,
-    }
-
-
-def _all_in_at_conversion(hh: Household, base: dict, conv: float, net_inv_income: float) -> dict:
-    """Compute all-in costs at a given conversion amount."""
-    ya, sa = base["ya"], base["sa"]
-    year: int = base["year"]
-    cpi: float = base["cpi"]
-
-    # Recalculate taxable SS with conversion income
-    other_inc = base["opt"] + conv
-    tss = taxable_ss(base["combined_ss"], other_inc)
-
-    gross = base["opt"] + conv + tss
-    magi = base["base_magi"] + conv
-
-    # Recalculate senior bonus deduction at new MAGI
-    senior_bonus = senior_bonus_deduction(
-        ya, sa, magi, year=year, cpi=cpi, filing_status=hh.filing_status
-    )
-    total_ded = base["ded_base"] + senior_bonus
-
-    taxable_inc = max(gross - total_ded, 0)
-    tax = federal_tax(taxable_inc, year=year, cpi=cpi)
-
-    # Base tax (no conversion)
-    base_tss = taxable_ss(base["combined_ss"], base["opt"])
-    base_gross = base["opt"] + base_tss
-    base_senior = senior_bonus_deduction(
-        ya, sa, base["base_magi"], year=year, cpi=cpi, filing_status=hh.filing_status
-    )
-    base_total_ded = base["ded_base"] + base_senior
-    base_taxable = max(base_gross - base_total_ded, 0)
-    base_tax = federal_tax(base_taxable, year=year, cpi=cpi)
-
-    conv_tax = tax - base_tax
-
-    # IRMAA (2-year lookback)
-    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi)
-    base_irmaa, _ = irmaa_for_year(
-        base["base_magi"], ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi
-    )
-    irmaa_delta = irmaa_cost - base_irmaa
-
-    # ACA
-    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
-    aca_loss = (
-        aca_subsidy_loss(
-            base["base_magi"], magi, filing_status=hh.filing_status, year=year, cpi=cpi
-        )
-        if anyone_on_aca
-        else 0.0
-    )
-
-    # NIIT
-    niit_with = niit(magi, net_inv_income, filing_status=hh.filing_status)
-    niit_without = niit(base["base_magi"], net_inv_income, filing_status=hh.filing_status)
-    niit_delta = niit_with - niit_without
-
-    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta
-
-    return {
-        "conv": conv,
-        "conv_tax": conv_tax,
-        "irmaa_delta": irmaa_delta,
-        "aca_loss": aca_loss,
-        "niit_delta": niit_delta,
-        "all_in": all_in,
-        "magi": magi,
-        "taxable_inc": taxable_inc,
-        "room_12": room_to_12(gross, total_ded, year=year, cpi=cpi),
-        "room_22": room_to_22(gross, total_ded, year=year, cpi=cpi),
-    }
-
-
-def _find_sweet_spots(results: list[dict]) -> list[dict]:
-    """Identify zones where marginal cost jumps significantly."""
-    spots = []
-    if len(results) < 2:
-        return spots
-
-    prev_marginal = 0.0
-    for i in range(1, len(results)):
-        curr = results[i]
-        prev = results[i - 1]
-        if curr["conv"] == 0:
-            continue
-        marginal = (curr["all_in"] - prev["all_in"]) / STEP * 100  # per $100
-        if i > 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
-            spots.append(
-                {
-                    "conv": prev["conv"],
-                    "label": fmt_dollars(prev["conv"]),
-                    "reason": _classify_jump(prev, curr),
-                    "marginal_before": prev_marginal,
-                    "marginal_after": marginal,
-                }
-            )
-        prev_marginal = marginal
-
-    return spots
-
-
-def _classify_jump(before: dict, after: dict) -> str:
-    """Classify what caused a marginal cost jump."""
-    reasons = []
-    if after["irmaa_delta"] > before["irmaa_delta"] + 100:
-        reasons.append("IRMAA tier")
-    if after["aca_loss"] > before["aca_loss"] + 100:
-        reasons.append("ACA cliff")
-    if after["niit_delta"] > before["niit_delta"] + 10:
-        reasons.append("NIIT threshold")
-    if not reasons:
-        reasons.append("bracket change")
-    return " + ".join(reasons)
-
-
-def render(hh: Household):
+def render(hh: Household) -> None:
     st.title("🎯 Sweet Spot Finder")
     st.caption(
         "Find the optimal Roth conversion amount where marginal cost jumps. "
@@ -248,16 +77,16 @@ def render(hh: Household):
     indexed_brackets_mfj = _index_brackets(BRACKETS_MFJ, selected_year, _cpi)
 
     # --- Compute base income ---
-    base = _base_income_for_year(hh, selected_year)
+    base = base_income_for_year(hh, selected_year)
 
     # --- Info bar ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Option Income", fmt_dollars(base["opt"]))
-    c2.metric("Combined SS", fmt_dollars(base["combined_ss"]))
-    c3.metric("Deductions", fmt_dollars(base["total_ded"]))
+    c1.metric("Option Income", fmt_dollars(base.opt))
+    c2.metric("Combined SS", fmt_dollars(base.combined_ss))
+    c3.metric("Deductions", fmt_dollars(base.total_ded))
 
-    base_result = _all_in_at_conversion(hh, base, 0, net_inv_income)
-    c4.metric("Base MAGI", fmt_dollars(base["base_magi"]))
+    base_result = all_in_at_conversion(hh, base, 0, net_inv_income)
+    c4.metric("Base MAGI", fmt_dollars(base.base_magi))
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
     prior_magi = st.session_state.get("prior_year_magi") or {}
@@ -272,14 +101,14 @@ def render(hh: Household):
     # --- Sweep conversion amounts ---
     max_conv = int(
         min(
-            base["total_ded"] + indexed_brackets_mfj[-2][0],  # up to 35% bracket
+            base.total_ded + indexed_brackets_mfj[-2][0],  # up to 35% bracket
             hh.your_ira + hh.spouse_ira,
         )
     )
     max_conv = min(max_conv, 800_000)  # cap at $800K for performance
 
     convs = list(range(0, max_conv + STEP, STEP))
-    results = [_all_in_at_conversion(hh, base, c, net_inv_income) for c in convs]
+    results = [all_in_at_conversion(hh, base, c, net_inv_income) for c in convs]
 
     # --- Marginal cost chart ---
     st.markdown("### Marginal All-In Cost per $1,000 Converted")
@@ -288,31 +117,13 @@ def render(hh: Household):
         "Flat sections are sweet zones; jumps indicate bracket/tier boundaries."
     )
 
-    marginals = [0.0]
-    for i in range(1, len(results)):
-        m = (results[i]["all_in"] - results[i - 1]["all_in"]) / STEP * 1000
-        marginals.append(m)
-
-    # Decompose marginals
-    marginal_tax = [0.0]
-    marginal_irmaa = [0.0]
-    marginal_aca = [0.0]
-    marginal_niit = [0.0]
-    for i in range(1, len(results)):
-        marginal_tax.append((results[i]["conv_tax"] - results[i - 1]["conv_tax"]) / STEP * 1000)
-        marginal_irmaa.append(
-            (results[i]["irmaa_delta"] - results[i - 1]["irmaa_delta"]) / STEP * 1000
-        )
-        marginal_aca.append((results[i]["aca_loss"] - results[i - 1]["aca_loss"]) / STEP * 1000)
-        marginal_niit.append(
-            (results[i]["niit_delta"] - results[i - 1]["niit_delta"]) / STEP * 1000
-        )
+    marginal_data = compute_marginal_costs(results)
 
     fig_m = go.Figure()
     fig_m.add_trace(
         go.Scatter(
             x=convs,
-            y=marginal_tax,
+            y=marginal_data.marginal_tax,
             name="Fed Tax",
             stackgroup="one",
             line={"color": "#3b82f6"},
@@ -322,29 +133,29 @@ def render(hh: Household):
     fig_m.add_trace(
         go.Scatter(
             x=convs,
-            y=marginal_irmaa,
+            y=marginal_data.marginal_irmaa,
             name="IRMAA",
             stackgroup="one",
             line={"color": "#ef4444"},
             hovertemplate="IRMAA: $%{y:.0f} per $1K<extra></extra>",
         )
     )
-    if any(v > 0 for v in marginal_aca):
+    if any(v > 0 for v in marginal_data.marginal_aca):
         fig_m.add_trace(
             go.Scatter(
                 x=convs,
-                y=marginal_aca,
+                y=marginal_data.marginal_aca,
                 name="ACA Loss",
                 stackgroup="one",
                 line={"color": "#f59e0b"},
                 hovertemplate="ACA Loss: $%{y:.0f} per $1K<extra></extra>",
             )
         )
-    if any(v > 0 for v in marginal_niit):
+    if any(v > 0 for v in marginal_data.marginal_niit):
         fig_m.add_trace(
             go.Scatter(
                 x=convs,
-                y=marginal_niit,
+                y=marginal_data.marginal_niit,
                 name="NIIT",
                 stackgroup="one",
                 line={"color": "#8b5cf6"},
@@ -355,7 +166,7 @@ def render(hh: Household):
     # Add bracket boundary lines
     bracket_boundaries = []
     for ceil, rate in indexed_brackets_mfj[:-1]:
-        boundary_conv = max(base["total_ded"] + ceil - base["base_gross"] - base["opt"], 0)
+        boundary_conv = max(base.total_ded + ceil - base.base_gross - base.opt, 0)
         # Adjust for the fact that conversion changes taxable SS
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
@@ -369,7 +180,7 @@ def render(hh: Household):
 
     # IRMAA threshold lines
     for threshold, _, _ in irmaa_tiers:
-        irmaa_conv = threshold - base["base_magi"]
+        irmaa_conv = threshold - base.base_magi
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
                 x=irmaa_conv,
@@ -380,7 +191,7 @@ def render(hh: Household):
             )
 
     # NIIT threshold line
-    niit_conv = niit_threshold - base["base_magi"]
+    niit_conv = niit_threshold - base.base_magi
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
             x=niit_conv,
@@ -401,11 +212,11 @@ def render(hh: Household):
     st.plotly_chart(fig_m, width="stretch")
 
     # --- Sweet spots ---
-    sweet_spots = _find_sweet_spots(results)
+    sweet_spots = find_sweet_spots(results)
 
     # Also find the room-to-12% and room-to-22% values
-    room_12 = base_result["room_12"]
-    room_22 = base_result["room_22"]
+    room_12 = base_result.room_12
+    room_22 = base_result.room_22
 
     st.markdown("### Recommended Conversion Zones")
 
@@ -413,28 +224,26 @@ def render(hh: Household):
     with z1:
         st.markdown("#### Fill to 12%")
         st.metric("Conversion", fmt_dollars(room_12))
-        r12_result = _all_in_at_conversion(hh, base, room_12, net_inv_income)
-        avg_rate = r12_result["all_in"] / max(room_12, 1)
-        st.metric("All-In Cost", fmt_dollars(r12_result["all_in"]), f"Avg {fmt_pct(avg_rate)}")
+        r12_result = all_in_at_conversion(hh, base, room_12, net_inv_income)
+        avg_rate = r12_result.all_in / max(room_12, 1)
+        st.metric("All-In Cost", fmt_dollars(r12_result.all_in), f"Avg {fmt_pct(avg_rate)}")
 
     with z2:
         st.markdown("#### Fill to 22%")
         st.metric("Conversion", fmt_dollars(room_22))
-        r22_result = _all_in_at_conversion(hh, base, room_22, net_inv_income)
-        avg_rate_22 = r22_result["all_in"] / max(room_22, 1)
-        st.metric("All-In Cost", fmt_dollars(r22_result["all_in"]), f"Avg {fmt_pct(avg_rate_22)}")
+        r22_result = all_in_at_conversion(hh, base, room_22, net_inv_income)
+        avg_rate_22 = r22_result.all_in / max(room_22, 1)
+        st.metric("All-In Cost", fmt_dollars(r22_result.all_in), f"Avg {fmt_pct(avg_rate_22)}")
 
     with z3:
         st.markdown("#### IRMAA-Safe Max")
         # Find the largest conversion that doesn't trigger IRMAA
-        irmaa_safe = max(irmaa_tiers[0][0] - base["base_magi"], 0)
+        irmaa_safe = max(irmaa_tiers[0][0] - base.base_magi, 0)
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
-            irmaa_result = _all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
-            avg_rate_i = irmaa_result["all_in"] / max(irmaa_safe, 1)
-            st.metric(
-                "All-In Cost", fmt_dollars(irmaa_result["all_in"]), f"Avg {fmt_pct(avg_rate_i)}"
-            )
+            irmaa_result = all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
+            avg_rate_i = irmaa_result.all_in / max(irmaa_safe, 1)
+            st.metric("All-In Cost", fmt_dollars(irmaa_result.all_in), f"Avg {fmt_pct(avg_rate_i)}")
         else:
             st.metric("All-In Cost", "N/A", "Base MAGI exceeds tier 1")
 
@@ -444,9 +253,9 @@ def render(hh: Household):
         st.caption("Converting beyond these amounts triggers a significant cost increase.")
         for sp in sweet_spots:
             st.warning(
-                f"**{sp['label']}** — marginal cost jumps from "
-                f"${sp['marginal_before']:.0f} to ${sp['marginal_after']:.0f} per $1K "
-                f"({sp['reason']})"
+                f"**{sp.label}** — marginal cost jumps from "
+                f"${sp.marginal_before:.0f} to ${sp.marginal_after:.0f} per $1K "
+                f"({sp.reason})"
             )
 
     # --- Cumulative all-in cost chart ---
@@ -457,7 +266,7 @@ def render(hh: Household):
     fig_c.add_trace(
         go.Scatter(
             x=convs,
-            y=[r["conv_tax"] for r in results],
+            y=[r.conv_tax for r in results],
             name="Federal Tax",
             stackgroup="one",
             line={"color": "#3b82f6"},
@@ -466,27 +275,27 @@ def render(hh: Household):
     fig_c.add_trace(
         go.Scatter(
             x=convs,
-            y=[r["irmaa_delta"] for r in results],
+            y=[r.irmaa_delta for r in results],
             name="IRMAA",
             stackgroup="one",
             line={"color": "#ef4444"},
         )
     )
-    if any(r["aca_loss"] > 0 for r in results):
+    if any(r.aca_loss > 0 for r in results):
         fig_c.add_trace(
             go.Scatter(
                 x=convs,
-                y=[r["aca_loss"] for r in results],
+                y=[r.aca_loss for r in results],
                 name="ACA Loss",
                 stackgroup="one",
                 line={"color": "#f59e0b"},
             )
         )
-    if any(r["niit_delta"] > 0 for r in results):
+    if any(r.niit_delta > 0 for r in results):
         fig_c.add_trace(
             go.Scatter(
                 x=convs,
-                y=[r["niit_delta"] for r in results],
+                y=[r.niit_delta for r in results],
                 name="NIIT",
                 stackgroup="one",
                 line={"color": "#8b5cf6"},
@@ -494,7 +303,7 @@ def render(hh: Household):
         )
 
     # Effective rate overlay
-    eff_rates = [r["all_in"] / max(r["conv"], 1) * 100 if r["conv"] > 0 else 0 for r in results]
+    eff_rates = [r.all_in / max(r.conv, 1) * 100 if r.conv > 0 else 0 for r in results]
     fig_c.add_trace(
         go.Scatter(
             x=convs,
@@ -526,34 +335,27 @@ def render(hh: Household):
     st.markdown("### Multi-Year Sweet Spot Summary")
     st.caption("Quick comparison of recommended zones across all conversion years.")
 
-    rows = []
-    for yr in conv_years:
-        b = _base_income_for_year(hh, yr)
-        b_result = _all_in_at_conversion(hh, b, 0, net_inv_income)
-        r12 = b_result["room_12"]
-        r22 = b_result["room_22"]
-        irmaa_max = max(irmaa_tiers[0][0] - b["base_magi"], 0)
-
-        r12_res = _all_in_at_conversion(hh, b, r12, net_inv_income) if r12 > 0 else None
-        r22_res = _all_in_at_conversion(hh, b, r22, net_inv_income) if r22 > 0 else None
-
-        row = {
-            "Year": str(yr),
-            "You/Sp": f"{b['ya']}/{b['sa']}",
-            "Base MAGI": fmt_dollars(b["base_magi"]),
-            "Fill 12%": fmt_dollars(r12),
-            "12% Cost": fmt_dollars(r12_res["all_in"]) if r12_res else "---",
-            "12% Rate": fmt_pct(r12_res["all_in"] / max(r12, 1)) if r12_res else "---",
-            "Fill 22%": fmt_dollars(r22),
-            "22% Cost": fmt_dollars(r22_res["all_in"]) if r22_res else "---",
-            "22% Rate": fmt_pct(r22_res["all_in"] / max(r22, 1)) if r22_res else "---",
-            "IRMAA Safe": fmt_dollars(irmaa_max),
-        }
-        rows.append(row)
+    summary_rows = compute_multi_year_summary(hh, net_inv_income=net_inv_income)
 
     import pandas as pd
 
-    df = pd.DataFrame(rows)
+    rows_fmt = []
+    for s in summary_rows:
+        row = {
+            "Year": str(s.year),
+            "You/Sp": f"{s.you_age}/{s.spouse_age}",
+            "Base MAGI": fmt_dollars(s.base_magi),
+            "Fill 12%": fmt_dollars(s.fill_12),
+            "12% Cost": fmt_dollars(s.cost_12) if s.fill_12 > 0 else "---",
+            "12% Rate": fmt_pct(s.rate_12) if s.fill_12 > 0 else "---",
+            "Fill 22%": fmt_dollars(s.fill_22),
+            "22% Cost": fmt_dollars(s.cost_22) if s.fill_22 > 0 else "---",
+            "22% Rate": fmt_pct(s.rate_22) if s.fill_22 > 0 else "---",
+            "IRMAA Safe": fmt_dollars(s.irmaa_safe) if s.irmaa_safe is not None else fmt_dollars(0),
+        }
+        rows_fmt.append(row)
+
+    df = pd.DataFrame(rows_fmt)
     st.dataframe(df, hide_index=True, width="stretch")
 
     # --- Guidance ---
