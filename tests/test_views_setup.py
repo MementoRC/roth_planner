@@ -46,7 +46,9 @@ class TestPyodideGating:
 
         from views import setup
 
-        source = inspect.getsource(setup.render)
+        # Post-refactor: the sync block lives in render_portfolio_tab (extracted
+        # from the original render() Portfolio tab body in PR #145).
+        source = inspect.getsource(setup.render_portfolio_tab)
         guard_pos = source.find("is_pyodide()")
         fetch_pos = source.find("fetch_portfolio(")
         assert guard_pos != -1, "is_pyodide() guard not found in render()"
@@ -96,9 +98,10 @@ class TestPdf1040ImportHelper:
 
         from views import setup
 
-        source = inspect.getsource(setup.render)
+        # Post-refactor: Joint sub-tab moved into render_parameters_tab (PR #145).
+        source = inspect.getsource(setup.render_parameters_tab)
         assert "_render_pdf_1040_import()" in source, (
-            "_render_pdf_1040_import() not called in render() — widget not wired up"
+            "_render_pdf_1040_import() not called in render_parameters_tab — widget not wired up"
         )
         magi_pos = source.find("_render_prior_year_magi_anchor()")
         pdf_pos = source.find("_render_pdf_1040_import()")
