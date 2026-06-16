@@ -15,20 +15,18 @@ from engine.aca import (
     FPL_2,
     _aca_cap_schedule,
     aca_applies,
-    aca_net_cost,
-    aca_subsidy,
-    aca_subsidy_loss,
+)
+from engine.aca_irmaa_compute import (
+    compute_cost_curves,
+    compute_year_by_year_timeline,
+    index_irmaa_tier_thresholds,
 )
 from engine.irmaa import (
     BASE_PART_B,
     IRMAA_TIERS_MFJ,
     IRMAA_TIERS_SINGLE,
-    irmaa_next_threshold,
-    irmaa_surcharge,
-    irmaa_tier,
 )
-from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE, niit
-from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
+from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
@@ -82,110 +80,12 @@ def render(hh: Household):
     # --- Generate cost curves ---
     magi_points = list(range(magi_range[0], magi_range[1] + 1, 1_000))
 
-    aca_subsidy_vals = []
-    aca_net_cost_vals = []
-    aca_loss_vals = []
-    irmaa_vals = []
-    irmaa_tier_vals = []
-    niit_vals = []
-    fed_tax_vals = []
-    marginal_vals = []
-    total_hidden_cost = []
-
     _view_year = hh.base_year
     _view_cpi = hh.cpi_assumption
-    ded = deductions(
-        hh.your_age,
-        hh.spouse_age,
-        hh.std_deduction,
-        hh.senior_extra,
-        year=_view_year,
-        cpi=_view_cpi,
+
+    curves = compute_cost_curves(
+        magi_points, base_magi, net_inv_income, hh, year=_view_year, cpi=_view_cpi
     )
-
-    for magi in magi_points:
-        # ACA (only meaningful if enrolled and pre-65)
-        if anyone_on_aca:
-            sub = aca_subsidy(
-                magi,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                year=_view_year,
-                cpi=_view_cpi,
-            )
-            aca_subsidy_vals.append(sub)
-            aca_net_cost_vals.append(
-                aca_net_cost(
-                    magi,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    year=_view_year,
-                    cpi=_view_cpi,
-                )
-            )
-            aca_loss_vals.append(
-                aca_subsidy_loss(
-                    base_magi,
-                    magi,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    year=_view_year,
-                    cpi=_view_cpi,
-                )
-            )
-        else:
-            aca_subsidy_vals.append(0)
-            aca_net_cost_vals.append(0)
-            aca_loss_vals.append(0)
-
-        # IRMAA
-        surcharge = irmaa_surcharge(
-            magi,
-            num_people=2,
-            base_part_b=hh.medicare_part_b_base_monthly * 12,
-            filing_status=hh.filing_status,
-            year=_view_year,
-            cpi=_view_cpi,
-        )
-        irmaa_vals.append(surcharge)
-        irmaa_tier_vals.append(irmaa_tier(magi))
-
-        # NIIT
-        niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
-
-        # Tax
-        bonus_ded = senior_bonus_deduction(
-            hh.your_age,
-            hh.spouse_age,
-            magi,
-            year=_view_year,
-            cpi=_view_cpi,
-            filing_status=hh.filing_status,
-        )
-        taxable = max(magi - ded - bonus_ded, 0)
-        fed_tax_vals.append(federal_tax(taxable, year=_view_year, cpi=_view_cpi))
-        marginal_vals.append(marginal_rate(taxable, year=_view_year, cpi=_view_cpi))
-
-        # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
-        base_irmaa = irmaa_surcharge(
-            base_magi,
-            num_people=2,
-            base_part_b=hh.medicare_part_b_base_monthly * 12,
-            filing_status=hh.filing_status,
-            year=_view_year,
-            cpi=_view_cpi,
-        )
-        base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
-        hidden = (
-            aca_subsidy_loss(
-                base_magi,
-                magi,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=hh.filing_status,
-                year=_view_year,
-                cpi=_view_cpi,
-            )
-            + max(surcharge - base_irmaa, 0)
-            + max(niit(magi, net_inv_income, filing_status=hh.filing_status) - base_niit, 0)
-        )
-        total_hidden_cost.append(hidden)
 
     # --- Chart 1: ACA Subsidy & Net Premium ---
     st.markdown("---")
@@ -198,7 +98,7 @@ def render(hh: Household):
             fig_aca.add_trace(
                 go.Scatter(
                     x=magi_points,
-                    y=aca_subsidy_vals,
+                    y=curves.aca_subsidy_vals,
                     name="Subsidy",
                     line={"color": "#22c55e", "width": 2},
                     hovertemplate="MAGI: $%{x:,.0f}<br>Subsidy: $%{y:,.0f}<extra></extra>",
@@ -207,7 +107,7 @@ def render(hh: Household):
             fig_aca.add_trace(
                 go.Scatter(
                     x=magi_points,
-                    y=aca_net_cost_vals,
+                    y=curves.aca_net_cost_vals,
                     name="You Pay",
                     line={"color": "#ef4444", "width": 2},
                     hovertemplate="MAGI: $%{x:,.0f}<br>You Pay: $%{y:,.0f}<extra></extra>",
@@ -256,7 +156,7 @@ def render(hh: Household):
         fig_irmaa.add_trace(
             go.Scatter(
                 x=magi_points,
-                y=irmaa_vals,
+                y=curves.irmaa_vals,
                 name="IRMAA Surcharge (2 people)",
                 line={"color": "#f59e0b", "width": 2},
                 fill="tozeroy",
@@ -267,9 +167,9 @@ def render(hh: Household):
 
         # Mark tier thresholds (indexed for base year)
         _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
-        _irmaa_tiers = [
-            (_index_value(t, _view_year, _view_cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers
-        ]
+        _irmaa_tiers = index_irmaa_tier_thresholds(
+            _base_irmaa_tiers, year=_view_year, cpi=_view_cpi
+        )
         for threshold, _part_b, _ in _irmaa_tiers:
             if magi_range[0] <= threshold <= magi_range[1]:
                 fig_irmaa.add_vline(
@@ -298,22 +198,10 @@ def render(hh: Household):
     fig_hidden = go.Figure()
 
     # Stacked area: ACA loss + IRMAA increase + NIIT increase
-    base_irmaa = irmaa_surcharge(
-        base_magi,
-        num_people=2,
-        base_part_b=hh.medicare_part_b_base_monthly * 12,
-        filing_status=hh.filing_status,
-        year=_view_year,
-        cpi=_view_cpi,
-    )
-    base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
-    irmaa_increase = [max(v - base_irmaa, 0) for v in irmaa_vals]
-    niit_increase = [max(v - base_niit, 0) for v in niit_vals]
-
     fig_hidden.add_trace(
         go.Scatter(
             x=magi_points,
-            y=aca_loss_vals,
+            y=curves.aca_subsidy_loss_vals,
             name="ACA Subsidy Lost",
             stackgroup="cost",
             line={"color": "#22c55e"},
@@ -324,7 +212,7 @@ def render(hh: Household):
     fig_hidden.add_trace(
         go.Scatter(
             x=magi_points,
-            y=irmaa_increase,
+            y=curves.irmaa_increase_vals,
             name="IRMAA Increase",
             stackgroup="cost",
             line={"color": "#f59e0b"},
@@ -335,7 +223,7 @@ def render(hh: Household):
     fig_hidden.add_trace(
         go.Scatter(
             x=magi_points,
-            y=niit_increase,
+            y=curves.niit_increase_vals,
             name=f"NIIT ({fmt_pct(NIIT_RATE)})",
             stackgroup="cost",
             line={"color": "#8b5cf6"},
@@ -348,7 +236,7 @@ def render(hh: Household):
     fig_hidden.add_trace(
         go.Scatter(
             x=magi_points,
-            y=[r * 100 for r in marginal_vals],
+            y=[r * 100 for r in curves.marginal_rate_vals],
             name="Marginal Tax Rate",
             yaxis="y2",
             line={"color": "#3b82f6", "width": 1, "dash": "dot"},
@@ -388,75 +276,26 @@ def render(hh: Household):
 
     import pandas as pd
 
+    _yr_cpi = hh.cpi_assumption
+    timeline_rows = compute_year_by_year_timeline(hh, base_magi, years=20, cpi=_yr_cpi)
+
     timeline = []
-    for yr_idx in range(20):
-        year = hh.base_year + yr_idx
-        ya = hh.your_age_in(year)
-        sa = hh.spouse_age_in(year)
-
-        you_on_aca = aca_applies(ya, hh.your_aca_enrolled)
-        sp_on_aca = aca_applies(sa, hh.spouse_aca_enrolled)
-        on_medicare_you = ya >= 65
-        on_medicare_sp = sa >= 65
-        medicare_count = sum(1 for a in [ya, sa] if a >= 65)
-
-        # Determine system per person
-        parts = []
-        if you_on_aca:
-            parts.append("ACA (you)")
-        elif on_medicare_you:
-            parts.append("Medicare (you)")
-        else:
-            parts.append("Employer (you)")
-        if sp_on_aca:
-            parts.append("ACA (sp)")
-        elif on_medicare_sp:
-            parts.append("Medicare (sp)")
-        elif hh.spouse_aca_enrolled:
-            parts.append("ACA (sp)")
-        else:
-            parts.append("Uninsured/Other (sp)")
-        system = " + ".join(parts)
-
-        # TODO: per-year filing_status for survivor timeline (see comparator.py template); using hh.filing_status uniformly for now
-        _yr_cpi = hh.cpi_assumption
-        irmaa_room = (
-            irmaa_next_threshold(base_magi, filing_status=hh.filing_status, year=year, cpi=_yr_cpi)
-            if medicare_count > 0
-            else None
-        )
-
-        row = {
-            "Year": year,
-            "You": ya,
-            "Spouse": sa,
-            "System": system,
-            "IRMAA Tier": str(irmaa_tier(base_magi)) if medicare_count > 0 else "—",
-            "IRMAA Room": fmt_dollars(irmaa_room) if irmaa_room is not None else "—",
+    for row in timeline_rows:
+        entry = {
+            "Year": row.year,
+            "You": row.you_age,
+            "Spouse": row.spouse_age,
+            "System": row.system,
+            "IRMAA Tier": str(row.irmaa_tier) if row.irmaa_tier is not None else "—",
+            "IRMAA Room": fmt_dollars(row.irmaa_room) if row.irmaa_room is not None else "—",
         }
-
-        if you_on_aca or sp_on_aca:
-            row["ACA Subsidy"] = fmt_dollars(
-                aca_subsidy(
-                    base_magi,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    year=year,
-                    cpi=_yr_cpi,
-                )
-            )
-            row["ACA You Pay"] = fmt_dollars(
-                aca_net_cost(
-                    base_magi,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    year=year,
-                    cpi=_yr_cpi,
-                )
-            )
+        if row.aca_subsidy is not None:
+            entry["ACA Subsidy"] = fmt_dollars(row.aca_subsidy)
+            entry["ACA You Pay"] = fmt_dollars(row.aca_you_pay)
         else:
-            row["ACA Subsidy"] = "—"
-            row["ACA You Pay"] = "—"
-
-        timeline.append(row)
+            entry["ACA Subsidy"] = "—"
+            entry["ACA You Pay"] = "—"
+        timeline.append(entry)
 
     df = pd.DataFrame(timeline)
     st.dataframe(df, width="stretch", hide_index=True)
