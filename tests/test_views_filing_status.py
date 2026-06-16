@@ -36,7 +36,7 @@ class TestViewFilingStatusThreading:
         """
         from dataclasses import replace
 
-        from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
+        from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
 
         hh_mfj = replace(
             Household(grants=[]),
@@ -47,19 +47,19 @@ class TestViewFilingStatusThreading:
         )
         hh_single = replace(hh_mfj, filing_status="Single")
 
-        base_mfj = _base_income_for_year(hh_mfj, hh_mfj.base_year)
-        base_single = _base_income_for_year(hh_single, hh_single.base_year)
+        base_mfj = base_income_for_year(hh_mfj, hh_mfj.base_year)
+        base_single = base_income_for_year(hh_single, hh_single.base_year)
 
         # $115K conversion: above Single T1 ($109K) but below MFJ T1 ($218K)
         conv = 115_000.0
-        r_mfj = _all_in_at_conversion(hh_mfj, base_mfj, conv, 0)
-        r_single = _all_in_at_conversion(hh_single, base_single, conv, 0)
+        r_mfj = all_in_at_conversion(hh_mfj, base_mfj, conv, 0)
+        r_single = all_in_at_conversion(hh_single, base_single, conv, 0)
 
-        assert r_mfj["irmaa_delta"] == pytest.approx(0.0, abs=1.0), (
-            f"MFJ should not trigger IRMAA at $115K conv; got {r_mfj['irmaa_delta']:.2f}"
+        assert r_mfj.irmaa_delta == pytest.approx(0.0, abs=1.0), (
+            f"MFJ should not trigger IRMAA at $115K conv; got {r_mfj.irmaa_delta:.2f}"
         )
-        assert r_single["irmaa_delta"] > 0.0, (
-            f"Single should trigger IRMAA at $115K conv; got {r_single['irmaa_delta']:.2f}"
+        assert r_single.irmaa_delta > 0.0, (
+            f"Single should trigger IRMAA at $115K conv; got {r_single.irmaa_delta:.2f}"
         )
 
     def test_sweet_spot_niit_uses_single_threshold(self):
@@ -69,7 +69,7 @@ class TestViewFilingStatusThreading:
         """
         from dataclasses import replace
 
-        from views.sweet_spot import _all_in_at_conversion, _base_income_for_year
+        from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
 
         hh_mfj = replace(
             Household(grants=[]),
@@ -80,20 +80,20 @@ class TestViewFilingStatusThreading:
         )
         hh_single = replace(hh_mfj, filing_status="Single")
 
-        base_mfj = _base_income_for_year(hh_mfj, hh_mfj.base_year)
-        base_single = _base_income_for_year(hh_single, hh_single.base_year)
+        base_mfj = base_income_for_year(hh_mfj, hh_mfj.base_year)
+        base_single = base_income_for_year(hh_single, hh_single.base_year)
 
         # $210K conversion puts MAGI above Single threshold ($200K) but below MFJ ($250K)
         conv = 210_000.0
         nii = 50_000.0
-        r_mfj = _all_in_at_conversion(hh_mfj, base_mfj, conv, nii)
-        r_single = _all_in_at_conversion(hh_single, base_single, conv, nii)
+        r_mfj = all_in_at_conversion(hh_mfj, base_mfj, conv, nii)
+        r_single = all_in_at_conversion(hh_single, base_single, conv, nii)
 
-        assert r_mfj["niit_delta"] == pytest.approx(0.0, abs=1.0), (
-            f"MFJ should not trigger NIIT at $210K conv; got {r_mfj['niit_delta']:.2f}"
+        assert r_mfj.niit_delta == pytest.approx(0.0, abs=1.0), (
+            f"MFJ should not trigger NIIT at $210K conv; got {r_mfj.niit_delta:.2f}"
         )
-        assert r_single["niit_delta"] > 0.0, (
-            f"Single should trigger NIIT at $210K conv; got {r_single['niit_delta']:.2f}"
+        assert r_single.niit_delta > 0.0, (
+            f"Single should trigger NIIT at $210K conv; got {r_single.niit_delta:.2f}"
         )
 
     # --- aca_irmaa.py ---
