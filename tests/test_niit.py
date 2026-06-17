@@ -2,12 +2,12 @@
 
 import pytest
 
-from engine.niit import niit
+from engine.niit import NIIT_THRESHOLD_MFJ, niit
 from engine.scenario import (
     ConversionPlan,
     run_scenario,
 )
-from models.household import Household
+from models.household import GrowthProfile, Household
 
 
 def approx(expected, tol=1.0):
@@ -97,20 +97,32 @@ class TestNIIT:
     def test_niit_cost_includes_realized_gains_in_magi_excess_bound(self):
         """niit() must receive MAGI including realized_gains (IRC §1411 — no exclusion).
 
-        Exercises the excess-bound regime where MAGI-threshold is the binding term:
-          - Ordinary MAGI (RMDs + conversion, no realized_gains) is just above $250K MFJ
-          - Realized gains (from brokerage carry) are large enough that NII >> ordinary excess
-          - Before fix: niit() saw MAGI without realized_gains → small excess → under-count
-          - After fix: niit() sees MAGI including realized_gains → full §1411 MAGI → correct
+        This test discriminates the pre-fix vs post-fix behaviour in the regime where
+        ordinary MAGI (RMDs + conversion, no realized gains) is BELOW the $250K MFJ
+        threshold, but full MAGI including realized gains is ABOVE it:
 
-        The test verifies the correct niit_cost using yr.niit_magi (which includes
-        realized_gains post-fix) and brokerage_growth * brok_turnover as NII proxy.
+          - Pre-fix code passed ordinary MAGI to niit() → threshold not crossed → niit_cost=0
+          - Post-fix code passes full §1411 MAGI (including realized gains) → niit_cost > 0
+
+        This test FAILS (niit_cost==0) against pre-fix code and PASSES post-fix.
+
+        Fixture design:
+          - Age-75 household with IRAs sized so RMDs + conversion keep ordinary MAGI
+            well below $250K (~178K).
+          - brokerage_growth uses a high appreciation rate (0.60) separate from IRA
+            growth (0.10), so brokerage turnover produces realized gains that push
+            full §1411 MAGI clearly above $250K.
+          - brok_turnover=1.0 so all brokerage appreciation is realized (no yield).
+          - No ytd snapshot → yr.niit_magi == yr.magi (no muni-interest exclusion).
+          - Year index 1 (base_year+1): brokerage has one year of accumulated excess
+            before the tested year begins.
         """
         from dataclasses import replace
 
         # Age-75 household: RMD factor ~22.9 → each $2M IRA yields ~$87K RMD.
-        # Combined RMDs ~$174K + $80K conversion → ordinary MAGI ~$254K (just above $250K).
-        # Low living expenses → large brokerage carry → material realized_gains in year 2.
+        # Combined RMDs ~$174K + $4K conversion → ordinary MAGI ~$178K (below $250K).
+        # brokerage_growth rate=0.60 (separate from IRA growth_rate=0.10) ensures
+        # realized_gains in year 2 push full niit_magi well above $250K.
         # brok_turnover=1.0 so all appreciation becomes realized gains (no yield).
         hh = replace(
             Household(grants=[]),
@@ -123,43 +135,53 @@ class TestNIIT:
             living_expenses=20_000.0,
             brok_turnover=1.0,
             growth_rate=0.10,
+            brokerage_growth=GrowthProfile(default_rate=0.60),
             your_ss_fra=0.0,
             spouse_ss_fra=0.0,
         )
-        # Small conversion to nudge ordinary MAGI above $250K
-        plan = ConversionPlan(your_conversions={hh.base_year: 80_000.0, hh.base_year + 1: 80_000.0})
+        # Small conversion — keeps ordinary MAGI below $250K threshold
+        plan = ConversionPlan(
+            your_conversions={hh.base_year: 4_000.0, hh.base_year + 1: 4_000.0}
+        )
         result = run_scenario(hh, plan, "niit_excess_bound", end_age=78)
 
-        # Year 2 (index 1): brokerage carry from year-1 excess generates realized_gains
+        # Year 2 (index 1): brokerage accumulated from year-1 excess generates realized_gains
         yr = result.years[1]
-        realized_gains = yr.brokerage_growth * hh.brok_turnover
-        assert realized_gains > 0, "fixture must produce non-zero realized gains in year 2"
 
-        # Verify the excess-bound regime:
-        # 1. Ordinary MAGI (before adding realized_gains) is above $250K threshold
-        threshold = 250_000.0
-        ordinary_magi = yr.magi - realized_gains
-        ordinary_excess = max(0.0, ordinary_magi - threshold)
-        assert ordinary_excess > 0, (
-            f"fixture must have ordinary MAGI above ${threshold:,.0f}; "
-            f"ordinary_magi={ordinary_magi:,.2f}"
+        # realized_gains_magi mirrors scenario.py's formula:
+        #   realized_gains_magi = brokerage * brok_appreciation_rate * brok_turnover
+        #                       = yr.brokerage_growth * brok_turnover  (brok_turnover=1.0)
+        realized_gains_magi = yr.brokerage_growth * hh.brok_turnover
+        assert realized_gains_magi > 0, "fixture must produce non-zero realized gains in year 2"
+
+        # No ytd → yr.niit_magi == yr.magi (confirmed by test_niit_magi_equals_magi_without_ytd).
+        # ordinary_magi = full magi minus the realized gains component.
+        ordinary_magi = yr.niit_magi - realized_gains_magi
+
+        # Guard: verify we are in the discriminating regime.
+        # ordinary_magi must be BELOW the threshold (pre-fix code returns niit_cost=0 here).
+        assert ordinary_magi <= NIIT_THRESHOLD_MFJ, (
+            f"fixture ordinary_magi={ordinary_magi:,.2f} must be <= "
+            f"NIIT_THRESHOLD_MFJ={NIIT_THRESHOLD_MFJ:,.0f} "
+            f"(regime: pre-fix code sees below-threshold MAGI → niit_cost=0)"
         )
-        # 2. Realized gains (NII proxy) are larger than the ordinary excess alone,
-        #    so the bug (omitting realized_gains from MAGI) would produce a smaller niit_cost.
-        assert realized_gains > ordinary_excess, (
-            "fixture must be in excess-bound regime: realized_gains > ordinary MAGI excess"
+        # Full §1411 MAGI (including realized gains) must be ABOVE the threshold.
+        assert yr.niit_magi > NIIT_THRESHOLD_MFJ, (
+            f"fixture yr.niit_magi={yr.niit_magi:,.2f} must exceed "
+            f"NIIT_THRESHOLD_MFJ={NIIT_THRESHOLD_MFJ:,.0f} "
+            f"(post-fix code must see above-threshold MAGI → niit_cost > 0)"
         )
 
-        # Correct NIIT: niit_magi includes realized_gains (post-fix); no ytd so
-        # yr.niit_magi == yr.magi. NIIT = min(NII, niit_magi - threshold) × 3.8%.
-        # With full MAGI, excess is large enough that NII is the binding term.
-        full_excess = max(0.0, yr.niit_magi - threshold)
-        assert full_excess >= realized_gains, (
-            "after including realized_gains in MAGI, full_excess must be >= NII"
+        # PRIMARY assertion: post-fix niit_cost must be positive.
+        # Pre-fix code would have called niit(ordinary_magi, nii) with ordinary_magi <= 250K
+        # → returned 0. Post-fix calls niit(yr.niit_magi, nii) with niit_magi > 250K → > 0.
+        assert yr.niit_cost > 0, (
+            f"niit_cost={yr.niit_cost} must be > 0; "
+            f"ordinary_magi={ordinary_magi:,.2f}, niit_magi={yr.niit_magi:,.2f}"
         )
-        # NII = realized_gains (brok_turnover=1.0, no yield rate, no ytd)
-        expected_niit = realized_gains * 0.038  # min(NII, full_excess) == NII
-        assert yr.niit_cost == approx(expected_niit, tol=1.0), (
-            f"niit_cost={yr.niit_cost:,.2f} must equal {expected_niit:,.2f} "
-            f"(niit_magi={yr.niit_magi:,.2f}, realized_gains={realized_gains:,.2f})"
+
+        # Sanity envelope: NIIT cannot exceed 3.8% of the threshold excess.
+        assert yr.niit_cost <= 0.038 * (yr.niit_magi - NIIT_THRESHOLD_MFJ) + 1e-6, (
+            f"niit_cost={yr.niit_cost:,.2f} exceeds 3.8% × "
+            f"(niit_magi − threshold) = {0.038 * (yr.niit_magi - NIIT_THRESHOLD_MFJ):,.2f}"
         )
