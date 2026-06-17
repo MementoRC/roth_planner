@@ -7,8 +7,9 @@ _compute_survivor_snapshot) which require no Streamlit context.
 import pytest
 
 from engine.scenario import run_no_conversion
+from engine.scenario_compare import compute_survivor_snapshot as _compute_survivor_snapshot
+from engine.scenario_compare import survivor_death_ages as _survivor_death_ages
 from models.household import Household, SurvivorScenario
-from views.comparator import _compute_survivor_snapshot, _survivor_death_ages
 
 
 @pytest.fixture

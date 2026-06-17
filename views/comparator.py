@@ -10,18 +10,17 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.scenario import (
-    ConversionPlan,
-    ScenarioResult,
-    YearResult,
-    add_bracket_fill_withdrawals,
-    auto_fill_12,
-    auto_fill_22,
-    auto_fill_irmaa_safe,
-    run_no_conversion,
-    run_scenario,
+from engine.scenario import ScenarioResult
+from engine.scenario_compare import (
+    build_scenario,
+    compute_conversion_rows,
+    compute_cumulative_net_benefit,
+    compute_milestone_rows,
+    compute_summary_rows,
+    compute_survivor_snapshot,
+    survivor_death_ages,
 )
-from models.household import Household, SurvivorScenario
+from models.household import Household
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
@@ -37,144 +36,6 @@ SCENARIO_PRESETS = {
     "IRMAA-Safe Max": "irmaa_safe",
     "Custom (from Planner)": "custom",
 }
-
-
-def _survivor_death_ages(hh: Household) -> tuple[str, list[int]]:
-    """Return (who_dies, death_ages_to_sweep) based on hh.survivor.
-
-    When hh.survivor is set: single-element list from the configured scenario.
-    When hh.survivor is None: default sweep [70, 75, 80, 85] treating 'you' as dying.
-    """
-    surv: SurvivorScenario | None = hh.survivor
-    if surv is not None:
-        who_dies = surv.who_dies
-        base_age = hh.your_age if who_dies == "you" else hh.spouse_age
-        death_age = base_age + (surv.death_year - hh.base_year)
-        return who_dies, [death_age]
-    return "you", [70, 75, 80, 85]
-
-
-def _compute_survivor_snapshot(
-    hh: Household,
-    scenarios: list[ScenarioResult],
-    who_dies: str,
-    death_ages: list[int],
-) -> list[dict[str, str]]:
-    """Compute survivor analysis rows (pure function, no Streamlit calls).
-
-    For each death_age and scenario, projects the surviving spouse's tax
-    burden 5 years after the death year using Single-filer rules.
-
-    Fixes vs legacy inline code:
-    - Uses the SURVIVING spouse's per-person rmd_start_age (not deprecated hh.rmd_start_age)
-    - Passes filing_status="Single" to taxable_ss (correct $25K/$34K thresholds)
-    - Supports who_dies="spouse" in addition to who_dies="you"
-    """
-    from engine.ira import calc_rmd, ss_with_cola
-    from engine.tax import (
-        SENIOR_EXTRA_SINGLE,
-        STD_DEDUCTION_SINGLE,
-        federal_tax_single,
-        marginal_rate_single,
-        taxable_ss,
-    )
-
-    if who_dies == "you":
-        death_col = "Your Death Age"
-        survivor_col = "Spouse Age"
-        survivor_rmd_start = hh.spouse_rmd_start_age
-
-        def _surv_age(deceased_age: int, proj: int) -> int:
-            return (deceased_age - hh.age_gap) + proj
-
-        def _surv_rate(year: int) -> float:
-            return hh.spouse_ira_rate(year)
-
-        def _yr_death_match(y: YearResult, da: int) -> bool:
-            return y.your_age == da
-
-    else:
-        death_col = "Spouse Death Age"
-        survivor_col = "Your Age"
-        survivor_rmd_start = hh.your_rmd_start_age
-
-        def _surv_age(deceased_age: int, proj: int) -> int:  # type: ignore[misc]
-            return (deceased_age + hh.age_gap) + proj
-
-        def _surv_rate(year: int) -> float:  # type: ignore[misc]
-            return hh.your_ira_rate(year)
-
-        def _yr_death_match(y: YearResult, da: int) -> bool:  # type: ignore[misc]
-            return y.spouse_age == da
-
-    deceased_base_age = hh.your_age if who_dies == "you" else hh.spouse_age
-
-    rows: list[dict[str, str]] = []
-    for death_age in death_ages:
-        row: dict[str, str] = {
-            death_col: str(death_age),
-            survivor_col: str(_surv_age(death_age, 0)),
-        }
-        for s in scenarios:
-            yr_death = next((y for y in s.years if _yr_death_match(y, death_age)), None)
-            if not yr_death:
-                row[f"{s.name} Inherited IRA"] = "---"
-                row[f"{s.name} Survivor Tax"] = "---"
-                row[f"{s.name} Bracket"] = "---"
-                continue
-
-            inherited_ira = yr_death.your_ira_begin + yr_death.spouse_ira_begin
-            survivor_ss = max(yr_death.your_ss, yr_death.spouse_ss)
-
-            proj_years = 5
-            survivor_age = _surv_age(death_age, proj_years)
-            death_year_calc = hh.base_year + (death_age - deceased_base_age)
-            rate = _surv_rate(death_year_calc + proj_years)
-            ira_grown = inherited_ira * (1 + rate) ** proj_years
-
-            # FIX: use the surviving spouse's own rmd_start_age
-            rmd = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
-
-            ss_grown = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0.0
-
-            # FIX: Single filing_status uses correct $25K/$34K SS thresholds (not MFJ $32K/$44K)
-            tss = taxable_ss(ss_grown, rmd, filing_status="Single")
-            gross = rmd + tss
-            ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
-            taxable = max(gross - ded, 0.0)
-            tax = federal_tax_single(taxable)
-            bracket = marginal_rate_single(taxable)
-
-            row[f"{s.name} Inherited IRA"] = fmt_dollars_short(inherited_ira, decimals=2)
-            row[f"{s.name} Survivor Tax"] = f"{fmt_dollars(tax)}/yr"
-            row[f"{s.name} Bracket"] = fmt_pct(bracket, 0)
-
-        rows.append(row)
-    return rows
-
-
-def _build_scenario(hh: Household, key: str) -> ScenarioResult:
-    """Build a scenario from a preset key."""
-    if key == "no_conv":
-        return run_no_conversion(hh, end_age=95)
-    if key == "fill_12":
-        return run_scenario(hh, auto_fill_12(hh), "Fill to 12%", end_age=95)
-    if key == "fill_12_bf":
-        base = auto_fill_12(hh)
-        plan = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
-        return run_scenario(hh, plan, "Fill 12% + Bracket Fill", end_age=95)
-    if key == "fill_22":
-        return run_scenario(hh, auto_fill_22(hh), "Fill to 22%", end_age=95)
-    if key == "irmaa_safe":
-        return run_scenario(hh, auto_fill_irmaa_safe(hh), "IRMAA-Safe Max", end_age=95)
-    if key == "custom":
-        plan = ConversionPlan(
-            your_conversions=dict(st.session_state.get("conv_plan_your", {})),
-            spouse_conversions=dict(st.session_state.get("conv_plan_spouse", {})),
-            qcds=dict(st.session_state.get("conv_plan_qcd", {})),
-        )
-        return run_scenario(hh, plan, "Custom Plan", end_age=95)
-    return run_no_conversion(hh, end_age=95)
 
 
 def render(hh: Household):
@@ -203,63 +64,34 @@ def render(hh: Household):
     scenarios: list[ScenarioResult] = []
     for name in selected:
         key = SCENARIO_PRESETS[name]
-        result = _build_scenario(hh, key)
+        result = build_scenario(hh, key)
         result.name = name  # override name for display
         scenarios.append(result)
 
     # --- Summary metrics ---
     st.markdown("### Summary Comparison")
 
-    def _total_conv(s: ScenarioResult) -> float:
-        return s.total_your_conv + s.total_spouse_conv
-
-    def _lifetime_tax(s: ScenarioResult) -> float:
-        return sum(yr.federal_tax_amt for yr in s.years)
-
-    def _lifetime_irmaa(s: ScenarioResult) -> float:
-        return sum(yr.irmaa_cost for yr in s.years)
-
-    def _lifetime_brok_tax(s: ScenarioResult) -> float:
-        return sum(yr.brokerage_gain_tax for yr in s.years)
-
-    def _ira_at_age(s: ScenarioResult, age: int) -> float:
-        yr = next((y for y in s.years if y.your_age == age), None)
-        return (yr.your_ira_begin + yr.spouse_ira_begin) if yr else 0
-
-    # Build summary table
-    summary_rows = []
     baseline = scenarios[0]  # first scenario is baseline for delta
-    for s in scenarios:
-        total_conv = _total_conv(s)
-        lifetime_tax = _lifetime_tax(s)
-        lifetime_irmaa = _lifetime_irmaa(s)
-        lifetime_brok = _lifetime_brok_tax(s)
-        total_cost = lifetime_tax + lifetime_irmaa + lifetime_brok
+    summaries = compute_summary_rows(scenarios, baseline)
 
-        summary_rows.append(
-            {
-                "Scenario": s.name,
-                "Total Converted": fmt_dollars(total_conv),
-                "Conv Tax Paid": fmt_dollars(s.total_conv_tax),
-                "Avg Conv Rate": fmt_pct(s.total_conv_tax / max(total_conv, 1)),
-                "Lifetime Tax": fmt_dollars(lifetime_tax),
-                "Lifetime IRMAA": fmt_dollars(lifetime_irmaa),
-                "Lifetime Brok Tax": fmt_dollars(lifetime_brok),
-                "Total All-In Cost": fmt_dollars(total_cost),
-                "vs Baseline": fmt_dollars(
-                    total_cost
-                    - (
-                        _lifetime_tax(baseline)
-                        + _lifetime_irmaa(baseline)
-                        + _lifetime_brok_tax(baseline)
-                    ),
-                    sign=True,
-                ),
-                "IRA at 75": fmt_dollars_short(_ira_at_age(s, 75), decimals=2),
-                "IRA at 85": fmt_dollars_short(_ira_at_age(s, 85), decimals=2),
-                "IRA at 95": fmt_dollars_short(_ira_at_age(s, 95), decimals=2),
-            }
-        )
+    # Format raw ScenarioSummary values into display dicts
+    summary_rows = [
+        {
+            "Scenario": s.name,
+            "Total Converted": fmt_dollars(s.total_conv),
+            "Conv Tax Paid": fmt_dollars(s.conv_tax),
+            "Avg Conv Rate": fmt_pct(s.avg_rate),
+            "Lifetime Tax": fmt_dollars(s.lifetime_tax),
+            "Lifetime IRMAA": fmt_dollars(s.lifetime_irmaa),
+            "Lifetime Brok Tax": fmt_dollars(s.lifetime_brok_tax),
+            "Total All-In Cost": fmt_dollars(s.all_in_cost),
+            "vs Baseline": fmt_dollars(s.vs_baseline, sign=True),
+            "IRA at 75": fmt_dollars_short(s.ira_at_75, decimals=2),
+            "IRA at 85": fmt_dollars_short(s.ira_at_85, decimals=2),
+            "IRA at 95": fmt_dollars_short(s.ira_at_95, decimals=2),
+        }
+        for s in summaries
+    ]
 
     df_summary = pd.DataFrame(summary_rows)
     st.dataframe(df_summary, hide_index=True, width="stretch")
@@ -357,16 +189,7 @@ def render(hh: Household):
         if i == baseline_idx:
             continue  # skip baseline vs itself
 
-        cum_benefit = []
-        cum_conv_tax = s.total_conv_tax  # sunk cost
-        cum_rmd_saved = 0.0
-        cum_brok_saved = 0.0
-
-        for yr_b, yr_s in zip(baseline_s.years, s.years, strict=False):
-            if yr_b.your_age >= 75:
-                cum_rmd_saved += yr_b.federal_tax_amt - yr_s.federal_tax_amt
-            cum_brok_saved += yr_b.brokerage_gain_tax - yr_s.brokerage_gain_tax
-            cum_benefit.append(cum_rmd_saved + cum_brok_saved - cum_conv_tax)
+        cum_benefit = compute_cumulative_net_benefit(s, baseline_s)
 
         fig_net.add_trace(
             go.Scatter(
@@ -421,18 +244,21 @@ def render(hh: Household):
     # --- Milestone comparison table ---
     st.markdown("### Key Age Milestones")
 
-    milestone_ages = [70, 75, 80, 85, 90, 95]
+    # Collect raw milestone data and build display dicts (view-layer formatting)
+    raw_milestones = compute_milestone_rows(scenarios)
+    # Group by age to reconstruct the per-age row with per-scenario columns
+    milestone_ages_list = [70, 75, 80, 85, 90, 95]
+    # Build lookup: (scenario_name, age) -> MilestoneRow
+    _ms_lookup = {(m.scenario_name, m.age): m for m in raw_milestones}
     milestone_rows = []
-    for age in milestone_ages:
-        row = {"Age": str(age), "Sp Age": str(age - hh.age_gap)}
+    for age in milestone_ages_list:
+        row: dict[str, str] = {"Age": str(age), "Sp Age": str(age - hh.age_gap)}
         for s in scenarios:
-            yr = next((y for y in s.years if y.your_age == age), None)
-            if yr:
-                ira = yr.your_ira_begin + yr.spouse_ira_begin
-                row[f"{s.name} IRA"] = fmt_dollars_short(ira, decimals=2)
-                total_rmd = yr.your_rmd + yr.spouse_rmd
-                row[f"{s.name} RMD"] = fmt_dollars(total_rmd) if total_rmd > 0 else "---"
-                row[f"{s.name} Bracket"] = fmt_pct(yr.marginal_bracket, 0)
+            m = _ms_lookup.get((s.name, age))
+            if m is not None:
+                row[f"{s.name} IRA"] = fmt_dollars_short(m.ira_balance, decimals=2)
+                row[f"{s.name} RMD"] = fmt_dollars(m.total_rmd) if m.total_rmd > 0 else "---"
+                row[f"{s.name} Bracket"] = fmt_pct(m.marginal_bracket, 0)
             else:
                 row[f"{s.name} IRA"] = "---"
                 row[f"{s.name} RMD"] = "---"
@@ -444,26 +270,23 @@ def render(hh: Household):
     # --- Conversion detail per scenario ---
     with st.expander("📋 Conversion Detail by Scenario"):
         for s in scenarios:
-            conv_total = _total_conv(s)
-            if conv_total == 0:
+            raw_conv_rows = compute_conversion_rows(s)
+            if not raw_conv_rows:
                 continue
             st.markdown(f"#### {s.name}")
-            conv_rows = []
-            for yr in s.years:
-                if yr.your_conversion > 0 or yr.spouse_conversion > 0:
-                    conv_rows.append(
-                        {
-                            "Year": str(yr.year),
-                            "You/Sp": f"{yr.your_age}/{yr.spouse_age}",
-                            "Your Conv": fmt_dollars(yr.your_conversion),
-                            "Sp Conv": fmt_dollars(yr.spouse_conversion),
-                            "Bracket": fmt_pct(yr.marginal_bracket, 0),
-                            "Conv Tax": fmt_dollars(yr.conversion_tax),
-                            "IRMAA": fmt_dollars(yr.irmaa_cost),
-                        }
-                    )
-            if conv_rows:
-                st.dataframe(pd.DataFrame(conv_rows), hide_index=True, width="stretch")
+            conv_rows = [
+                {
+                    "Year": str(r.year),
+                    "You/Sp": f"{r.your_age}/{r.spouse_age}",
+                    "Your Conv": fmt_dollars(r.your_conv),
+                    "Sp Conv": fmt_dollars(r.spouse_conv),
+                    "Bracket": fmt_pct(r.bracket, 0),
+                    "Conv Tax": fmt_dollars(r.conv_tax),
+                    "IRMAA": fmt_dollars(r.irmaa_cost),
+                }
+                for r in raw_conv_rows
+            ]
+            st.dataframe(pd.DataFrame(conv_rows), hide_index=True, width="stretch")
 
     # --- Surviving Spouse Analysis ---
     st.markdown("---")
@@ -473,7 +296,7 @@ def render(hh: Household):
         "files Single (tighter brackets), and keeps the higher of two SS benefits."
     )
 
-    who_dies, death_ages = _survivor_death_ages(hh)
+    who_dies, death_ages = survivor_death_ages(hh)
 
     # Scenario source caption
     surv = hh.survivor
@@ -490,7 +313,7 @@ def render(hh: Household):
             "set a Survivor scenario in Setup → Joint to model a specific case."
         )
 
-    survivor_rows = _compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
+    survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
 
     st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
 
