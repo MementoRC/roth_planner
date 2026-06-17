@@ -421,9 +421,16 @@ def run_scenario(
         # YTD: add realized gains, dividends, interest to investment income
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income
-        # Set base niit_magi (without realized_gains, mirroring yr.magi at this point) so
-        # niit() reads the correct value; realized_gains is added below after yr.magi += realized_gains.
-        yr.niit_magi = yr.magi - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
+        # IRC §1411: realized capital gains belong in NIIT MAGI with no exclusion.
+        # Capture the realized-gains amount upfront (identical to the first term of
+        # net_investment_income, and to brokerage_growth * brok_turnover computed in the
+        # brokerage block below) so niit() receives the full §1411 MAGI at call time.
+        realized_gains_magi = brokerage * brok_appreciation_rate * hh.brok_turnover
+        yr.niit_magi = (
+            yr.magi
+            - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
+            + realized_gains_magi
+        )
         yr.niit_cost = niit(
             yr.niit_magi, net_investment_income, filing_status=current_filing_status
         )
@@ -457,9 +464,9 @@ def run_scenario(
         realized_gains = yr.brokerage_growth * hh.brok_turnover
         # E-3: realized gains (Schedule D → AGI → MAGI) were absent from yr.magi.
         # Add here after realized_gains is known; magi_history is also updated here.
+        # yr.niit_magi already includes realized_gains_magi (set above before niit() call).
         yr.magi += realized_gains
         magi_history[year] = yr.magi
-        yr.niit_magi += realized_gains
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
         # point; realized gains + qualified dividends (IRC §1(h)(11)) walk up
         # through 0% / 15% / 20% bands.
