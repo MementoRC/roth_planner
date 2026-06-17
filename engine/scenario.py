@@ -9,29 +9,32 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from engine.aca import aca_applies, aca_excess_aptc_repayment, aca_subsidy_loss
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
+from engine.scenario_compute import (
+    compute_aca,
+    compute_bracket_room,
+    compute_brokerage_dividends,
+    compute_conversions,
+    compute_federal_tax,
+    compute_magi,
+    compute_phase,
+    compute_rmds,
+    compute_social_security,
+)
 from engine.tax import (
-    BRACKETS_SINGLE,
     LTCG_THRESHOLDS_MFJ,
     LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
-    federal_tax,
-    federal_tax_single,
-    marginal_rate,
-    marginal_rate_single,
     room_to_12,
     room_to_22,
-    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
 from engine.tax_indexing import index_tuple as _index_tuple
-from engine.tax_indexing import index_value as _index_value
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
@@ -232,19 +235,7 @@ def run_scenario(
         yr = YearResult(year=year, your_age=ya, spouse_age=sa, phase="")
 
         # === Phase classification ===
-        if (
-            ya <= min(74, hh.base_year + 2 - hh.base_year + hh.your_age)
-            and hh.option_income(year, early_exercise) > 0
-        ):
-            yr.phase = "options"
-        elif ya <= 74 and ya < 70:
-            yr.phase = "clean"
-        elif ya <= 74 and ya >= 70:
-            yr.phase = "ss_conv"
-        elif ya >= 75:
-            yr.phase = "squeeze" if sa <= 74 else "rmd"
-        else:
-            yr.phase = "clean"
+        yr.phase = compute_phase(ya, sa, year, hh, early_exercise)
 
         # === IRA balances ===
         yr.your_ira_begin = your_ira
@@ -256,13 +247,9 @@ def run_scenario(
         # === Brokerage dividend forecast ===
         # Skip in base year if YTD actuals are provided (they already carry real dividends).
         # yield_rate defaults to 0.0 on GrowthProfile, so this is zero-cost when not configured.
-        use_forecast_divs = ytd is None or year != hh.base_year
-        if use_forecast_divs and hh.brokerage_growth is not None:
-            qual_div_this_year = hh.brokerage_growth.qualified_div_for(year, brokerage)
-            ord_div_this_year = hh.brokerage_growth.ordinary_div_for(year, brokerage)
-        else:
-            qual_div_this_year = 0.0
-            ord_div_this_year = 0.0
+        qual_div_this_year, ord_div_this_year = compute_brokerage_dividends(
+            year, hh.base_year, brokerage, hh.brokerage_growth, ytd
+        )
         yr.brokerage_qual_div = qual_div_this_year
         yr.brokerage_ord_div = ord_div_this_year
 
@@ -288,29 +275,38 @@ def run_scenario(
         # are pretax). If you have non-deductible contributions tracked on Form 8606,
         # the actual taxable income from a conversion will be lower than what this
         # tool reports.
-        yr.your_conversion = plan.your_conversions.get(year, 0.0)
-        if ya > 74:
-            yr.your_conversion = 0.0  # can't convert after 74
-        yr.spouse_conversion = plan.spouse_conversions.get(year, 0.0)
-        if sa > 74:
-            yr.spouse_conversion = 0.0  # past conversion window (RMDs begin)
-
-        # Subtract conversions already done YTD from planned amount
-        if ytd_year is not None and ytd_year.ira_conversions_ytd > 0:
-            remaining = max(yr.your_conversion - ytd_year.ira_conversions_ytd, 0.0)
-            yr.your_conversion = remaining
+        yr.your_conversion, yr.spouse_conversion = compute_conversions(
+            year,
+            ya,
+            sa,
+            plan.your_conversions.get(year, 0.0),
+            plan.spouse_conversions.get(year, 0.0),
+            ytd_year,
+        )
 
         # === RMD ===
         # When survivor_active, deceased's IRA was rolled to survivor at death_year+1.
         # The deceased's IRA variable is now 0, so calc_rmd returns 0 naturally.
         # QCD: after death the deceased's QCD limit is unavailable; survivor keeps
         # their own limit (qcd_limit is per-person, so no change needed for survivor).
-        yr.your_rmd = calc_rmd(your_ira, ya, hh.your_rmd_start_age)
-        yr.qcd = min(plan.qcds.get(year, 0.0), yr.your_rmd, hh.qcd_limit)
-        yr.taxable_rmd = max(yr.your_rmd - yr.qcd, 0)
-        yr.spouse_rmd = calc_rmd(spouse_ira, sa, hh.spouse_rmd_start_age)
-        yr.spouse_qcd = min(plan.spouse_qcds.get(year, 0.0), yr.spouse_rmd, hh.qcd_limit)
-        yr.spouse_taxable_rmd = max(yr.spouse_rmd - yr.spouse_qcd, 0)
+        (
+            yr.your_rmd,
+            yr.qcd,
+            yr.taxable_rmd,
+            yr.spouse_rmd,
+            yr.spouse_qcd,
+            yr.spouse_taxable_rmd,
+        ) = compute_rmds(
+            your_ira,
+            spouse_ira,
+            ya,
+            sa,
+            hh.your_rmd_start_age,
+            hh.spouse_rmd_start_age,
+            plan.qcds.get(year, 0.0),
+            plan.spouse_qcds.get(year, 0.0),
+            hh.qcd_limit,
+        )
 
         # === Extra voluntary withdrawals (bracket fill post-RMD) ===
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
@@ -338,96 +334,52 @@ def run_scenario(
         yr.your_inherited_distribution = your_inherited_distribution
         yr.spouse_inherited_distribution = spouse_inherited_distribution
 
-        # === Social Security ===
-        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
-        spouse_ss_base = ss_benefit_at_age(
-            hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age
-        )
-        yr.your_ss = (
-            ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
-            if ya >= hh.your_ss_start_age
-            else 0.0
-        )
-        yr.spouse_ss = (
-            ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
-            if sa >= hh.spouse_ss_start_age
-            else 0.0
-        )
-        # Survivor: zero the deceased spouse's SS from death_year + 1 onward
+        # === Social Security + taxable SS ===
         # (SS survivor benefit step-up is NOT yet modeled — deferred to future PR)
-        if survivor_active:
-            assert surv is not None  # narrowing: survivor_active implies surv is not None
-            if surv.who_dies == "you":
-                yr.your_ss = 0.0
-            else:
-                yr.spouse_ss = 0.0
-        yr.combined_ss = yr.your_ss + yr.spouse_ss
-
-        # === SS taxation (computed before MAGI — D-1: MAGI uses taxable SS, not full SS) ===
-        # other_inc excludes SS itself (provisional income formula adds 50% SS separately
-        # inside taxable_ss()). All non-SS ordinary income sources are included.
-        other_inc = (
-            yr.option_income
-            + yr.your_conversion
-            + yr.spouse_conversion
-            + yr.taxable_rmd
-            + yr.spouse_taxable_rmd
-            + yr.extra_withdrawal
-            + yr.spouse_extra_withdrawal
-        )
-        # YTD ordinary income affects SS taxation.
-        # Includes wages, NEC, STCG, ordinary dividends, conversions already
-        # done, IRA distributions, and interest — matching total_ordinary_income
-        # minus nqo_exercise_ytd (NQO spread is captured in option_income for
-        # the base year, not double-counted here).
-        if ytd_year is not None:
-            other_inc += (
-                ytd_year.wages_ytd
-                + ytd_year.nec_income_ytd
-                + ytd_year.stcg_ytd
-                + ytd_year.ordinary_dividends_ytd
-                + ytd_year.ira_conversions_ytd
-                + ytd_year.ira_distributions_ytd
-                + ytd_year.interest_ytd  # C-3: fully taxable ordinary interest (IRC §86(b)(2))
-            )
-        # A-3: inherited IRA distributions are AGI → required in provisional income (IRC §86(b)(2))
-        other_inc += yr.your_inherited_distribution + yr.spouse_inherited_distribution
-        # B-3: forecast ordinary brokerage dividends are ordinary income → provisional income
-        other_inc += ord_div_this_year
-        yr.taxable_ss_amt = taxable_ss(
-            yr.combined_ss, other_inc, filing_status=current_filing_status
+        # D-1: MAGI uses taxable SS, not full SS (computed here, before MAGI block).
+        yr.your_ss, yr.spouse_ss, yr.combined_ss, yr.taxable_ss_amt = compute_social_security(
+            hh,
+            ya,
+            sa,
+            survivor_active,
+            surv.who_dies if surv is not None else None,
+            current_filing_status,
+            yr.your_conversion,
+            yr.spouse_conversion,
+            yr.taxable_rmd,
+            yr.spouse_taxable_rmd,
+            yr.extra_withdrawal,
+            yr.spouse_extra_withdrawal,
+            yr.option_income,
+            yr.your_inherited_distribution,
+            yr.spouse_inherited_distribution,
+            ord_div_this_year,
+            ytd_year,
         )
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
         # D-1: use taxable_ss_amt (up to 85% of SS) not full combined_ss — per §1395r(i)(4)
-        #      AGI includes only the taxable portion of SS (IRC §86), not the gross benefit.
-        # C-7: subtract nqo_exercise_ytd from option_income contribution when ytd is present —
-        #      magi_ytd already includes nqo_exercise_ytd, so using full option_income would
-        #      double-count the exercised portion.
+        # C-7: subtract nqo_exercise_ytd from option_income contribution when ytd is present.
         # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
+        # NOTE: realized_gains intentionally excluded here; added after brokerage block below.
         option_income_for_magi = yr.option_income - (
             ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
         )
-        yr.magi = (
-            option_income_for_magi
-            + yr.your_conversion
-            + yr.spouse_conversion
-            + yr.taxable_rmd
-            + yr.spouse_taxable_rmd
-            + yr.extra_withdrawal
-            + yr.spouse_extra_withdrawal
-            + yr.taxable_ss_amt
-            + yr.your_inherited_distribution
-            + yr.spouse_inherited_distribution
+        yr.magi = compute_magi(
+            option_income_for_magi,
+            yr.your_conversion,
+            yr.spouse_conversion,
+            yr.taxable_rmd,
+            yr.spouse_taxable_rmd,
+            yr.extra_withdrawal,
+            yr.spouse_extra_withdrawal,
+            yr.taxable_ss_amt,
+            yr.your_inherited_distribution,
+            yr.spouse_inherited_distribution,
+            qual_div_this_year,
+            ord_div_this_year,
+            ytd_year,
         )
-        # YTD: add all MAGI components via the canonical magi_ytd property.
-        # Using the property ensures parity with _auto_fill_core and avoids
-        # missing fields (nec_income_ytd, ira_conversions_ytd,
-        # ira_distributions_ytd were absent in the prior manual enumeration).
-        if ytd_year is not None:
-            yr.magi += ytd_year.magi_ytd
-        # Forecast brokerage dividends: both qual and ord affect MAGI
-        yr.magi += qual_div_this_year + ord_div_this_year
 
         # Accumulate projected MAGI for future IRMAA lookback resolution
         # (E-3: realized_gains not yet known here — added below after brokerage block)
@@ -486,25 +438,17 @@ def run_scenario(
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
-        # === Federal tax ===
-        if survivor_active:
-            yr.federal_tax_amt = federal_tax_single(yr.taxable_income, year=year, cpi=cpi)
-            yr.marginal_bracket = marginal_rate_single(yr.taxable_income, year=year, cpi=cpi)
-        else:
-            yr.federal_tax_amt = federal_tax(yr.taxable_income, year=year, cpi=cpi)
-            yr.marginal_bracket = marginal_rate(yr.taxable_income, year=year, cpi=cpi)
-
-        # === Conversion tax (incremental) ===
-        base_gross = yr.combined_gross - yr.your_conversion - yr.spouse_conversion
-        base_taxable = max(base_gross - yr.total_deductions, 0)
-        if survivor_active:
-            yr.conversion_tax = federal_tax_single(
-                yr.taxable_income, year=year, cpi=cpi
-            ) - federal_tax_single(base_taxable, year=year, cpi=cpi)
-        else:
-            yr.conversion_tax = federal_tax(yr.taxable_income, year=year, cpi=cpi) - federal_tax(
-                base_taxable, year=year, cpi=cpi
-            )
+        # === Federal tax + conversion tax (incremental) ===
+        yr.federal_tax_amt, yr.marginal_bracket, yr.conversion_tax = compute_federal_tax(
+            yr.taxable_income,
+            yr.combined_gross,
+            yr.your_conversion,
+            yr.spouse_conversion,
+            yr.total_deductions,
+            survivor_active,
+            year,
+            cpi,
+        )
 
         # === IRMAA (2-year lookback) ===
         # IRMAA paid in year Y is based on filed MAGI of year Y-2.
@@ -537,51 +481,30 @@ def run_scenario(
             yr.magi, filing_status=current_filing_status, year=year, cpi=cpi
         )
 
-        # === ACA subsidy loss ===
+        # === ACA subsidy loss + clawback ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.
         # Audit B-4: scale the couple benchmark when only one spouse is on ACA.
-        # When one spouse turns 65 and moves to Medicare the solo SLCSP is roughly
-        # 50-60% of the couple value; halving is the documented approximation.
-        num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
-            1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
+        yr.aca_magi, yr.aca_loss, yr.aca_clawback = compute_aca(
+            yr.magi,
+            yr.combined_ss,
+            yr.taxable_ss_amt,
+            yr.your_conversion,
+            yr.spouse_conversion,
+            ya,
+            sa,
+            hh.your_aca_enrolled,
+            hh.spouse_aca_enrolled,
+            hh.aca_benchmark_premium_annual,
+            hh.aca_enhanced_subsidies_active,
+            hh.advance_aptc_annual,
+            current_filing_status,
+            year,
+            cpi,
         )
-        # ACA MAGI per IRC §36B(d)(2)(B)(iii): AGI + tax-exempt interest + non-taxable SS.
-        # yr.magi already includes taxable_ss_amt; add the non-taxable remainder.
-        # Distinct from yr.magi (IRMAA §1839(i)(4)) which does NOT add non-taxable SS.
-        yr.aca_magi = yr.magi + (yr.combined_ss - yr.taxable_ss_amt)
-        if num_on_aca > 0:
-            effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
-            base_aca_magi = yr.aca_magi - yr.your_conversion - yr.spouse_conversion
-            yr.aca_loss = aca_subsidy_loss(
-                base_aca_magi,
-                yr.aca_magi,
-                effective_benchmark,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=current_filing_status,
-                year=year,
-                cpi=cpi,
-            )
-        else:
-            yr.aca_loss = 0.0
-
-        # === ACA excess-APTC clawback (Form 8962 line 29) ===
-        # P.L. 119-21 eliminated the IRC §36B(f)(2)(B) repayment cap for TY 2026+.
-        # Only applies when household elected advance APTC payments.
-        if hh.advance_aptc_annual > 0:
-            yr.aca_clawback = aca_excess_aptc_repayment(
-                advance_aptc_annual=hh.advance_aptc_annual,
-                actual_magi=yr.aca_magi,
-                benchmark_premium_annual=hh.aca_benchmark_premium_annual,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=current_filing_status,
-                year=yr.year,
-                cpi=cpi,
-            )
-            # Positive clawback = additional tax; negative = additional refund.
-            # DO NOT subtract from aca_loss — they model different things.
+        # Positive clawback = additional tax; negative = additional refund.
+        # DO NOT subtract from aca_loss — they model different things.
+        if yr.aca_clawback != 0.0:
             yr.federal_tax_amt += yr.aca_clawback
-        else:
-            yr.aca_clawback = 0.0
 
         # === LTCG tax (computed separately at preferential rate) ===
         # Stack-walk 0%/15%/20% brackets: ordinary taxable income sets the
@@ -631,21 +554,9 @@ def run_scenario(
         yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost
 
         # === Bracket room ===
-        if survivor_active:
-            # Single brackets: index ceilings for the current year
-            yr.room_12 = room_to_bracket(
-                yr.combined_gross,
-                yr.total_deductions,
-                _index_value(BRACKETS_SINGLE[1][0], year, cpi),
-            )
-            yr.room_22 = room_to_bracket(
-                yr.combined_gross,
-                yr.total_deductions,
-                _index_value(BRACKETS_SINGLE[2][0], year, cpi),
-            )
-        else:
-            yr.room_12 = room_to_12(yr.combined_gross, yr.total_deductions, year=year, cpi=cpi)
-            yr.room_22 = room_to_22(yr.combined_gross, yr.total_deductions, year=year, cpi=cpi)
+        yr.room_12, yr.room_22 = compute_bracket_room(
+            yr.combined_gross, yr.total_deductions, survivor_active, year, cpi
+        )
 
         # === Living expenses & brokerage ===
         years_from_base = yr_idx
