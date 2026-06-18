@@ -128,6 +128,7 @@ def compute_headroom(
     # --- Deductions (same for both scenarios) ---
     # Use locked MAGI for deduction phaseout (conservative — planned income may change)
     locked_magi = ytd.magi_ytd + combined_ss
+    locked_niit_magi = ytd.niit_magi_ytd + combined_ss
     result.locked_magi = locked_magi
     ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
     ded += senior_bonus_deduction(ya, sa, locked_magi, year=_year, cpi=_cpi)
@@ -145,11 +146,12 @@ def compute_headroom(
     irmaa_t1 = index_value(base_irmaa_tiers[0][0], _year, _cpi)
     niit_threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
     result.room_to_irmaa_t1 = max(irmaa_t1 - locked_magi, 0.0)
-    result.room_to_niit = max(niit_threshold - locked_magi, 0.0)
+    result.room_to_niit = max(niit_threshold - locked_niit_magi, 0.0)
 
     # === WITH PLANNED (locked + option exercise) ===
 
     planned_magi = locked_magi + opt
+    planned_niit_magi = locked_niit_magi + opt
     result.projected_magi_base = planned_magi
 
     planned_other = locked_other + opt
@@ -163,7 +165,7 @@ def compute_headroom(
     result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned, year=_year, cpi=_cpi)
     result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned, year=_year, cpi=_cpi)
     result.room_to_irmaa_t1_with_planned = max(irmaa_t1 - planned_magi, 0.0)
-    result.room_to_niit_with_planned = max(niit_threshold - planned_magi, 0.0)
+    result.room_to_niit_with_planned = max(niit_threshold - planned_niit_magi, 0.0)
 
     # === IRMAA relevance check (age-aware) ===
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
