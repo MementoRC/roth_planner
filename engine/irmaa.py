@@ -9,6 +9,8 @@ Key facts:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
 # 2026 IRMAA thresholds (MFJ).
@@ -39,7 +41,7 @@ BASE_PART_D = 0.0  # base Part D surcharge is $0
 
 
 def _index_irmaa_tiers(
-    base_tiers: list[tuple[float, float, float]],
+    base_tiers: Sequence[tuple[float, float, float]],
     year: int,
     cpi: float,
 ) -> list[tuple[float, float, float]]:
@@ -50,7 +52,7 @@ def _index_irmaa_tiers(
     and must never be indexed forward.
     """
     if not base_tiers:
-        return base_tiers
+        return []
     indexed = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers[:-1]]
     # Last tier: preserve base threshold exactly (frozen)
     last_t, last_pb, last_pd = base_tiers[-1]
