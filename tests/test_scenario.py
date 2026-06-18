@@ -456,21 +456,27 @@ class TestRothBalanceTracking:
     # Test 3: grid-01 bias fix — converted principal still exists in Roth
     # ------------------------------------------------------------------
 
-    def test_conversion_does_not_destroy_total_tax_advantaged_assets(self):
-        """INVARIANT: conversion scenario total assets ≈ no-conversion total assets.
+    def test_conversion_does_not_destroy_total_net_worth(self):
+        """INVARIANT: conversion scenario net worth is not materially below no-conversion.
 
-        Pre-fix behaviour (grid-01 bug): conversions were debited from IRA
-        but the Roth was never credited, so total tax-advantaged assets
-        dropped by approximately the full converted principal.  That made
-        the Roth conversion look like it destroyed wealth and biased the
-        grid metric against converting.
+        Pre-fix behaviour (grid-01 bug): conversions were debited from IRA but
+        the Roth was never credited, so total assets dropped by approximately
+        the full converted principal — making Roth conversions appear to destroy
+        wealth and biasing the grid metric against converting.
 
-        Post-fix invariant: the difference in total tax-advantaged assets
-        between the two scenarios at end-of-horizon must be driven by tax
-        drag and growth-rate differences — NOT by disappearing principal.
-        We assert the gap is less than 50% of the total converted principal.
-        If the pre-fix bug were present the gap would exceed ~100% of the
-        converted principal (plus compounded growth).
+        Post-fix invariant: "total net worth" = IRA + Roth + brokerage for BOTH
+        scenarios.  The no-conversion scenario accumulates RMD proceeds in the
+        brokerage account (taxable), while the conversion scenario keeps money in
+        tax-free, RMD-free Roth.  Including brokerage makes the comparison fair.
+
+        The assertion proves that conversions are NOT penalised: the conversion
+        scenario's net worth must not be more than 10% of total converted principal
+        BELOW the no-conversion net worth.
+
+        Pre-fix: total_conv ≈ total_noconv − principal  →  fails this bound.
+        Post-fix: converted principal lives in Roth; total_conv ≥ total_noconv
+                  (Roth's RMD-free, tax-free compounding is at least as good),
+                  so passes with wide margin.
         """
         base_year = 2026
         conv_amount = 80_000.0
@@ -491,31 +497,38 @@ class TestRothBalanceTracking:
         last_conv = result_conv.years[-1]
         last_noconv = result_noconv.years[-1]
 
-        # Total tax-advantaged assets at end of horizon
+        # True end-of-horizon net worth: IRA + Roth + brokerage.
+        # Brokerage must be included because the no-conversion scenario parks
+        # RMD proceeds there; omitting it would make that scenario look poorer
+        # than it is and produce a spurious asymmetry.
         total_conv = (
             last_conv.your_ira_end
             + last_conv.spouse_ira_end
             + last_conv.your_roth_end
             + last_conv.spouse_roth_end
+            + last_conv.brokerage_balance
         )
         total_noconv = (
             last_noconv.your_ira_end
             + last_noconv.spouse_ira_end
             + last_noconv.your_roth_end
             + last_noconv.spouse_roth_end
+            + last_noconv.brokerage_balance
         )
 
         total_converted_principal = conv_amount * 5  # 400_000
 
-        # INVARIANT: the gap must be small relative to total converted principal.
-        # Pre-fix: |gap| ≈ total_converted_principal * (1 + rate)^years >> 50%.
-        # Post-fix: |gap| reflects only tax drag (conversion_tax paid), which is
-        # far less than the full principal.
-        gap = abs(total_conv - total_noconv)
-        assert gap < total_converted_principal * 0.5, (
-            f"Gap {gap:,.0f} exceeds 50% of converted principal {total_converted_principal:,.0f}. "
-            f"This indicates converted principal is not being credited to Roth (grid-01 bug). "
-            f"conv_total={total_conv:,.0f}, noconv_total={total_noconv:,.0f}"
+        # INVARIANT: converted principal must not disappear.
+        # Allow up to 10% of principal as slack for tax drag on conversion income.
+        # Pre-fix: total_conv ≈ total_noconv - principal  (≫ 10% below) → FAIL.
+        # Post-fix: total_conv ≥ total_noconv or only modestly below → PASS.
+        assert total_conv >= total_noconv - total_converted_principal * 0.1, (
+            f"Conversion scenario net worth is too far below no-conversion: "
+            f"total_conv={total_conv:,.0f}, total_noconv={total_noconv:,.0f}, "
+            f"gap={total_noconv - total_conv:,.0f} exceeds 10% of converted "
+            f"principal {total_converted_principal:,.0f}. "
+            f"This indicates converted principal is not being credited to Roth "
+            f"(grid-01 bug) or is being taxed away entirely."
         )
 
     # ------------------------------------------------------------------
