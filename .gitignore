@@ -52,3 +52,7 @@ logs/
 sessions/
 metadata/
 agents/
+
+# Local-only caches and AI scratch (not project code)
+.tax_pdf_cache.json
+ai_docs/
