@@ -306,6 +306,14 @@ def render_parameters_tab(hh: Household) -> None:
             disabled=_synced,
             help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
         )
+        st.session_state.your_roth = st.number_input(
+            "Your Roth IRA" + (" (synced)" if _synced else ""),
+            value=st.session_state.get("your_roth", 0),
+            step=50_000,
+            format="%d",
+            disabled=_synced,
+            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
+        )
         st.session_state.your_age = st.number_input(
             "Your Age",
             value=st.session_state.your_age,
@@ -358,6 +366,14 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             disabled=_synced,
             help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
+        )
+        st.session_state.spouse_roth = st.number_input(
+            "Spouse Roth IRA" + (" (synced)" if _synced else ""),
+            value=st.session_state.get("spouse_roth", 0),
+            step=50_000,
+            format="%d",
+            disabled=_synced,
+            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
         st.session_state.spouse_age = st.number_input(
             "Spouse Age",

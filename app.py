@@ -25,6 +25,8 @@ def _seed_session_state() -> None:
         "spouse_age": "spouse_age",
         "your_ira": "your_ira",
         "spouse_ira": "spouse_ira",
+        "your_roth": "your_roth",
+        "spouse_roth": "spouse_roth",
         "your_ss_fra": "your_ss_fra",
         "spouse_ss_fra": "spouse_ss_fra",
         "living_expenses": "living_expenses",
@@ -67,12 +69,18 @@ if "portfolio_snapshot" not in st.session_state:
     if _cached is not None:
         st.session_state.portfolio_snapshot = _cached
         from engine.upload_merge import derive_ira_balances as _derive_ira
+        from engine.upload_merge import derive_roth_balances as _derive_roth
 
         _your_ira, _spouse_ira = _derive_ira(_cached)
         if _your_ira > 0:
             st.session_state.your_ira = int(_your_ira)
         if _spouse_ira > 0:
             st.session_state.spouse_ira = int(_spouse_ira)
+        _your_roth, _spouse_roth = _derive_roth(_cached)
+        if _your_roth > 0:
+            st.session_state.your_roth = int(_your_roth)
+        if _spouse_roth > 0:
+            st.session_state.spouse_roth = int(_spouse_roth)
 
 if "tax_return_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_tax_snapshot
@@ -145,6 +153,8 @@ def get_household() -> Household:
         spouse_age=st.session_state.spouse_age,
         your_ira=st.session_state.your_ira,
         spouse_ira=st.session_state.spouse_ira,
+        your_roth=st.session_state.get("your_roth", 0),
+        spouse_roth=st.session_state.get("spouse_roth", 0),
         your_ss_fra=st.session_state.your_ss_fra,
         spouse_ss_fra=st.session_state.spouse_ss_fra,
         growth_rate=st.session_state.growth_rate / 100,
@@ -196,6 +206,7 @@ def get_household() -> Household:
     if snap and snap.server_available:
         # Your pre-tax accounts (Rollover IRA + 403b) → your_ira balance & growth
         from engine.upload_merge import derive_ira_balances as _derive_ira
+        from engine.upload_merge import derive_roth_balances as _derive_roth
 
         _your_pretax, _spouse_pretax = _derive_ira(snap)
         if _your_pretax > 0:
@@ -215,6 +226,32 @@ def get_household() -> Household:
             hh.spouse_ira_growth = GrowthProfile(
                 default_rate=_spouse_pretax_weighted_return,
             )
+
+        # Roth IRA accounts → your_roth / spouse_roth balance & growth.
+        # PortfolioSnapshot has no roth_weighted_return property (only pretax_ and brokerage_),
+        # so we compute the weighted return inline from filtered account lists.
+        # If no Roth accounts exist in the snapshot, balances stay as session_state values.
+        _your_roth_bal, _spouse_roth_bal = _derive_roth(snap)
+        if _your_roth_bal > 0:
+            hh.your_roth = _your_roth_bal
+            _your_roth_accounts = [a for a in snap.accounts if a.owner == "you" and a.is_roth]
+            _your_roth_return = (
+                sum(a.total_value * a.weighted_return for a in _your_roth_accounts)
+                / _your_roth_bal
+                if _your_roth_accounts
+                else hh.growth_rate
+            )
+            hh.your_roth_growth = GrowthProfile(default_rate=_your_roth_return)
+        if _spouse_roth_bal > 0:
+            hh.spouse_roth = _spouse_roth_bal
+            _spouse_roth_accounts = [a for a in snap.accounts if a.owner == "spouse" and a.is_roth]
+            _spouse_roth_return = (
+                sum(a.total_value * a.weighted_return for a in _spouse_roth_accounts)
+                / _spouse_roth_bal
+                if _spouse_roth_accounts
+                else hh.growth_rate
+            )
+            hh.spouse_roth_growth = GrowthProfile(default_rate=_spouse_roth_return)
 
         # Brokerage weighted return + dividend forecast (aggregate across all owners)
         brokerage_accounts = snap.brokerage_accounts

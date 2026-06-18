@@ -30,6 +30,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         spouse_field_map = {
             "your_age": "spouse_age",
             "your_ira": "spouse_ira",
+            "your_roth": "spouse_roth",
             "your_ss_fra": "spouse_ss_fra",
             "your_ss_start_age": "spouse_ss_start_age",
             "your_rmd_start_age": "spouse_rmd_start_age",
@@ -44,6 +45,8 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         "spouse_age",
         "your_ira",
         "spouse_ira",
+        "your_roth",
+        "spouse_roth",
         "your_ss_fra",
         "spouse_ss_fra",
         "your_ss_start_age",
@@ -92,4 +95,17 @@ def derive_ira_balances(snap: PortfolioSnapshot) -> tuple[float, float]:
     """
     your_total = sum(a.total_value for a in snap.accounts if a.owner == "you" and a.is_pretax)
     spouse_total = sum(a.total_value for a in snap.accounts if a.owner == "spouse" and a.is_pretax)
+    return float(your_total), float(spouse_total)
+
+
+def derive_roth_balances(snap: PortfolioSnapshot) -> tuple[float, float]:
+    """Return (your_roth_total, spouse_roth_total) from a snapshot, filtered by owner.
+
+    Both values are floats summed across Roth IRA accounts. Mirrors
+    derive_ira_balances but filters a.is_roth instead of a.is_pretax.
+    Used by app.py and views/setup/portfolio.py to populate
+    Household.your_roth / Household.spouse_roth.
+    """
+    your_total = sum(a.total_value for a in snap.accounts if a.owner == "you" and a.is_roth)
+    spouse_total = sum(a.total_value for a in snap.accounts if a.owner == "spouse" and a.is_roth)
     return float(your_total), float(spouse_total)
