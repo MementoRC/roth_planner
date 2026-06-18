@@ -283,10 +283,10 @@ class TestIRMAATier5Frozen:
     """Tier 5 (top bracket) is frozen by statute — never CPI-indexed."""
 
     # 2026 base values (directly from module constants)
-    _MFJ_TOP = IRMAA_TIERS_MFJ[-1][0]    # 750_000
+    _MFJ_TOP = IRMAA_TIERS_MFJ[-1][0]  # 750_000
     _SGL_TOP = IRMAA_TIERS_SINGLE[-1][0]  # 500_000
     # A lower tier that IS indexed (Tier 4)
-    _MFJ_T4 = IRMAA_TIERS_MFJ[-2][0]     # 410_000
+    _MFJ_T4 = IRMAA_TIERS_MFJ[-2][0]  # 410_000
 
     def test_base_year_all_tiers_unchanged(self):
         """2026 (base year) — all tier thresholds must equal their base values."""
@@ -295,7 +295,7 @@ class TestIRMAATier5Frozen:
 
         tiers_mfj = _index_irmaa_tiers(IRMAA_TIERS_MFJ, BASE_YEAR, DEFAULT_CPI)
         for i, ((base_t, _, _), (indexed_t, _, _)) in enumerate(
-            zip(IRMAA_TIERS_MFJ, tiers_mfj)
+            zip(IRMAA_TIERS_MFJ, tiers_mfj, strict=False)
         ):
             assert indexed_t == pytest.approx(base_t, abs=1), (
                 f"MFJ Tier {i + 1}: base year must be unchanged"
