@@ -11,29 +11,51 @@ from __future__ import annotations
 
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
-# 2026 IRMAA thresholds (MFJ) — indexed annually
+# 2026 IRMAA thresholds (MFJ).
+# Tiers 1-4 are CPI-indexed annually; Tier 5 ($750K) is FROZEN by statute since 2020.
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
-    (218_000, 284.10 * 12, 14.50 * 12),  # Tier 1
-    (274_000, 405.80 * 12, 37.50 * 12),  # Tier 2
-    (342_000, 527.50 * 12, 60.40 * 12),  # Tier 3
-    (410_000, 649.20 * 12, 83.30 * 12),  # Tier 4
-    (750_000, 689.90 * 12, 91.00 * 12),  # Tier 5
+    (218_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
+    (274_000, 405.80 * 12, 37.50 * 12),  # Tier 2 — CPI-indexed
+    (342_000, 527.50 * 12, 60.40 * 12),  # Tier 3 — CPI-indexed
+    (410_000, 649.20 * 12, 83.30 * 12),  # Tier 4 — CPI-indexed
+    (750_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — FROZEN (not indexed)
 ]
 
-# 2026 IRMAA thresholds (Single) — each threshold is roughly half of MFJ
+# 2026 IRMAA thresholds (Single) — each threshold is roughly half of MFJ.
+# Tiers 1-4 are CPI-indexed annually; Tier 5 ($500K) is FROZEN by statute since 2020.
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_SINGLE = [
-    (109_000, 284.10 * 12, 14.50 * 12),  # Tier 1
-    (137_000, 405.80 * 12, 37.50 * 12),  # Tier 2
-    (171_000, 527.50 * 12, 60.40 * 12),  # Tier 3
-    (205_000, 649.20 * 12, 83.30 * 12),  # Tier 4
-    (500_000, 689.90 * 12, 91.00 * 12),  # Tier 5
+    (109_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
+    (137_000, 405.80 * 12, 37.50 * 12),  # Tier 2 — CPI-indexed
+    (171_000, 527.50 * 12, 60.40 * 12),  # Tier 3 — CPI-indexed
+    (205_000, 649.20 * 12, 83.30 * 12),  # Tier 4 — CPI-indexed
+    (500_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — FROZEN (not indexed)
 ]
 
 # Base premiums (no surcharge)
 BASE_PART_B = 202.90 * 12  # annual per person
 BASE_PART_D = 0.0  # base Part D surcharge is $0
+
+
+def _index_irmaa_tiers(
+    base_tiers: list[tuple[float, float, float]],
+    year: int,
+    cpi: float,
+) -> list[tuple[float, float, float]]:
+    """Return tiers with MAGI thresholds CPI-indexed, except the last (frozen) tier.
+
+    Tiers 1-4 are inflation-adjusted annually per CMS rulemaking.
+    Tier 5 ($750K MFJ / $500K Single) has been frozen by statute since 2020
+    and must never be indexed forward.
+    """
+    if not base_tiers:
+        return base_tiers
+    indexed = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers[:-1]]
+    # Last tier: preserve base threshold exactly (frozen)
+    last_t, last_pb, last_pd = base_tiers[-1]
+    indexed.append((last_t, last_pb, last_pd))
+    return indexed
 
 
 def irmaa_surcharge(
@@ -60,8 +82,8 @@ def irmaa_surcharge(
         Total annual surcharge above base premiums.
     """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
-    # Index MAGI thresholds; premiums are not indexed (CMS sets them annually)
-    tiers = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers]
+    # Index MAGI thresholds (Tiers 1-4 only); Tier 5 is frozen — see _index_irmaa_tiers
+    tiers = _index_irmaa_tiers(base_tiers, year, cpi)
     for threshold, part_b_annual, part_d_annual in reversed(tiers):
         if magi > threshold:
             surcharge_per_person = (part_b_annual - base_part_b) + (part_d_annual - BASE_PART_D)
@@ -129,7 +151,7 @@ def irmaa_next_threshold(
         above the highest tier.
     """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
-    tiers = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers]
+    tiers = _index_irmaa_tiers(base_tiers, year, cpi)
     for threshold, _, _ in tiers:
         if magi <= threshold:
             return threshold - magi

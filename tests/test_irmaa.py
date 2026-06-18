@@ -2,7 +2,7 @@
 
 import pytest
 
-from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_next_threshold, irmaa_surcharge
 from engine.scenario import (
     ConversionPlan,
     run_scenario,
@@ -277,3 +277,85 @@ class TestIRMAA:
             filing_status="MFJ",
         )
         assert mfj_surcharge == 0.0
+
+
+class TestIRMAATier5Frozen:
+    """Tier 5 (top bracket) is frozen by statute — never CPI-indexed."""
+
+    # 2026 base values (directly from module constants)
+    _MFJ_TOP = IRMAA_TIERS_MFJ[-1][0]    # 750_000
+    _SGL_TOP = IRMAA_TIERS_SINGLE[-1][0]  # 500_000
+    # A lower tier that IS indexed (Tier 4)
+    _MFJ_T4 = IRMAA_TIERS_MFJ[-2][0]     # 410_000
+
+    def test_base_year_all_tiers_unchanged(self):
+        """2026 (base year) — all tier thresholds must equal their base values."""
+        from engine.irmaa import _index_irmaa_tiers
+        from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI
+
+        tiers_mfj = _index_irmaa_tiers(IRMAA_TIERS_MFJ, BASE_YEAR, DEFAULT_CPI)
+        for i, ((base_t, _, _), (indexed_t, _, _)) in enumerate(
+            zip(IRMAA_TIERS_MFJ, tiers_mfj)
+        ):
+            assert indexed_t == pytest.approx(base_t, abs=1), (
+                f"MFJ Tier {i + 1}: base year must be unchanged"
+            )
+
+    def test_forecast_year_top_tier_mfj_frozen(self):
+        """2028 (2 years out): MFJ Tier 5 threshold stays at $750,000 (not ~$768,800)."""
+        from engine.irmaa import _index_irmaa_tiers
+        from engine.tax_indexing import DEFAULT_CPI
+
+        tiers = _index_irmaa_tiers(IRMAA_TIERS_MFJ, 2028, DEFAULT_CPI)
+        top_threshold = tiers[-1][0]
+        assert top_threshold == pytest.approx(self._MFJ_TOP, abs=1), (
+            f"MFJ Tier 5 must stay frozen at {self._MFJ_TOP}, got {top_threshold:.0f}"
+        )
+
+    def test_forecast_year_top_tier_single_frozen(self):
+        """2028: Single Tier 5 threshold stays at $500,000 (not ~$512,563)."""
+        from engine.irmaa import _index_irmaa_tiers
+        from engine.tax_indexing import DEFAULT_CPI
+
+        tiers = _index_irmaa_tiers(IRMAA_TIERS_SINGLE, 2028, DEFAULT_CPI)
+        top_threshold = tiers[-1][0]
+        assert top_threshold == pytest.approx(self._SGL_TOP, abs=1), (
+            f"Single Tier 5 must stay frozen at {self._SGL_TOP}, got {top_threshold:.0f}"
+        )
+
+    def test_forecast_year_lower_tier_does_drift(self):
+        """2028: MFJ Tier 4 ($410K base) DOES drift up with CPI — confirms indexing is active."""
+        from engine.irmaa import _index_irmaa_tiers
+        from engine.tax_indexing import DEFAULT_CPI
+
+        tiers = _index_irmaa_tiers(IRMAA_TIERS_MFJ, 2028, DEFAULT_CPI)
+        tier4_threshold = tiers[-2][0]  # second-to-last = Tier 4
+        expected = self._MFJ_T4 * (1.0 + DEFAULT_CPI) ** 2  # 2 years of CPI
+        assert tier4_threshold == pytest.approx(expected, abs=1), (
+            f"MFJ Tier 4 must be indexed; expected ~{expected:.0f}, got {tier4_threshold:.0f}"
+        )
+        assert tier4_threshold > self._MFJ_T4, "Tier 4 must drift above its 2026 base"
+
+    def test_irmaa_surcharge_top_tier_entry_frozen_in_2028(self):
+        """irmaa_surcharge with MAGI just above $750K still hits Tier 5 in 2028.
+
+        Pre-fix: the top threshold would drift to ~$768,800 so $760K MAGI would
+        fall into Tier 4 in 2028. Post-fix: threshold is frozen at $750K so $760K
+        still triggers Tier 5 surcharge.
+        """
+        magi = 760_000  # above frozen $750K threshold but below drifted ~$768,800
+        # In 2026 (base year) this is unambiguously Tier 5
+        surcharge_2026 = irmaa_surcharge(magi, year=2026)
+        # In 2028 post-fix it must still be Tier 5 (same surcharge amount)
+        surcharge_2028 = irmaa_surcharge(magi, year=2028)
+        assert surcharge_2026 > 0, "Sanity: $760K MFJ must be in Tier 5 in 2026"
+        assert surcharge_2028 == pytest.approx(surcharge_2026, abs=1), (
+            "Tier 5 surcharge for $760K must be identical in 2026 and 2028 "
+            "(frozen threshold means same tier entry point)"
+        )
+
+    def test_irmaa_next_threshold_above_top_tier_returns_zero_in_2028(self):
+        """irmaa_next_threshold returns 0.0 when already above the frozen top tier."""
+        # $800K is above $750K even without drift — should be 0.0 in any year
+        result = irmaa_next_threshold(800_000, year=2028)
+        assert result == pytest.approx(0.0, abs=1)
