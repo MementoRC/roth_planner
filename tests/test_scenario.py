@@ -924,8 +924,7 @@ class TestMagiOrderingAndLtcgCost:
 
         # (a) BEHAVIORAL: ytd_ltcg_tax must be positive
         assert yr_with.ytd_ltcg_tax > 0, (
-            f"Expected ytd_ltcg_tax > 0 for ltcg_ytd={ltcg_amount}; "
-            f"got {yr_with.ytd_ltcg_tax}"
+            f"Expected ytd_ltcg_tax > 0 for ltcg_ytd={ltcg_amount}; got {yr_with.ytd_ltcg_tax}"
         )
 
         # (b) BEHAVIORAL: the delta in federal_tax_amt must equal ytd_ltcg_tax exactly.
@@ -1123,9 +1122,7 @@ class TestMagiOrderingAndLtcgCost:
         yr_muni = result_muni.years[0]  # base year: ytd applies
 
         # §1411(d)(3): niit_magi = magi - tax_exempt_interest
-        assert yr_muni.niit_magi == pytest.approx(
-            yr_muni.magi - muni_interest, abs=0.01
-        ), (
+        assert yr_muni.niit_magi == pytest.approx(yr_muni.magi - muni_interest, abs=0.01), (
             f"niit_magi ({yr_muni.niit_magi:.2f}) != magi - muni_interest "
             f"({yr_muni.magi - muni_interest:.2f}); §1411(d)(3) exclusion broken"
         )
