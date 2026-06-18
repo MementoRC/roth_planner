@@ -239,7 +239,7 @@ def run_scenario(
         # D-1: use taxable_ss_amt (up to 85% of SS) not full combined_ss — per §1395r(i)(4)
         # C-7: subtract nqo_exercise_ytd from option_income contribution when ytd is present.
         # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
-        # NOTE: realized_gains intentionally excluded here; added after brokerage block below.
+        # NOTE: realized_gains excluded here; folded into yr.magi in the MAGI ordering block below.
         option_income_for_magi = yr.option_income - (
             ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
         )
@@ -259,8 +259,20 @@ def run_scenario(
             ytd_year,
         )
 
-        # Accumulate projected MAGI for future IRMAA lookback resolution
-        # (E-3: realized_gains not yet known here — added below after brokerage block)
+        # === Brokerage realized gains (hoisted for MAGI ordering) ===
+        # Realized gains (Schedule D -> AGI -> MAGI) must be reflected in yr.magi
+        # BEFORE MAGI-dependent steps: the OBBBA senior-bonus phase-out (grid-02) and
+        # the IRMAA same-year fallback (grid-03). `brokerage` is the begin-of-year
+        # balance and brok_appreciation_rate depends only on the year, so both are
+        # known here. Final yr.magi value is unchanged vs. folding realized_gains later.
+        brok_rate = hh.brokerage_rate(year)
+        if hh.brokerage_growth is not None:
+            brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
+        else:
+            brok_appreciation_rate = brok_rate
+        realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
+        yr.magi += realized_gains
+        magi_history[year] = yr.magi
 
         # === Combined gross (for tax) ===
         # Includes ordinary income only — LTCG taxed separately at preferential rate
@@ -404,15 +416,14 @@ def run_scenario(
                 0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1])
             )
             yr.ytd_ltcg_tax = _ytd_ltcg_at_15 * 0.15 + _ytd_ltcg_at_20 * 0.20
+            # grid-05: YTD realized LTCG tax is a real federal tax for the base year
+            # but was previously orphaned (computed, never counted in any total). Fold
+            # it into federal_tax_amt so lifetime tax / all-in cost reflect it.
+            yr.federal_tax_amt += yr.ytd_ltcg_tax
 
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
         # Net investment income = realized appreciation gains + all dividends (qual + ord)
         # Computed on beginning brokerage balance (carry-forward from prior year)
-        brok_rate = hh.brokerage_rate(year)
-        if hh.brokerage_growth is not None:
-            brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
-        else:
-            brok_appreciation_rate = brok_rate
         net_investment_income = (
             brokerage * brok_appreciation_rate * hh.brok_turnover
             + qual_div_this_year
@@ -422,15 +433,9 @@ def run_scenario(
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income
         # IRC §1411: realized capital gains belong in NIIT MAGI with no exclusion.
-        # Capture the realized-gains amount upfront (identical to the first term of
-        # net_investment_income, and to brokerage_growth * brok_turnover computed in the
-        # brokerage block below) so niit() receives the full §1411 MAGI at call time.
-        realized_gains_magi = brokerage * brok_appreciation_rate * hh.brok_turnover
-        yr.niit_magi = (
-            yr.magi
-            - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
-            + realized_gains_magi
-        )
+        # yr.magi already includes realized_gains (folded in the MAGI ordering block),
+        # so niit_magi only needs to strip muni interest per IRC §1411(d)(3).
+        yr.niit_magi = yr.magi - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
         yr.niit_cost = niit(
             yr.niit_magi, net_investment_income, filing_status=current_filing_status
         )
@@ -461,12 +466,8 @@ def run_scenario(
         # Brokerage: accumulates excess, grows (appreciation), dividends reinvest, pays cap gains
         yr.brokerage_balance = brokerage
         yr.brokerage_growth = brokerage * brok_appreciation_rate
-        realized_gains = yr.brokerage_growth * hh.brok_turnover
-        # E-3: realized gains (Schedule D → AGI → MAGI) were absent from yr.magi.
-        # Add here after realized_gains is known; magi_history is also updated here.
-        # yr.niit_magi already includes realized_gains_magi (set above before niit() call).
-        yr.magi += realized_gains
-        magi_history[year] = yr.magi
+        # realized_gains, the yr.magi fold, and magi_history[year] were computed earlier
+        # (MAGI ordering block) so the phase-out and IRMAA fallback see the full MAGI.
         # Stack-walk LTCG brackets: ordinary taxable income sets the starting
         # point; realized gains + qualified dividends (IRC §1(h)(11)) walk up
         # through 0% / 15% / 20% bands.
