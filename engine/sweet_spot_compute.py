@@ -109,8 +109,8 @@ def base_income_for_year(hh: Household, year: int) -> BaseIncome:
 
     opt = hh.option_income(year, early=True)
 
-    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age)
-    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age)
+    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+    spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
     your_ss = (
         ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
         if ya >= hh.your_ss_start_age
