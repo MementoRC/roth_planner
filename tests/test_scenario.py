@@ -1410,3 +1410,35 @@ class TestMagiOrderingAndLtcgCost:
             f"niit_magi ({yr_muni.niit_magi:.2f}) != magi - muni_interest "
             f"({yr_muni.magi - muni_interest:.2f}); §1411(d)(3) exclusion broken"
         )
+
+
+class TestReviewRegressions:
+    """Regression tests for deep-review 2026-06-18 high-severity findings (PR-A)."""
+
+    def test_ytd_interest_included_in_base_year_gross(self):
+        """scenario-math-1: interest_ytd must flow into base-year ordinary income."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        plan = ConversionPlan()
+        ytd_zero = YTDSnapshot(tax_year=2026, interest_ytd=0.0)
+        ytd_int = YTDSnapshot(tax_year=2026, interest_ytd=50_000.0)
+        y0 = run_scenario(hh, plan, "no-int", end_age=65, ytd=ytd_zero).years[0]
+        y1 = run_scenario(hh, plan, "int", end_age=65, ytd=ytd_int).years[0]
+        # interest_ytd was omitted before the fix -> this delta would have been 0.
+        assert y1.combined_gross - y0.combined_gross == approx(50_000.0)
+        assert y1.federal_tax_amt > y0.federal_tax_amt
+        assert y1.ytd_interest == approx(50_000.0)
+
+    def test_fra_age_affects_sweet_spot_ss(self):
+        """compare-sweetspot-2: ss_benefit_at_age must honor hh.your_fra_age."""
+        from engine.sweet_spot_compute import base_income_for_year
+
+        hh67 = Household(your_fra_age=67, spouse_fra_age=67)
+        hh66 = Household(your_fra_age=66, spouse_fra_age=66)
+        year = 2026 + (70 - hh67.your_age)  # year your_age reaches default claim age 70
+        b67 = base_income_for_year(hh67, year)
+        b66 = base_income_for_year(hh66, year)
+        # Same claim age (70), earlier FRA -> more delayed-retirement credits -> higher SS.
+        # Hardcoded fra_age=67 before the fix would make these equal.
+        assert b66.combined_ss > b67.combined_ss
