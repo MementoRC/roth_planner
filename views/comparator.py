@@ -105,7 +105,10 @@ def render(hh: Household):
     ages = [yr.your_age for yr in scenarios[0].years]
 
     for i, s in enumerate(scenarios):
-        ira_vals = [yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin for yr in s.years]
+        ira_vals = [
+            yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+            for yr in s.years
+        ]
         fig_ira.add_trace(
             go.Scatter(
                 x=ages,

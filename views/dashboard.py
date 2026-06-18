@@ -44,8 +44,14 @@ def render(hh: Household):
     [yr.year for yr in no_conv.years]
 
     # Combined IRA + Roth (grid-01: include Roth so converted principal is not invisible)
-    ira_nc = [yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin for yr in no_conv.years]
-    ira_wc = [yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin for yr in with_conv.years]
+    ira_nc = [
+        yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+        for yr in no_conv.years
+    ]
+    ira_wc = [
+        yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+        for yr in with_conv.years
+    ]
 
     # Annual tax
     tax_nc = [yr.federal_tax_amt for yr in no_conv.years]
@@ -343,8 +349,14 @@ def render(hh: Household):
                         "Year": yr_nc.year,
                         "You": yr_nc.your_age,
                         "Sp": yr_nc.spouse_age,
-                        "IRA+Roth (NC)": yr_nc.your_ira_begin + yr_nc.spouse_ira_begin + yr_nc.your_roth_begin + yr_nc.spouse_roth_begin,
-                        "IRA+Roth (WC)": yr_wc.your_ira_begin + yr_wc.spouse_ira_begin + yr_wc.your_roth_begin + yr_wc.spouse_roth_begin,
+                        "IRA+Roth (NC)": yr_nc.your_ira_begin
+                        + yr_nc.spouse_ira_begin
+                        + yr_nc.your_roth_begin
+                        + yr_nc.spouse_roth_begin,
+                        "IRA+Roth (WC)": yr_wc.your_ira_begin
+                        + yr_wc.spouse_ira_begin
+                        + yr_wc.your_roth_begin
+                        + yr_wc.spouse_roth_begin,
                         "RMD (NC)": yr_nc.your_rmd + yr_nc.spouse_rmd,
                         "RMD (WC)": yr_wc.your_rmd + yr_wc.spouse_rmd,
                         "Tax (NC)": yr_nc.federal_tax_amt,
