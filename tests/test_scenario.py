@@ -485,9 +485,7 @@ class TestRothBalanceTracking:
         hh_noconv = self._simple_hh(your_ira=500_000.0)
 
         # Conversion plan: convert in the first 5 years
-        plan_conv = ConversionPlan(
-            your_conversions={base_year + i: conv_amount for i in range(5)}
-        )
+        plan_conv = ConversionPlan(your_conversions={base_year + i: conv_amount for i in range(5)})
         plan_noconv = ConversionPlan()  # baseline: no conversions
 
         end_age = 80
