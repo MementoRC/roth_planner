@@ -23,6 +23,8 @@ class YearResult:
     # IRA balances (beginning of year)
     your_ira_begin: float = 0.0
     spouse_ira_begin: float = 0.0
+    your_roth_begin: float = 0.0
+    spouse_roth_begin: float = 0.0
 
     # Income sources
     option_income: float = 0.0
@@ -101,6 +103,8 @@ class YearResult:
     # IRA end of year
     your_ira_end: float = 0.0
     spouse_ira_end: float = 0.0
+    your_roth_end: float = 0.0
+    spouse_roth_end: float = 0.0
 
 
 @dataclass

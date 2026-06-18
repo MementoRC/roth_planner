@@ -15,6 +15,8 @@ DEFAULTS: dict = {
     "spouse_age": 53,
     "your_ira": 500_000,
     "spouse_ira": 500_000,
+    "your_roth": 0,
+    "spouse_roth": 0,
     "your_ss_fra": 2_500,
     "spouse_ss_fra": 2_500,
     "living_expenses": 60_000,

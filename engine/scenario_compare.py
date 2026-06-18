@@ -185,7 +185,7 @@ class ScenarioSummary:
     lifetime_brok_tax: float  # sum of brokerage_gain_tax
     all_in_cost: float  # lifetime_tax + lifetime_irmaa + lifetime_brok_tax
     vs_baseline: float  # this.all_in_cost - baseline.all_in_cost (positive = worse)
-    ira_at_75: float  # your_ira_begin + spouse_ira_begin at your_age == 75
+    ira_at_75: float  # IRA + Roth combined at your_age == 75 (grid-01 fix: includes roth begins)
     ira_at_85: float
     ira_at_95: float
 
@@ -214,8 +214,11 @@ def compute_summary_rows(
         return sum(yr.brokerage_gain_tax for yr in s.years)
 
     def _ira_at_age(s: ScenarioResult, age: int) -> float:
+        # Value includes Roth balances so converted principal is not invisible (grid-01).
         yr = next((y for y in s.years if y.your_age == age), None)
-        return (yr.your_ira_begin + yr.spouse_ira_begin) if yr else 0.0
+        return (
+            yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+        ) if yr else 0.0
 
     baseline_all_in = (
         _lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)
@@ -254,7 +257,7 @@ class MilestoneRow:
 
     scenario_name: str
     age: int
-    ira_balance: float  # your_ira_begin + spouse_ira_begin
+    ira_balance: float  # IRA + Roth combined (your_ira_begin + spouse_ira_begin + roth begins); grid-01 fix
     total_rmd: float  # your_rmd + spouse_rmd
     marginal_bracket: float  # raw fraction (e.g. 0.22), view multiplies by 100
 
@@ -292,7 +295,7 @@ def compute_milestone_rows(
                     MilestoneRow(
                         scenario_name=s.name,
                         age=age,
-                        ira_balance=yr.your_ira_begin + yr.spouse_ira_begin,
+                        ira_balance=yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin,
                         total_rmd=yr.your_rmd + yr.spouse_rmd,
                         marginal_bracket=yr.marginal_bracket,
                     )
