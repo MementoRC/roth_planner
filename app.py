@@ -236,8 +236,7 @@ def get_household() -> Household:
             hh.your_roth = _your_roth_bal
             _your_roth_accounts = [a for a in snap.accounts if a.owner == "you" and a.is_roth]
             _your_roth_return = (
-                sum(a.total_value * a.weighted_return for a in _your_roth_accounts)
-                / _your_roth_bal
+                sum(a.total_value * a.weighted_return for a in _your_roth_accounts) / _your_roth_bal
                 if _your_roth_accounts
                 else hh.growth_rate
             )
