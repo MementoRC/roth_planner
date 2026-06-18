@@ -262,7 +262,10 @@ def render(hh: Household):
     fig.add_trace(
         go.Scatter(
             x=all_ages,
-            y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in no_conv.years],
+            y=[
+                yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+                for yr in no_conv.years
+            ],
             name="No Conversion",
             line={"color": "#ef4444", "width": 2, "dash": "dash"},
         )
@@ -270,7 +273,10 @@ def render(hh: Household):
     fig.add_trace(
         go.Scatter(
             x=all_ages,
-            y=[yr.your_ira_begin + yr.spouse_ira_begin for yr in result.years],
+            y=[
+                yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+                for yr in result.years
+            ],
             name="Your Plan",
             line={"color": "#22c55e", "width": 3},
         )
@@ -279,7 +285,7 @@ def render(hh: Household):
 
     fig.update_layout(
         xaxis_title="Your Age",
-        yaxis_title="Combined IRA ($)",
+        yaxis_title="IRA + Roth Balance ($)",
         yaxis_tickformat="$,.0s",
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},

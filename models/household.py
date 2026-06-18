@@ -102,6 +102,8 @@ class Household:
     # IRA balances (beginning of base_year)
     your_ira: float = _D["your_ira"]
     spouse_ira: float = _D["spouse_ira"]
+    your_roth: float = _D["your_roth"]
+    spouse_roth: float = _D["spouse_roth"]
 
     # Social Security (monthly at FRA 67)
     your_ss_fra: float = _D["your_ss_fra"]  # $/month at FRA
@@ -119,6 +121,8 @@ class Household:
     your_ira_growth: GrowthProfile | None = None
     spouse_ira_growth: GrowthProfile | None = None
     brokerage_growth: GrowthProfile | None = None
+    your_roth_growth: GrowthProfile | None = None
+    spouse_roth_growth: GrowthProfile | None = None
 
     # Living expenses (annual, today's dollars)
     living_expenses: float = _D["living_expenses"]
@@ -232,6 +236,18 @@ class Household:
         """Growth rate for spouse's IRA in a given year."""
         if self.spouse_ira_growth is not None:
             return self.spouse_ira_growth.rate_for(year)
+        return self.growth_rate
+
+    def your_roth_rate(self, year: int) -> float:
+        """Growth rate for your Roth IRA in a given year."""
+        if self.your_roth_growth is not None:
+            return self.your_roth_growth.rate_for(year)
+        return self.growth_rate
+
+    def spouse_roth_rate(self, year: int) -> float:
+        """Growth rate for spouse's Roth IRA in a given year."""
+        if self.spouse_roth_growth is not None:
+            return self.spouse_roth_growth.rate_for(year)
         return self.growth_rate
 
     def brokerage_rate(self, year: int) -> float:

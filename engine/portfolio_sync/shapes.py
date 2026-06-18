@@ -110,6 +110,11 @@ class AccountSummary:
         """True if this is a pre-tax retirement account (IRA, 403b)."""
         return self.account_type in ("trad_ira", "403b")
 
+    @property
+    def is_roth(self) -> bool:
+        """True if this is a Roth IRA account."""
+        return self.account_type == "roth_ira"
+
 
 @dataclass
 class EquityGrant:

@@ -67,6 +67,8 @@ def run_scenario(
     cpi = hh.cpi_assumption
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
+    your_roth = hh.your_roth
+    spouse_roth = hh.spouse_roth
     # TODO(math-audit-2026-06-12 P3): Brokerage starting balance not initialized from YTD
     # snapshot. Projection always starts at 0.0, ignoring any brokerage balance already
     # accumulated by the snapshot date. Fix requires adding a brokerage_balance field to
@@ -118,6 +120,8 @@ def run_scenario(
         # === IRA balances ===
         yr.your_ira_begin = your_ira
         yr.spouse_ira_begin = spouse_ira
+        yr.your_roth_begin = your_roth
+        yr.spouse_roth_begin = spouse_roth
 
         # === Option income ===
         yr.option_income = hh.option_income(year, early_exercise)
@@ -501,6 +505,12 @@ def run_scenario(
         yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
         yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.spouse_ira_rate(year))
 
+        # === Roth end of year ===
+        # Credit conversions (only) to Roth; grow tax-free.
+        # rmd and extra_withdrawal are NOT Roth-eligible (they go to taxable accounts).
+        yr.your_roth_end = (your_roth + yr.your_conversion) * (1 + hh.your_roth_rate(year))
+        yr.spouse_roth_end = (spouse_roth + yr.spouse_conversion) * (1 + hh.spouse_roth_rate(year))
+
         # Inherited IRA end-of-year balances (sum by owner, after drain+growth applied above)
         yr.your_inherited_balance_end = sum(
             inherited_balances[i] for i, iira in enumerate(hh.inherited_iras) if iira.owner == "you"
@@ -514,6 +524,8 @@ def run_scenario(
         # Carry forward
         your_ira = yr.your_ira_end
         spouse_ira = yr.spouse_ira_end
+        your_roth = yr.your_roth_end
+        spouse_roth = yr.spouse_roth_end
 
         # Accumulate totals
         cum_conv_tax += yr.conversion_tax

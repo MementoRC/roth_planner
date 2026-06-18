@@ -28,7 +28,7 @@ from engine.portfolio_sync import (
     save_tax_snapshot,
     save_ytd_snapshot,
 )
-from engine.upload_merge import derive_ira_balances
+from engine.upload_merge import derive_ira_balances, derive_roth_balances
 from models.household import Household
 
 
@@ -223,6 +223,11 @@ def render_portfolio_tab(hh: Household) -> None:
                     st.session_state.your_ira = int(_your_ira)
                 if _spouse_ira > 0:
                     st.session_state.spouse_ira = int(_spouse_ira)
+                _your_roth, _spouse_roth = derive_roth_balances(snap)
+                if _your_roth > 0:
+                    st.session_state.your_roth = int(_your_roth)
+                if _spouse_roth > 0:
+                    st.session_state.spouse_roth = int(_spouse_roth)
                 # Merge dividend history into holdings before saving snapshot
                 div_rollup = fetch_dividends_rollup()
                 if div_rollup.server_available:

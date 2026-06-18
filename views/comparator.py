@@ -86,9 +86,9 @@ def render(hh: Household):
             "Lifetime Brok Tax": fmt_dollars(s.lifetime_brok_tax),
             "Total All-In Cost": fmt_dollars(s.all_in_cost),
             "vs Baseline": fmt_dollars(s.vs_baseline, sign=True),
-            "IRA at 75": fmt_dollars_short(s.ira_at_75, decimals=2),
-            "IRA at 85": fmt_dollars_short(s.ira_at_85, decimals=2),
-            "IRA at 95": fmt_dollars_short(s.ira_at_95, decimals=2),
+            "IRA+Roth at 75": fmt_dollars_short(s.ira_at_75, decimals=2),
+            "IRA+Roth at 85": fmt_dollars_short(s.ira_at_85, decimals=2),
+            "IRA+Roth at 95": fmt_dollars_short(s.ira_at_95, decimals=2),
         }
         for s in summaries
     ]
@@ -98,14 +98,17 @@ def render(hh: Household):
 
     st.markdown("---")
 
-    # --- Chart 1: IRA Trajectory ---
-    st.markdown("### IRA Balance Trajectory")
+    # --- Chart 1: IRA + Roth Trajectory ---
+    st.markdown("### IRA + Roth Balance Trajectory")
 
     fig_ira = go.Figure()
     ages = [yr.your_age for yr in scenarios[0].years]
 
     for i, s in enumerate(scenarios):
-        ira_vals = [yr.your_ira_begin + yr.spouse_ira_begin for yr in s.years]
+        ira_vals = [
+            yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+            for yr in s.years
+        ]
         fig_ira.add_trace(
             go.Scatter(
                 x=ages,
@@ -119,7 +122,7 @@ def render(hh: Household):
     fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_ira.update_layout(
         xaxis_title="Your Age",
-        yaxis_title="Combined IRA ($)",
+        yaxis_title="IRA + Roth Balance ($)",
         yaxis_tickformat="$,.0s",
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
@@ -256,11 +259,11 @@ def render(hh: Household):
         for s in scenarios:
             m = _ms_lookup.get((s.name, age))
             if m is not None:
-                row[f"{s.name} IRA"] = fmt_dollars_short(m.ira_balance, decimals=2)
+                row[f"{s.name} IRA+Roth"] = fmt_dollars_short(m.ira_balance, decimals=2)
                 row[f"{s.name} RMD"] = fmt_dollars(m.total_rmd) if m.total_rmd > 0 else "---"
                 row[f"{s.name} Bracket"] = fmt_pct(m.marginal_bracket, 0)
             else:
-                row[f"{s.name} IRA"] = "---"
+                row[f"{s.name} IRA+Roth"] = "---"
                 row[f"{s.name} RMD"] = "---"
                 row[f"{s.name} Bracket"] = "---"
         milestone_rows.append(row)

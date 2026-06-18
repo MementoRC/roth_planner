@@ -43,9 +43,15 @@ def render(hh: Household):
     ages = [yr.your_age for yr in no_conv.years]
     [yr.year for yr in no_conv.years]
 
-    # Combined IRA
-    ira_nc = [yr.your_ira_begin + yr.spouse_ira_begin for yr in no_conv.years]
-    ira_wc = [yr.your_ira_begin + yr.spouse_ira_begin for yr in with_conv.years]
+    # Combined IRA + Roth (grid-01: include Roth so converted principal is not invisible)
+    ira_nc = [
+        yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+        for yr in no_conv.years
+    ]
+    ira_wc = [
+        yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
+        for yr in with_conv.years
+    ]
 
     # Annual tax
     tax_nc = [yr.federal_tax_amt for yr in no_conv.years]
@@ -107,7 +113,7 @@ def render(hh: Household):
             y=ira_nc,
             name="No Conversion",
             line={"color": "#ef4444", "width": 2, "dash": "dash"},
-            hovertemplate="Age %{x}<br>IRA: $%{y:,.0f}<extra>No Conversion</extra>",
+            hovertemplate="Age %{x}<br>IRA + Roth: $%{y:,.0f}<extra>No Conversion</extra>",
         )
     )
     fig_ira.add_trace(
@@ -116,15 +122,15 @@ def render(hh: Household):
             y=ira_wc,
             name="With Conversion (12%)",
             line={"color": "#22c55e", "width": 3},
-            hovertemplate="Age %{x}<br>IRA: $%{y:,.0f}<extra>With Conversion</extra>",
+            hovertemplate="Age %{x}<br>IRA + Roth: $%{y:,.0f}<extra>With Conversion</extra>",
         )
     )
     # RMD start line
     fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_ira.update_layout(
-        title="Combined IRA Trajectory (Both Spouses)",
+        title="Combined IRA + Roth Trajectory (Both Spouses)",
         xaxis_title="Your Age",
-        yaxis_title="IRA Balance ($)",
+        yaxis_title="IRA + Roth Balance ($)",
         yaxis_tickformat="$,.0s",
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
@@ -277,10 +283,10 @@ def render(hh: Household):
             st.caption(label)
             if yr_nc and yr_wc:
                 st.markdown(
-                    f"IRA (NC): **{fmt_dollars_short(yr_nc.your_ira_begin + yr_nc.spouse_ira_begin)}**"
+                    f"IRA+Roth (NC): **{fmt_dollars_short(yr_nc.your_ira_begin + yr_nc.spouse_ira_begin + yr_nc.your_roth_begin + yr_nc.spouse_roth_begin)}**"
                 )
                 st.markdown(
-                    f"IRA (WC): **{fmt_dollars_short(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin)}**"
+                    f"IRA+Roth (WC): **{fmt_dollars_short(yr_wc.your_ira_begin + yr_wc.spouse_ira_begin + yr_wc.your_roth_begin + yr_wc.spouse_roth_begin)}**"
                 )
                 st.markdown(f"RMD (NC): {fmt_dollars(yr_nc.your_rmd + yr_nc.spouse_rmd)}")
                 st.markdown(f"RMD (WC): {fmt_dollars(yr_wc.your_rmd + yr_wc.spouse_rmd)}")
@@ -343,8 +349,14 @@ def render(hh: Household):
                         "Year": yr_nc.year,
                         "You": yr_nc.your_age,
                         "Sp": yr_nc.spouse_age,
-                        "IRA (NC)": yr_nc.your_ira_begin + yr_nc.spouse_ira_begin,
-                        "IRA (WC)": yr_wc.your_ira_begin + yr_wc.spouse_ira_begin,
+                        "IRA+Roth (NC)": yr_nc.your_ira_begin
+                        + yr_nc.spouse_ira_begin
+                        + yr_nc.your_roth_begin
+                        + yr_nc.spouse_roth_begin,
+                        "IRA+Roth (WC)": yr_wc.your_ira_begin
+                        + yr_wc.spouse_ira_begin
+                        + yr_wc.your_roth_begin
+                        + yr_wc.spouse_roth_begin,
                         "RMD (NC)": yr_nc.your_rmd + yr_nc.spouse_rmd,
                         "RMD (WC)": yr_wc.your_rmd + yr_wc.spouse_rmd,
                         "Tax (NC)": yr_nc.federal_tax_amt,
@@ -357,8 +369,8 @@ def render(hh: Household):
             st.dataframe(
                 df.style.format(
                     {
-                        "IRA (NC)": "${:,.0f}",
-                        "IRA (WC)": "${:,.0f}",
+                        "IRA+Roth (NC)": "${:,.0f}",
+                        "IRA+Roth (WC)": "${:,.0f}",
                         "RMD (NC)": "${:,.0f}",
                         "RMD (WC)": "${:,.0f}",
                         "Tax (NC)": "${:,.0f}",
