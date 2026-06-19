@@ -8,11 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from engine.data_bridge_browser import (
-    BROWSER_PRIVKEY_LS_KEY,
     is_pyodide,
-    local_storage_get,
-    local_storage_remove,
-    local_storage_set,
 )
 from engine.data_bridge_keys import (
     decode_keymaterial,
@@ -69,18 +65,13 @@ def _resolve_privkey_bytes() -> bytes | None:
 
 
 def _handle_v2_privkey() -> None:
-    """Widget for entering and caching the V2 data-bridge private key.
+    """Widget for entering the V2 data-bridge private key.
 
-    On stlite/Pyodide, the key is cached in ``localStorage`` under
-    ``roth_planner.data_bridge.priv_b64`` so it survives page reloads.
-    In all environments, the key lives in ``st.session_state`` under
-    ``data_bridge_privkey_b64`` for the duration of the session.
+    The key lives only in ``st.session_state`` under
+    ``data_bridge_privkey_b64`` for the duration of the browser session; it
+    is never persisted to ``localStorage`` or disk, so it must be re-pasted
+    after a page reload.
     """
-    # Hydrate session_state from localStorage on first paint.
-    if "data_bridge_privkey_b64" not in st.session_state:
-        cached = local_storage_get(BROWSER_PRIVKEY_LS_KEY)
-        if cached:
-            st.session_state["data_bridge_privkey_b64"] = cached
 
     has_key = "data_bridge_privkey_b64" in st.session_state
     # Auto-expand on the public site when no key is set — user needs to act.
@@ -91,7 +82,6 @@ def _handle_v2_privkey() -> None:
             st.caption("\U0001f510 Private key loaded for this session.")
             if st.button("Clear", key="clear_v2_privkey"):
                 st.session_state.pop("data_bridge_privkey_b64", None)
-                local_storage_remove(BROWSER_PRIVKEY_LS_KEY)
                 st.rerun()
             return
         st.caption(
@@ -112,7 +102,6 @@ def _handle_v2_privkey() -> None:
                 return
             val = key_input.strip()
             st.session_state["data_bridge_privkey_b64"] = val
-            local_storage_set(BROWSER_PRIVKEY_LS_KEY, val)
             st.success("Private key saved.")
             st.rerun()
 
@@ -226,7 +215,7 @@ def _handle_personal_exports() -> None:
     with st.expander("📦 Export my data", expanded=False):
         pubkey = _resolved_pubkey()
         defaults = _user_defaults_from_session()
-        cache_path = Path(__file__).resolve().parent.parent / ".portfolio_cache.json"
+        cache_path = Path(__file__).resolve().parent.parent.parent / ".portfolio_cache.json"
 
         if pubkey is not None:
             st.caption("🔐 V2 encrypted export active — files are sealed for your private key.")
