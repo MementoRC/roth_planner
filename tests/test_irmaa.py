@@ -111,6 +111,8 @@ class TestIRMAA:
             yr2.your_age - 2,
             yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
+            year=2028,  # payment year for yr2 (base_year 2026 + 2)
+            cpi=hh.cpi_assumption,
         )
         # Year-2 MAGI (no conversion) should produce a lower IRMAA
         expected_from_yr2, _ = irmaa_for_year(
@@ -118,6 +120,8 @@ class TestIRMAA:
             yr2.your_age - 2,
             yr2.spouse_age - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
+            year=2028,  # payment year for yr2 (base_year 2026 + 2)
+            cpi=hh.cpi_assumption,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0), (
             "PR5: year-2 IRMAA must use year-0 projected MAGI"
@@ -195,6 +199,8 @@ class TestIRMAA:
             yr2.your_age - 2,
             yr2.spouse_age - 2,
             base_part_b=hh_anchored.medicare_part_b_base_monthly * 12,
+            year=2028,  # payment year for yr2 (base_year 2026 + 2)
+            cpi=hh_anchored.cpi_assumption,
         )
         assert yr2.irmaa_cost == approx(expected_from_yr0_magi), (
             "Year-2 IRMAA must use year-0 projected MAGI, not prior_year_magi"

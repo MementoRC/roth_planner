@@ -370,7 +370,7 @@ def run_scenario(
             sa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
-            year=income_year,
+            year=year,  # CMS indexes IRMAA thresholds to the payment year (income_year + 2)
             cpi=cpi,
         )
         yr.irmaa_cost = irmaa_cost
