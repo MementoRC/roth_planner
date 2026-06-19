@@ -100,6 +100,7 @@ def compute_cost_curves(
                 magi,
                 benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=hh.filing_status,
                 year=year,
                 cpi=cpi,
             )
@@ -109,6 +110,7 @@ def compute_cost_curves(
                     magi,
                     benchmark=hh.aca_benchmark_premium_annual,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                    filing_status=hh.filing_status,
                     year=year,
                     cpi=cpi,
                 )
@@ -119,6 +121,7 @@ def compute_cost_curves(
                     magi,
                     benchmark=hh.aca_benchmark_premium_annual,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                    filing_status=hh.filing_status,
                     year=year,
                     cpi=cpi,
                 )
@@ -138,7 +141,7 @@ def compute_cost_curves(
             cpi=cpi,
         )
         irmaa_vals.append(surcharge)
-        irmaa_tier_vals.append(irmaa_tier(magi))
+        irmaa_tier_vals.append(irmaa_tier(magi, filing_status=hh.filing_status))
 
         # NIIT
         niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
@@ -269,6 +272,7 @@ def compute_year_by_year_timeline(
                 base_magi,
                 benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=hh.filing_status,
                 year=year,
                 cpi=_yr_cpi,
             )
@@ -276,6 +280,7 @@ def compute_year_by_year_timeline(
                 base_magi,
                 benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+                filing_status=hh.filing_status,
                 year=year,
                 cpi=_yr_cpi,
             )
@@ -286,7 +291,9 @@ def compute_year_by_year_timeline(
                 you_age=ya,
                 spouse_age=sa,
                 system=system,
-                irmaa_tier=irmaa_tier(base_magi) if medicare_count > 0 else None,
+                irmaa_tier=irmaa_tier(base_magi, filing_status=hh.filing_status)
+                if medicare_count > 0
+                else None,
                 irmaa_room=irmaa_room,
                 aca_subsidy=aca_sub,
                 aca_you_pay=aca_pay,

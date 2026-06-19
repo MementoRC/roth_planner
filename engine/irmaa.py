@@ -93,9 +93,10 @@ def irmaa_surcharge(
     return 0.0
 
 
-def irmaa_tier(magi: float) -> int:
+def irmaa_tier(magi: float, filing_status: str = "MFJ") -> int:
     """Return IRMAA tier (0 = no surcharge, 1-5 = tiers)."""
-    for i, (threshold, _, _) in enumerate(IRMAA_TIERS_MFJ):
+    base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    for i, (threshold, _, _) in enumerate(base_tiers):
         if magi <= threshold:
             return 0 if i == 0 else i
     return 5
