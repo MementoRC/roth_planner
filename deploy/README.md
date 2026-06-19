@@ -35,7 +35,7 @@ to the app. `pixi run streamlit run app.py` picks them up at startup.
 
 ### Deployed (stlite)
 
-Use the "🔓 Use my real data" expander in the sidebar to upload both
+Use the "🔓 Use my real data" expander on the ⚙️ Setup page → 🔗 Data Bridge tab to upload both
 files. Values stay in your browser session; refresh = back to demo.
 
 ### .user_defaults.json schema
@@ -91,14 +91,14 @@ That host can now encrypt exports to you but cannot decrypt anything.
 ### Auto-activation in the sidebar export
 
 When `~/.finextract/data-bridge.pub` (or the `ROTH_PLANNER_DATA_BRIDGE_PUBKEY`
-env var) is present, the sidebar "📦 Export my data" expander auto-switches
+env var) is present, the "📦 Export my data" expander (⚙️ Setup → 🔗 Data Bridge tab) auto-switches
 to V2: download buttons emit `.user_defaults.json.enc` and
 `.portfolio_cache.json.enc`, sealed for your private key. Delete the public
 key file to fall back to V1 plaintext export (with a deprecation warning).
 
 ### Browser side
 
-The public Streamlit site shows a "🔑 V2 private key" sidebar widget
+The public Streamlit site shows a "🔑 V2 private key" widget on the ⚙️ Setup → 🔗 Data Bridge tab
 on first use. Paste your data-bridge private key (base64). The key is
 cached in `localStorage` under `roth_planner.data_bridge.priv_b64` so
 it survives page reloads. Click "Clear" in the widget (or wipe browser
