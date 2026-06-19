@@ -282,7 +282,7 @@ def compute_federal_tax(
     combined_gross: float,
     your_conversion: float,
     spouse_conversion: float,
-    total_deductions: float,
+    base_total_deductions: float,
     survivor_active: bool,
     year: int,
     cpi: float,
@@ -296,7 +296,7 @@ def compute_federal_tax(
         marginal_bracket = marginal_rate(taxable_income, year=year, cpi=cpi)
 
     base_gross = combined_gross - your_conversion - spouse_conversion
-    base_taxable = max(base_gross - total_deductions, 0)
+    base_taxable = max(base_gross - base_total_deductions, 0)
     if survivor_active:
         conversion_tax = federal_tax_single(
             taxable_income, year=year, cpi=cpi

@@ -332,6 +332,21 @@ def run_scenario(
             )
             yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi, year=year, cpi=cpi)
 
+        # Baseline (no-conversion) deductions for the incremental conversion tax:
+        # recompute the OBBBA bonus at the no-conversion MAGI so a conversion cannot
+        # phase out its own baseline deduction (scenario-math-3).
+        base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion
+        if survivor_active:
+            base_total_deductions = deductions(
+                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
+            ) + senior_bonus_deduction(
+                ya_eff, sa_eff, base_magi, year=year, cpi=cpi, filing_status="Single"
+            )
+        else:
+            base_total_deductions = deductions(
+                ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi
+            ) + senior_bonus_deduction(ya, sa, base_magi, year=year, cpi=cpi)
+
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
@@ -341,7 +356,7 @@ def run_scenario(
             yr.combined_gross,
             yr.your_conversion,
             yr.spouse_conversion,
-            yr.total_deductions,
+            base_total_deductions,
             survivor_active,
             year,
             cpi,
