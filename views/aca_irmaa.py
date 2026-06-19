@@ -145,8 +145,8 @@ def render(hh: Household):
                 st.info(f"You are {hh.your_age} — on Medicare. See IRMAA section.")
             else:
                 st.info(
-                    "ACA not enrolled. Toggle 'You/Spouse on ACA Marketplace' "
-                    "in the sidebar to model ACA subsidies."
+                    "ACA not enrolled. Go to the ⚙️ Setup page (Parameters tab) "
+                    "and toggle 'On ACA Marketplace' to model ACA subsidies."
                 )
 
     # --- Chart 2: IRMAA Tiers ---
