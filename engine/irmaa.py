@@ -120,7 +120,7 @@ def irmaa_for_year(
 
     The surcharge applies in medicare_year = income_year + 2.
     Only counts people who are 65+ in the medicare_year.
-    year/cpi: index MAGI thresholds for the income year (pre-lookback).
+    year/cpi: index MAGI thresholds to the payment year (income_year + 2), matching CMS published thresholds.
     """
     medicare_your_age = your_age_income_year + 2
     medicare_spouse_age = spouse_age_income_year + 2
