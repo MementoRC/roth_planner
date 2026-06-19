@@ -45,17 +45,21 @@ roth_planner/
 ├── pyproject.toml             # Python tooling config
 ├── models/
 │   └── household.py          # Household data model (ages, IRAs, SS, grants)
-├── engine/
+├── engine/                   # pure computation (no Streamlit imports)
 │   ├── tax.py                # Federal brackets, SS taxation, deductions
-│   ├── ira.py                # IRA projection, RMD calculator, SS benefits
+│   ├── niit.py               # Net investment income tax
 │   ├── irmaa.py              # Medicare surcharge tiers + lookback
 │   ├── aca.py                # ACA marketplace subsidy calculator
-│   └── scenario.py           # Full multi-year projection engine
-├── pages/
+│   ├── ira.py                # IRA projection, RMD calculator, SS benefits
+│   ├── portfolio_sync/       # FinExtract live-holdings integration (package)
+│   ├── scenario.py           # Full multi-year projection engine
+│   └── …                     # scenario_compute, tax_return_pdf, data_bridge_*, etc.
+├── views/                    # Streamlit pages (each exports render(hh: Household))
+│   ├── setup/                # Setup landing page — Parameters / Portfolio / Data Bridge tabs
 │   ├── dashboard.py          # IRA trajectory + net benefit overview
-│   └── planner.py            # Interactive 20-year conversion grid
-└── tests/
-    └── test_engine.py        # 43 tests against verified spreadsheet numbers
+│   ├── planner.py            # Interactive 20-year conversion grid
+│   └── …                     # sweet_spot, rmd_squeeze, comparator, aca_irmaa, asset_location, portfolio, roth_eligibility, ytd_income
+└── tests/                    # ~630 tests split into per-module test_*.py files
 ```
 
 ## Key Concepts
