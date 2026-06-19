@@ -70,12 +70,12 @@ def render(hh: Household):
         your_qcd_years = {
             yr: qcd_annual
             for yr in range(hh.base_year, hh.base_year + 35)
-            if hh.your_age_in(yr) >= 75
+            if hh.your_age_in(yr) >= hh.your_rmd_start_age
         }
         spouse_qcd_years = {
             yr: spouse_qcd_annual
             for yr in range(hh.base_year, hh.base_year + 35)
-            if hh.spouse_age_in(yr) >= 75
+            if hh.spouse_age_in(yr) >= hh.spouse_rmd_start_age
         }
         qcd_plan = ConversionPlan(
             your_conversions=dict(plan_12.your_conversions),
@@ -94,10 +94,14 @@ def render(hh: Household):
         with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95)
         no_conv_qcd = None
 
-    # Filter to RMD years (75+)
-    rmd_nc = [yr for yr in no_conv.years if yr.your_age >= 75]
-    rmd_wc = [yr for yr in with_conv.years if yr.your_age >= 75]
-    rmd_nc_qcd = [yr for yr in no_conv_qcd.years if yr.your_age >= 75] if no_conv_qcd else None
+    # Filter to RMD years (each person's RMD start age and later)
+    rmd_nc = [yr for yr in no_conv.years if yr.your_age >= hh.your_rmd_start_age]
+    rmd_wc = [yr for yr in with_conv.years if yr.your_age >= hh.your_rmd_start_age]
+    rmd_nc_qcd = (
+        [yr for yr in no_conv_qcd.years if yr.your_age >= hh.your_rmd_start_age]
+        if no_conv_qcd
+        else None
+    )
 
     if not rmd_nc:
         st.warning("No RMD years in projection range.")
