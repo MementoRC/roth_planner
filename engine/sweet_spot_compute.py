@@ -132,7 +132,7 @@ def base_income_for_year(hh: Household, year: int) -> BaseIncome:
     base_gross = opt + tss
 
     # MAGI base (without conversion)
-    base_magi = opt + combined_ss
+    base_magi = opt + tss
 
     # Senior bonus deduction
     senior_bonus = senior_bonus_deduction(
@@ -167,7 +167,7 @@ def all_in_at_conversion(
     tss = taxable_ss(base.combined_ss, other_inc)
 
     gross = base.opt + conv + tss
-    magi = base.base_magi + conv
+    magi = base.opt + conv + tss
 
     # Recalculate senior bonus deduction at new MAGI
     senior_bonus = senior_bonus_deduction(
