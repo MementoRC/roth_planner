@@ -70,9 +70,10 @@ def compute_cost_curves(
     )
 
     # Hoist base-state computations outside the loop
+    on_medicare = sum(1 for a in (hh.your_age_in(year), hh.spouse_age_in(year)) if a >= 65)
     base_irmaa = irmaa_surcharge(
         base_magi,
-        num_people=2,
+        num_people=on_medicare,
         base_part_b=hh.medicare_part_b_base_monthly * 12,
         filing_status=hh.filing_status,
         year=year,
@@ -97,6 +98,7 @@ def compute_cost_curves(
         if anyone_on_aca:
             sub = aca_subsidy(
                 magi,
+                benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 year=year,
                 cpi=cpi,
@@ -105,6 +107,7 @@ def compute_cost_curves(
             aca_net_cost_vals.append(
                 aca_net_cost(
                     magi,
+                    benchmark=hh.aca_benchmark_premium_annual,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     year=year,
                     cpi=cpi,
@@ -114,6 +117,7 @@ def compute_cost_curves(
                 aca_subsidy_loss(
                     base_magi,
                     magi,
+                    benchmark=hh.aca_benchmark_premium_annual,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     year=year,
                     cpi=cpi,
@@ -127,7 +131,7 @@ def compute_cost_curves(
         # IRMAA
         surcharge = irmaa_surcharge(
             magi,
-            num_people=2,
+            num_people=on_medicare,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=hh.filing_status,
             year=year,
@@ -157,6 +161,7 @@ def compute_cost_curves(
             aca_subsidy_loss(
                 base_magi,
                 magi,
+                benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
                 year=year,
@@ -262,12 +267,14 @@ def compute_year_by_year_timeline(
         if you_on_aca or sp_on_aca:
             aca_sub = aca_subsidy(
                 base_magi,
+                benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 year=year,
                 cpi=_yr_cpi,
             )
             aca_pay = aca_net_cost(
                 base_magi,
+                benchmark=hh.aca_benchmark_premium_annual,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 year=year,
                 cpi=_yr_cpi,
