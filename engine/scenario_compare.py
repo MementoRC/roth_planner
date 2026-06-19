@@ -25,6 +25,7 @@ from engine.tax import (
     STD_DEDUCTION_SINGLE,
     federal_tax_single,
     marginal_rate_single,
+    senior_bonus_deduction,
     taxable_ss,
 )
 from models.household import Household, SurvivorScenario
@@ -126,7 +127,16 @@ def compute_survivor_snapshot(
             # FIX: Single filing_status uses correct $25K/$34K SS thresholds (not MFJ $32K/$44K)
             tss = taxable_ss(ss_grown, rmd, filing_status="Single")
             gross = rmd + tss
-            ded = STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0)
+            ded = float(STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0))
+            # OBBBA senior bonus deduction (survivor files Single; deceased age zeroed).
+            ded += senior_bonus_deduction(
+                survivor_age,
+                0,
+                gross,
+                year=death_year_calc + proj_years,
+                cpi=hh.cpi_assumption,
+                filing_status="Single",
+            )
             taxable = max(gross - ded, 0.0)
             tax = federal_tax_single(taxable)
             bracket = marginal_rate_single(taxable)
@@ -217,8 +227,10 @@ def compute_summary_rows(
         # Value includes Roth balances so converted principal is not invisible (grid-01).
         yr = next((y for y in s.years if y.your_age == age), None)
         return (
-            yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin
-        ) if yr else 0.0
+            (yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin)
+            if yr
+            else 0.0
+        )
 
     baseline_all_in = (
         _lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)
@@ -257,7 +269,9 @@ class MilestoneRow:
 
     scenario_name: str
     age: int
-    ira_balance: float  # IRA + Roth combined (your_ira_begin + spouse_ira_begin + roth begins); grid-01 fix
+    ira_balance: (
+        float  # IRA + Roth combined (your_ira_begin + spouse_ira_begin + roth begins); grid-01 fix
+    )
     total_rmd: float  # your_rmd + spouse_rmd
     marginal_bracket: float  # raw fraction (e.g. 0.22), view multiplies by 100
 
@@ -295,7 +309,10 @@ def compute_milestone_rows(
                     MilestoneRow(
                         scenario_name=s.name,
                         age=age,
-                        ira_balance=yr.your_ira_begin + yr.spouse_ira_begin + yr.your_roth_begin + yr.spouse_roth_begin,
+                        ira_balance=yr.your_ira_begin
+                        + yr.spouse_ira_begin
+                        + yr.your_roth_begin
+                        + yr.spouse_roth_begin,
                         total_rmd=yr.your_rmd + yr.spouse_rmd,
                         marginal_bracket=yr.marginal_bracket,
                     )
