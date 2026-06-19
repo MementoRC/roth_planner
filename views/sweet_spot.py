@@ -77,7 +77,12 @@ def render(hh: Household) -> None:
     indexed_brackets_mfj = _index_brackets(BRACKETS_MFJ, selected_year, _cpi)
 
     # --- Compute base income ---
-    base = base_income_for_year(hh, selected_year)
+    # Inject base-year realized YTD income into MAGI when the user opted in (niit-5).
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    base = base_income_for_year(
+        hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
+    )
 
     # --- Info bar ---
     c1, c2, c3, c4 = st.columns(4)
@@ -335,7 +340,7 @@ def render(hh: Household) -> None:
     st.markdown("### Multi-Year Sweet Spot Summary")
     st.caption("Quick comparison of recommended zones across all conversion years.")
 
-    summary_rows = compute_multi_year_summary(hh, net_inv_income=net_inv_income)
+    summary_rows = compute_multi_year_summary(hh, net_inv_income=net_inv_income, ytd=_ytd)
 
     import pandas as pd
 

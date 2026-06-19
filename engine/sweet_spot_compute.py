@@ -21,6 +21,7 @@ from engine.tax import (
 )
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 STEP = 1_000  # sweep in $1K increments
 
@@ -39,6 +40,7 @@ class BaseIncome:
     base_magi: float
     total_ded: float
     ded_base: float
+    ytd_magi: float = 0.0
 
 
 @dataclass
@@ -101,7 +103,7 @@ def _fmt_dollars_simple(v: float) -> str:
     return f"${v:,.0f}"
 
 
-def base_income_for_year(hh: Household, year: int) -> BaseIncome:
+def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> BaseIncome:
     """Compute fixed income components for a given year (no conversion)."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
@@ -132,7 +134,8 @@ def base_income_for_year(hh: Household, year: int) -> BaseIncome:
     base_gross = opt + tss
 
     # MAGI base (without conversion)
-    base_magi = opt + tss
+    ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
+    base_magi = opt + tss + ytd_magi
 
     # Senior bonus deduction
     senior_bonus = senior_bonus_deduction(
@@ -151,6 +154,7 @@ def base_income_for_year(hh: Household, year: int) -> BaseIncome:
         base_magi=base_magi,
         total_ded=total_ded,
         ded_base=ded,
+        ytd_magi=ytd_magi,
     )
 
 
@@ -167,7 +171,7 @@ def all_in_at_conversion(
     tss = taxable_ss(base.combined_ss, other_inc)
 
     gross = base.opt + conv + tss
-    magi = base.opt + conv + tss
+    magi = base.opt + conv + tss + base.ytd_magi
 
     # Recalculate senior bonus deduction at new MAGI
     senior_bonus = senior_bonus_deduction(
@@ -200,7 +204,15 @@ def all_in_at_conversion(
     # ACA
     anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
     aca_loss = (
-        aca_subsidy_loss(base.base_magi, magi, filing_status=hh.filing_status, year=year, cpi=cpi)
+        aca_subsidy_loss(
+            base.base_magi,
+            magi,
+            benchmark=hh.aca_benchmark_premium_annual,
+            enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+            filing_status=hh.filing_status,
+            year=year,
+            cpi=cpi,
+        )
         if anyone_on_aca
         else 0.0
     )
@@ -293,7 +305,9 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     )
 
 
-def compute_multi_year_summary(hh: Household, *, net_inv_income: float = 0.0) -> list[YearSummary]:
+def compute_multi_year_summary(
+    hh: Household, *, net_inv_income: float = 0.0, ytd: YTDSnapshot | None = None
+) -> list[YearSummary]:
     """Compute sweet-spot summary rows for all conversion years."""
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
     conv_years = list(range(hh.base_year, hh.base_year + conv_window))
@@ -305,7 +319,7 @@ def compute_multi_year_summary(hh: Household, *, net_inv_income: float = 0.0) ->
         cpi = hh.cpi_assumption
         irmaa_tiers = [(_index_value(t, yr, cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers]
 
-        b = base_income_for_year(hh, yr)
+        b = base_income_for_year(hh, yr, ytd=ytd if yr == hh.base_year else None)
         b_result = all_in_at_conversion(hh, b, 0, net_inv_income)
         r12 = b_result.room_12
         r22 = b_result.room_22
