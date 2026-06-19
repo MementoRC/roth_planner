@@ -170,7 +170,7 @@ def senior_bonus_deduction(
     OBBBA Senior Bonus Deduction (2026-2028).
 
     $6,000 per person age 65+, phases out linearly at 6% per $1 above threshold.
-    Sunset: returns 0.0 for year > 2028 (Pub. L. 119-21 §70103).
+    Sunset: returns 0.0 for year < 2026 or year > 2028 (Pub. L. 119-21 §70103).
     Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
       MFJ:    phase-out starts $150,000, ends $250,000
       Single/HoH: phase-out starts $75,000, ends $175,000
@@ -184,6 +184,8 @@ def senior_bonus_deduction(
     """
     if year > 2028:
         return 0.0
+    if year < 2026:
+        return 0.0
     if filing_status == "MFS":
         return 0.0
     eligible = sum(1 for age in [your_age, spouse_age] if age >= 65)
@@ -193,7 +195,8 @@ def senior_bonus_deduction(
         _base_phaseout = (
             OBBBA_PHASEOUT_START_MFJ if filing_status == "MFJ" else OBBBA_PHASEOUT_START_SINGLE
         )
-        phaseout_start = index_value(_base_phaseout, year, cpi)
+        # Statutory nominal amount — NOT CPI-indexed (Pub. L. 119-21 §70103)
+        phaseout_start = _base_phaseout
     if magi <= phaseout_start:
         return bonus_per_person * eligible
     per_person_reduction = min(bonus_per_person, max(0.0, magi - phaseout_start) * phaseout_rate)
@@ -338,6 +341,15 @@ def estimate_ytd_federal_tax(
         std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi) + senior_count * index_value(
             SENIOR_EXTRA_SINGLE, _year, _cpi
         )
+    # OBBBA senior bonus deduction also lowers the LTCG stack-walk base.
+    std_ded += senior_bonus_deduction(
+        hh.your_age,
+        hh.spouse_age,
+        ytd.niit_magi_ytd,
+        year=_year,
+        cpi=_cpi,
+        filing_status=hh.filing_status,
+    )
     taxable_ordinary = max(ordinary_income - std_ded, 0.0)
 
     # LTCG + qualified dividends taxed at preferential rate.
