@@ -177,6 +177,22 @@ class TestEngineConstantsCharacterization:
         # cap=0.85*10_000=8_500 → result=8_500
         assert taxable_ss(combined_ss=10_000, other_income=200_000) == approx(8_500)
 
+    def test_taxable_ss_irc86_clamp_mfj(self):
+        # IRC 86(a)(2): upper-tier add-back clamped to half of benefits (MFJ).
+        # combined_ss=10_000 -> 0.5*SS=5_000 < band cap 6_000, tier-1 add = 5_000.
+        # provisional=45_000 -> 0.85*(45_000-44_000)+5_000 = 5_850 (cap 8_500 not binding).
+        # Pre-fix used the unclamped 6_000 and returned 6_850.
+        assert taxable_ss(combined_ss=10_000, other_income=40_000) == approx(5_850.0)
+
+    def test_taxable_ss_irc86_clamp_single(self):
+        # IRC 86(a)(2) clamp also fires for Single filers.
+        # combined_ss=8_000 -> 0.5*SS=4_000 < band cap 4_500, tier-1 add = 4_000.
+        # provisional=36_000 -> 0.85*(36_000-34_000)+4_000 = 5_700 (cap 6_800 not binding).
+        # Pre-fix used the unclamped 4_500 and returned 6_200.
+        assert taxable_ss(combined_ss=8_000, other_income=32_000, filing_status="Single") == approx(
+            5_700.0
+        )
+
     # --- 2026 IRS constant pins (Rev. Proc. 2025-32) ---
 
     def test_senior_extra_single_2026_value(self):
