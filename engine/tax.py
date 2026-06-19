@@ -314,13 +314,16 @@ def estimate_ytd_federal_tax(
     — are evaluated correctly. The ordinary-income bracket call (federal_tax) still
     receives gross ordinary income as a conservative estimate (no deduction applied).
     """
-    from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ
+    from engine.niit import niit
 
     _year = hh.base_year
     _cpi = hh.cpi_assumption
 
     ordinary_income = ytd.total_ordinary_income
-    ordinary_tax = federal_tax(ordinary_income, year=_year, cpi=_cpi)
+    is_single = hh.filing_status == "Single"
+    ordinary_tax = (federal_tax_single if is_single else federal_tax)(
+        ordinary_income, year=_year, cpi=_cpi
+    )
 
     # Compute standard deduction to find taxable ordinary income for LTCG stack-walk.
     # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds (IRC §1(h)(1));
@@ -339,7 +342,9 @@ def estimate_ytd_federal_tax(
 
     # LTCG + qualified dividends taxed at preferential rate.
     # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
-    _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, _year, _cpi)
+    _ltcg_thresholds = index_tuple(
+        LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi
+    )
     ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
     ltcg_start = taxable_ordinary
     ltcg_end = taxable_ordinary + ltcg_taxable
@@ -355,17 +360,20 @@ def estimate_ytd_federal_tax(
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
     net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
     magi = ytd.niit_magi_ytd
-    magi_excess = max(0.0, magi - NIIT_THRESHOLD_MFJ)
-    niit_amount = NIIT_RATE * min(net_investment_income, magi_excess)
+    niit_amount = niit(magi, net_investment_income, filing_status=hh.filing_status)
 
     total = ordinary_tax + ltcg_tax + niit_amount
     effective_rate = total / magi if magi > 0 else 0.0
 
     # Marginal bracket for ordinary income
-    marginal = marginal_rate(ordinary_income, year=_year, cpi=_cpi)
+    marginal = (marginal_rate_single if is_single else marginal_rate)(
+        ordinary_income, year=_year, cpi=_cpi
+    )
 
     # Room to next bracket ceiling
-    _indexed_brackets = index_bracket_list(BRACKETS_MFJ, _year, _cpi)
+    _indexed_brackets = index_bracket_list(
+        BRACKETS_SINGLE if is_single else BRACKETS_MFJ, _year, _cpi
+    )
     room_next = 0.0
     for ceil, _rate in _indexed_brackets:
         if ordinary_income <= ceil:

@@ -11,7 +11,7 @@ Toggle ENHANCED_SUBSIDIES_ACTIVE to model either scenario.
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
 # 2025 Federal Poverty Level guidelines (used for 2026 coverage, continental US)
-FPL_1 = 15_060  # single person
+FPL_1 = 15_650  # single person
 FPL_2 = 21_150  # family of 2
 
 # Legislative status: Enhanced subsidies (ARPA/IRA) expired Dec 31, 2025.
