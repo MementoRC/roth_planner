@@ -91,17 +91,19 @@ def compute_conversions(
     your_planned: float,
     spouse_planned: float,
     ytd_year: YTDSnapshot | None,
+    your_rmd_start_age: int,
+    spouse_rmd_start_age: int,
 ) -> tuple[float, float]:
     """Return (your_conversion, spouse_conversion) after age and YTD clamping.
 
-    Zeroes conversions for planners past age 74; subtracts already-done
+    Zeroes conversions once a planner reaches their RMD start age; subtracts already-done
     YTD conversions from your_conversion.
     """
     your_conversion = your_planned
-    if ya > 74:
+    if ya >= your_rmd_start_age:
         your_conversion = 0.0
     spouse_conversion = spouse_planned
-    if sa > 74:
+    if sa >= spouse_rmd_start_age:
         spouse_conversion = 0.0
 
     if ytd_year is not None and ytd_year.ira_conversions_ytd > 0:

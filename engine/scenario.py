@@ -164,6 +164,8 @@ def run_scenario(
             plan.your_conversions.get(year, 0.0),
             plan.spouse_conversions.get(year, 0.0),
             ytd_year,
+            hh.your_rmd_start_age,
+            hh.spouse_rmd_start_age,
         )
 
         # === RMD ===
