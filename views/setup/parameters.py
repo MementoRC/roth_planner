@@ -16,6 +16,39 @@ from engine.tax_return_pdf import (
 from models.household import Household
 from views._format import fmt_dollars
 
+_HH_FILING_LABEL_MFJ = "Married filing jointly"
+_HH_FILING_LABEL_SINGLE = "Single"
+
+
+def filing_status_from_label(label: str) -> str:
+    """Map the household filing-status radio label to the engine's canonical value.
+
+    The engine compares ``hh.filing_status`` against ``"MFJ"`` / ``"Single"``
+    (capitalized). This is a DIFFERENT vocabulary from the lowercase
+    ``_FILING_STATUS_OPTIONS`` used by the PDF-1040 import widget to tag an
+    imported prior-year return — the two must not be conflated, or the engine's
+    ``== "Single"`` branches stay dead code (R1 #6).
+    """
+    return _HH_FILING_LABEL_SINGLE if label == _HH_FILING_LABEL_SINGLE else "MFJ"
+
+
+def spouse_single_overrides() -> dict[str, object]:
+    """session_state overrides applied when the household files Single.
+
+    Single models a single-from-the-start household (no spouse). Zeroing the
+    spouse financial/age inputs and clearing the spouse ACA flag lets the
+    (otherwise MFJ-shaped) engine non-survivor path produce single-filer income;
+    ``filing_status="Single"`` separately selects the single brackets, standard
+    deduction, IRMAA/NIIT thresholds, and ACA FPL.
+    """
+    return {
+        "spouse_ira": 0,
+        "spouse_roth": 0,
+        "spouse_age": 0,
+        "spouse_ss_fra": 0,
+        "spouse_aca": False,
+    }
+
 
 def _render_survivor_scenario() -> None:
     """Render the Survivor scenario expander in the Joint sub-tab."""
@@ -295,6 +328,28 @@ def _render_prior_year_magi_anchor() -> None:
 def render_parameters_tab(hh: Household) -> None:
     """Extracted from setup.py render() — parameters tab body."""
     _synced = bool(st.session_state.get("portfolio_snapshot"))
+
+    # Household filing status — gate that activates the engine's Single-filer paths.
+    _filing_choice = st.radio(
+        "Filing status",
+        [_HH_FILING_LABEL_MFJ, _HH_FILING_LABEL_SINGLE],
+        index=0 if st.session_state.get("filing_status", "MFJ") == "MFJ" else 1,
+        horizontal=True,
+        key="_hh_filing_status_choice",
+        help=(
+            "Single models a single-from-the-start household: spouse inputs are "
+            "zeroed and single-filer brackets, standard deduction, IRMAA/NIIT "
+            "thresholds, and ACA FPL apply. To model a spouse dying mid-projection, "
+            "leave this on Married filing jointly and use the Survivor scenario "
+            "(Joint sub-tab)."
+        ),
+    )
+    _is_single = filing_status_from_label(_filing_choice) == "Single"
+    st.session_state["filing_status"] = "Single" if _is_single else "MFJ"
+    if _is_single:
+        for _key, _val in spouse_single_overrides().items():
+            st.session_state[_key] = _val
+
     me_sub, spouse_sub, joint_sub = st.tabs(["Me", "Spouse", "Joint"])
 
     with me_sub:
@@ -359,12 +414,17 @@ def render_parameters_tab(hh: Household) -> None:
         )
 
     with spouse_sub:
+        if _is_single:
+            st.info(
+                "Single filer — spouse inputs are disabled and treated as zero. "
+                "Switch Filing status to Married filing jointly to re-enable."
+            )
         st.session_state.spouse_ira = st.number_input(
             "Spouse Trad IRA" + (" (synced)" if _synced else ""),
             value=st.session_state.spouse_ira,
             step=50_000,
             format="%d",
-            disabled=_synced,
+            disabled=_synced or _is_single,
             help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
         )
         st.session_state.spouse_roth = st.number_input(
@@ -372,7 +432,7 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.get("spouse_roth", 0),
             step=50_000,
             format="%d",
-            disabled=_synced,
+            disabled=_synced or _is_single,
             help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
         st.session_state.spouse_age = st.number_input(
@@ -380,12 +440,14 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.spouse_age,
             step=1,
             format="%d",
+            disabled=_is_single,
         )
         st.session_state.spouse_ss_fra = st.number_input(
             "Spouse SS at FRA 67 ($/mo)",
             value=st.session_state.spouse_ss_fra,
             step=100,
             format="%d",
+            disabled=_is_single,
         )
         st.session_state.spouse_ss_start_age = st.number_input(
             "Spouse SS claim age",
@@ -394,6 +456,7 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.get("spouse_ss_start_age", 70),
             step=1,
             format="%d",
+            disabled=_is_single,
         )
         st.session_state.spouse_rmd_start_age = st.number_input(
             "Spouse RMD start age",
@@ -403,6 +466,7 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
             help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
+            disabled=_is_single,
         )
         st.session_state.spouse_fra_age = st.number_input(
             "Spouse FRA (Full Retirement Age)",
@@ -412,11 +476,13 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
             help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
+            disabled=_is_single,
         )
         st.session_state.spouse_aca = st.checkbox(
             "Spouse on ACA Marketplace",
             value=st.session_state.spouse_aca,
             help="Check if spouse is enrolled in ACA marketplace",
+            disabled=_is_single,
         )
 
     with joint_sub:

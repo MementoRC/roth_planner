@@ -53,6 +53,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("survivor", None)
     st.session_state.setdefault("inherited_iras", [])
     st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state.setdefault("filing_status", "MFJ")
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
     st.session_state.setdefault("_seeded", True)
@@ -188,6 +189,7 @@ def get_household() -> Household:
             int(k): float(v) for k, v in st.session_state.get("prior_year_magi", {}).items() if v
         },
         cpi_assumption=float(st.session_state.get("cpi_assumption", 0.025)),
+        filing_status=st.session_state.get("filing_status", "MFJ"),
         survivor=_build_survivor_scenario(),
         inherited_iras=[
             InheritedIRA(

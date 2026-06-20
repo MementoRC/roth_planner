@@ -211,3 +211,76 @@ class TestPdfRecordRoundTrip:
             assert loaded[2023].tax_year == 2023
         finally:
             _mod._PDF_TAX_CACHE_PATH = original
+
+
+class TestFilingStatusGate:
+    """Gate wiring: household filing_status flows into Household via canonical values (R1 #6)."""
+
+    def test_filing_status_from_label_canonical(self):
+        from views.setup import filing_status_from_label
+
+        assert filing_status_from_label("Single") == "Single"
+        assert filing_status_from_label("Married filing jointly") == "MFJ"
+        assert filing_status_from_label("anything else") == "MFJ"
+
+    def test_gate_uses_capitalized_not_pdf_lowercase(self):
+        """Engine compares == 'Single'; the gate must NOT emit the lowercase
+        PDF-import vocabulary or the Single branches stay dead code (R1 #6)."""
+        from views.setup import _FILING_STATUS_OPTIONS, filing_status_from_label
+
+        assert filing_status_from_label("Single") == "Single"
+        assert filing_status_from_label("Single") not in _FILING_STATUS_OPTIONS
+
+    def test_spouse_single_overrides_zeroes_spouse(self):
+        from views.setup import spouse_single_overrides
+
+        ov = spouse_single_overrides()
+        assert ov["spouse_ira"] == 0
+        assert ov["spouse_roth"] == 0
+        assert ov["spouse_age"] == 0
+        assert ov["spouse_ss_fra"] == 0
+        assert ov["spouse_aca"] is False
+
+    def test_widget_renders_before_subtabs(self):
+        import inspect
+
+        from views import setup
+
+        source = inspect.getsource(setup.render_parameters_tab)
+        radio_pos = source.find('"Filing status"')
+        tabs_pos = source.find("st.tabs(")
+        assert radio_pos != -1, "Filing status radio not found in render_parameters_tab"
+        assert tabs_pos != -1
+        assert radio_pos < tabs_pos, (
+            "Filing status must render before the Me/Spouse/Joint sub-tabs so spouse "
+            "state can be zeroed in the same render pass"
+        )
+
+    def test_filing_status_written_to_session_state(self):
+        import inspect
+
+        from views import setup
+
+        source = inspect.getsource(setup.render_parameters_tab)
+        assert 'st.session_state["filing_status"]' in source
+
+
+class TestAppFilingStatusWiring:
+    """app.py get_household must thread filing_status into Household and seed it."""
+
+    def _app_source(self) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parent.parent / "app.py").read_text()
+
+    def test_get_household_threads_filing_status(self):
+        text = self._app_source()
+        assert 'filing_status=st.session_state.get("filing_status"' in text, (
+            "get_household must thread filing_status from session_state into Household"
+        )
+
+    def test_seed_defaults_filing_status_mfj(self):
+        text = self._app_source()
+        assert 'setdefault("filing_status", "MFJ")' in text, (
+            "_seed_session_state must seed filing_status default 'MFJ'"
+        )

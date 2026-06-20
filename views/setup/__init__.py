@@ -7,7 +7,13 @@ import streamlit as st
 from models.household import Household
 
 from .data_bridge import render_data_bridge_tab
-from .parameters import _FILING_STATUS_OPTIONS, _render_pdf_1040_import, render_parameters_tab
+from .parameters import (
+    _FILING_STATUS_OPTIONS,
+    _render_pdf_1040_import,
+    filing_status_from_label,
+    render_parameters_tab,
+    spouse_single_overrides,
+)
 from .portfolio import render_portfolio_tab
 
 
@@ -29,8 +35,10 @@ def render(hh: Household) -> None:
 __all__ = [
     "_FILING_STATUS_OPTIONS",
     "_render_pdf_1040_import",
+    "filing_status_from_label",
     "render",
     "render_data_bridge_tab",
     "render_parameters_tab",
     "render_portfolio_tab",
+    "spouse_single_overrides",
 ]
