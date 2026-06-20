@@ -128,8 +128,8 @@ def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MF
     if provisional <= tier2:
         taxable = 0.5 * (provisional - tier1)
     else:
-        # Tier-1 band contributes 0.5*(tier2-tier1)
-        tier1_contribution = 0.5 * (tier2 - tier1)
+        # Tier-1 band contributes at most half of benefits (IRC 86(a)(2))
+        tier1_contribution = min(0.5 * combined_ss, 0.5 * (tier2 - tier1))
         taxable = SS_MAX_TAXABLE_FRACTION * (provisional - tier2) + tier1_contribution
     return min(taxable, SS_MAX_TAXABLE_FRACTION * combined_ss)
 
@@ -440,24 +440,28 @@ def _next_quarterly_due(payment_date: str) -> str:
         d = date.today()
 
     year = d.year
-    month, day = d.month, d.day
 
-    if (month, day) <= (4, 15):
-        due = date(year, 4, 15)
-    elif (month, day) <= (6, 15):
-        due = date(year, 6, 15)
-    elif (month, day) <= (9, 15):
-        due = date(year, 9, 15)
-    else:
-        due = date(year + 1, 1, 15)
+    def _rolled(candidate: date) -> date:
+        # Roll Saturday (weekday 5) -> Monday (+2), Sunday (weekday 6) -> Monday (+1)
+        if candidate.weekday() == 5:
+            return candidate + timedelta(days=2)
+        if candidate.weekday() == 6:
+            return candidate + timedelta(days=1)
+        return candidate
 
-    # Roll Saturday (weekday 5) → Monday (+2), Sunday (weekday 6) → Monday (+1)
-    if due.weekday() == 5:
-        due += timedelta(days=2)
-    elif due.weekday() == 6:
-        due += timedelta(days=1)
-
-    return due.isoformat()
+    # Roll each candidate deadline BEFORE comparing, so a date in the gap between
+    # a weekend nominal date and its rolled deadline maps to the still-open
+    # deadline rather than skipping to the next quarter.
+    candidates = [
+        _rolled(date(year, 4, 15)),
+        _rolled(date(year, 6, 15)),
+        _rolled(date(year, 9, 15)),
+        _rolled(date(year + 1, 1, 15)),
+    ]
+    for due in candidates:
+        if due >= d:
+            return due.isoformat()
+    return candidates[-1].isoformat()
 
 
 def safe_harbor_payment(

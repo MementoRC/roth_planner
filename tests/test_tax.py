@@ -177,8 +177,19 @@ class TestSafeHarborPayment:
         from engine.tax import _next_quarterly_due
 
         # Sep 15, 2024 is a Sunday → should roll to Monday Sep 16, 2024
-        result = _next_quarterly_due("2024-06-16")
+        # Jun 15 2024 is a Sat (Q2 rolls to Jun 17); use Jun 18 to land in the Q3 window
+        result = _next_quarterly_due("2024-06-18")
         assert result == "2024-09-16"
+
+    def test_next_quarterly_due_weekend_gap_maps_to_rolled_deadline(self):
+        # Dates in the gap between a weekend nominal due date and its rolled (Monday)
+        # deadline must map to that still-open deadline, not the next quarter.
+        # Apr 15, 2028 is a Saturday -> Q1 deadline rolls to Mon Apr 17, 2028.
+        from engine.tax import _next_quarterly_due
+
+        assert _next_quarterly_due("2028-04-15") == "2028-04-17"
+        assert _next_quarterly_due("2028-04-16") == "2028-04-17"
+        assert _next_quarterly_due("2028-04-17") == "2028-04-17"
 
     def test_room_to_12_uses_brackets_constant(self):
         """room_to_12 must derive its ceiling from BRACKETS_MFJ, not a hardcoded literal."""
