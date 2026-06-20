@@ -174,6 +174,8 @@ def _handle_personal_uploads() -> None:
                     json.JSONDecodeError,
                     ValueError,
                     TypeError,
+                    KeyError,
+                    AttributeError,
                     DataBridgeCryptoError,
                 ) as e:
                     st.error(f"Invalid {ud_file.name}: {e}")
@@ -190,6 +192,7 @@ def _handle_personal_uploads() -> None:
                     ValueError,
                     TypeError,
                     KeyError,
+                    AttributeError,
                     DataBridgeCryptoError,
                 ) as e:
                     st.error(f"Invalid {pc_file.name}: {e}")

@@ -116,6 +116,7 @@ _TAX_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".tax_return_c
 def save_tax_snapshot(snap: TaxReturnSnapshot) -> None:
     """Save tax return snapshot to disk as JSON."""
     _TAX_CACHE_PATH.write_text(json.dumps(asdict(snap), indent=2))
+    _TAX_CACHE_PATH.chmod(0o600)  # PII cache: restrict to owner
 
 
 def load_tax_snapshot() -> TaxReturnSnapshot | None:

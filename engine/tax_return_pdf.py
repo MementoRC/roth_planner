@@ -400,6 +400,7 @@ def save_pdf_tax_records(records: dict[int, Form1040Record]) -> None:
     """
     serialised: dict[str, Any] = {str(k): v.to_dict() for k, v in records.items()}
     _PDF_TAX_CACHE_PATH.write_text(json.dumps(serialised, indent=2))
+    _PDF_TAX_CACHE_PATH.chmod(0o600)  # PII cache: restrict to owner
 
 
 def load_pdf_tax_records() -> dict[int, Form1040Record]:
