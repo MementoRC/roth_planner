@@ -60,6 +60,11 @@ def compute_cost_curves(
         hh.spouse_age, hh.spouse_aca_enrolled
     )
 
+    num_on_aca = (1 if aca_applies(hh.your_age, hh.your_aca_enrolled) else 0) + (
+        1 if aca_applies(hh.spouse_age, hh.spouse_aca_enrolled) else 0
+    )
+    effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
+
     ded = deductions(
         hh.your_age,
         hh.spouse_age,
@@ -98,7 +103,7 @@ def compute_cost_curves(
         if anyone_on_aca:
             sub = aca_subsidy(
                 magi,
-                benchmark=hh.aca_benchmark_premium_annual,
+                benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
                 year=year,
@@ -108,7 +113,7 @@ def compute_cost_curves(
             aca_net_cost_vals.append(
                 aca_net_cost(
                     magi,
-                    benchmark=hh.aca_benchmark_premium_annual,
+                    benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
                     year=year,
@@ -119,7 +124,7 @@ def compute_cost_curves(
                 aca_subsidy_loss(
                     base_magi,
                     magi,
-                    benchmark=hh.aca_benchmark_premium_annual,
+                    benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
                     year=year,
@@ -164,7 +169,7 @@ def compute_cost_curves(
             aca_subsidy_loss(
                 base_magi,
                 magi,
-                benchmark=hh.aca_benchmark_premium_annual,
+                benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
                 year=year,
@@ -265,12 +270,14 @@ def compute_year_by_year_timeline(
             else None
         )
 
+        num_on_aca_yr = (1 if you_on_aca else 0) + (1 if sp_on_aca else 0)
+        eff_bench_yr = hh.aca_benchmark_premium_annual * (num_on_aca_yr / 2)
         aca_sub: float | None = None
         aca_pay: float | None = None
         if you_on_aca or sp_on_aca:
             aca_sub = aca_subsidy(
                 base_magi,
-                benchmark=hh.aca_benchmark_premium_annual,
+                benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
                 year=year,
@@ -278,7 +285,7 @@ def compute_year_by_year_timeline(
             )
             aca_pay = aca_net_cost(
                 base_magi,
-                benchmark=hh.aca_benchmark_premium_annual,
+                benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
                 year=year,

@@ -344,8 +344,10 @@ def compute_aca(
     # yr.magi already includes taxable_ss_amt; add the non-taxable remainder.
     # Distinct from yr.magi (IRMAA §1839(i)(4)) which does NOT add non-taxable SS.
     aca_magi = magi + (combined_ss - taxable_ss_amt)
+    # Scale the couple benchmark by the number of enrollees (used by BOTH the
+    # subsidy-loss and the excess-APTC clawback below, for consistency).
+    effective_benchmark = aca_benchmark_premium_annual * (num_on_aca / 2)
     if num_on_aca > 0:
-        effective_benchmark = aca_benchmark_premium_annual * (num_on_aca / 2)
         base_aca_magi = aca_magi - your_conversion - spouse_conversion
         aca_loss = aca_subsidy_loss(
             base_aca_magi,
@@ -365,7 +367,7 @@ def compute_aca(
         aca_clawback = aca_excess_aptc_repayment(
             advance_aptc_annual=advance_aptc_annual,
             actual_magi=aca_magi,
-            benchmark_premium_annual=aca_benchmark_premium_annual,
+            benchmark_premium_annual=effective_benchmark,
             enhanced_subsidies_active=aca_enhanced_subsidies_active,
             filing_status=current_filing_status,
             year=year,
