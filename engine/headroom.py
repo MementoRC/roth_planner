@@ -131,13 +131,15 @@ def compute_headroom(
     locked_niit_magi = ytd.niit_magi_ytd + combined_ss
     result.locked_magi = locked_magi
     ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
-    ded += senior_bonus_deduction(ya, sa, locked_magi, year=_year, cpi=_cpi)
+    ded += senior_bonus_deduction(
+        ya, sa, locked_magi, year=_year, cpi=_cpi, filing_status=filing_status
+    )
 
     # === LOCKED ONLY (YTD actuals — no option exercise) ===
 
     # Ordinary gross: YTD ordinary income + taxable SS (no LTCG, no options)
     locked_other = ytd.total_ordinary_income - ytd.ira_conversions_ytd
-    locked_tss = taxable_ss(combined_ss, locked_other)
+    locked_tss = taxable_ss(combined_ss, locked_other, filing_status=filing_status)
     locked_gross = ytd.total_ordinary_income + locked_tss
 
     result.room_to_12pct = room_to_12(locked_gross, ded, year=_year, cpi=_cpi)
@@ -155,12 +157,14 @@ def compute_headroom(
     result.projected_magi_base = planned_magi
 
     planned_other = locked_other + opt
-    planned_tss = taxable_ss(combined_ss, planned_other)
+    planned_tss = taxable_ss(combined_ss, planned_other, filing_status=filing_status)
     planned_gross = ytd.total_ordinary_income + opt + planned_tss
 
     # Recalculate deductions with full planned MAGI
     ded_planned = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
-    ded_planned += senior_bonus_deduction(ya, sa, planned_magi, year=_year, cpi=_cpi)
+    ded_planned += senior_bonus_deduction(
+        ya, sa, planned_magi, year=_year, cpi=_cpi, filing_status=filing_status
+    )
 
     result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned, year=_year, cpi=_cpi)
     result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned, year=_year, cpi=_cpi)
@@ -183,7 +187,7 @@ def compute_headroom(
     result.irmaa_first_relevant_year = _year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)
-    result.irmaa_tier_current = irmaa_tier(locked_magi)
+    result.irmaa_tier_current = irmaa_tier(locked_magi, filing_status=filing_status)
     result.irmaa_already_triggered = result.irmaa_tier_current > 0 and result.irmaa_relevant
 
     # --- ACA cliff ---
