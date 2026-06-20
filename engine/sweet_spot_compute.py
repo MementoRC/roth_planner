@@ -158,6 +158,15 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     )
 
 
+def bracket_boundary_conversion(base: BaseIncome, bracket_ceiling: float) -> float:
+    """Conversion amount that lifts taxable income to the given bracket ceiling."""
+    # all_in_at_conversion uses taxable_inc = (opt + conv + tss) - total_ded, and
+    # base.base_gross == opt + tss, so solving taxable_inc == ceiling gives
+    #   conv = ceiling + total_ded - opt - tss = ceiling + total_ded - base_gross.
+    # (The earlier view formula subtracted opt a second time, drawing boundaries low.)
+    return max(base.total_ded + bracket_ceiling - base.base_gross, 0.0)
+
+
 def all_in_at_conversion(
     hh: Household, base: BaseIncome, conv: float, net_inv_income: float
 ) -> ConversionResult:

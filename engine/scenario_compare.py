@@ -23,12 +23,40 @@ from engine.scenario import (
 from engine.tax import (
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
+    deductions,
     federal_tax_single,
     marginal_rate_single,
     senior_bonus_deduction,
     taxable_ss,
 )
 from models.household import Household, SurvivorScenario
+
+
+def survivor_year_tax(
+    survivor_age: int,
+    rmd: float,
+    survivor_ss: float,
+    *,
+    year: int,
+    cpi: float,
+) -> tuple[float, float, float]:
+    """Tax, marginal rate, and taxable income for a Single survivor in a future year."""
+    # Index the standard deduction and brackets to the projection year (via cpi) so
+    # inflation-grown income is taxed against indexed thresholds, matching the main
+    # engine (scenario.py) rather than raw BASE_YEAR (2026) constants.
+    tss = taxable_ss(survivor_ss, rmd, filing_status="Single")
+    gross = rmd + tss
+    ded = deductions(survivor_age, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi)
+    ded += senior_bonus_deduction(
+        survivor_age, 0, gross, year=year, cpi=cpi, filing_status="Single"
+    )
+    taxable = max(gross - ded, 0.0)
+    return (
+        federal_tax_single(taxable, year=year, cpi=cpi),
+        marginal_rate_single(taxable, year=year, cpi=cpi),
+        taxable,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Relocated helpers (previously private in views/comparator.py)
@@ -124,22 +152,15 @@ def compute_survivor_snapshot(
 
             ss_grown = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0.0
 
-            # FIX: Single filing_status uses correct $25K/$34K SS thresholds (not MFJ $32K/$44K)
-            tss = taxable_ss(ss_grown, rmd, filing_status="Single")
-            gross = rmd + tss
-            ded = float(STD_DEDUCTION_SINGLE + (SENIOR_EXTRA_SINGLE if survivor_age >= 65 else 0))
-            # OBBBA senior bonus deduction (survivor files Single; deceased age zeroed).
-            ded += senior_bonus_deduction(
+            # Single survivor, indexed to the projection year so inflation-grown
+            # income is taxed against indexed brackets + deduction (not raw 2026).
+            tax, bracket, _taxable = survivor_year_tax(
                 survivor_age,
-                0,
-                gross,
+                rmd,
+                ss_grown,
                 year=death_year_calc + proj_years,
                 cpi=hh.cpi_assumption,
-                filing_status="Single",
             )
-            taxable = max(gross - ded, 0.0)
-            tax = federal_tax_single(taxable)
-            bracket = marginal_rate_single(taxable)
 
             from views._format import fmt_dollars, fmt_dollars_short, fmt_pct  # noqa: PLC0415
 

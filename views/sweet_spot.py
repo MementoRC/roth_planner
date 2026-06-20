@@ -16,6 +16,7 @@ from engine.sweet_spot_compute import (
     STEP,
     all_in_at_conversion,
     base_income_for_year,
+    bracket_boundary_conversion,
     compute_marginal_costs,
     compute_multi_year_summary,
     find_sweet_spots,
@@ -171,7 +172,7 @@ def render(hh: Household) -> None:
     # Add bracket boundary lines
     bracket_boundaries = []
     for ceil, rate in indexed_brackets_mfj[:-1]:
-        boundary_conv = max(base.total_ded + ceil - base.base_gross - base.opt, 0)
+        boundary_conv = bracket_boundary_conversion(base, ceil)
         # Adjust for the fact that conversion changes taxable SS
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
