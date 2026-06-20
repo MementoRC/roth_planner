@@ -413,6 +413,16 @@ def run_scenario(
         # === ACA subsidy loss + clawback ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.
         # Audit B-4: scale the couple benchmark when only one spouse is on ACA.
+        # R2-D: a deceased spouse must not count as an ACA enrollee. In survivor
+        # years drop the decedent's enrollment so the benchmark scales to the
+        # survivor alone (single-from-the-start households already zero the spouse
+        # ACA flag via the Setup gate).
+        _your_aca_enrolled = hh.your_aca_enrolled and not (
+            survivor_active and surv is not None and surv.who_dies == "you"
+        )
+        _spouse_aca_enrolled = hh.spouse_aca_enrolled and not (
+            survivor_active and surv is not None and surv.who_dies == "spouse"
+        )
         yr.aca_magi, yr.aca_loss, yr.aca_clawback = compute_aca(
             yr.magi,
             yr.combined_ss,
@@ -421,8 +431,8 @@ def run_scenario(
             yr.spouse_conversion,
             ya,
             sa,
-            hh.your_aca_enrolled,
-            hh.spouse_aca_enrolled,
+            _your_aca_enrolled,
+            _spouse_aca_enrolled,
             hh.aca_benchmark_premium_annual,
             hh.aca_enhanced_subsidies_active,
             hh.advance_aptc_annual,

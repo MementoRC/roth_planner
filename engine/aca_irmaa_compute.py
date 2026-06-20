@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from engine.aca import aca_applies, aca_net_cost, aca_subsidy, aca_subsidy_loss
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
-from engine.tax import deductions, federal_tax, marginal_rate, senior_bonus_deduction
+from engine.tax import (
+    SENIOR_EXTRA_SINGLE,
+    STD_DEDUCTION_SINGLE,
+    deductions,
+    federal_tax,
+    federal_tax_single,
+    marginal_rate,
+    marginal_rate_single,
+    senior_bonus_deduction,
+)
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 
@@ -65,14 +74,19 @@ def compute_cost_curves(
     )
     effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
 
-    ded = deductions(
-        hh.your_age,
-        hh.spouse_age,
-        hh.std_deduction,
-        hh.senior_extra,
-        year=year,
-        cpi=cpi,
-    )
+    if hh.filing_status == "Single":
+        ded = deductions(
+            hh.your_age,
+            hh.spouse_age,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            year=year,
+            cpi=cpi,
+        )
+    else:
+        ded = deductions(
+            hh.your_age, hh.spouse_age, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi
+        )
 
     # Hoist base-state computations outside the loop
     on_medicare = sum(1 for a in (hh.your_age_in(year), hh.spouse_age_in(year)) if a >= 65)
@@ -161,8 +175,12 @@ def compute_cost_curves(
             filing_status=hh.filing_status,
         )
         taxable = max(magi - ded - bonus_ded, 0)
-        fed_tax_vals.append(federal_tax(taxable, year=year, cpi=cpi))
-        marginal_vals.append(marginal_rate(taxable, year=year, cpi=cpi))
+        if hh.filing_status == "Single":
+            fed_tax_vals.append(federal_tax_single(taxable, year=year, cpi=cpi))
+            marginal_vals.append(marginal_rate_single(taxable, year=year, cpi=cpi))
+        else:
+            fed_tax_vals.append(federal_tax(taxable, year=year, cpi=cpi))
+            marginal_vals.append(marginal_rate(taxable, year=year, cpi=cpi))
 
         # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
         hidden = (
