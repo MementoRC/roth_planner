@@ -140,9 +140,7 @@ class TestNIIT:
             spouse_ss_fra=0.0,
         )
         # Small conversion — keeps ordinary MAGI below $250K threshold
-        plan = ConversionPlan(
-            your_conversions={hh.base_year: 4_000.0, hh.base_year + 1: 4_000.0}
-        )
+        plan = ConversionPlan(your_conversions={hh.base_year: 4_000.0, hh.base_year + 1: 4_000.0})
         result = run_scenario(hh, plan, "niit_excess_bound", end_age=78)
 
         # Year 2 (index 1): brokerage accumulated from year-1 excess generates realized_gains

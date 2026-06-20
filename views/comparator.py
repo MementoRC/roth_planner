@@ -313,7 +313,7 @@ def render(hh: Household):
         default_death_age = hh.your_age + 5
         st.caption(
             f"Default snapshot (you die at age {default_death_age}) — "
-            "set a Survivor scenario in Setup → Joint to model a specific case."
+            "set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
         )
 
     survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)

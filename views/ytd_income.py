@@ -56,7 +56,7 @@ def render(hh: Household):
     if is_pyodide():
         st.caption(
             "Live sync requires a local install. "
-            "Use the Setup → Data Bridge tab to upload a snapshot."
+            "Use the **⚙️ Setup → 🔗 Data bridge** tab to upload a snapshot."
         )
     else:
         col_sync, col_status = st.columns([1, 3])
