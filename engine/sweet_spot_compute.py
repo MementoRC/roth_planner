@@ -211,18 +211,21 @@ def all_in_at_conversion(
     irmaa_delta = irmaa_cost - base_irmaa
 
     # ACA
-    anyone_on_aca = aca_applies(ya, hh.your_aca_enrolled) or aca_applies(sa, hh.spouse_aca_enrolled)
+    num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
+        1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
+    )
+    effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
     aca_loss = (
         aca_subsidy_loss(
             base.base_magi,
             magi,
-            benchmark=hh.aca_benchmark_premium_annual,
+            benchmark=effective_benchmark,
             enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
             filing_status=hh.filing_status,
             year=year,
             cpi=cpi,
         )
-        if anyone_on_aca
+        if num_on_aca > 0
         else 0.0
     )
 
