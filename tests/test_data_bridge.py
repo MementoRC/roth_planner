@@ -377,3 +377,34 @@ class TestDecodeKeymaterialPublic:
         raw = b"\xab" * 32
         encoded = base64.b64encode(raw).decode("ascii")
         assert decode_keymaterial(encoded) == _decode_keymaterial(encoded)
+
+
+# ---------------------------------------------------------------------------
+# TestWriteKeypairPermissions — security hardening regressions (atomic write)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteKeypairPermissions:
+    """Prove the atomic os.open write never exposes keys with wrong permissions."""
+
+    def test_keypair_permissions_nested_subdir(self, monkeypatch, tmp_path):
+        # write_keypair creates the parent dir; verify both file modes after mkdir
+        key_dir = tmp_path / "nested" / "subdir"
+        pub_path = key_dir / "data-bridge.pub"
+        priv_path = key_dir / "data-bridge.priv"
+        monkeypatch.setattr("engine.data_bridge_keys.PUBKEY_PATH", pub_path)
+        monkeypatch.setattr("engine.data_bridge_keys.PRIVKEY_PATH", priv_path)
+        write_keypair(b"\x01" * 32, b"\x02" * 32)
+        assert stat.S_IMODE(pub_path.stat().st_mode) == 0o644
+        assert stat.S_IMODE(priv_path.stat().st_mode) == 0o600
+
+    def test_force_corrects_loose_priv_permissions(self, monkeypatch, tmp_path):
+        # Pre-create priv file with mode 0o644 (too permissive); force=True must correct it
+        pub_path = tmp_path / "data-bridge.pub"
+        priv_path = tmp_path / "data-bridge.priv"
+        priv_path.write_text("old\n", encoding="utf-8")
+        priv_path.chmod(0o644)
+        monkeypatch.setattr("engine.data_bridge_keys.PUBKEY_PATH", pub_path)
+        monkeypatch.setattr("engine.data_bridge_keys.PRIVKEY_PATH", priv_path)
+        write_keypair(b"\x01" * 32, b"\x02" * 32, force=True)
+        assert stat.S_IMODE(priv_path.stat().st_mode) == 0o600

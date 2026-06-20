@@ -147,6 +147,7 @@ def save_snapshot(snap: PortfolioSnapshot) -> None:
         data["sources"] = existing["sources"]
 
     _CACHE_PATH.write_text(json.dumps(data, indent=2))
+    _CACHE_PATH.chmod(0o600)  # PII cache: restrict to owner
 
 
 def load_snapshot() -> PortfolioSnapshot | None:
