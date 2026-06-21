@@ -21,7 +21,7 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 
 
-def approx(expected: float, tol: float = 1.0) -> pytest.ApproxBase:
+def approx(expected: float, tol: float = 1.0) -> object:
     return pytest.approx(expected, abs=tol)
 
 
