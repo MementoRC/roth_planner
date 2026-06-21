@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
+from engine.secure_io import write_pii_json
+
 if TYPE_CHECKING:
     pass
 
@@ -146,8 +148,7 @@ def save_snapshot(snap: PortfolioSnapshot) -> None:
     if "sources" in existing:
         data["sources"] = existing["sources"]
 
-    _CACHE_PATH.write_text(json.dumps(data, indent=2))
-    _CACHE_PATH.chmod(0o600)  # PII cache: restrict to owner
+    write_pii_json(_CACHE_PATH, data)
 
 
 def load_snapshot() -> PortfolioSnapshot | None:

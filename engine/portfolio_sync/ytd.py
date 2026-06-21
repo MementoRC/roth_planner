@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
+from engine.secure_io import write_pii_json
 from models.ytd_income import RealizedGainEvent, YTDSnapshot
 
 if TYPE_CHECKING:
@@ -218,7 +219,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "manually_entered": ytd.manually_entered,
     }
-    _YTD_CACHE_PATH.write_text(json.dumps(data, indent=2))
+    write_pii_json(_YTD_CACHE_PATH, data)
 
 
 def load_ytd_snapshot() -> YTDSnapshot | None:

@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from engine.secure_io import write_pii_json
+
 
 class Form1040ParseError(Exception):
     """Raised when a 1040 PDF cannot be parsed or the tax year is unsupported."""
@@ -390,7 +392,7 @@ def parse_form_1040_pdf(data: bytes) -> Form1040Record:
 # JSON cache — mirrors save_tax_snapshot / load_tax_snapshot pattern
 # ---------------------------------------------------------------------------
 
-_PDF_TAX_CACHE_PATH = Path(".tax_pdf_cache.json")
+_PDF_TAX_CACHE_PATH = Path(__file__).resolve().parent.parent / ".tax_pdf_cache.json"
 
 
 def save_pdf_tax_records(records: dict[int, Form1040Record]) -> None:
@@ -399,8 +401,7 @@ def save_pdf_tax_records(records: dict[int, Form1040Record]) -> None:
     Keys are stored as strings (JSON requirement); year ints are converted.
     """
     serialised: dict[str, Any] = {str(k): v.to_dict() for k, v in records.items()}
-    _PDF_TAX_CACHE_PATH.write_text(json.dumps(serialised, indent=2))
-    _PDF_TAX_CACHE_PATH.chmod(0o600)  # PII cache: restrict to owner
+    write_pii_json(_PDF_TAX_CACHE_PATH, serialised)
 
 
 def load_pdf_tax_records() -> dict[int, Form1040Record]:
