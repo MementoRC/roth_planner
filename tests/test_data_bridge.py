@@ -359,10 +359,12 @@ class TestBrowserNonPyodide:
 
         local_storage_remove("some_key")  # must not raise
 
-    def test_browser_privkey_ls_key_constant(self):
-        from engine.data_bridge_browser import BROWSER_PRIVKEY_LS_KEY
+    def test_browser_privkey_ls_key_removed(self):
+        # F38: BROWSER_PRIVKEY_LS_KEY was deleted to prevent misleading callers
+        # into persisting private keys to localStorage (XSS risk).
+        import engine.data_bridge_browser as _mod
 
-        assert BROWSER_PRIVKEY_LS_KEY == "roth_planner.data_bridge.priv_b64"
+        assert not hasattr(_mod, "BROWSER_PRIVKEY_LS_KEY")
 
 
 # ---------------------------------------------------------------------------

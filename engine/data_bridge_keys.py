@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import os
+import warnings
 from pathlib import Path
 
 PUBKEY_PATH = Path.home() / ".finextract" / "data-bridge.pub"
@@ -51,7 +52,14 @@ def _try_load(env_name: str, path: Path) -> bytes | None:
     if path.is_file():
         try:
             return _decode_keymaterial(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except OSError:
+            return None
+        except ValueError as e:
+            warnings.warn(
+                f"{path}: key file unreadable ({e}); ignoring.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
             return None
     return None
 

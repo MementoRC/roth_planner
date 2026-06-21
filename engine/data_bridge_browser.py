@@ -1,15 +1,18 @@
 """Browser-side helpers for the V2 data bridge (stlite / Pyodide).
 
 Provides :func:`is_pyodide` for runtime detection and thin ``localStorage``
-wrappers that no-op outside Pyodide. Used by the public-site upload widget
-to cache the V2 private key across page reloads.
+wrappers that no-op outside Pyodide.
+
+NOTE — private keys are deliberately NOT persisted to localStorage.
+The V2 private key lives only in ``st.session_state`` for the duration of
+the session.  Persisting it to localStorage would expose the key to any
+JavaScript running in the same origin (XSS risk), so the
+``local_storage_*`` helpers are available only for non-sensitive values.
 """
 
 from __future__ import annotations
 
 import sys
-
-BROWSER_PRIVKEY_LS_KEY = "roth_planner.data_bridge.priv_b64"
 
 
 def is_pyodide() -> bool:
