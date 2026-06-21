@@ -327,10 +327,19 @@ def run_scenario(
                 ya_eff, sa_eff, yr.magi, year=year, cpi=cpi, filing_status="Single"
             )
         else:
-            yr.total_deductions = deductions(
-                ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi
+            # Non-survivor path. A single-from-the-start household (filing_status
+            # "Single", spouse inputs zeroed by the Setup gate) uses the single
+            # standard deduction + senior extra; an MFJ couple keeps hh values.
+            _std_ded: float
+            _senior_extra: float
+            if current_filing_status == "Single":
+                _std_ded, _senior_extra = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
+            else:
+                _std_ded, _senior_extra = hh.std_deduction, hh.senior_extra
+            yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, year=year, cpi=cpi)
+            yr.total_deductions += senior_bonus_deduction(
+                ya, sa, yr.magi, year=year, cpi=cpi, filing_status=current_filing_status
             )
-            yr.total_deductions += senior_bonus_deduction(ya, sa, yr.magi, year=year, cpi=cpi)
 
         # Baseline (no-conversion) deductions for the incremental conversion tax:
         # recompute the OBBBA bonus at the no-conversion MAGI so a conversion cannot
@@ -343,9 +352,17 @@ def run_scenario(
                 ya_eff, sa_eff, base_magi, year=year, cpi=cpi, filing_status="Single"
             )
         else:
+            _b_std_ded: float
+            _b_senior_extra: float
+            if current_filing_status == "Single":
+                _b_std_ded, _b_senior_extra = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
+            else:
+                _b_std_ded, _b_senior_extra = hh.std_deduction, hh.senior_extra
             base_total_deductions = deductions(
-                ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi
-            ) + senior_bonus_deduction(ya, sa, base_magi, year=year, cpi=cpi)
+                ya, sa, _b_std_ded, _b_senior_extra, year=year, cpi=cpi
+            ) + senior_bonus_deduction(
+                ya, sa, base_magi, year=year, cpi=cpi, filing_status=current_filing_status
+            )
 
         # === Taxable income ===
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
@@ -357,7 +374,7 @@ def run_scenario(
             yr.your_conversion,
             yr.spouse_conversion,
             base_total_deductions,
-            survivor_active,
+            current_filing_status,
             year,
             cpi,
         )
@@ -396,6 +413,16 @@ def run_scenario(
         # === ACA subsidy loss + clawback ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.
         # Audit B-4: scale the couple benchmark when only one spouse is on ACA.
+        # R2-D: a deceased spouse must not count as an ACA enrollee. In survivor
+        # years drop the decedent's enrollment so the benchmark scales to the
+        # survivor alone (single-from-the-start households already zero the spouse
+        # ACA flag via the Setup gate).
+        _your_aca_enrolled = hh.your_aca_enrolled and not (
+            survivor_active and surv is not None and surv.who_dies == "you"
+        )
+        _spouse_aca_enrolled = hh.spouse_aca_enrolled and not (
+            survivor_active and surv is not None and surv.who_dies == "spouse"
+        )
         yr.aca_magi, yr.aca_loss, yr.aca_clawback = compute_aca(
             yr.magi,
             yr.combined_ss,
@@ -404,8 +431,8 @@ def run_scenario(
             yr.spouse_conversion,
             ya,
             sa,
-            hh.your_aca_enrolled,
-            hh.spouse_aca_enrolled,
+            _your_aca_enrolled,
+            _spouse_aca_enrolled,
             hh.aca_benchmark_premium_annual,
             hh.aca_enhanced_subsidies_active,
             hh.advance_aptc_annual,
@@ -424,7 +451,7 @@ def run_scenario(
         if ytd_year is not None and ytd_year.ltcg_ytd > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
             _base_ytd_ltcg_thresholds = (
-                LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+                LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
             )
             _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi)
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
@@ -467,7 +494,7 @@ def run_scenario(
 
         # === Bracket room ===
         yr.room_12, yr.room_22 = compute_bracket_room(
-            yr.combined_gross, yr.total_deductions, survivor_active, year, cpi
+            yr.combined_gross, yr.total_deductions, current_filing_status, year, cpi
         )
 
         # === Living expenses & brokerage ===
@@ -495,7 +522,9 @@ def run_scenario(
         # through 0% / 15% / 20% bands.
         # yr.taxable_income is already ordinary-only; do NOT subtract realized_gains.
         # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
-        _base_ltcg_thresholds = LTCG_THRESHOLDS_SINGLE if survivor_active else LTCG_THRESHOLDS_MFJ
+        _base_ltcg_thresholds = (
+            LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
+        )
         ltcg_thresholds = _index_tuple(_base_ltcg_thresholds, year, cpi)
         ltcg_eligible = realized_gains + qual_div_this_year
         _ltcg_start = max(0.0, yr.taxable_income)

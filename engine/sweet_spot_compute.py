@@ -12,10 +12,15 @@ from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year
 from engine.niit import niit
 from engine.tax import (
+    BRACKETS_SINGLE,
+    SENIOR_EXTRA_SINGLE,
+    STD_DEDUCTION_SINGLE,
     deductions,
     federal_tax,
+    federal_tax_single,
     room_to_12,
     room_to_22,
+    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
@@ -125,10 +130,13 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     )
     combined_ss = your_ss + spouse_ss
 
-    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
+    if hh.filing_status == "Single":
+        ded = deductions(ya, sa, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi)
+    else:
+        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
 
     # Base taxable SS (without conversion)
-    tss = taxable_ss(combined_ss, opt)
+    tss = taxable_ss(combined_ss, opt, filing_status=hh.filing_status)
 
     # Base gross (without conversion)
     base_gross = opt + tss
@@ -175,9 +183,11 @@ def all_in_at_conversion(
     year: int = base.year
     cpi: float = base.cpi
 
+    single = hh.filing_status == "Single"
+
     # Recalculate taxable SS with conversion income
     other_inc = base.opt + conv
-    tss = taxable_ss(base.combined_ss, other_inc)
+    tss = taxable_ss(base.combined_ss, other_inc, filing_status=hh.filing_status)
 
     gross = base.opt + conv + tss
     magi = base.opt + conv + tss + base.ytd_magi
@@ -189,17 +199,17 @@ def all_in_at_conversion(
     total_ded = base.ded_base + senior_bonus
 
     taxable_inc = max(gross - total_ded, 0)
-    tax = federal_tax(taxable_inc, year=year, cpi=cpi)
+    tax = (federal_tax_single if single else federal_tax)(taxable_inc, year=year, cpi=cpi)
 
     # Base tax (no conversion)
-    base_tss = taxable_ss(base.combined_ss, base.opt)
+    base_tss = taxable_ss(base.combined_ss, base.opt, filing_status=hh.filing_status)
     base_gross = base.opt + base_tss
     base_senior = senior_bonus_deduction(
         ya, sa, base.base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )
     base_total_ded = base.ded_base + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
-    base_tax = federal_tax(base_taxable, year=year, cpi=cpi)
+    base_tax = (federal_tax_single if single else federal_tax)(base_taxable, year=year, cpi=cpi)
 
     conv_tax = tax - base_tax
 
@@ -245,8 +255,12 @@ def all_in_at_conversion(
         all_in=all_in,
         magi=magi,
         taxable_inc=taxable_inc,
-        room_12=room_to_12(gross, total_ded, year=year, cpi=cpi),
-        room_22=room_to_22(gross, total_ded, year=year, cpi=cpi),
+        room_12=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi))
+        if single
+        else room_to_12(gross, total_ded, year=year, cpi=cpi),
+        room_22=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[2][0], year, cpi))
+        if single
+        else room_to_22(gross, total_ded, year=year, cpi=cpi),
     )
 
 

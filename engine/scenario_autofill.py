@@ -11,19 +11,45 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
-from engine.irmaa import IRMAA_TIERS_MFJ
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario_types import ConversionPlan
 from engine.tax import (
     BRACKETS_MFJ,
+    BRACKETS_SINGLE,
+    SENIOR_EXTRA_SINGLE,
+    STD_DEDUCTION_SINGLE,
     deductions,
     room_to_12,
     room_to_22,
+    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
 from engine.tax_indexing import index_value as _iv
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+
+
+def _room_to_12_fs(
+    current_gross: float, total_deductions: float, *, year: int, cpi: float, filing_status: str
+) -> float:
+    """room_to_12 honoring filing status (single 12% ceiling for "Single")."""
+    if filing_status == "Single":
+        return room_to_bracket(
+            current_gross, total_deductions, _iv(BRACKETS_SINGLE[1][0], year, cpi)
+        )
+    return room_to_12(current_gross, total_deductions, year=year, cpi=cpi)
+
+
+def _room_to_22_fs(
+    current_gross: float, total_deductions: float, *, year: int, cpi: float, filing_status: str
+) -> float:
+    """room_to_22 honoring filing status (single 22% ceiling for "Single")."""
+    if filing_status == "Single":
+        return room_to_bracket(
+            current_gross, total_deductions, _iv(BRACKETS_SINGLE[2][0], year, cpi)
+        )
+    return room_to_22(current_gross, total_deductions, year=year, cpi=cpi)
 
 
 def _auto_fill_core(
@@ -114,7 +140,7 @@ def _auto_fill_core(
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
             )
-        tss = taxable_ss(combined_ss, other_fixed)
+        tss = taxable_ss(combined_ss, other_fixed, filing_status=hh.filing_status)
 
         # Fixed gross (ordinary income — no LTCG)
         fixed_gross = (
@@ -131,9 +157,17 @@ def _auto_fill_core(
                 + ytd_year.ira_distributions_ytd
             )
 
-        # Deductions
-        ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=_cpi)
-        ded += senior_bonus_deduction(ya, sa, base_magi, year=year, cpi=_cpi)
+        # Deductions — single-from-the-start households use single std/senior values
+        _af_std: float
+        _af_senior: float
+        if hh.filing_status == "Single":
+            _af_std, _af_senior = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
+        else:
+            _af_std, _af_senior = hh.std_deduction, hh.senior_extra
+        ded = deductions(ya, sa, _af_std, _af_senior, year=year, cpi=_cpi)
+        ded += senior_bonus_deduction(
+            ya, sa, base_magi, year=year, cpi=_cpi, filing_status=hh.filing_status
+        )
 
         # Room — delegated to caller's room_fn
         room = room_fn(fixed_gross, ded, base_magi, year, _cpi)
@@ -195,7 +229,9 @@ def auto_fill_12(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi: room_to_12(fg, ded, year=yr, cpi=cpi),
+        room_fn=lambda fg, ded, _bm, yr, cpi: _room_to_12_fs(
+            fg, ded, year=yr, cpi=cpi, filing_status=hh.filing_status
+        ),
     )
 
 
@@ -212,7 +248,9 @@ def auto_fill_22(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi: room_to_22(fg, ded, year=yr, cpi=cpi),
+        room_fn=lambda fg, ded, _bm, yr, cpi: _room_to_22_fs(
+            fg, ded, year=yr, cpi=cpi, filing_status=hh.filing_status
+        ),
     )
 
 
@@ -225,13 +263,18 @@ def auto_fill_irmaa_safe(
     Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
     """
-    irmaa_base_threshold = IRMAA_TIERS_MFJ[0][0]  # tier-1 joint MAGI ceiling (2026 base)
+    # tier-1 MAGI ceiling (2026 base) — single tiers for a single-from-the-start household
+    _irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+    irmaa_base_threshold = _irmaa_tiers[0][0]
 
     def _irmaa_room(fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float) -> float:
         # Room to IRMAA threshold (indexed), capped at 22% bracket room
         irmaa_threshold = _iv(irmaa_base_threshold, yr, cpi)
         irmaa_room = max(irmaa_threshold - base_magi, 0.0)
-        return min(irmaa_room, room_to_22(fixed_gross, ded, year=yr, cpi=cpi))
+        return min(
+            irmaa_room,
+            _room_to_22_fs(fixed_gross, ded, year=yr, cpi=cpi, filing_status=hh.filing_status),
+        )
 
     return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
 
@@ -261,9 +304,11 @@ def add_bracket_fill_withdrawals(
     result = run_scenario(hh, base_plan, "temp", end_age=95, early_exercise=early_exercise)
     _cpi_fill = hh.cpi_assumption
 
-    # Find the base (2026) bracket ceiling for the target rate
+    # Find the base (2026) bracket ceiling for the target rate (single brackets
+    # for a single-from-the-start household).
+    base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     base_bracket_ceiling = 0.0
-    for ceil, rate in BRACKETS_MFJ:
+    for ceil, rate in base_brackets:
         if rate <= target_bracket:
             base_bracket_ceiling = ceil
         else:

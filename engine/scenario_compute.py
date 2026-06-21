@@ -283,12 +283,18 @@ def compute_federal_tax(
     your_conversion: float,
     spouse_conversion: float,
     base_total_deductions: float,
-    survivor_active: bool,
+    current_filing_status: str,
     year: int,
     cpi: float,
 ) -> tuple[float, float, float]:
-    """Return (federal_tax_amt, marginal_bracket, conversion_tax)."""
-    if survivor_active:
+    """Return (federal_tax_amt, marginal_bracket, conversion_tax).
+
+    ``current_filing_status`` is the effective status for the year ("Single" for
+    survivor years and single-from-the-start households; "MFJ" otherwise).
+    Dispatching on it (rather than a raw survivor flag) lets a non-survivor
+    Single household use the single brackets while MFJ/survivor math is unchanged.
+    """
+    if current_filing_status == "Single":
         federal_tax_amt = federal_tax_single(taxable_income, year=year, cpi=cpi)
         marginal_bracket = marginal_rate_single(taxable_income, year=year, cpi=cpi)
     else:
@@ -297,7 +303,7 @@ def compute_federal_tax(
 
     base_gross = combined_gross - your_conversion - spouse_conversion
     base_taxable = max(base_gross - base_total_deductions, 0)
-    if survivor_active:
+    if current_filing_status == "Single":
         conversion_tax = federal_tax_single(
             taxable_income, year=year, cpi=cpi
         ) - federal_tax_single(base_taxable, year=year, cpi=cpi)
@@ -387,12 +393,16 @@ def compute_aca(
 def compute_bracket_room(
     combined_gross: float,
     total_deductions: float,
-    survivor_active: bool,
+    current_filing_status: str,
     year: int,
     cpi: float,
 ) -> tuple[float, float]:
-    """Return (room_12, room_22) — headroom to the 12% and 22% bracket ceilings."""
-    if survivor_active:
+    """Return (room_12, room_22) — headroom to the 12% and 22% bracket ceilings.
+
+    Dispatches on the effective filing status so a non-survivor Single household
+    uses the single-filer bracket ceilings (MFJ/survivor math unchanged).
+    """
+    if current_filing_status == "Single":
         room_12 = room_to_bracket(
             combined_gross,
             total_deductions,
