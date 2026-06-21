@@ -13,7 +13,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
-from engine.tax import BRACKETS_MFJ
+from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
+from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
@@ -329,8 +330,12 @@ def render(hh: Household):
                 )
             )
 
-    # Add 12% ceiling line
-    ceil_12_values = [yr.total_deductions + BRACKETS_MFJ[1][0] for yr in conv_window]
+    # Add 12% ceiling line (CPI-indexed, filing-status-aware)
+    _cpi = hh.cpi_assumption
+    _br = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    ceil_12_values = [
+        yr.total_deductions + _index_value(_br[1][0], yr.year, _cpi) for yr in conv_window
+    ]
     fig_br.add_trace(
         go.Scatter(
             x=[yr.year for yr in conv_window],

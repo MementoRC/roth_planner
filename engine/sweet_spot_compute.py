@@ -46,6 +46,7 @@ class BaseIncome:
     total_ded: float
     ded_base: float
     ytd_magi: float = 0.0
+    ytd_niit_magi: float = 0.0
 
 
 @dataclass
@@ -143,6 +144,7 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
 
     # MAGI base (without conversion)
     ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
+    ytd_niit_magi = ytd.niit_magi_ytd if ytd is not None else 0.0  # IRC §1411(d)(3)
     base_magi = opt + tss + ytd_magi
 
     # Senior bonus deduction
@@ -163,6 +165,7 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
         total_ded=total_ded,
         ded_base=ded,
         ytd_magi=ytd_magi,
+        ytd_niit_magi=ytd_niit_magi,
     )
 
 
@@ -239,9 +242,11 @@ def all_in_at_conversion(
         else 0.0
     )
 
-    # NIIT
-    niit_with = niit(magi, net_inv_income, filing_status=hh.filing_status)
-    niit_without = niit(base.base_magi, net_inv_income, filing_status=hh.filing_status)
+    # NIIT — use NIIT-MAGI which excludes tax-exempt interest (IRC §1411(d)(3))
+    niit_magi = base.opt + conv + tss + base.ytd_niit_magi
+    niit_base_magi = base.opt + base_tss + base.ytd_niit_magi
+    niit_with = niit(niit_magi, net_inv_income, filing_status=hh.filing_status)
+    niit_without = niit(niit_base_magi, net_inv_income, filing_status=hh.filing_status)
     niit_delta = niit_with - niit_without
 
     all_in = conv_tax + irmaa_delta + aca_loss + niit_delta

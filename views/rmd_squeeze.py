@@ -18,7 +18,7 @@ import streamlit as st
 
 from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
-from engine.tax import BRACKETS_MFJ
+from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from models.household import Household
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
@@ -188,16 +188,17 @@ def render(hh: Household):
     )
 
     # Bracket ceiling lines
+    _brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     for yr in rmd_nc[:1]:  # use first year's deductions for reference
         ded = yr.total_deductions
         fig_w.add_hline(
-            y=ded + BRACKETS_MFJ[1][0],
+            y=ded + _brackets[1][0],
             line_dash="dash",
             line_color="#22c55e",
             annotation_text="12% ceiling",
         )
         fig_w.add_hline(
-            y=ded + BRACKETS_MFJ[2][0],
+            y=ded + _brackets[2][0],
             line_dash="dash",
             line_color="#f59e0b",
             annotation_text="22% ceiling",
