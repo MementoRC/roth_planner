@@ -649,13 +649,16 @@ class TestEstimateYtdFederalTax:
         assert result.effective_rate == 0.0
 
     def test_pure_wages_no_ltcg(self):
-        """W-2 wages only — ordinary_tax matches bracket calc, ltcg_tax=0."""
-        from engine.tax import estimate_ytd_federal_tax
+        """W-2 wages only — ordinary_tax matches bracket calc on taxable (not gross) income, ltcg_tax=0."""
+        from engine.tax import STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
-        ytd = YTDSnapshot(wages_ytd=150_000.0)
+        wages = 150_000.0
+        ytd = YTDSnapshot(wages_ytd=wages)
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        assert result.ordinary_tax == pytest.approx(federal_tax(150_000.0))
+        # updated: F19/F1 — std deduction applied before bracket walk; ordinary_tax uses
+        # taxable_ordinary = wages - std_ded, not gross wages.
+        assert result.ordinary_tax == pytest.approx(federal_tax(wages - STD_DEDUCTION_MFJ))
         assert result.ltcg_tax == 0.0
         assert result.niit == 0.0
         assert result.total == pytest.approx(result.ordinary_tax)
@@ -696,16 +699,18 @@ class TestEstimateYtdFederalTax:
 
     def test_marginal_bracket_and_room_correct(self):
         """Marginal bracket and room-to-next-bracket are correct for mid-bracket income."""
-        from engine.tax import BRACKETS_MFJ, estimate_ytd_federal_tax
+        from engine.tax import BRACKETS_MFJ, STD_DEDUCTION_MFJ, estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
 
-        # Put wages midway through the 22% bracket (24_800–100_800)
-        wages = 60_000.0  # inside 12% bracket (24_800–100_800)
+        # Put wages midway through the 12% bracket (24_800–100_800 taxable)
+        wages = 60_000.0  # taxable_ordinary = 60_000 - 32_200 = 27_800 → inside 12% bracket
         ytd = YTDSnapshot(wages_ytd=wages)
         result = estimate_ytd_federal_tax(ytd, self._hh())
         assert result.marginal_bracket_pct == pytest.approx(0.12)
-        # Room to top of 12% bracket = 100_800 - 60_000 = 40_800
-        assert result.room_to_next_bracket == pytest.approx(BRACKETS_MFJ[1][0] - wages)
+        # updated: F14 — room measured from taxable income (wages - std_ded), not gross wages.
+        # room = BRACKETS_MFJ[1][0] - (wages - STD_DEDUCTION_MFJ) = 100_800 - 27_800 = 73_000
+        taxable = wages - STD_DEDUCTION_MFJ
+        assert result.room_to_next_bracket == pytest.approx(BRACKETS_MFJ[1][0] - taxable)
 
     def test_ltcg_tax_when_stack_crosses_15pct_threshold(self):
         """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div.

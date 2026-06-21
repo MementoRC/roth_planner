@@ -330,7 +330,14 @@ def render(hh: Household):
 
     # --- Section B: Tax Bracket Position ---
     # --- Section C: Estimated YTD Federal Tax ---
-    estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh)
+    # F20: pass combined annual SS so taxable_ss() applies IRC §86 cap.
+    # your_ss_at_70()/spouse_ss_at_70() return annual benefit at claimed age (monthly
+    # FRA benefit * delay-credit factor * 12); guard on start-age so pre-claim = 0.
+    _combined_ss = (
+        (hh.your_ss_at_70() if hh.your_age >= hh.your_ss_start_age else 0.0)
+        + (hh.spouse_ss_at_70() if hh.spouse_age >= hh.spouse_ss_start_age else 0.0)
+    )
+    estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh, combined_ss=_combined_ss)
 
     st.markdown("---")
     st.subheader("Tax Bracket Position")

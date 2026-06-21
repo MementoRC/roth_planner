@@ -122,8 +122,8 @@ def render(hh: Household):
     # Data rows
     for yr in conv_window:
         ya, sa = yr.your_age, yr.spouse_age
-        you_can_conv = ya <= 74
-        sp_can_conv = sa <= 74
+        you_can_conv = ya < hh.your_rmd_start_age
+        sp_can_conv = sa < hh.spouse_rmd_start_age
         qcd_ok = ya >= 71
         sp_qcd_ok = sa >= 71
 
@@ -160,7 +160,7 @@ def render(hh: Household):
             if new_yc != yc_val:
                 st.session_state.conv_plan_your[yr.year] = new_yc
         else:
-            cols[5].markdown("*RMD era*" if ya >= 75 else "—")
+            cols[5].markdown("*RMD era*" if ya >= hh.your_rmd_start_age else "—")
 
         # Spouse conversion input
         if sp_can_conv:
@@ -281,7 +281,12 @@ def render(hh: Household):
             line={"color": "#22c55e", "width": 3},
         )
     )
-    fig.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig.add_vline(
+        x=hh.your_rmd_start_age,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="RMDs begin",
+    )
 
     fig.update_layout(
         xaxis_title="Your Age",

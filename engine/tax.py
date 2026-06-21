@@ -304,6 +304,7 @@ class YTDTaxEstimate:
 def estimate_ytd_federal_tax(
     ytd: YTDSnapshot,
     hh: Household,
+    combined_ss: float = 0.0,
 ) -> YTDTaxEstimate:
     """Estimate federal tax owed YTD as if today were Dec 31.
 
@@ -312,25 +313,37 @@ def estimate_ytd_federal_tax(
     MAGI threshold. Does NOT include state tax, IRMAA premiums, or quarterly
     underpayment penalties.
 
-    Standard deduction IS applied for the LTCG stack-walk base (taxable_ordinary)
-    so that LTCG thresholds — which are taxable-income thresholds per IRC §1(h)(1)
-    — are evaluated correctly. The ordinary-income bracket call (federal_tax) still
-    receives gross ordinary income as a conservative estimate (no deduction applied).
+    ``combined_ss`` is the total annual Social Security benefit received by the
+    household (both spouses combined). Defaults to 0.0 so existing callers that
+    do not pass SS remain unaffected. When provided, taxable_ss() is used to
+    compute the includable portion (IRC §86) and fold it into ordinary income
+    before the bracket walk.
+
+    Standard deduction and OBBBA senior bonus are applied to derive taxable
+    ordinary income (IRC §63(a)). All bracket-dependent outputs — ordinary_tax,
+    marginal_bracket_pct, room_to_next_bracket — use taxable_ordinary, not gross.
     """
     from engine.niit import niit
 
     _year = hh.base_year
     _cpi = hh.cpi_assumption
 
-    ordinary_income = ytd.total_ordinary_income
     is_single = hh.filing_status == "Single"
-    ordinary_tax = (federal_tax_single if is_single else federal_tax)(
-        ordinary_income, year=_year, cpi=_cpi
-    )
 
-    # Compute standard deduction to find taxable ordinary income for LTCG stack-walk.
-    # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds (IRC §1(h)(1));
-    # using gross income shifts the 0%-band upward by the std deduction amount.
+    # Step 1: gross ordinary income (excludes LTCG/qualified divs — those go through
+    # the preferential-rate stack below).
+    ordinary_income = ytd.total_ordinary_income
+
+    # Step 2: taxable SS — computed first so it can be added to ordinary_income
+    # before the standard-deduction subtraction.  provisional income = other_income
+    # + 0.5 * SS; taxable_ss() handles the tier thresholds per IRC §86.
+    tss = taxable_ss(combined_ss, ordinary_income, filing_status=hh.filing_status)
+    ordinary_income_with_ss = ordinary_income + tss
+
+    # Step 3: standard deduction (indexed) + senior extras + OBBBA bonus.
+    # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds
+    # (IRC §1(h)(1)); the same std_ded base is used for both the ordinary bracket
+    # walk and the LTCG stack-walk so both are evaluated on taxable income.
     if hh.filing_status == "MFJ":
         senior_count = (1 if hh.your_age >= 65 else 0) + (1 if hh.spouse_age >= 65 else 0)
         std_ded = index_value(STD_DEDUCTION_MFJ, _year, _cpi) + senior_count * index_value(
@@ -341,7 +354,7 @@ def estimate_ytd_federal_tax(
         std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi) + senior_count * index_value(
             SENIOR_EXTRA_SINGLE, _year, _cpi
         )
-    # OBBBA senior bonus deduction also lowers the LTCG stack-walk base.
+    # OBBBA senior bonus deduction also lowers the taxable income base.
     std_ded += senior_bonus_deduction(
         hh.your_age,
         hh.spouse_age,
@@ -350,9 +363,15 @@ def estimate_ytd_federal_tax(
         cpi=_cpi,
         filing_status=hh.filing_status,
     )
-    taxable_ordinary = max(ordinary_income - std_ded, 0.0)
+    # Taxable ordinary income: gross (including taxable SS) minus deductions (IRC §63(a)).
+    taxable_ordinary = max(ordinary_income_with_ss - std_ded, 0.0)
 
-    # LTCG + qualified dividends taxed at preferential rate.
+    # Step 4: ordinary income tax on TAXABLE ordinary income (not gross).
+    ordinary_tax = (federal_tax_single if is_single else federal_tax)(
+        taxable_ordinary, year=_year, cpi=_cpi
+    )
+
+    # Step 5: LTCG + qualified dividends taxed at preferential rate.
     # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
     _ltcg_thresholds = index_tuple(
         LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi
@@ -368,7 +387,7 @@ def estimate_ytd_federal_tax(
     ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
     ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
 
-    # NIIT: 3.8% on lesser of NII or MAGI excess over threshold
+    # Step 6: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
     net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
     magi = ytd.niit_magi_ytd
@@ -377,19 +396,20 @@ def estimate_ytd_federal_tax(
     total = ordinary_tax + ltcg_tax + niit_amount
     effective_rate = total / magi if magi > 0 else 0.0
 
-    # Marginal bracket for ordinary income
+    # Step 7: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).
     marginal = (marginal_rate_single if is_single else marginal_rate)(
-        ordinary_income, year=_year, cpi=_cpi
+        taxable_ordinary, year=_year, cpi=_cpi
     )
 
-    # Room to next bracket ceiling
+    # Step 8: room to next bracket ceiling — measured from TAXABLE ordinary income
+    # against the taxable-income bracket ceilings (not from gross income).
     _indexed_brackets = index_bracket_list(
         BRACKETS_SINGLE if is_single else BRACKETS_MFJ, _year, _cpi
     )
     room_next = 0.0
     for ceil, _rate in _indexed_brackets:
-        if ordinary_income <= ceil:
-            room_next = ceil - ordinary_income
+        if taxable_ordinary <= ceil:
+            room_next = ceil - taxable_ordinary
             break
 
     return YTDTaxEstimate(

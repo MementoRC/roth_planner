@@ -125,21 +125,31 @@ def compute_headroom(
     )
     combined_ss = your_ss + spouse_ss
 
-    # --- Deductions (same for both scenarios) ---
-    # Use locked MAGI for deduction phaseout (conservative — planned income may change)
-    locked_magi = ytd.magi_ytd + combined_ss
-    locked_niit_magi = ytd.niit_magi_ytd + combined_ss
+    # --- LOCKED ONLY (YTD actuals — no option exercise) ---
+    #
+    # Provisional-income base for §86 taxable-SS computation (F18 + F26 merged fix):
+    #   magi_ytd already includes: wages, NEC, STCG, conversions, distributions,
+    #   LTCG, dividends, interest, tax-exempt/muni interest, NQO exercises.
+    #   F26: conversions ARE provisional income (§86(b)(2)) — do NOT subtract them.
+    #   F18: LTCG + qualified dividends + muni interest also belong in provisional income.
+    #   Combined: locked_other = ytd.magi_ytd (no subtractions needed).
+    locked_other = ytd.magi_ytd
+    locked_tss = taxable_ss(combined_ss, locked_other, filing_status=filing_status)
+
+    # F8 fix: MAGI adds only taxable SS (≤85%), not gross combined_ss.
+    # locked_tss must be computed before locked_magi (reordered from original).
+    locked_magi = ytd.magi_ytd + locked_tss
+    locked_niit_magi = ytd.niit_magi_ytd + locked_tss
     result.locked_magi = locked_magi
+
+    # Deductions use locked MAGI for phaseout (conservative — planned income may change)
     ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
     ded += senior_bonus_deduction(
         ya, sa, locked_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
 
-    # === LOCKED ONLY (YTD actuals — no option exercise) ===
-
-    # Ordinary gross: YTD ordinary income + taxable SS (no LTCG, no options)
-    locked_other = ytd.total_ordinary_income - ytd.ira_conversions_ytd
-    locked_tss = taxable_ss(combined_ss, locked_other, filing_status=filing_status)
+    # Ordinary gross for bracket walk: ordinary income only + taxable SS (LTCG excluded
+    # from brackets per IRC §1(h)); conversions are ordinary income and stay in.
     locked_gross = ytd.total_ordinary_income + locked_tss
 
     result.room_to_12pct = room_to_12(locked_gross, ded, year=_year, cpi=_cpi)
@@ -152,12 +162,14 @@ def compute_headroom(
 
     # === WITH PLANNED (locked + option exercise) ===
 
-    planned_magi = locked_magi + opt
-    planned_niit_magi = locked_niit_magi + opt
+    # planned_other adds opt to the full provisional-income base (same magi_ytd base).
+    planned_other = ytd.magi_ytd + opt
+    planned_tss = taxable_ss(combined_ss, planned_other, filing_status=filing_status)
+
+    planned_magi = ytd.magi_ytd + planned_tss + opt
+    planned_niit_magi = ytd.niit_magi_ytd + planned_tss + opt
     result.projected_magi_base = planned_magi
 
-    planned_other = locked_other + opt
-    planned_tss = taxable_ss(combined_ss, planned_other, filing_status=filing_status)
     planned_gross = ytd.total_ordinary_income + opt + planned_tss
 
     # Recalculate deductions with full planned MAGI
