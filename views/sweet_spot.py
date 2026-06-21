@@ -10,7 +10,7 @@ Sweeps conversion amounts from $0 to bracket ceiling and plots:
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers
 from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.sweet_spot_compute import (
     STEP,
@@ -23,7 +23,6 @@ from engine.sweet_spot_compute import (
 )
 from engine.tax import BRACKETS_MFJ
 from engine.tax_indexing import index_bracket_list as _index_brackets
-from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
@@ -72,9 +71,7 @@ def render(hh: Household) -> None:
 
     # Index IRMAA tiers and brackets for the selected year
     _cpi = hh.cpi_assumption
-    irmaa_tiers = [
-        (_index_value(t, selected_year, _cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers
-    ]
+    irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year, _cpi)
     indexed_brackets_mfj = _index_brackets(BRACKETS_MFJ, selected_year, _cpi)
 
     # --- Compute base income ---

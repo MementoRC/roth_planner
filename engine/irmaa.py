@@ -93,10 +93,27 @@ def irmaa_surcharge(
     return 0.0
 
 
-def irmaa_tier(magi: float, filing_status: str = "MFJ") -> int:
-    """Return IRMAA tier (0 = no surcharge, 1-5 = tiers)."""
+def irmaa_tier(
+    magi: float,
+    filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> int:
+    """Return IRMAA tier (0 = no surcharge, 1-5 = tiers).
+
+    Args:
+        magi: Modified Adjusted Gross Income.
+        filing_status: "MFJ" (default) or "Single".
+        year: calendar year — indexes Tier 1-4 thresholds forward from 2026 base.
+        cpi: annual CPI rate for indexing (default 2.5%).
+
+    Tiers 1-4 are CPI-indexed; Tier 5 ($750K MFJ / $500K Single) is frozen
+    by statute since 2020 and is never indexed forward.
+    """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
-    for i, (threshold, _, _) in enumerate(base_tiers):
+    tiers = _index_irmaa_tiers(base_tiers, year, cpi)
+    for i, (threshold, _, _) in enumerate(tiers):
         if magi <= threshold:
             return 0 if i == 0 else i
     return 5

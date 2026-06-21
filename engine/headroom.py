@@ -199,7 +199,9 @@ def compute_headroom(
     result.irmaa_first_relevant_year = _year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)
-    result.irmaa_tier_current = irmaa_tier(locked_magi, filing_status=filing_status)
+    result.irmaa_tier_current = irmaa_tier(
+        locked_magi, filing_status=filing_status, year=_year, cpi=_cpi
+    )
     result.irmaa_already_triggered = result.irmaa_tier_current > 0 and result.irmaa_relevant
 
     # --- ACA cliff ---
