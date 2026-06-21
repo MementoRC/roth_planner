@@ -12,6 +12,7 @@ import streamlit as st
 
 from engine.aca import (
     BENCHMARK_PREMIUM_ANNUAL,
+    FPL_1,
     FPL_2,
     _aca_cap_schedule,
     aca_applies,
@@ -122,7 +123,8 @@ def render(hh: Household):
 
             # Mark FPL thresholds
             if not hh.aca_enhanced_subsidies_active:
-                cliff_magi = 4.0 * _index_value(FPL_2, _view_year, _view_cpi)
+                cliff_fpl = FPL_1 if hh.filing_status == "Single" else FPL_2
+                cliff_magi = 4.0 * _index_value(cliff_fpl, _view_year, _view_cpi)
                 fig_aca.add_vline(
                     x=cliff_magi,
                     line_dash="dash",
@@ -332,7 +334,9 @@ def render(hh: Household):
             aca_data.append(
                 {
                     "FPL Range": fpl_label,
-                    "MAGI ≤": fmt_dollars(upper_fpl * FPL_2)
+                    "MAGI ≤": fmt_dollars(
+                        upper_fpl * (FPL_1 if hh.filing_status == "Single" else FPL_2)
+                    )
                     if upper_fpl != float("inf")
                     else "No limit",
                     "Premium Cap": f"{fmt_pct(cap_rate)} of income",
@@ -340,9 +344,11 @@ def render(hh: Household):
             )
         st.dataframe(pd.DataFrame(aca_data), width="stretch", hide_index=True)
 
+        _fpl_label = "family of 1" if hh.filing_status == "Single" else "family of 2"
+        _fpl_val = FPL_1 if hh.filing_status == "Single" else FPL_2
         st.caption(
-            f"FPL (family of 2): {fmt_dollars(FPL_2)} · "
-            f"Benchmark silver plan: {fmt_dollars(BENCHMARK_PREMIUM_ANNUAL)}/yr"
+            f"FPL ({_fpl_label}): {fmt_dollars(_fpl_val)} · "
+            f"Benchmark silver plan: {fmt_dollars(hh.aca_benchmark_premium_annual)}/yr"
         )
 
     _niit_thr = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
