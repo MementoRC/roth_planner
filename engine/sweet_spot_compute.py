@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from engine.aca import aca_applies, aca_subsidy_loss
 from engine.ira import ss_benefit_at_age, ss_with_cola
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
 from engine.tax import (
     BRACKETS_SINGLE,
@@ -348,7 +348,7 @@ def compute_multi_year_summary(
     rows: list[YearSummary] = []
     for yr in conv_years:
         cpi = hh.cpi_assumption
-        irmaa_tiers = [(_index_value(t, yr, cpi), pb, pd) for t, pb, pd in _base_irmaa_tiers]
+        irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr, cpi)
 
         b = base_income_for_year(hh, yr, ytd=ytd if yr == hh.base_year else None)
         b_result = all_in_at_conversion(hh, b, 0, net_inv_income)

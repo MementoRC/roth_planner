@@ -463,7 +463,7 @@ def render(hh: Household):
 - **Divisor shrinks**: At 75 you withdraw ~4.1%, by 85 it's ~6.3%, by 95 it's ~11.2%
 - **Growth amplifies**: If your IRA grew from $1.7M to $4.4M untouched, RMDs are huge
 - **Bracket escalation**: Large RMDs + SS push you from 12% into 22-24% brackets
-- **IRMAA trigger**: MAGI over $218K means Medicare surcharges ($3,400+/yr for couple)
+- **IRMAA trigger**: MAGI over $218K means Medicare surcharges (~$2,300/yr for couple at Tier 1)
 - **Brokerage overflow**: RMDs exceeding living expenses create taxable investment accounts
 - **The fix**: Converting during low-income years (ages 61-74) shrinks the IRA *before* RMDs start
 - **QCD option**: At 70½+, donating up to $111K/yr directly from IRA to charity bypasses taxation

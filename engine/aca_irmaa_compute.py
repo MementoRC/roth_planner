@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.aca import aca_applies, aca_net_cost, aca_subsidy, aca_subsidy_loss
-from engine.irmaa import irmaa_next_threshold, irmaa_surcharge, irmaa_tier
+from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
 from engine.tax import (
     SENIOR_EXTRA_SINGLE,
@@ -21,7 +21,6 @@ from engine.tax import (
     marginal_rate_single,
     senior_bonus_deduction,
 )
-from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 
 
@@ -160,7 +159,7 @@ def compute_cost_curves(
             cpi=cpi,
         )
         irmaa_vals.append(surcharge)
-        irmaa_tier_vals.append(irmaa_tier(magi, filing_status=hh.filing_status))
+        irmaa_tier_vals.append(irmaa_tier(magi, filing_status=hh.filing_status, year=year, cpi=cpi))
 
         # NIIT
         niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
@@ -316,7 +315,9 @@ def compute_year_by_year_timeline(
                 you_age=ya,
                 spouse_age=sa,
                 system=system,
-                irmaa_tier=irmaa_tier(base_magi, filing_status=hh.filing_status)
+                irmaa_tier=irmaa_tier(
+                    base_magi, filing_status=hh.filing_status, year=year, cpi=_yr_cpi
+                )
                 if medicare_count > 0
                 else None,
                 irmaa_room=irmaa_room,
@@ -334,5 +335,9 @@ def index_irmaa_tier_thresholds(
     year: int,
     cpi: float,
 ) -> list[tuple[float, float, float]]:
-    """CPI-index IRMAA tier thresholds (first tuple slot) to a target year."""
-    return [(_index_value(t[0], year, cpi), t[1], t[2]) for t in tiers]
+    """CPI-index IRMAA tier thresholds (first tuple slot) to a target year.
+
+    Delegates to _index_irmaa_tiers so the frozen Tier 5 threshold is never
+    inflated (Tiers 1-4 indexed; Tier 5 preserved at statute-frozen base value).
+    """
+    return _index_irmaa_tiers(tiers, year=year, cpi=cpi)
