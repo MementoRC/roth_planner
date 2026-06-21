@@ -218,9 +218,22 @@ def run_scenario(
         yr.your_inherited_distribution = your_inherited_distribution
         yr.spouse_inherited_distribution = spouse_inherited_distribution
 
+        # === Brokerage appreciation rate + realized gains (hoisted for SS provisional income) ===
+        # F4: realized_gains is an AGI item required in SS provisional income (IRC §86(b)(2)).
+        # It depends only on the begin-of-year brokerage balance and appreciation rate — both
+        # known here — so hoisting is safe and does not change any downstream value.
+        # Also needed for MAGI ordering (OBBBA senior-bonus phase-out and IRMAA fallback).
+        brok_rate = hh.brokerage_rate(year)
+        if hh.brokerage_growth is not None:
+            brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
+        else:
+            brok_appreciation_rate = brok_rate
+        realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
+
         # === Social Security + taxable SS ===
         # (SS survivor benefit step-up is NOT yet modeled — deferred to future PR)
         # D-1: MAGI uses taxable SS, not full SS (computed here, before MAGI block).
+        # F3/F4: qual_div_this_year and realized_gains are now passed in for provisional income.
         yr.your_ss, yr.spouse_ss, yr.combined_ss, yr.taxable_ss_amt = compute_social_security(
             hh,
             ya,
@@ -239,6 +252,8 @@ def run_scenario(
             yr.spouse_inherited_distribution,
             ord_div_this_year,
             ytd_year,
+            qual_div_this_year,
+            realized_gains,
         )
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
@@ -265,18 +280,9 @@ def run_scenario(
             ytd_year,
         )
 
-        # === Brokerage realized gains (hoisted for MAGI ordering) ===
-        # Realized gains (Schedule D -> AGI -> MAGI) must be reflected in yr.magi
-        # BEFORE MAGI-dependent steps: the OBBBA senior-bonus phase-out (grid-02) and
-        # the IRMAA same-year fallback (grid-03). `brokerage` is the begin-of-year
-        # balance and brok_appreciation_rate depends only on the year, so both are
-        # known here. Final yr.magi value is unchanged vs. folding realized_gains later.
-        brok_rate = hh.brokerage_rate(year)
-        if hh.brokerage_growth is not None:
-            brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
-        else:
-            brok_appreciation_rate = brok_rate
-        realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
+        # === Brokerage realized gains added to MAGI ===
+        # brok_rate, brok_appreciation_rate, and realized_gains were computed above (hoisted
+        # for SS provisional income). Add realized_gains to MAGI here for the ordering block.
         yr.magi += realized_gains
         magi_history[year] = yr.magi
 
@@ -448,14 +454,18 @@ def run_scenario(
         # === LTCG tax (computed separately at preferential rate) ===
         # Stack-walk 0%/15%/20% brackets: ordinary taxable income sets the
         # starting point; YTD LTCG walks up through the bands.
-        if ytd_year is not None and ytd_year.ltcg_ytd > 0:
+        # F5: guard widened to include qualified_dividends_ytd (IRC §1(h)(11) — both taxed
+        # at preferential rates). If only qual-divs exist and ltcg_ytd==0 the old guard
+        # skipped the entire block, applying $0 LTCG-rate tax to qual dividends.
+        _ytd_ltcg_total = (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd) if ytd_year is not None else 0.0
+        if ytd_year is not None and _ytd_ltcg_total > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
             _base_ytd_ltcg_thresholds = (
                 LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
             )
             _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi)
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
-            _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, ytd_year.ltcg_ytd)
+            _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, _ytd_ltcg_total)
             _ytd_ltcg_at_15 = max(
                 0.0,
                 min(_ytd_ltcg_end, _ytd_ltcg_thresholds[1])

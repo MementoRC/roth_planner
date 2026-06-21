@@ -107,7 +107,7 @@ class TestHeadroom:
         from models.ytd_income import YTDSnapshot
 
         # Case 1: You are 55, spouse is 64 (spouse reaches 65 first in 1 year)
-        # Spouse's Medicare start (65) occurs in 1 year from now (2026 + 1 = 2027)
+        # Spouse's Medicare start (65) occurs in 1 year from now (2026 + 1 = 2027).
         # IRMAA lookback is 2 years before Medicare start, so first relevant income year
         # is 65 - 2 = 63, which occurs 1 year from now when spouse is 65 (2026 + 0 = 2026... wait, let me recalculate)
         # When spouse is 64 in 2026, they turn 65 in 2027.
@@ -241,3 +241,268 @@ class TestHeadroomOptionIncomeSubtract:
         result = compute_headroom(hh, ytd, early_exercise=True)
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
+
+
+# ---------------------------------------------------------------------------
+# Helpers used across F8/F18/F26 tests
+# ---------------------------------------------------------------------------
+
+def _ss_household(your_ss_monthly: float = 2_000, spouse_ss_monthly: float = 2_000) -> Household:
+    """Household where both spouses claim SS at 65 (FRA=67 → 86.67% of FRA benefit).
+
+    your_ss_fra / spouse_ss_fra are in $/month.
+    annual benefit each ≈ monthly * 0.8667 * 12 ≈ $20,800/yr at $2K/month.
+    Combined ≈ $41,600/yr.
+    """
+    return Household(
+        your_age=65,
+        spouse_age=65,
+        base_year=2026,
+        your_ss_fra=your_ss_monthly,
+        spouse_ss_fra=spouse_ss_monthly,
+        your_ss_start_age=65,
+        spouse_ss_start_age=65,
+        your_fra_age=67,
+        spouse_fra_age=67,
+    )
+
+
+class TestHeadroomSSMAGIFixes:
+    """Tests for F8 (taxable SS in MAGI), F18 (LTCG/qual-divs in SS provisional income),
+    and F26 (executed IRA conversions in SS provisional income)."""
+
+    # ------------------------------------------------------------------
+    # F8: MAGI uses taxable SS only, not gross SS
+    # ------------------------------------------------------------------
+
+    def test_f8_magi_uses_taxable_ss_not_gross(self):
+        """F8: locked_magi = magi_ytd + taxable_ss, NOT magi_ytd + combined_ss.
+
+        With $100K wages and ~$41.6K combined SS:
+          provisional = 100K + 0.5 * 41.6K = 121.6K > tier2 ($44K MFJ) → 85% cap
+          taxable SS ≈ 0.85 * 41.6K ≈ $35.4K (< gross $41.6K)
+          locked_magi = 100K + 35.4K = ~$135.4K (NOT 100K + 41.6K = ~$141.6K)
+        """
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        monthly = 2_000.0
+        hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=100_000)
+        hr = compute_headroom(hh, ytd)
+
+        # Compute expected values independently
+        annual_ss_each = ss_benefit_at_age(monthly, claim_age=65, fra_age=67)
+        combined_ss = 2 * annual_ss_each
+        # magi_ytd = wages only (no SS in YTD snapshot)
+        expected_tss = taxable_ss(combined_ss, 100_000, filing_status="MFJ")
+        expected_locked_magi = 100_000 + expected_tss
+
+        assert hr.locked_magi == approx(expected_locked_magi, tol=10)
+        # Confirm taxable SS < gross SS (85% cap applies here)
+        assert expected_tss < combined_ss
+        # Also confirm the old (wrong) value would have been higher
+        assert hr.locked_magi < 100_000 + combined_ss
+
+    def test_f8_zero_ss_locked_magi_equals_magi_ytd(self):
+        """F8: with zero SS (ages below start age), locked_magi = magi_ytd exactly."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        # Default household: your_ss_start_age=70 > your_age default → no SS
+        hh = Household(your_age=55, spouse_age=55, base_year=2026)
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=80_000)
+        hr = compute_headroom(hh, ytd)
+        assert hr.locked_magi == approx(80_000)
+
+    def test_f8_low_ss_below_tier1_taxable_ss_is_zero(self):
+        """F8: when provisional income < MFJ tier1 ($32K), taxable SS = 0.
+
+        Provisional = other_income + 0.5 * SS.
+        If wages=$0 and SS=$40K → provisional = 0 + 20K = 20K < $32K → taxable = 0.
+        locked_magi = magi_ytd (0) + 0 = 0.
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        # Very small SS so provisional stays below $32K MFJ threshold
+        # monthly=$600/person → annual ≈ $600 * 0.8667 * 12 ≈ $6,240/yr each → $12.5K combined
+        # provisional = 0 + 0.5 * 12.5K = 6.25K < 32K → taxable SS = 0
+        hh = _ss_household(your_ss_monthly=600.0, spouse_ss_monthly=600.0)
+        ytd = YTDSnapshot(tax_year=2026)  # zero wages
+        hr = compute_headroom(hh, ytd)
+        # taxable SS = 0 → locked_magi = magi_ytd = 0
+        assert hr.locked_magi == approx(0.0)
+
+    # ------------------------------------------------------------------
+    # F18: LTCG and qualified dividends included in SS provisional income
+    # ------------------------------------------------------------------
+
+    def test_f18_ltcg_raises_taxable_ss(self):
+        """F18: LTCG flows through magi_ytd into provisional income → taxable SS increases.
+
+        Pre-fix: locked_other excluded LTCG (used total_ordinary_income only).
+        Post-fix: locked_other = magi_ytd, which includes ltcg_ytd.
+        """
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        monthly = 1_500.0  # modest SS to stay in the middle range
+        hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
+
+        ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
+        ytd_with_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000, ltcg_ytd=60_000)
+
+        hr_no_ltcg = compute_headroom(hh, ytd_no_ltcg)
+        hr_with_ltcg = compute_headroom(hh, ytd_with_ltcg)
+
+        # LTCG adds to magi_ytd (70K vs 10K), so provisional income is higher
+        # → taxable SS is higher in the with-LTCG case
+        # → locked_magi exceeds the no-LTCG case by MORE than $60K (SS contribution rises too)
+        assert hr_with_ltcg.locked_magi > hr_no_ltcg.locked_magi + 60_000
+
+        # Confirm the exact taxable SS matches our own calculation with LTCG included
+        annual_ss_each = ss_benefit_at_age(monthly, claim_age=65, fra_age=67)
+        combined_ss = 2 * annual_ss_each
+        expected_tss = taxable_ss(combined_ss, 70_000, filing_status="MFJ")
+        expected_locked_magi = 70_000 + expected_tss
+        assert hr_with_ltcg.locked_magi == approx(expected_locked_magi, tol=10)
+
+    def test_f18_qual_divs_raise_taxable_ss(self):
+        """F18: qualified dividends flow through magi_ytd (via dividends_ytd) into
+        provisional income, raising taxable SS above what ordinary-income-only base gives.
+        """
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        monthly = 1_500.0
+        hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
+
+        ytd_no_divs = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
+        ytd_with_divs = YTDSnapshot(
+            tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=40_000
+        )
+
+        hr_no_divs = compute_headroom(hh, ytd_no_divs)
+        hr_with_divs = compute_headroom(hh, ytd_with_divs)
+
+        # Qualified dividends go into magi_ytd → provisional income rises
+        # locked_magi with divs must exceed that without by more than $40K
+        assert hr_with_divs.locked_magi > hr_no_divs.locked_magi + 40_000
+
+        annual_ss_each = ss_benefit_at_age(monthly, claim_age=65, fra_age=67)
+        combined_ss = 2 * annual_ss_each
+        # magi_ytd with divs = wages + qual_divs = 50K (dividends_ytd = ordinary + qualified)
+        expected_tss = taxable_ss(combined_ss, 50_000, filing_status="MFJ")
+        assert hr_with_divs.locked_magi == approx(50_000 + expected_tss, tol=50)
+
+    # ------------------------------------------------------------------
+    # F26: Executed IRA conversions remain in provisional income
+    # ------------------------------------------------------------------
+
+    def test_f26_conversions_in_provisional_income(self):
+        """F26: ira_conversions_ytd is in magi_ytd and must NOT be subtracted from
+        provisional income. Conversions ARE ordinary income under §1.408A-4 Q&A 7.
+
+        Equivalence test: $50K wages vs $20K wages + $30K conversion should produce
+        the same locked_magi (both have magi_ytd=$50K → identical provisional income
+        and taxable SS).
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        monthly = 1_500.0
+        hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
+
+        ytd_wages_only = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
+        ytd_wages_plus_conv = YTDSnapshot(
+            tax_year=2026, wages_ytd=20_000, ira_conversions_ytd=30_000
+        )
+
+        hr_wages = compute_headroom(hh, ytd_wages_only)
+        hr_with_conv = compute_headroom(hh, ytd_wages_plus_conv)
+
+        # Same magi_ytd → same provisional income → same taxable SS → same locked_magi
+        assert hr_with_conv.locked_magi == approx(hr_wages.locked_magi, tol=1.0)
+
+    def test_f26_conversion_raises_ss_vs_pre_fix_behavior(self):
+        """F26: old code subtracted conversions from provisional income base.
+
+        Old: locked_other = total_ordinary_income - ira_conversions_ytd = wages
+        New: locked_other = magi_ytd = wages + conversions
+
+        With wages=$10K + $40K conversion and SS present, new code yields
+        higher taxable SS (more provisional income) than old code would have.
+        """
+        from engine.tax import taxable_ss
+
+        combined_ss = 40_000.0  # approximate combined SS
+
+        # Old code's provisional base (excluded conversions)
+        old_provisional_base = 10_000  # wages only
+        # New code's provisional base (includes conversions)
+        new_provisional_base = 50_000  # wages + conversions
+
+        old_tss = taxable_ss(combined_ss, old_provisional_base, filing_status="MFJ")
+        new_tss = taxable_ss(combined_ss, new_provisional_base, filing_status="MFJ")
+
+        assert new_tss > old_tss
+
+    # ------------------------------------------------------------------
+    # Combined: F8 + F18 + F26 all together
+    # ------------------------------------------------------------------
+
+    def test_f8_f18_f26_combined_consistency(self):
+        """Combined fix: wages + LTCG + conversion all in magi_ytd; taxable SS (not gross) in MAGI.
+
+        Scenario:
+          wages=$30K, LTCG=$50K, IRA conversion=$20K (ages 65, claiming SS at 65).
+          monthly SS = $2,000/person (FRA=67 → factor ≈ 0.8667)
+          annual SS each ≈ $20,800 → combined ≈ $41,600
+
+          magi_ytd = 30K + 50K + 20K = $100K
+          provisional = 100K + 0.5 * 41.6K = 120.8K > tier2 ($44K) → 85% cap
+          taxable SS = 0.85 * 41.6K ≈ $35,360
+          locked_magi = 100K + 35,360 ≈ $135,360
+
+        Old code would have used:
+          locked_other = total_ordinary_income - conversions = (30K + 20K) - 20K = 30K
+          provisional = 30K + 0.5 * 41.6K ≈ 50.8K → 85% → taxable SS ≈ $35,360 (similar here)
+          BUT locked_magi = magi_ytd + combined_ss = 100K + 41.6K = $141.6K (gross SS)
+
+        New code: locked_magi = magi_ytd + taxable_ss = 100K + 35,360 = $135,360 ✓
+        """
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        monthly = 2_000.0
+        hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=30_000,
+            ltcg_ytd=50_000,
+            ira_conversions_ytd=20_000,
+        )
+        hr = compute_headroom(hh, ytd)
+
+        annual_ss_each = ss_benefit_at_age(monthly, claim_age=65, fra_age=67)
+        combined_ss = 2 * annual_ss_each
+        magi_ytd = 100_000  # 30K + 50K + 20K
+        expected_tss = taxable_ss(combined_ss, magi_ytd, filing_status="MFJ")
+        expected_locked_magi = magi_ytd + expected_tss
+
+        assert hr.locked_magi == approx(expected_locked_magi, tol=100)
+
+        # F8 check: locked_magi must be less than magi_ytd + combined_ss (gross)
+        assert hr.locked_magi < magi_ytd + combined_ss
+
+        # IRMAA room must be positive (threshold ~$212K indexed, locked_magi ~$135K)
+        assert hr.room_to_irmaa_t1 > 0

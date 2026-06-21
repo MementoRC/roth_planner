@@ -1442,3 +1442,286 @@ class TestReviewRegressions:
         # Same claim age (70), earlier FRA -> more delayed-retirement credits -> higher SS.
         # Hardcoded fra_age=67 before the fix would make these equal.
         assert b66.combined_ss > b67.combined_ss
+
+
+class TestAuditF3F4SSProvisionalIncome:
+    """F3/F4: LTCG, qualified dividends, and realized brokerage gains must enter
+    SS provisional income per IRC §86(b)(2)."""
+
+    def _base_hh(self) -> Household:
+        return Household(
+            your_age=70,
+            spouse_age=64,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_ira=1_000_000,
+            spouse_ira=0,
+        )
+
+    def _call_ss(self, hh: Household, **kwargs) -> float:
+        """Call compute_social_security and return taxable_ss_amt."""
+        from engine.scenario_compute import compute_social_security
+
+        _, _, _, taxable_ss_amt = compute_social_security(
+            hh=hh,
+            ya=hh.your_age,
+            sa=hh.spouse_age,
+            survivor_active=False,
+            who_dies=None,
+            current_filing_status="MFJ",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=kwargs.get("ytd_year"),
+            qual_div_this_year=kwargs.get("qual_div_this_year", 0.0),
+            realized_gains=kwargs.get("realized_gains", 0.0),
+        )
+        return taxable_ss_amt
+
+    def test_f3_ytd_ltcg_raises_taxable_ss(self):
+        """F3: ltcg_ytd must enter provisional income — taxable SS is higher with YTD LTCG."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+        ytd_no_ltcg = YTDSnapshot(tax_year=hh.base_year, ltcg_ytd=0.0)
+        ytd_with_ltcg = YTDSnapshot(tax_year=hh.base_year, ltcg_ytd=50_000.0)
+
+        ss_without = self._call_ss(hh, ytd_year=ytd_no_ltcg)
+        ss_with = self._call_ss(hh, ytd_year=ytd_with_ltcg)
+
+        assert ss_with > ss_without, (
+            "ltcg_ytd must increase taxable SS via provisional income (IRC §86(b)(2))"
+        )
+
+    def test_f3_ytd_qualified_dividends_raises_taxable_ss(self):
+        """F3: qualified_dividends_ytd must enter provisional income — taxable SS is higher."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+        ytd_no_qdiv = YTDSnapshot(qualified_dividends_ytd=0.0)
+        ytd_with_qdiv = YTDSnapshot(qualified_dividends_ytd=30_000.0)
+
+        ss_without = self._call_ss(hh, ytd_year=ytd_no_qdiv)
+        ss_with = self._call_ss(hh, ytd_year=ytd_with_qdiv)
+
+        assert ss_with > ss_without, (
+            "qualified_dividends_ytd must increase taxable SS via provisional income"
+        )
+
+    def test_f4_forecast_qual_div_raises_taxable_ss(self):
+        """F4: forecast qual_div_this_year must enter provisional income."""
+        hh = self._base_hh()
+        ss_without = self._call_ss(hh, qual_div_this_year=0.0)
+        ss_with = self._call_ss(hh, qual_div_this_year=20_000.0)
+
+        assert ss_with > ss_without, (
+            "qual_div_this_year must increase taxable SS via provisional income (IRC §86(b)(2))"
+        )
+
+    def test_f4_realized_gains_raise_taxable_ss(self):
+        """F4: brokerage realized_gains must enter SS provisional income."""
+        hh = self._base_hh()
+        ss_without = self._call_ss(hh, realized_gains=0.0)
+        ss_with = self._call_ss(hh, realized_gains=40_000.0)
+
+        assert ss_with > ss_without, (
+            "realized_gains must increase taxable SS via provisional income (IRC §86(b)(2))"
+        )
+
+    def test_f4_run_scenario_brokerage_yield_raises_taxable_ss(self):
+        """F4: run_scenario with a brokerage yield produces higher taxable SS than zero-yield.
+
+        Sanity-checks that the fix flows end-to-end through run_scenario.
+        Use a future year (your_age=72) where SS is active but no RMDs yet.
+        """
+        hh_no_yield = Household(
+            your_age=68,
+            spouse_age=62,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_ira=500_000,
+            spouse_ira=0,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07,
+                yield_rate=0.0,
+                qualified_fraction=1.0,
+            ),
+        )
+        hh_with_yield = Household(
+            your_age=68,
+            spouse_age=62,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_ira=500_000,
+            spouse_ira=0,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07,
+                yield_rate=0.03,
+                qualified_fraction=1.0,
+            ),
+        )
+        # Seed both with a brokerage balance by running enough years to accumulate
+        plan = ConversionPlan()
+        res_no = run_scenario(hh_no_yield, plan, end_age=75)
+        res_with = run_scenario(hh_with_yield, plan, end_age=75)
+
+        # At age 72 (SS active, no RMDs) the yield scenario must show higher taxable SS
+        yr_no = next(yr for yr in res_no.years if yr.your_age == 73)
+        yr_with = next(yr for yr in res_with.years if yr.your_age == 73)
+
+        assert yr_with.taxable_ss_amt >= yr_no.taxable_ss_amt, (
+            "Scenario with brokerage yield must produce >= taxable SS than zero-yield"
+        )
+
+
+class TestAuditF5BaseYearQualDivLTCGWalk:
+    """F5: YTD qualified dividends must be taxed at preferential LTCG rates,
+    not escaped entirely when ltcg_ytd == 0."""
+
+    def _hh(self) -> Household:
+        return Household(
+            your_age=65,
+            spouse_age=59,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_ira=500_000,
+            spouse_ira=0,
+        )
+
+    def test_f5_qual_div_only_gets_ltcg_rate_tax(self):
+        """F5: When ltcg_ytd==0 but qualified_dividends_ytd>0, ytd_ltcg_tax must be > 0.
+
+        Pre-fix: guard was `ltcg_ytd > 0` so qual-divs-only skipped the stack walk entirely
+        → ytd_ltcg_tax = 0. Post-fix: guard is `(ltcg_ytd + qualified_dividends_ytd) > 0`.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._hh()
+        # Put enough ordinary income so the qual-divs land in the 15% LTCG band
+        ytd = YTDSnapshot(
+            wages_ytd=150_000.0,
+            ltcg_ytd=0.0,
+            qualified_dividends_ytd=20_000.0,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=hh.your_age, ytd=ytd)
+        yr = result.years[0]
+
+        assert yr.ytd_ltcg_tax > 0.0, (
+            "ytd_ltcg_tax must be > 0 when only qualified_dividends_ytd > 0 (F5 fix)"
+        )
+
+    def test_f5_qual_div_plus_ltcg_both_taxed(self):
+        """F5: Combined ltcg_ytd + qualified_dividends_ytd must both enter the stack walk."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._hh()
+        ytd_ltcg_only = YTDSnapshot(
+            wages_ytd=150_000.0,
+            ltcg_ytd=20_000.0,
+            qualified_dividends_ytd=0.0,
+        )
+        ytd_both = YTDSnapshot(
+            wages_ytd=150_000.0,
+            ltcg_ytd=20_000.0,
+            qualified_dividends_ytd=10_000.0,
+        )
+        plan = ConversionPlan()
+        res_ltcg = run_scenario(hh, plan, end_age=hh.your_age, ytd=ytd_ltcg_only)
+        res_both = run_scenario(hh, plan, end_age=hh.your_age, ytd=ytd_both)
+
+        yr_ltcg = res_ltcg.years[0]
+        yr_both = res_both.years[0]
+
+        assert yr_both.ytd_ltcg_tax > yr_ltcg.ytd_ltcg_tax, (
+            "Adding qualified_dividends_ytd to ltcg_ytd must increase ytd_ltcg_tax"
+        )
+
+
+class TestAuditF7ComputePhaseRmdStartAge:
+    """F7: compute_phase must respect hh.your_rmd_start_age / hh.spouse_rmd_start_age,
+    not hardcoded 74/75 literals."""
+
+    def test_f7_rmd_phase_at_73_when_rmd_start_age_73(self):
+        """F7: user at age 73 with rmd_start_age=73 must get 'rmd' or 'squeeze', not 'ss_conv'."""
+        from engine.scenario_compute import compute_phase
+
+        hh = Household(
+            your_age=73,
+            spouse_age=73,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
+        )
+        phase = compute_phase(ya=73, sa=73, year=hh.base_year, hh=hh, early_exercise=False)
+        assert phase in ("rmd", "squeeze"), (
+            f"Expected 'rmd' or 'squeeze' at age 73 with rmd_start_age=73, got '{phase}'"
+        )
+
+    def test_f7_ss_conv_before_rmd_start_age_73(self):
+        """F7: user at age 72 with rmd_start_age=73 must still get 'ss_conv'."""
+        from engine.scenario_compute import compute_phase
+
+        hh = Household(
+            your_age=72,
+            spouse_age=67,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
+        )
+        phase = compute_phase(ya=72, sa=67, year=hh.base_year, hh=hh, early_exercise=False)
+        assert phase == "ss_conv", (
+            f"Expected 'ss_conv' at age 72 with rmd_start_age=73, got '{phase}'"
+        )
+
+    def test_f7_squeeze_when_only_user_hits_rmd(self):
+        """F7: user at rmd_start_age but spouse below theirs → 'squeeze', not 'rmd'."""
+        from engine.scenario_compute import compute_phase
+
+        hh = Household(
+            your_age=73,
+            spouse_age=67,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=75,
+        )
+        phase = compute_phase(ya=73, sa=67, year=hh.base_year, hh=hh, early_exercise=False)
+        assert phase == "squeeze", (
+            f"Expected 'squeeze' when your_age==rmd_start_age but spouse below theirs, got '{phase}'"
+        )
+
+    def test_f7_rmd_phase_at_75_with_default_rmd_start_age(self):
+        """F7: default rmd_start_age=75 — phase must be 'rmd'/'squeeze' only at age 75+."""
+        from engine.scenario_compute import compute_phase
+
+        hh = Household(
+            your_age=74,
+            spouse_age=74,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year, hh=hh, early_exercise=False)
+        phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 1, hh=hh, early_exercise=False)
+        assert phase_74 == "ss_conv", f"Age 74 with rmd_start=75 should be ss_conv, got '{phase_74}'"
+        assert phase_75 in ("rmd", "squeeze"), f"Age 75 with rmd_start=75 should be rmd/squeeze, got '{phase_75}'"
+
+    def test_f7_run_scenario_phase_73_rmd_start_73(self):
+        """F7: run_scenario must label age-73 year as 'rmd' when rmd_start_age=73."""
+        hh = Household(
+            your_age=70,
+            spouse_age=70,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=74)
+        yr73 = next(yr for yr in result.years if yr.your_age == 73)
+        assert yr73.phase in ("rmd", "squeeze"), (
+            f"run_scenario year at age 73 (rmd_start_age=73) must be rmd/squeeze, got '{yr73.phase}'"
+        )

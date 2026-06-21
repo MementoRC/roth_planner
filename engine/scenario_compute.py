@@ -44,12 +44,14 @@ def compute_phase(
         and hh.option_income(year, early_exercise) > 0
     ):
         return "options"
-    if ya <= 74 and ya < 70:
+    rmd_yours = hh.your_rmd_start_age
+    rmd_spouse = hh.spouse_rmd_start_age
+    if ya < rmd_yours and ya < 70:
         return "clean"
-    if ya <= 74 and ya >= 70:
+    if ya < rmd_yours and ya >= 70:
         return "ss_conv"
-    if ya >= 75:
-        return "squeeze" if sa <= 74 else "rmd"
+    if ya >= rmd_yours:
+        return "squeeze" if sa < rmd_spouse else "rmd"
     return "clean"
 
 
@@ -162,6 +164,8 @@ def compute_social_security(
     spouse_inherited_distribution: float,
     ord_div_this_year: float,
     ytd_year: YTDSnapshot | None,
+    qual_div_this_year: float = 0.0,
+    realized_gains: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt)."""
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
@@ -210,11 +214,15 @@ def compute_social_security(
             + ytd_year.ira_conversions_ytd
             + ytd_year.ira_distributions_ytd
             + ytd_year.interest_ytd  # C-3: fully taxable ordinary interest (IRC §86(b)(2))
+            # F3: LTCG and qualified dividends are AGI items per IRC §86(b)(2) provisional-income
+            + ytd_year.ltcg_ytd
+            + ytd_year.qualified_dividends_ytd
         )
     # A-3: inherited IRA distributions are AGI → required in provisional income (IRC §86(b)(2))
     other_inc += your_inherited_distribution + spouse_inherited_distribution
     # B-3: forecast ordinary brokerage dividends are ordinary income → provisional income
-    other_inc += ord_div_this_year
+    # F4: forecast qualified dividends and realized brokerage gains are also AGI items
+    other_inc += ord_div_this_year + qual_div_this_year + realized_gains
     taxable_ss_amt = taxable_ss(combined_ss, other_inc, filing_status=current_filing_status)
     return your_ss, spouse_ss, combined_ss, taxable_ss_amt
 

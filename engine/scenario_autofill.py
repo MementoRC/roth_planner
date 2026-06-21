@@ -111,19 +111,8 @@ def _auto_fill_core(
             spouse_ira, sa, hh.spouse_rmd_start_age
         )  # no spouse QCD in auto-fill
 
-        # MAGI without conversion (full MAGI — includes LTCG for IRMAA)
-        # Identical to approx_magi in the former 12/22 variants; passed to room_fn
-        # so the IRMAA-safe variant can enforce its joint-MAGI ceiling.
-        base_magi = (
-            opt
-            + combined_ss
-            + (taxable_rmd if ya >= hh.your_rmd_start_age else 0)
-            + spouse_taxable_rmd
-        )
-        if ytd_year is not None:
-            base_magi += ytd_year.magi_ytd
-
-        # Taxable SS (need to estimate with current other income)
+        # Taxable SS — computed first so base_magi uses only the includable
+        # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
         other_fixed = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
         # YTD ordinary income affects SS taxation.
         # Mirrors run_scenario's combined_gross YTD block: wages, NEC, STCG,
@@ -141,6 +130,18 @@ def _auto_fill_core(
                 + ytd_year.ira_distributions_ytd
             )
         tss = taxable_ss(combined_ss, other_fixed, filing_status=hh.filing_status)
+
+        # MAGI without conversion (full MAGI — includes LTCG for IRMAA).
+        # Uses taxable SS (tss) not gross combined_ss per IRC §86 + §1395r(i)(4).
+        # Passed to room_fn so the IRMAA-safe variant can enforce its ceiling.
+        base_magi = (
+            opt
+            + tss
+            + (taxable_rmd if ya >= hh.your_rmd_start_age else 0)
+            + spouse_taxable_rmd
+        )
+        if ytd_year is not None:
+            base_magi += ytd_year.magi_ytd
 
         # Fixed gross (ordinary income — no LTCG)
         fixed_gross = (
