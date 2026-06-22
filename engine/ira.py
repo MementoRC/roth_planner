@@ -79,8 +79,10 @@ def ss_benefit_at_age(monthly_fra: float, claim_age: int, fra_age: int = 67) -> 
         else:
             factor = 1 - 36 * (5 / 9 / 100) - (early_months - 36) * (5 / 12 / 100)
         return monthly_fra * max(factor, 0) * 12
-    # Delayed: 8% per year = 2/3% per month
-    factor = 1 + months_diff * (2 / 3 / 100)
+    # Delayed: 8% per year = 2/3% per month; credits stop accruing at age 70
+    max_delay_months = (70 - fra_age) * 12
+    effective_delay = min(months_diff, max_delay_months)
+    factor = 1 + effective_delay * (2 / 3 / 100)
     return monthly_fra * factor * 12
 
 

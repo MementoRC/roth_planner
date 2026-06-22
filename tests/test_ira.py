@@ -63,6 +63,17 @@ class TestSSBenefit:
         with_cola = ss_with_cola(56_544, 5, 0.025)
         assert with_cola == approx(56_544 * 1.025**5)
 
+    def test_drc_capped_at_70(self):
+        """Delayed-retirement credits stop at age 70; claiming at 71 or 75 must
+        yield the same benefit as claiming at 70 (FRA=67, max 36 months of DRC)."""
+        fra = 67
+        monthly = 3_000.0
+        at_70 = ss_benefit_at_age(monthly, 70, fra)
+        at_71 = ss_benefit_at_age(monthly, 71, fra)
+        at_75 = ss_benefit_at_age(monthly, 75, fra)
+        assert at_71 == approx(at_70), "Claiming at 71 must equal 70 (DRC capped)"
+        assert at_75 == approx(at_70), "Claiming at 75 must equal 70 (DRC capped)"
+
 
 class TestSSProvisionalIncomeRegression:
     """Regression guards for three omissions in the other_inc block used by taxable_ss().
