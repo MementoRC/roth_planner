@@ -35,7 +35,9 @@ from models.household import Household
 def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) -> None:
     """Render a read-only accounts dataframe, or an info banner when empty."""
     if not accounts:
-        st.info("No accounts loaded — click Sync above.")
+        st.info(
+            "No accounts loaded — use the Sync button below (local install) or upload a data file."
+        )
         return
     rows = [
         {
@@ -63,7 +65,9 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
         for h in a.holdings
     ]
     if not rows:
-        st.info("No holdings loaded — click Sync above.")
+        st.info(
+            "No holdings loaded — use the Sync button below (local install) or upload a data file."
+        )
         return
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
@@ -96,7 +100,9 @@ def _render_portfolio_sub_tabs(
     if snap is None:
         for tab in (me_tab, spouse_tab, all_tab):
             with tab:
-                st.info("No accounts loaded — click Sync above.")
+                st.info(
+                    "No accounts loaded — use the Sync button below (local install) or upload a data file."
+                )
         return
 
     me_accounts = [a for a in snap.accounts if a.owner == "you"]

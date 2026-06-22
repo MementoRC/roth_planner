@@ -17,7 +17,7 @@ from views._format import fmt_dollars, fmt_pct
 def render(hh: Household):
     _cfg = load_defaults()
     ticker = _cfg["stock_ticker"]
-    st.title("Portfolio Sync")
+    st.title("Portfolio")
     st.caption(
         "Cached data from FinExtract ingestion server. "
         "Go to **⚙️ Setup → 💼 Portfolio** and click **Sync from FinExtract** to refresh."
@@ -62,12 +62,12 @@ def render(hh: Household):
         acct_rows.append(
             {
                 "Account": f"{ticker} Shares (ESPP/RSU)",
-                "Owner": "You",
                 "Total Value": fmt_dollars(snap.txn_shares_value),
                 "Equity": fmt_dollars(snap.txn_shares_value),
-                "Bonds": "$0",
-                "Equity %": "100%",
-                "Expected Return": "—",
+                "Bonds": fmt_dollars(0),
+                "Cash": fmt_dollars(0),
+                "Crypto": fmt_dollars(0),
+                "Wtd Return": "—",
             }
         )
 
@@ -91,10 +91,9 @@ def render(hh: Household):
     pretax = snap.pretax_total
     if pretax > 0:
         st.markdown("---")
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         c1.metric("Household Pre-Tax (IRA + 403b)", fmt_dollars(pretax))
         c2.metric("Household Pre-Tax Wtd Return", fmt_pct(snap.pretax_weighted_return))
-        c3.metric("Household Pre-Tax Balance", fmt_dollars(pretax), help="Combined balance for both owners")
 
     # --- Holdings Detail ---
     st.markdown("### Holdings")
@@ -252,9 +251,7 @@ def render(hh: Household):
 
     spouse_pretax_accts = [a for a in snap.pretax_accounts if a.owner == "spouse"]
     spouse_pretax_return = (
-        fmt_pct(snap.pretax_weighted_return_for("spouse"))
-        if spouse_pretax_accts
-        else "—"
+        fmt_pct(snap.pretax_weighted_return_for("spouse")) if spouse_pretax_accts else "—"
     )
     rate_rows.append(
         {

@@ -41,7 +41,6 @@ def render(hh: Household):
 
     # --- Build data ---
     ages = [yr.your_age for yr in no_conv.years]
-    [yr.year for yr in no_conv.years]
 
     # Combined IRA + Roth (grid-01: include Roth so converted principal is not invisible)
     ira_nc = [
@@ -65,10 +64,6 @@ def render(hh: Household):
         ct_wc += t_wc
         cum_tax_nc.append(ct_nc)
         cum_tax_wc.append(ct_wc)
-
-    # Brokerage balance
-    [yr.brokerage_balance for yr in no_conv.years]
-    [yr.brokerage_balance for yr in with_conv.years]
 
     # --- Top metrics ---
     col1, col2, col3, col4 = st.columns(4)
@@ -126,7 +121,9 @@ def render(hh: Household):
         )
     )
     # RMD start line
-    fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_ira.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_ira.update_layout(
         title="Combined IRA + Roth Trajectory (Both Spouses)",
         xaxis_title="Your Age",
@@ -221,7 +218,6 @@ def render(hh: Household):
         net_benefit.append(cum_rmd_savings + cum_brok_savings - cum_conv_tax)
 
     fig_net = go.Figure()
-    ["#ef4444" if v < 0 else "#22c55e" for v in net_benefit]
     fig_net.add_trace(
         go.Scatter(
             x=ages,
@@ -234,7 +230,9 @@ def render(hh: Household):
         )
     )
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig_net.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_net.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
 
     # Find break-even age
     breakeven = None
