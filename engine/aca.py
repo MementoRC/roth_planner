@@ -1,11 +1,9 @@
 """ACA Marketplace subsidy calculator for pre-Medicare coverage.
 
 Applies only ages 61-64 (before Medicare at 65).
-Enhanced subsidies (ARPA/IRA) cap premiums at % of income based on FPL.
-
-NOTE: Enhanced subsidies expired Dec 31, 2025. The House passed a 3-year
-extension on Jan 8, 2026, but it has not been signed into law yet.
-Toggle ENHANCED_SUBSIDIES_ACTIVE to model either scenario.
+Enhanced ARPA/IRA subsidies expired Dec 31, 2025; 2026 uses the pre-ARP
+schedule by default (ENHANCED_SUBSIDIES_ACTIVE = False). Toggle the flag
+to model a hypothetical future extension.
 """
 
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value

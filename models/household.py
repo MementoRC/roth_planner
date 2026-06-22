@@ -127,7 +127,7 @@ class Household:
     # Living expenses (annual, today's dollars)
     living_expenses: float = _D["living_expenses"]
 
-    # Tax parameters (2025 TCJA/OBBBA permanent)
+    # Tax parameters (2026 TCJA/OBBBA permanent)
     std_deduction: float = 32_200  # MFJ
     senior_extra: float = 1_650  # per person 65+
     filing_status: str = "MFJ"

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+_log = logging.getLogger(__name__)
 
 
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
@@ -26,7 +29,8 @@ def _load_token() -> str:
     if p.is_file():
         try:
             return p.read_text(encoding="utf-8").strip()
-        except OSError:
+        except OSError as exc:
+            _log.warning("Could not read FinExtract auth token from %s: %s", p, exc)
             return ""
     return ""
 
