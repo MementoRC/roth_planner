@@ -402,10 +402,19 @@ def run_scenario(
             magi_for_irmaa = yr.magi
         # irmaa_for_year() adds +2 internally for the 2-year MAGI lookback;
         # pass income-year ages (ya - 2, sa - 2) so Medicare-year ages come out correctly.
+        # H1 fix: in survivor years, zero the deceased person's income-year age so
+        # irmaa_for_year() counts only the surviving beneficiary (1 person, not 2).
+        # The MAGI lookback (income side) is preserved exactly — only the person-count changes.
+        if survivor_active and surv is not None:
+            ya_irmaa = 0 if surv.who_dies == "you" else ya
+            sa_irmaa = 0 if surv.who_dies == "spouse" else sa
+        else:
+            ya_irmaa = ya
+            sa_irmaa = sa
         irmaa_cost, _ = irmaa_for_year(
             magi_for_irmaa,
-            ya - 2,
-            sa - 2,
+            ya_irmaa - 2,
+            sa_irmaa - 2,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=current_filing_status,
             year=year,  # CMS indexes IRMAA thresholds to the payment year (income_year + 2)

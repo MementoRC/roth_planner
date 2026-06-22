@@ -578,6 +578,71 @@ class TestSurvivorScenario:
             # irmaa_room must be bounded by Single T1, not MFJ T1
             assert yr_2031.irmaa_room < mfj_t1
 
+    # --- audit regression: H1 — survivor IRMAA counts only 1 person ---
+
+    def test_survivor_irmaa_counts_one_person(self):
+        """H1 regression: in survivor years IRMAA must charge for 1 person, not 2.
+
+        Both spouses are well past 65 at IRMAA payment time.  The lookback MAGI
+        is anchored at $230K — above both Single T1 ($109K) and MFJ T1 ($218K).
+        In survivor years the deceased spouse must NOT be counted as a Medicare
+        beneficiary, so the engine cost must equal the explicit 1-person cost and
+        be strictly less than the explicit 2-person (MFJ) cost at the same MAGI.
+        """
+        from engine.irmaa import irmaa_for_year
+
+        # Both ages 73 in 2026 → income-year ages (ya-2=71) are ≥65 in 2027.
+        # Spouse dies in 2026; first survivor year is 2027.
+        # Anchor lookback MAGI at $230K so IRMAA computation is deterministic.
+        surv = SurvivorScenario(who_dies="spouse", death_year=2026)
+        hh = Household(
+            your_age=73,
+            spouse_age=73,
+            base_year=2026,
+            your_ira=2_000_000,
+            spouse_ira=0,
+            your_ss_fra=2_400,
+            spouse_ss_fra=0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=60_000,
+            prior_year_magi={2025: 230_000, 2024: 230_000},
+            survivor=surv,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=82)
+
+        # 2027 is the first survivor year (death_year + 1).
+        yr_survivor = next(y for y in result.years if y.year == 2027)
+
+        # Reference costs — both using Single filing_status (the survivor's status).
+        # ya=75 in 2027 → income-year age passed to irmaa_for_year is ya-2 = 73.
+        # Fixed code: deceased spouse zeroed → age 0 → not counted as Medicare enrollee.
+        one_person_cost, _ = irmaa_for_year(
+            230_000,
+            73,  # your income-year age (ya - 2 = 75 - 2)
+            0,   # deceased spouse zeroed → not counted
+            filing_status="Single",
+            year=2027,
+        )
+        # Buggy code: deceased spouse age kept at 73 → both counted, surcharge × 2.
+        two_person_cost, _ = irmaa_for_year(
+            230_000,
+            73,  # your income-year age
+            73,  # deceased spouse still counted (the bug)
+            filing_status="Single",
+            year=2027,
+        )
+        assert one_person_cost > 0, "sanity: $230K MAGI must trigger Single IRMAA"
+        assert two_person_cost > one_person_cost, "sanity: 2-person Single > 1-person Single"
+        assert yr_survivor.irmaa_cost == approx(one_person_cost, tol=1.0), (
+            f"Survivor IRMAA {yr_survivor.irmaa_cost:.0f} should equal 1-person cost "
+            f"{one_person_cost:.0f}, not 2-person cost {two_person_cost:.0f}"
+        )
+
     # --- audit regression: C — aca_magi includes non-taxable SS ---
 
     def test_aca_magi_includes_nontaxable_ss(self):
