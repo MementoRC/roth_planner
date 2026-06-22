@@ -103,9 +103,13 @@ def project_asset_location(
         else:
             yr.ira_growth_rate = 0.0
 
-        # Conversion
+        # RMD must be satisfied first before any conversion can occur
+        rmd = calc_rmd(ira_total, ya, hh.your_rmd_start_age)
+        yr.rmd = rmd
+
+        # Conversion: capped to post-RMD balance so RMD priority is enforced
         conv = annual_conversions.get(year, 0.0)
-        conv = min(conv, ira_total)
+        conv = min(conv, max(ira_total - rmd, 0.0))
         yr.conversion = conv
         total_conv += conv
 
@@ -113,10 +117,6 @@ def project_asset_location(
         conv_eq, conv_bd = _allocate_conversion(conv, ira_eq, ira_bd, strategy)
         yr.conv_equity = conv_eq
         yr.conv_bond = conv_bd
-
-        # RMD (proportional withdrawal from both asset classes)
-        rmd = calc_rmd(ira_total, ya, hh.your_rmd_start_age)
-        yr.rmd = rmd
 
         # RMD is always proportional to current allocation
         if ira_total > 0:

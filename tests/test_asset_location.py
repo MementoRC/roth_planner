@@ -72,3 +72,34 @@ class TestAssetLocation:
         eq = project_asset_location(hh, conv, strategy="equity_first")
         bd = project_asset_location(hh, conv, strategy="bond_first")
         assert eq.rmd_at_85 < bd.rmd_at_85
+
+    def test_conversion_does_not_consume_rmd_dollars(self):
+        """When conv >= ira_total - rmd, the RMD must still be fully honoured.
+
+        Build a scenario where the RMD start age is 73 and the requested
+        conversion in the first RMD year is intentionally larger than what
+        remains after the RMD.  The conversion stored on the year result must
+        be capped to ira_total - rmd, not ira_total.
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        # Use a small IRA so RMD is material relative to a large conversion
+        hh = replace(Household(), your_ira=500_000.0, your_rmd_start_age=73)
+        # age 73 is 2026 + (73 - 61) = 2038 for default your_age=61
+        first_rmd_year = 2026 + (73 - hh.your_age)
+        # Request a very large conversion in the first RMD year
+        conv = {first_rmd_year: 1_000_000.0}
+        result = project_asset_location(hh, conv, strategy="proportional")
+
+        yr = next((y for y in result.years if y.year == first_rmd_year), None)
+        assert yr is not None, "RMD year not found in projection"
+        assert yr.rmd > 0, "Sanity: RMD should be positive in first RMD year"
+        # Conversion must leave the full RMD intact
+        assert yr.conversion + yr.rmd <= yr.ira_total + 1.0, (
+            "Conversion + RMD may not exceed opening IRA balance"
+        )
+        assert yr.conversion <= yr.ira_total - yr.rmd + 1.0, (
+            "Conversion must be capped to post-RMD balance"
+        )
