@@ -142,6 +142,65 @@ class TestPortfolioSync:
         assert snap.pretax_total == approx(1_640_000)
         assert snap.pretax_weighted_return > 0
 
+    def test_pretax_weighted_return_for_owner(self):
+        """pretax_weighted_return_for('you') must exclude spouse accounts."""
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+        # "you": 100% equity → 9% return; "spouse": 100% bond → 4% return
+        snap = PortfolioSnapshot(
+            accounts=[
+                AccountSummary(
+                    account_type="trad_ira",
+                    owner="you",
+                    total_value=1_000_000,
+                    equity_value=1_000_000,
+                ),
+                AccountSummary(
+                    account_type="trad_ira",
+                    owner="spouse",
+                    total_value=1_000_000,
+                    bond_value=1_000_000,
+                ),
+            ],
+            server_available=True,
+        )
+
+        your_return = snap.pretax_weighted_return_for("you")
+        spouse_return = snap.pretax_weighted_return_for("spouse")
+        joint_return = snap.pretax_weighted_return
+
+        # Owner-filtered returns must differ from each other and from joint
+        assert your_return == approx(0.09, tol=1e-6), "your return should be 100% equity (9%)"
+        assert spouse_return == approx(0.04, tol=1e-6), "spouse return should be 100% bond (4%)"
+        assert your_return != approx(joint_return, tol=1e-6), (
+            "your-filtered return must not equal joint return when owners differ"
+        )
+        assert spouse_return != approx(joint_return, tol=1e-6), (
+            "spouse-filtered return must not equal joint return when owners differ"
+        )
+        # Joint is 50/50 blend: (9% + 4%) / 2 = 6.5%
+        assert joint_return == approx(0.065, tol=1e-6)
+
+    def test_pretax_weighted_return_for_owner_fallback(self):
+        """pretax_weighted_return_for falls back to joint return for unknown owner."""
+        from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+        snap = PortfolioSnapshot(
+            accounts=[
+                AccountSummary(
+                    account_type="trad_ira",
+                    owner="you",
+                    total_value=500_000,
+                    equity_value=500_000,
+                ),
+            ],
+            server_available=True,
+        )
+        # "spouse" has no pretax accounts → fallback to joint value
+        assert snap.pretax_weighted_return_for("spouse") == approx(
+            snap.pretax_weighted_return, tol=1e-9
+        )
+
 
 class TestDividendForecast:
     """Tests for engine.dividend_forecast."""

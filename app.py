@@ -214,19 +214,12 @@ def get_household() -> Household:
         if _your_pretax > 0:
             hh.your_ira = _your_pretax
             hh.your_ira_growth = GrowthProfile(
-                default_rate=snap.pretax_weighted_return,
+                default_rate=snap.pretax_weighted_return_for("you"),
             )
         if _spouse_pretax > 0:
             hh.spouse_ira = _spouse_pretax
-            _spouse_pretax_accounts = [a for a in snap.pretax_accounts if a.owner == "spouse"]
-            _spouse_pretax_weighted_return = (
-                sum(a.total_value * a.weighted_return for a in _spouse_pretax_accounts)
-                / _spouse_pretax
-                if _spouse_pretax_accounts
-                else snap.pretax_weighted_return
-            )
             hh.spouse_ira_growth = GrowthProfile(
-                default_rate=_spouse_pretax_weighted_return,
+                default_rate=snap.pretax_weighted_return_for("spouse"),
             )
 
         # Roth IRA accounts → your_roth / spouse_roth balance & growth.
