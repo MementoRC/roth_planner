@@ -13,16 +13,35 @@ import streamlit as st
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
-# --- 2026 limits ---
-# Source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025)
-CONTRIB_LIMIT = 7_500
-CATCHUP_50 = 1_100  # additional if age 50+; total 50+ = $8,600
-
-# Roth MAGI phase-out (2026)
-ROTH_PHASEOUT = {
-    "MFJ": (242_000, 252_000),
-    "Single": (153_000, 168_000),
+# Per-year IRA contribution limits.
+# 2025 source: IRS Notice 2024-80.
+# 2026 source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025).
+CONTRIB_LIMIT_BY_YEAR: dict[int, int] = {
+    2025: 7_000,
+    2026: 7_500,
 }
+CATCHUP_50_BY_YEAR: dict[int, int] = {
+    2025: 1_000,  # total 50+ = $8,000
+    2026: 1_100,  # total 50+ = $8,600
+}
+
+# Roth MAGI phase-out by tax year.
+ROTH_PHASEOUT_BY_YEAR: dict[int, dict[str, tuple[int, int]]] = {
+    2025: {
+        "MFJ": (236_000, 246_000),
+        "Single": (150_000, 165_000),
+    },
+    2026: {
+        "MFJ": (242_000, 252_000),
+        "Single": (153_000, 168_000),
+    },
+}
+
+# Convenience aliases for the current default year (2026) — kept so that
+# any external references and the test suite that pins 2026 values still work.
+CONTRIB_LIMIT = CONTRIB_LIMIT_BY_YEAR[2026]
+CATCHUP_50 = CATCHUP_50_BY_YEAR[2026]
+ROTH_PHASEOUT = ROTH_PHASEOUT_BY_YEAR[2026]
 
 # Traditional IRA deduction phase-out when covered by workplace plan (2026)
 TRAD_DEDUCTION_PHASEOUT = {
@@ -302,6 +321,11 @@ def render(hh: Household):
     # --- Calculations ---
     st.markdown("---")
 
+    # Resolve per-year constants for the selected tax_year.
+    _contrib_limit = CONTRIB_LIMIT_BY_YEAR.get(tax_year, CONTRIB_LIMIT_BY_YEAR[2026])
+    _catchup_50 = CATCHUP_50_BY_YEAR.get(tax_year, CATCHUP_50_BY_YEAR[2026])
+    _roth_phaseout = ROTH_PHASEOUT_BY_YEAR.get(tax_year, ROTH_PHASEOUT_BY_YEAR[2026])
+
     for person, age, trad_contrib, trad_balance, workplace in [
         ("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan),
         ("Spouse", spouse_age, trad_contrib_spouse, spouse_trad_balance, spouse_workplace),
@@ -309,7 +333,7 @@ def render(hh: Household):
         st.markdown(f"### {person}")
 
         # Contribution limit
-        limit = CONTRIB_LIMIT + (CATCHUP_50 if age >= 50 else 0)
+        limit = _contrib_limit + (_catchup_50 if age >= 50 else 0)
         remaining = max(0, limit - trad_contrib)
 
         st.write(
@@ -322,7 +346,7 @@ def render(hh: Household):
 
         if remaining == 0:
             # Check if they COULD have done Roth instead
-            lower, upper = ROTH_PHASEOUT.get(filing, ROTH_PHASEOUT["MFJ"])
+            lower, upper = _roth_phaseout.get(filing, _roth_phaseout["MFJ"])
             roth_allowed = _phase_out(magi, lower, upper, float(limit))
             if roth_allowed > 0:
                 st.error(
@@ -346,7 +370,7 @@ def render(hh: Household):
             continue
 
         # Direct Roth eligibility
-        lower, upper = ROTH_PHASEOUT.get(filing, ROTH_PHASEOUT["MFJ"])
+        lower, upper = _roth_phaseout.get(filing, _roth_phaseout["MFJ"])
         allowed = _phase_out(magi, lower, upper, float(remaining))
 
         if allowed >= remaining:
