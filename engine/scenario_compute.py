@@ -39,10 +39,8 @@ def compute_phase(
 
     Phases: "options", "clean", "ss_conv", "squeeze", "rmd".
     """
-    if (
-        ya <= min(74, hh.base_year + 2 - hh.base_year + hh.your_age)
-        and hh.option_income(year, early_exercise) > 0
-    ):
+    # Option income models the 2026–2028 TXN NQO grant window.
+    if year <= hh.base_year + 2 and hh.option_income(year, early_exercise) > 0:
         return "options"
     rmd_yours = hh.your_rmd_start_age
     rmd_spouse = hh.spouse_rmd_start_age
