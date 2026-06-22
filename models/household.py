@@ -49,8 +49,8 @@ class SurvivorScenario:
     SS payments end, their IRA rolls into the survivor's IRA, their QCD
     allowance ends, only the survivor's senior bonus applies.
 
-    NOT YET MODELED (deferred):
-    - SS survivor benefit step-up (taking higher of two benefits)
+    MODELED:
+    - SS survivor benefit step-up: survivor keeps max(your_ss, spouse_ss) each year
     """
 
     who_dies: Literal["you", "spouse"]

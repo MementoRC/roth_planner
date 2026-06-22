@@ -231,7 +231,7 @@ def run_scenario(
         realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
 
         # === Social Security + taxable SS ===
-        # (SS survivor benefit step-up is NOT yet modeled — deferred to future PR)
+        # SS survivor step-up: survivor keeps max(your_ss, spouse_ss); implemented in compute_social_security.
         # D-1: MAGI uses taxable SS, not full SS (computed here, before MAGI block).
         # F3/F4: qual_div_this_year and realized_gains are now passed in for provisional income.
         yr.your_ss, yr.spouse_ss, yr.combined_ss, yr.taxable_ss_amt = compute_social_security(

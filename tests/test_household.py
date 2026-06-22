@@ -455,10 +455,9 @@ class TestSurvivorScenario:
     # --- (e) deceased SS zeroed ---
 
     def test_survivor_zeros_deceased_ss(self):
-        """who_dies='spouse': spouse_ss=0 from death_year+1; your_ss unchanged.
+        """who_dies='spouse': spouse_ss=0 from death_year+1; survivor (you) keeps larger benefit.
 
-        Note: SS survivor benefit step-up is NOT modeled; survivor keeps their
-        own benefit only. Future PR to add step-up logic.
+        Step-up: yr.your_ss = max(your_ss, spouse_ss) in survivor years.
         """
         surv = SurvivorScenario(who_dies="spouse", death_year=2030)
         # Use ages where both are past SS start age by 2031 so we can observe SS
@@ -487,9 +486,63 @@ class TestSurvivorScenario:
         assert yr_2030.spouse_ss > 0
         assert yr_2030.your_ss > 0
 
-        # Year after death: deceased (spouse) SS is 0; survivor (you) SS continues
+        # Year after death: deceased (spouse) SS is 0; survivor (you) keeps max benefit
         assert yr_2031.spouse_ss == approx(0.0, tol=0.01)
         assert yr_2031.your_ss > 0
+        # Step-up: your_ss > spouse_ss (you are higher earner), so your_ss is unchanged
+        # and combined_ss == your_ss (not your_ss + spouse_ss as in MFJ year)
+        assert yr_2031.your_ss > yr_2030.spouse_ss  # kept the larger, not the smaller
+        assert yr_2031.combined_ss == approx(yr_2031.your_ss, tol=0.01)
+
+    # --- (e2) SS survivor step-up: higher earner dies, survivor keeps larger benefit ---
+
+    def test_survivor_ss_stepup_higher_earner_dies(self):
+        """H2 regression: when the HIGHER earner dies, survivor keeps max(your_ss, spouse_ss).
+
+        Setup: you have higher FRA ($4K vs $2K). who_dies='you' → spouse survives.
+        In survivor years:
+        - yr.spouse_ss == max(pre-death your_ss, pre-death spouse_ss)  [step-up]
+        - yr.your_ss == 0
+        - yr.combined_ss > spouse-own-only (old broken behaviour)
+        """
+        surv = SurvivorScenario(who_dies="you", death_year=2030)
+        hh = Household(
+            your_age=70,
+            spouse_age=70,
+            your_ira=1_000_000,
+            spouse_ira=800_000,
+            your_ss_fra=4_000,   # you are the higher earner
+            spouse_ss_fra=2_000,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.07,
+            living_expenses=80_000,
+            survivor=surv,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=82)
+
+        yr_2030 = next(y for y in result.years if y.year == 2030)
+        yr_2031 = next(y for y in result.years if y.year == 2031)
+
+        # Pre-death year: both benefits positive, higher earner has larger SS
+        assert yr_2030.your_ss > yr_2030.spouse_ss > 0
+
+        # Survivor year: deceased (you) SS zeroed
+        assert yr_2031.your_ss == approx(0.0, tol=0.01)
+
+        # Step-up: both SS amounts are COLA-grown to 2031 inside compute_social_security,
+        # then max() is taken. Since your FRA ($4K) > spouse FRA ($2K), your 2031 COLA-grown
+        # benefit is larger, so spouse_ss_2031 inherits the higher-earner amount.
+        # It must be strictly greater than the 2030 higher-earner value (COLA grew it)
+        # and far greater than spouse's own-only path (2x FRA ratio).
+        assert yr_2031.spouse_ss > yr_2030.your_ss  # COLA grew from 2030 higher-earner base
+        assert yr_2031.spouse_ss > yr_2030.spouse_ss * 1.5  # far exceeds own-only
+
+        # combined_ss equals spouse_ss (only survivor benefit remains)
+        assert yr_2031.combined_ss == approx(yr_2031.spouse_ss, tol=0.01)
 
     # --- (f) single std deduction applies post-survivor ---
 
