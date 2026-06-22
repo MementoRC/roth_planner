@@ -159,11 +159,24 @@ class PortfolioSnapshot:
 
     @property
     def pretax_weighted_return(self) -> float:
-        """Weighted return across all pre-tax accounts."""
+        """Weighted return across all pre-tax accounts (both owners combined)."""
         total = self.pretax_total
         if total <= 0:
             return 0.0
         return sum(a.total_value * a.weighted_return for a in self.pretax_accounts) / total
+
+    def pretax_weighted_return_for(self, owner: str) -> float:
+        """Weighted return across pre-tax accounts for a single owner.
+
+        Returns the joint pretax_weighted_return as fallback when the owner
+        has no pretax accounts (avoids divide-by-zero and preserves prior
+        behaviour for callers that don't know the owner's balance upfront).
+        """
+        accounts = [a for a in self.pretax_accounts if a.owner == owner]
+        total = sum(a.total_value for a in accounts)
+        if total <= 0:
+            return self.pretax_weighted_return
+        return sum(a.total_value * a.weighted_return for a in accounts) / total
 
     @property
     def brokerage_accounts(self) -> list[AccountSummary]:

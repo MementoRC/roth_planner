@@ -92,9 +92,9 @@ def render(hh: Household):
     if pretax > 0:
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Your Pre-Tax (IRA + 403b)", fmt_dollars(pretax))
-        c2.metric("Pre-Tax Wtd Return", fmt_pct(snap.pretax_weighted_return))
-        c3.metric("Planner IRA Balance", fmt_dollars(pretax), help="Auto-synced to 'Your Trad IRA'")
+        c1.metric("Household Pre-Tax (IRA + 403b)", fmt_dollars(pretax))
+        c2.metric("Household Pre-Tax Wtd Return", fmt_pct(snap.pretax_weighted_return))
+        c3.metric("Household Pre-Tax Balance", fmt_dollars(pretax), help="Combined balance for both owners")
 
     # --- Holdings Detail ---
     st.markdown("### Holdings")
@@ -226,14 +226,15 @@ def render(hh: Household):
 
     rate_rows = []
 
-    # Your pre-tax IRA (Rollover IRA + 403b combined)
-    pretax = snap.pretax_total
-    if pretax > 0:
+    # Your pre-tax IRA (Rollover IRA + 403b, owner="you" only)
+    your_pretax_accts = [a for a in snap.pretax_accounts if a.owner == "you"]
+    your_pretax = sum(a.total_value for a in your_pretax_accts)
+    if your_pretax > 0:
         rate_rows.append(
             {
-                "Account": "Your IRA (pre-tax total)",
-                "Balance": fmt_dollars(pretax),
-                "Weighted Return": fmt_pct(snap.pretax_weighted_return),
+                "Account": "Your IRA (pre-tax)",
+                "Balance": fmt_dollars(your_pretax),
+                "Weighted Return": fmt_pct(snap.pretax_weighted_return_for("you")),
                 "Planner Uses": fmt_pct(hh.your_ira_rate(hh.base_year)),
                 "Status": "Synced" if hh.your_ira_growth else "Default",
             }
@@ -249,11 +250,17 @@ def render(hh: Household):
             }
         )
 
+    spouse_pretax_accts = [a for a in snap.pretax_accounts if a.owner == "spouse"]
+    spouse_pretax_return = (
+        fmt_pct(snap.pretax_weighted_return_for("spouse"))
+        if spouse_pretax_accts
+        else "—"
+    )
     rate_rows.append(
         {
-            "Account": "Spouse IRA",
+            "Account": "Spouse IRA (pre-tax)",
             "Balance": fmt_dollars(hh.spouse_ira),
-            "Weighted Return": "—",
+            "Weighted Return": spouse_pretax_return,
             "Planner Uses": fmt_pct(hh.spouse_ira_rate(hh.base_year)),
             "Status": "Synced" if hh.spouse_ira_growth else "Default (no data)",
         }
