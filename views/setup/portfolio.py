@@ -109,6 +109,10 @@ def _render_portfolio_sub_tabs(
         _render_holdings_table(me_accounts)
         st.subheader("Grants")
         _render_grants_section(snap.equity_grants)
+        st.caption(
+            "Grant owner attribution is not yet available from FinExtract — "
+            "all grants are shown here."
+        )
 
     with spouse_tab:
         st.subheader("Accounts")
@@ -116,7 +120,10 @@ def _render_portfolio_sub_tabs(
         st.subheader("Holdings")
         _render_holdings_table(spouse_accounts)
         st.subheader("Grants")
-        _render_grants_section([])
+        st.caption(
+            "Grant owner attribution is not yet available from FinExtract — "
+            "see the Me tab or All tab for all loaded grants."
+        )
 
     with all_tab:
         st.subheader("Accounts")

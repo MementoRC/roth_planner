@@ -147,6 +147,8 @@ def _clear_personal_session_state() -> None:
         "prior_year_magi",
         "survivor",
         "inherited_iras",
+        "filing_status",
+        "account_type_overrides",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
