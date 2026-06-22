@@ -180,12 +180,16 @@ def compute_social_security(
         if sa >= hh.spouse_ss_start_age
         else 0.0
     )
-    # Survivor: zero the deceased spouse's SS from death_year + 1 onward
-    # (SS survivor benefit step-up is NOT yet modeled — deferred to future PR)
+    # Survivor: apply SSA step-up rule from death_year + 1 onward.
+    # The survivor keeps the LARGER of the two COLA-grown benefits; the smaller stops.
+    # Pre-survivor years (including year-of-death MFJ year) are unchanged.
     if survivor_active and who_dies is not None:
+        survivor_combined = max(your_ss, spouse_ss)
         if who_dies == "you":
             your_ss = 0.0
+            spouse_ss = survivor_combined
         else:
+            your_ss = survivor_combined
             spouse_ss = 0.0
     combined_ss = your_ss + spouse_ss
 
