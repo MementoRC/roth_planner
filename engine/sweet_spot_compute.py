@@ -223,15 +223,20 @@ def all_in_at_conversion(
     )
     irmaa_delta = irmaa_cost - base_irmaa
 
-    # ACA
+    # ACA — MAGI per IRC §36B(d)(2)(B)(iii) adds back the NON-taxable portion of
+    # Social Security. The `magi` above is IRMAA-compatible (§1839(i)(4)) and does
+    # NOT include non-taxable SS, so add it back only for the ACA computation.
+    # Mirrors engine/scenario_compute.compute_aca (aca_magi = magi + combined_ss - taxable_ss).
     num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
         1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
     )
     effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
+    aca_base_magi = base.base_magi + (base.combined_ss - base_tss)
+    aca_magi = magi + (base.combined_ss - tss)
     aca_loss = (
         aca_subsidy_loss(
-            base.base_magi,
-            magi,
+            aca_base_magi,
+            aca_magi,
             benchmark=effective_benchmark,
             enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
             filing_status=hh.filing_status,
