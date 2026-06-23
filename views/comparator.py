@@ -21,13 +21,9 @@ from engine.scenario_compare import (
     survivor_death_ages,
 )
 from models.household import Household
-from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
-_FORM_8606_CAPTION = (
-    "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
-    "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
-)
 SCENARIO_PRESETS = {
     "No Conversion": "no_conv",
     "Fill to 12%": "fill_12",
@@ -41,7 +37,7 @@ SCENARIO_PRESETS = {
 def render(hh: Household):
     st.title("⚖️ Scenario Comparator")
     st.caption("Compare conversion strategies side-by-side to find the best approach.")
-    st.caption(_FORM_8606_CAPTION)
+    st.caption(FORM_8606_CAPTION)
 
     # --- Scenario selection ---
     st.markdown("### Select Scenarios to Compare")

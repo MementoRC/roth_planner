@@ -21,7 +21,7 @@ from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
-from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def render(hh: Household):
@@ -30,10 +30,7 @@ def render(hh: Household):
         "See how Required Minimum Distributions force you into higher brackets, "
         "trigger IRMAA, and overflow into taxable brokerage accounts."
     )
-    st.caption(
-        "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
-        "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
-    )
+    st.caption(FORM_8606_CAPTION)
 
     # --- Scenario selection ---
     col_s1, col_s2, col_s3 = st.columns(3)

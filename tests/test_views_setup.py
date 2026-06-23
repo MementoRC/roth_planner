@@ -343,3 +343,30 @@ class TestPlannerSpouseConversionCap:
         assert "int(yr.spouse_ira_begin)" in source, (
             "Spouse Conv max_value pattern int(yr.spouse_ira_begin) not found"
         )
+
+
+class TestClearPersonalSessionState:
+    """SEC-02: _clear_personal_session_state must wipe V2 private-key session keys."""
+
+    def _state_source(self) -> str:
+        import inspect
+
+        from views.setup import _state
+
+        return inspect.getsource(_state._clear_personal_session_state)
+
+    def test_data_bridge_privkey_b64_cleared(self):
+        """data_bridge_privkey_b64 must be in the keys_to_clear list."""
+        source = self._state_source()
+        assert "data_bridge_privkey_b64" in source, (
+            "_clear_personal_session_state does not clear data_bridge_privkey_b64 — "
+            "V2 private key survives a Reset to demo"
+        )
+
+    def test_v2_privkey_input_cleared(self):
+        """_v2_privkey_input must be in the keys_to_clear list."""
+        source = self._state_source()
+        assert "_v2_privkey_input" in source, (
+            "_clear_personal_session_state does not clear _v2_privkey_input — "
+            "the text_input widget retains the pasted key after Reset to demo"
+        )

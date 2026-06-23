@@ -24,12 +24,7 @@ from engine.sweet_spot_compute import (
 from engine.tax import BRACKETS_MFJ
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
-from views._format import fmt_dollars, fmt_pct
-
-_FORM_8606_CAPTION = (
-    "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
-    "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
-)
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
 
 
 def render(hh: Household) -> None:
@@ -38,7 +33,7 @@ def render(hh: Household) -> None:
         "Find the optimal Roth conversion amount where marginal cost jumps. "
         "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
     )
-    st.caption(_FORM_8606_CAPTION)
+    st.caption(FORM_8606_CAPTION)
 
     # Filing-status-aware constants for chart annotations (indexed for selected year)
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ

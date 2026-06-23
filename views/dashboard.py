@@ -12,7 +12,7 @@ import streamlit as st
 
 from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
 from models.household import Household
-from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
 
 def render(hh: Household):
@@ -29,10 +29,7 @@ def render(hh: Household):
         )
     )
 
-    st.caption(
-        "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
-        "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
-    )
+    st.caption(FORM_8606_CAPTION)
 
     # --- Run both scenarios ---
     no_conv = run_no_conversion(hh, end_age=95)
