@@ -73,6 +73,79 @@ class TestAssetLocation:
         bd = project_asset_location(hh, conv, strategy="bond_first")
         assert eq.rmd_at_85 < bd.rmd_at_85
 
+    def test_spouse_rmd_computed_independently_per_owner(self):
+        """RMD must be computed per-owner, not on pooled IRA balance.
+
+        Proof scenario:
+          primary age 75, your_ira=$1,000,000, your_rmd_start_age=75
+          spouse  age 69, spouse_ira=$1,000,000, spouse_rmd_start_age=75
+          divisor at 75 = 24.6
+
+        Bug:  total_ira=$2,000,000 / 24.6 = $81,300.81 (spouse included)
+        Correct: $1,000,000 / 24.6 = $40,650.41 (primary only; spouse below RMD age)
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            spouse_age=69,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+
+        yr0 = result.years[0]  # base year; primary is 75
+        assert yr0.your_age == 75
+        # Correct RMD = primary only: 1_000_000 / 24.6 ≈ 40_650.41
+        # Bug produces:              2_000_000 / 24.6 ≈ 81_300.81
+        assert yr0.rmd == pytest.approx(40_650.41, abs=1.0), (
+            f"Expected ~$40,650 (primary only), got {yr0.rmd:.2f} — "
+            "spouse IRA is being pooled into a single RMD"
+        )
+
+    def test_single_filer_rmd_unchanged(self):
+        """Single-filer (spouse_ira=0) behaviour must be preserved."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        assert yr0.rmd == pytest.approx(40_650.41, abs=1.0)
+
+    def test_both_spouses_in_rmd_age(self):
+        """When both spouses are at or above RMD age, both IRA balances count."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            spouse_age=75,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        # Both at 75 → combined RMD = 2 × (1_000_000 / 24.6) ≈ 81_300.81
+        assert yr0.rmd == pytest.approx(81_300.81, abs=1.0)
+
     def test_conversion_does_not_consume_rmd_dollars(self):
         """When conv >= ira_total - rmd, the RMD must still be fully honoured.
 
