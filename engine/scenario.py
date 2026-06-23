@@ -127,7 +127,7 @@ def run_scenario(
     results = []
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
-    brokerage = 0.0
+    brokerage = hh.brokerage_start
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
     cum_aca = 0.0

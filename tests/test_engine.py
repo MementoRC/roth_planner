@@ -196,3 +196,40 @@ class TestScenarios:
         result = run_scenario(hh, plan, "Fill 12%", end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
         assert yr75.your_ira_begin < 4_000_000
+
+
+class TestBrokerageStart:
+    def test_zero_start_produces_zero_year0_balance(self):
+        """Default household has brokerage_start=0 → year-0 balance is 0."""
+        hh = Household()
+        result = run_no_conversion(hh, end_age=hh.your_age)
+        yr0 = result.years[0]
+        assert yr0.brokerage_balance == 0.0
+
+    def test_nonzero_start_seeds_year0_balance(self):
+        """A household with brokerage_start=500_000 produces non-zero year-0 brokerage figures."""
+        hh = Household(brokerage_start=500_000.0)
+        result = run_no_conversion(hh, end_age=hh.your_age)
+        yr0 = result.years[0]
+        assert yr0.brokerage_balance == approx(500_000.0)
+
+    def test_nonzero_start_produces_nonzero_growth_and_tax(self):
+        """Year-0 brokerage_growth and brokerage_gain_tax must be non-zero when seeded."""
+        hh = Household(brokerage_start=500_000.0)
+        result = run_no_conversion(hh, end_age=hh.your_age)
+        yr0 = result.years[0]
+        expected_growth = 500_000.0 * hh.growth_rate
+        expected_tax = expected_growth * hh.brok_turnover * hh.ltcg_rate
+        assert yr0.brokerage_growth == approx(expected_growth)
+        assert yr0.brokerage_gain_tax == approx(expected_tax)
+
+    def test_brokerage_start_default_unchanged(self):
+        """Existing callers that do not pass brokerage_start behave identically to before."""
+        hh_default = Household()
+        hh_explicit = Household(brokerage_start=0.0)
+        r_default = run_no_conversion(hh_default, end_age=hh_default.your_age + 1)
+        r_explicit = run_no_conversion(hh_explicit, end_age=hh_explicit.your_age + 1)
+        for yd, ye in zip(r_default.years, r_explicit.years):
+            assert yd.brokerage_balance == ye.brokerage_balance
+            assert yd.brokerage_growth == ye.brokerage_growth
+            assert yd.brokerage_gain_tax == ye.brokerage_gain_tax
