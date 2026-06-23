@@ -16,7 +16,7 @@ from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
-from views._format import fmt_dollars, fmt_pct
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
 
 PHASE_COLORS = {
     "options": "#7c3aed",  # purple
@@ -40,10 +40,7 @@ def render(hh: Household):
     st.caption(
         "Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time."
     )
-    st.caption(
-        "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
-        "If you have non-deductible contributions tracked on Form 8606, taxable conversion income will be lower than shown."
-    )
+    st.caption(FORM_8606_CAPTION)
 
     # --- Auto-fill buttons ---
     col_btn1, col_btn2 = st.columns(2)
@@ -61,6 +58,9 @@ def render(hh: Household):
             st.session_state.conv_plan_spouse = plan.spouse_conversions
             st.session_state.conv_plan_qcd = plan.qcds
             st.session_state.conv_plan_spouse_qcd = plan.spouse_qcds
+            for _k in list(st.session_state):
+                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")):
+                    del st.session_state[_k]
             st.rerun()
 
     with col_btn2:
@@ -69,6 +69,9 @@ def render(hh: Household):
             st.session_state.conv_plan_spouse = {}
             st.session_state.conv_plan_qcd = {}
             st.session_state.conv_plan_spouse_qcd = {}
+            for _k in list(st.session_state):
+                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")):
+                    del st.session_state[_k]
             st.rerun()
 
     # --- Build and run scenario ---

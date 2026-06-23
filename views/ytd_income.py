@@ -326,7 +326,7 @@ def render(hh: Household):
                     }
                     for src, v in sorted(by_source.items())
                 ]
-                st.dataframe(gain_rows, use_container_width=True, hide_index=True)
+                st.dataframe(gain_rows, width="stretch", hide_index=True)
 
     # --- Section B: Tax Bracket Position ---
     # --- Section C: Estimated YTD Federal Tax ---
@@ -390,7 +390,7 @@ def render(hh: Household):
     if prior_year_tax == 0:
         st.warning(
             "Prior year tax unknown — only current-year estimate path active. "
-            "Upload your prior year 1040 PDF in Setup → Parameters → Joint to unlock "
+            "Upload your prior year 1040 PDF in ⚙️ Setup → 📊 Parameters → Joint to unlock "
             "the 110% safe-harbor rule."
         )
     g1, g2, g3 = st.columns(3)

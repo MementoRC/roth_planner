@@ -9,6 +9,16 @@ from __future__ import annotations
 import math
 from typing import Literal
 
+# ---------------------------------------------------------------------------
+# Canonical UI caption strings shared across multiple views
+# ---------------------------------------------------------------------------
+
+FORM_8606_CAPTION = (
+    "ℹ️ Assumes $0 Form 8606 basis — all Trad IRA dollars treated as pretax. "
+    "If you have non-deductible contributions tracked on Form 8606, "
+    "taxable conversion income will be lower than shown."
+)
+
 
 def fmt_dollars(value: float | int | None, decimals: int = 0, sign: bool = False) -> str:
     """Format a numeric value as a US dollar string.
