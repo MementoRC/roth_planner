@@ -146,6 +146,28 @@ class TestACA:
     def test_high_income_subsidy(self):
         aca_subsidy(300_000)  # just verify no error
 
+    def test_below_100_pct_fpl_ineligible(self):
+        # IRC §36B(c)(1)(A): below 100% FPL → no PTC regardless of premium
+        from engine.aca import FPL_2
+
+        assert aca_subsidy(FPL_2 - 1) == 0.0
+        assert aca_subsidy(0.0) == 0.0
+        assert aca_subsidy(1.0) == 0.0
+
+    def test_at_100_pct_fpl_eligible(self):
+        # Exactly at 100% FPL should be eligible (below 150% → 0% cap → full subsidy)
+        from engine.aca import BENCHMARK_PREMIUM_ANNUAL, FPL_2
+
+        subsidy = aca_subsidy(float(FPL_2))
+        assert subsidy == BENCHMARK_PREMIUM_ANNUAL
+
+    def test_above_100_pct_fpl_eligible(self):
+        # 150% FPL → $0 cap rate → full benchmark; confirms eligibility gate not over-blocking
+        from engine.aca import BENCHMARK_PREMIUM_ANNUAL, FPL_2
+
+        subsidy = aca_subsidy(FPL_2 * 1.25)
+        assert subsidy == BENCHMARK_PREMIUM_ANNUAL
+
 
 class TestHouseholdProperties:
     def test_age_gap(self):

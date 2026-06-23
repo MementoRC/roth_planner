@@ -36,9 +36,12 @@ def aca_subsidy(magi: float, benchmark: float = BENCHMARK_PREMIUM_ANNUAL) -> flo
     """
     Calculate ACA premium tax credit (subsidy).
 
+    Households below 100% FPL are statutorily ineligible per IRC §36B(c)(1)(A).
     Subsidy = benchmark_premium - (income × cap_rate)
     Cannot be negative.
     """
+    if magi < FPL_2:
+        return 0.0
     cap_rate = aca_premium_cap_rate(magi)
     expected_contribution = magi * cap_rate
     return max(benchmark - expected_contribution, 0)
