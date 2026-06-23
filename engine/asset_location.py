@@ -71,10 +71,13 @@ def project_asset_location(
         "proportional" — convert in proportion to current allocation
         "bond_first" — convert bonds before equities (minimize Roth growth)
     """
-    # Split initial IRA into equity/bond
-    total_ira = hh.your_ira + hh.spouse_ira
-    ira_eq = total_ira * equity_pct
-    ira_bd = total_ira * (1 - equity_pct)
+    # Track each owner's IRA balance separately to compute per-owner RMDs.
+    # The equity/bond split is applied to the combined pool for allocation purposes.
+    your_ira_bal = hh.your_ira
+    spouse_ira_bal = hh.spouse_ira
+    total_ira_init = your_ira_bal + spouse_ira_bal
+    ira_eq = total_ira_init * equity_pct
+    ira_bd = total_ira_init * (1 - equity_pct)
     roth_eq = 0.0
     roth_bd = 0.0
 
@@ -84,6 +87,7 @@ def project_asset_location(
     for yr_idx in range(end_age - hh.your_age + 1):
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
+        sa = hh.spouse_age + yr_idx
         ira_total = ira_eq + ira_bd
 
         yr = AssetLocationYear(
@@ -103,8 +107,11 @@ def project_asset_location(
         else:
             yr.ira_growth_rate = 0.0
 
-        # RMD must be satisfied first before any conversion can occur
-        rmd = calc_rmd(ira_total, ya, hh.your_rmd_start_age)
+        # RMD computed per-owner: each spouse only owes RMDs on their own IRA
+        # once they reach their own required-beginning-date age.
+        rmd = calc_rmd(your_ira_bal, ya, hh.your_rmd_start_age) + calc_rmd(
+            spouse_ira_bal, sa, hh.spouse_rmd_start_age
+        )
         yr.rmd = rmd
 
         # Conversion: capped to post-RMD balance so RMD priority is enforced
@@ -132,6 +139,18 @@ def project_asset_location(
         # Grow IRA
         ira_eq *= 1 + equity_return
         ira_bd *= 1 + bond_return
+
+        # Update per-owner balances to mirror the combined pool trajectory.
+        # Withdrawals (RMD + conversion) and growth are applied proportionally
+        # by ownership share so that next year's per-owner RMD is correct.
+        combined_after = ira_eq + ira_bd
+        prior_total = your_ira_bal + spouse_ira_bal
+        if prior_total > 0:
+            your_ira_bal = combined_after * (your_ira_bal / prior_total)
+            spouse_ira_bal = combined_after * (spouse_ira_bal / prior_total)
+        else:
+            your_ira_bal = 0.0
+            spouse_ira_bal = 0.0
 
         # Update Roth (conversions flow in, then grow)
         roth_eq = (roth_eq + conv_eq) * (1 + equity_return)
