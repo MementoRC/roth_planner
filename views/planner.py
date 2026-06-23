@@ -172,6 +172,7 @@ def render(hh: Household):
                 value=int(sc_val),
                 step=5000,
                 min_value=0,
+                max_value=int(yr.spouse_ira_begin),
                 label_visibility="collapsed",
                 key=sc_key,
             )
