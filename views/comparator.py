@@ -119,7 +119,7 @@ def render(hh: Household):
             )
         )
 
-    fig_ira.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_ira.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_ira.update_layout(
         xaxis_title="Your Age",
         yaxis_title="IRA + Roth Balance ($)",
@@ -206,7 +206,7 @@ def render(hh: Household):
         )
 
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig_net.add_vline(x=75, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_net.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
     fig_net.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Net Benefit vs No Conversion ($)",
@@ -220,10 +220,10 @@ def render(hh: Household):
     st.markdown("### RMD Size Comparison (Ages 75+)")
 
     fig_rmd = go.Figure()
-    rmd_ages = [a for a in ages if a >= 75]
+    rmd_ages = [a for a in ages if a >= hh.your_rmd_start_age]
 
     for i, s in enumerate(scenarios):
-        rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= 75]
+        rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= hh.your_rmd_start_age]
         fig_rmd.add_trace(
             go.Bar(
                 x=rmd_ages,

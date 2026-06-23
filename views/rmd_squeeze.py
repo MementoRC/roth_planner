@@ -19,6 +19,7 @@ import streamlit as st
 from engine.ira import RMD_DIVISORS
 from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
+from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
@@ -187,22 +188,33 @@ def render(hh: Household):
         )
     )
 
-    # Bracket ceiling lines
+    # Bracket ceiling lines — CPI-indexed per-year (mirrors planner.py)
     _brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
-    for yr in rmd_nc[:1]:  # use first year's deductions for reference
-        ded = yr.total_deductions
-        fig_w.add_hline(
-            y=ded + _brackets[1][0],
-            line_dash="dash",
-            line_color="#22c55e",
-            annotation_text="12% ceiling",
+    _cpi = hh.cpi_assumption
+    ceil_12_values = [
+        yr.total_deductions + _index_value(_brackets[1][0], yr.year, _cpi) for yr in rmd_nc
+    ]
+    ceil_22_values = [
+        yr.total_deductions + _index_value(_brackets[2][0], yr.year, _cpi) for yr in rmd_nc
+    ]
+    fig_w.add_trace(
+        go.Scatter(
+            x=ages,
+            y=ceil_12_values,
+            name="12% ceiling",
+            line={"color": "#22c55e", "width": 2, "dash": "dash"},
+            mode="lines",
         )
-        fig_w.add_hline(
-            y=ded + _brackets[2][0],
-            line_dash="dash",
-            line_color="#f59e0b",
-            annotation_text="22% ceiling",
+    )
+    fig_w.add_trace(
+        go.Scatter(
+            x=ages,
+            y=ceil_22_values,
+            name="22% ceiling",
+            line={"color": "#f59e0b", "width": 2, "dash": "dash"},
+            mode="lines",
         )
+    )
 
     fig_w.update_layout(
         barmode="stack",
