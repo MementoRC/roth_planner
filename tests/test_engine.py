@@ -98,6 +98,14 @@ class TestSSBenefit:
         annual = ss_benefit_at_age(3_800, 70, 67)
         assert annual == approx(3_800 * 1.24 * 12)
 
+    def test_ss_drc_capped_at_70(self):
+        """Claiming after 70 must not exceed the age-70 benefit (DRC cap)."""
+        at_70 = ss_benefit_at_age(3_800, 70, 67)
+        at_72 = ss_benefit_at_age(3_800, 72, 67)
+        at_75 = ss_benefit_at_age(3_800, 75, 67)
+        assert at_72 == approx(at_70), "age-72 claim should equal age-70 (DRC capped)"
+        assert at_75 == approx(at_70), "age-75 claim should equal age-70 (DRC capped)"
+
     def test_ss_with_cola(self):
         with_cola = ss_with_cola(56_544, 5, 0.025)
         assert with_cola == approx(56_544 * 1.025**5)
@@ -160,6 +168,16 @@ class TestHouseholdProperties:
         hh = Household()
         assert hh.your_ss_at_70() == approx(56_544)
         assert hh.spouse_ss_at_70() == approx(56_544)
+
+    def test_ss_at_70_capped_when_start_age_exceeds_70(self):
+        """ss_start_age > 70 must not inflate the benefit beyond the age-70 value."""
+        hh_70 = Household(ss_start_age=70)
+        hh_72 = Household(ss_start_age=72)
+        hh_75 = Household(ss_start_age=75)
+        assert hh_72.your_ss_at_70() == approx(hh_70.your_ss_at_70())
+        assert hh_75.your_ss_at_70() == approx(hh_70.your_ss_at_70())
+        assert hh_72.spouse_ss_at_70() == approx(hh_70.spouse_ss_at_70())
+        assert hh_75.spouse_ss_at_70() == approx(hh_70.spouse_ss_at_70())
 
 
 class TestScenarios:

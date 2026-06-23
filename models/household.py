@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from engine.ira import ss_benefit_at_age
+
 
 @dataclass
 class StockGrant:
@@ -92,15 +94,18 @@ class Household:
         return self.spouse_age + (year - self.base_year)
 
     def your_ss_at_70(self) -> float:
-        """Annual SS if delayed to 70 (8%/yr for 3 years past FRA 67)."""
-        delay_years = self.ss_start_age - 67
-        factor = 1 + delay_years * 0.08  # 24% increase
-        return self.your_ss_fra * factor * 12
+        """Annual SS benefit at the configured claim age, capped at age 70.
+
+        DRC stops accruing at 70; claiming later yields no additional credit.
+        Uses the canonical engine formula (monthly reduction/DRC schedule).
+        """
+        effective_age = min(self.ss_start_age, 70)
+        return ss_benefit_at_age(self.your_ss_fra, effective_age)
 
     def spouse_ss_at_70(self) -> float:
-        delay_years = self.ss_start_age - 67
-        factor = 1 + delay_years * 0.08
-        return self.spouse_ss_fra * factor * 12
+        """Annual SS benefit at the configured claim age, capped at age 70."""
+        effective_age = min(self.ss_start_age, 70)
+        return ss_benefit_at_age(self.spouse_ss_fra, effective_age)
 
     def option_income(self, year: int, early: bool = True) -> float:
         """Ordinary income from exercising the grant expiring ~this year."""

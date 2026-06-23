@@ -91,9 +91,11 @@ def ss_benefit_at_age(monthly_fra: float, claim_age: int, fra_age: int = 67) -> 
     Compute annual SS benefit at a given claim age.
 
     Before FRA: reduced ~6.67%/yr first 3 yrs, 5%/yr beyond
-    After FRA: increased 8%/yr (delayed retirement credits)
+    After FRA: increased 8%/yr (delayed retirement credits), capped at age 70
     """
-    months_diff = (claim_age - fra_age) * 12
+    # DRC stops accruing at age 70 — claiming later yields no additional credit
+    effective_age = min(claim_age, 70)
+    months_diff = (effective_age - fra_age) * 12
     if months_diff == 0:
         return monthly_fra * 12
     if months_diff < 0:
@@ -103,7 +105,7 @@ def ss_benefit_at_age(monthly_fra: float, claim_age: int, fra_age: int = 67) -> 
         else:
             factor = 1 - 36 * (5 / 9 / 100) - (early_months - 36) * (5 / 12 / 100)
         return monthly_fra * max(factor, 0) * 12
-    # Delayed: 8% per year = 2/3% per month
+    # Delayed: 8% per year = 2/3% per month, max 36 months past FRA (age 67→70)
     factor = 1 + months_diff * (2 / 3 / 100)
     return monthly_fra * factor * 12
 
