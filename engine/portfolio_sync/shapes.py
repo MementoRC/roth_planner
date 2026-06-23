@@ -240,7 +240,7 @@ class TaxReturnSnapshot:
         HSA contributions are above-the-line. Half SE tax on 1099-NEC is too.
         This is approximate — TurboTax shows the real number.
         """
-        se_deduction = self.nec_income * 0.0765  # half SE tax
+        se_deduction = self.nec_income * 0.07065  # employer-equiv half SE tax: 0.9235 × 15.3% / 2
         return self.total_income - self.hsa_contributions - se_deduction
 
 
