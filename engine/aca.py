@@ -13,7 +13,8 @@ FPL_1 = 15_650  # single person
 FPL_2 = 21_150  # family of 2
 
 # Legislative status: Enhanced subsidies (ARPA/IRA) expired Dec 31, 2025.
-# Pending 3-year extension as of Jan 2026. Toggle this flag to model scenarios.
+# OBBBA (P.L. 119-21) did not restore them; pre-ARP §36B schedule applies for TY 2026+.
+# Toggle this flag to model a hypothetical future extension.
 ENHANCED_SUBSIDIES_ACTIVE = False
 
 # Enhanced premium cap schedule (% of income) — ARPA/IRA rules
