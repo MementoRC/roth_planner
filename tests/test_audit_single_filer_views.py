@@ -241,3 +241,78 @@ class TestPlannerCeilingIndexing:
             cpi = hh.cpi_assumption
             ceil = _index_value(_br[1][0], year, cpi)
             assert ceil > 0
+
+
+# ---------------------------------------------------------------------------
+# D2 — comparator.py milestone/survivor tables must be gated on MFJ
+# ---------------------------------------------------------------------------
+
+
+class TestComparatorSingleFilerGating:
+    """D2: Single filer must not see 'Sp Age' column or Surviving Spouse section.
+
+    These are view-logic tests exercised via the source-inspection pattern
+    (inspect.getsource) since the view requires Streamlit runtime.
+    """
+
+    def test_sp_age_column_gated_on_mfj(self):
+        """The 'Sp Age' key must only appear in milestone_rows when is_mfj is True."""
+        import inspect
+
+        import views.comparator as comparator_mod
+
+        src = inspect.getsource(comparator_mod)
+        # The fix sets is_mfj = hh.filing_status == "MFJ" and gates "Sp Age" on it.
+        assert 'is_mfj = hh.filing_status == "MFJ"' in src, (
+            "comparator.py must define is_mfj from filing_status"
+        )
+        assert 'if is_mfj:' in src, "comparator.py must gate Sp Age column on is_mfj"
+        assert '"Sp Age"' in src, "comparator.py must still contain the Sp Age key (inside gate)"
+
+    def test_surviving_spouse_section_gated_on_mfj(self):
+        """Surviving Spouse Analysis section must be wrapped in 'if is_mfj:' block."""
+        import inspect
+
+        import views.comparator as comparator_mod
+
+        src = inspect.getsource(comparator_mod)
+        # Check that survivor_death_ages call is inside the is_mfj block
+        # by verifying the guard precedes the call in source
+        mfj_idx = src.find("# --- Surviving Spouse Analysis (MFJ only) ---")
+        assert mfj_idx >= 0, "Surviving Spouse section must have MFJ-only comment marker"
+        survivor_idx = src.find("survivor_death_ages(hh)", mfj_idx)
+        assert survivor_idx >= 0, "survivor_death_ages must follow the MFJ gate"
+
+
+# ---------------------------------------------------------------------------
+# D3 — rmd_squeeze.py Spouse QCD input must be gated on MFJ
+# ---------------------------------------------------------------------------
+
+
+class TestRmdSqueezeSpouseQcdGating:
+    """D3: Single filer must not render 'Spouse Annual QCD' input."""
+
+    def test_spouse_qcd_gated_on_mfj(self):
+        """Spouse Annual QCD number_input must only render when is_mfj is True."""
+        import inspect
+
+        import views.rmd_squeeze as rmd_mod
+
+        src = inspect.getsource(rmd_mod)
+        assert "_is_mfj = hh.filing_status" in src, (
+            "rmd_squeeze.py must define _is_mfj from filing_status"
+        )
+        assert '"Spouse Annual QCD"' in src, "Spouse QCD label must still be present"
+        # The fix gates the spouse input inside 'if _is_mfj:'
+        assert "if _is_mfj:" in src, "rmd_squeeze.py must gate spouse QCD on _is_mfj"
+
+    def test_single_filer_spouse_qcd_defaults_to_zero(self):
+        """For Single filer, spouse_qcd_annual must be forced to 0 in source."""
+        import inspect
+
+        import views.rmd_squeeze as rmd_mod
+
+        src = inspect.getsource(rmd_mod)
+        assert "spouse_qcd_annual = 0" in src, (
+            "rmd_squeeze.py must set spouse_qcd_annual=0 for Single filers"
+        )

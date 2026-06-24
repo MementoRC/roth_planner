@@ -33,7 +33,11 @@ def render(hh: Household):
     st.caption(FORM_8606_CAPTION)
 
     # --- Scenario selection ---
-    col_s1, col_s2, col_s3 = st.columns(3)
+    _is_mfj = hh.filing_status == "MFJ"
+    if _is_mfj:
+        col_s1, col_s2, col_s3 = st.columns(3)
+    else:
+        col_s1, col_s2 = st.columns(2)
     with col_s1:
         show_qcd = st.toggle(
             "Apply QCD Strategy",
@@ -49,15 +53,18 @@ def render(hh: Household):
             disabled=not show_qcd,
             help=f"Your QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
         )
-    with col_s3:
-        spouse_qcd_annual = st.number_input(
-            "Spouse Annual QCD",
-            value=50_000,
-            step=5_000,
-            format="%d",
-            disabled=not show_qcd,
-            help=f"Spouse QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
-        )
+    if _is_mfj:
+        with col_s3:
+            spouse_qcd_annual = st.number_input(
+                "Spouse Annual QCD",
+                value=50_000,
+                step=5_000,
+                format="%d",
+                disabled=not show_qcd,
+                help=f"Spouse QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
+            )
+    else:
+        spouse_qcd_annual = 0
 
     # --- Run scenarios ---
     no_conv = run_no_conversion(hh, end_age=95)

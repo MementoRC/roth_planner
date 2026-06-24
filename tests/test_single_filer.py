@@ -3,11 +3,13 @@
 import pytest
 
 from engine.aca import aca_subsidy
+from engine.aca_irmaa_compute import compute_year_by_year_timeline
+from engine.headroom import compute_headroom
 from engine.irmaa import irmaa_surcharge
 from engine.niit import niit
-from engine.tax import (
-    taxable_ss,
-)
+from engine.tax import senior_bonus_deduction, taxable_ss
+from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 
 def approx(expected, tol=1.0):
@@ -132,3 +134,164 @@ class TestSingleFilerFoundations:
         magi_in_band = 3.31 * FPL_2  # ~$70,002 — above 300% ($63,450), below 400% ($84,600)
         rate = aca_premium_cap_rate(magi_in_band, enhanced_subsidies_active=False)
         assert rate == pytest.approx(0.0996)
+
+
+# ---------------------------------------------------------------------------
+# D1 — senior_bonus_deduction must not count spouse for Single filers
+# ---------------------------------------------------------------------------
+
+
+class TestSeniorBonusSingleFilerNoSpouseCount:
+    """D1: Single filer with a non-zero spouse_age must only count the filer."""
+
+    def test_single_filer_only_counts_your_age(self):
+        """Single, your_age=70, spouse_age=68 (below 65 is irrelevant here;
+        the bug fires when spouse_age>=65 and filing_status='Single').
+
+        Correct:  eligible=1 → $6,000 (MAGI below phaseout start $75K)
+        Buggy:    eligible=2 → $12,000 (double-counts spouse)
+        """
+        result = senior_bonus_deduction(
+            70, 68, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == approx(6_000)
+
+    def test_single_filer_spouse_65_not_counted(self):
+        """The critical case: spouse_age=65 (or older) must NOT be counted for Single.
+
+        Correct:  eligible=1 → $6,000
+        Buggy:    eligible=2 → $12,000 (would incorrectly count spouse)
+        """
+        result = senior_bonus_deduction(
+            70, 65, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == approx(6_000)
+
+    def test_mfj_both_65_still_counts_two(self):
+        """MFJ control: both >=65 must still yield $12,000 (behavior unchanged)."""
+        result = senior_bonus_deduction(
+            70, 65, magi=50_000, year=2026, filing_status="MFJ"
+        )
+        assert result == approx(12_000)
+
+
+# ---------------------------------------------------------------------------
+# D4 — compute_headroom IRMAA relevance uses only filer age for Single
+# ---------------------------------------------------------------------------
+
+
+class TestHeadroomIrmaaRelevanceSingle:
+    """D4: irmaa_relevant and irmaa_first_relevant_year must not use spouse age
+    when filing_status='Single'."""
+
+    def test_single_filer_irmaa_not_relevant_because_of_young_spouse(self):
+        """Single filer age 60 (ya+2=62 < 65): irmaa_relevant must be False.
+
+        Buggy code checks (ya+2>=65 OR sa+2>=65); if spouse_age=65 that
+        wrongly sets irmaa_relevant=True even for a Single filer.
+        Correct: only ya+2>=65 matters for Single.
+        """
+        hh = Household(
+            your_age=60,
+            spouse_age=65,  # spouse age that would trigger bug
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            filing_status="MFJ",  # MFJ to confirm it triggers there
+        )
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=50_000.0)
+        hr_mfj = compute_headroom(hh, ytd, filing_status="MFJ")
+        hr_single = compute_headroom(hh, ytd, filing_status="Single")
+        # MFJ: spouse_age+2=67>=65 → irmaa_relevant=True
+        assert hr_mfj.irmaa_relevant is True
+        # Single: only ya+2=62<65 → irmaa_relevant=False (no surcharge at $50K)
+        assert hr_single.irmaa_relevant is False
+
+    def test_single_filer_irmaa_first_year_uses_only_filer_age(self):
+        """Single filer age 55, spouse_age=63 (would trigger min with sa sooner).
+
+        Buggy: years_until = min(65-2-55, 65-2-63) = min(8, 0) = 0 → immediate
+        Correct: years_until = 65-2-55 = 8 → first_relevant_year = base_year + 8
+        """
+        hh = Household(
+            your_age=55,
+            spouse_age=63,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=50_000.0)
+        hr = compute_headroom(hh, ytd, filing_status="Single")
+        # Correct: 65-2-55=8 years until filer hits Medicare
+        assert hr.irmaa_first_relevant_year == hh.base_year + 8
+
+
+# ---------------------------------------------------------------------------
+# D5 — compute_year_by_year_timeline respects filing_status=Single
+# ---------------------------------------------------------------------------
+
+
+class TestAcaIrmaaTimelineSingleFiler:
+    """D5: Single filer must not see spouse age or spouse system entries in timeline."""
+
+    def test_single_filer_spouse_age_is_none_in_timeline(self):
+        """For a Single filer, TimelineRow.spouse_age must be None (not a real age)."""
+        hh = Household(
+            your_age=62,
+            spouse_age=60,  # present in hh data but must be ignored for Single
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=False,
+            filing_status="Single",
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+        )
+        rows = compute_year_by_year_timeline(hh, base_magi=50_000, years=5, cpi=hh.cpi_assumption)
+        for row in rows:
+            assert row.spouse_age is None, (
+                f"year {row.year}: expected spouse_age=None for Single, got {row.spouse_age}"
+            )
+
+    def test_single_filer_system_string_has_no_spouse_entry(self):
+        """Single filer: system string must not contain '(sp)' entries."""
+        hh = Household(
+            your_age=62,
+            spouse_age=60,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=False,
+            filing_status="Single",
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+        )
+        rows = compute_year_by_year_timeline(hh, base_magi=50_000, years=5, cpi=hh.cpi_assumption)
+        for row in rows:
+            assert "(sp)" not in row.system, (
+                f"year {row.year}: Single filer system string must not include spouse: {row.system!r}"
+            )
+
+    def test_single_filer_medicare_count_ignores_spouse_age(self):
+        """Single filer age 63 with spouse_age=65: IRMAA tier must be None (not on
+        Medicare yet) because only filer's age matters.
+
+        Buggy: medicare_count = sum([63>=65, 65>=65]) = 1 → irmaa_tier is set
+        Correct: medicare_count = 0 for single filer (63 < 65) → irmaa_tier=None
+        """
+        hh = Household(
+            your_age=63,
+            spouse_age=65,  # would trigger bug
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=False,
+            filing_status="Single",
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+        )
+        rows = compute_year_by_year_timeline(hh, base_magi=50_000, years=1, cpi=hh.cpi_assumption)
+        assert rows[0].irmaa_tier is None, (
+            f"Single filer age 63: irmaa_tier should be None, got {rows[0].irmaa_tier}"
+        )

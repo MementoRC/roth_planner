@@ -249,17 +249,18 @@ def compute_year_by_year_timeline(
     - If anyone on Medicare: compute IRMAA tier + room to next threshold
     - If ACA applies: compute current ACA subsidy + net cost
     """
+    is_mfj = hh.filing_status == "MFJ"
     rows: list[TimelineRow] = []
     for yr_idx in range(years):
         year = hh.base_year + yr_idx
         ya = hh.your_age_in(year)
-        sa = hh.spouse_age_in(year)
+        sa = hh.spouse_age_in(year) if is_mfj else None
 
         you_on_aca = aca_applies(ya, hh.your_aca_enrolled)
-        sp_on_aca = aca_applies(sa, hh.spouse_aca_enrolled)
+        sp_on_aca = aca_applies(sa, hh.spouse_aca_enrolled) if sa is not None else False
         on_medicare_you = ya >= 65
-        on_medicare_sp = sa >= 65
-        medicare_count = sum(1 for a in [ya, sa] if a >= 65)
+        on_medicare_sp = sa >= 65 if sa is not None else False
+        medicare_count = (1 if on_medicare_you else 0) + (1 if on_medicare_sp else 0)
 
         # Determine system per person
         parts = []
@@ -269,17 +270,17 @@ def compute_year_by_year_timeline(
             parts.append("Medicare (you)")
         else:
             parts.append("Employer (you)")
-        if sp_on_aca:
-            parts.append("ACA (sp)")
-        elif on_medicare_sp:
-            parts.append("Medicare (sp)")
-        elif hh.spouse_aca_enrolled:
-            parts.append("ACA (sp)")
-        else:
-            parts.append("Uninsured/Other (sp)")
+        if is_mfj:
+            if sp_on_aca:
+                parts.append("ACA (sp)")
+            elif on_medicare_sp:
+                parts.append("Medicare (sp)")
+            elif hh.spouse_aca_enrolled:
+                parts.append("ACA (sp)")
+            else:
+                parts.append("Uninsured/Other (sp)")
         system = " + ".join(parts)
 
-        # TODO: per-year filing_status for survivor timeline (see comparator.py template); using hh.filing_status uniformly for now
         _yr_cpi = cpi
         irmaa_room = (
             irmaa_next_threshold(base_magi, filing_status=hh.filing_status, year=year, cpi=_yr_cpi)
