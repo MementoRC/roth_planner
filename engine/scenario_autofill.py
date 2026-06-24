@@ -114,21 +114,14 @@ def _auto_fill_core(
         # Taxable SS — computed first so base_magi uses only the includable
         # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
         other_fixed = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
-        # YTD ordinary income affects SS taxation.
-        # Mirrors run_scenario's combined_gross YTD block: wages, NEC, STCG,
-        # ordinary dividends, conversions done, and IRA distributions all stack
-        # into ordinary income. ordinary_dividends_ytd was previously omitted here
-        # (math audit 2026-06-12 Priority 3), overstating bracket room by that amount.
+        # Per IRC §86(b)(2), provisional income is MAGI (AGI + tax-exempt interest),
+        # not just ordinary income. For the base year, ytd_year.magi_ytd captures
+        # all §86-modified-AGI components (LTCG, qualified dividends, muni interest,
+        # wages, etc.) and correctly excludes SS, making it the right provisional-
+        # income proxy. Forecast years have no YTD snapshot; brokerage income is not
+        # separately modeled in autofill so other_fixed remains ordinary-only there.
         if ytd_year is not None:
-            other_fixed += (
-                ytd_year.wages_ytd
-                + ytd_year.nec_income_ytd
-                + ytd_year.stcg_ytd
-                + ytd_year.ordinary_dividends_ytd
-                + ytd_year.interest_ytd
-                + ytd_year.ira_conversions_ytd
-                + ytd_year.ira_distributions_ytd
-            )
+            other_fixed += ytd_year.magi_ytd
         tss = taxable_ss(combined_ss, other_fixed, filing_status=hh.filing_status)
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA).

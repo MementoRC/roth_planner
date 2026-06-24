@@ -337,7 +337,12 @@ def estimate_ytd_federal_tax(
     # Step 2: taxable SS — computed first so it can be added to ordinary_income
     # before the standard-deduction subtraction.  provisional income = other_income
     # + 0.5 * SS; taxable_ss() handles the tier thresholds per IRC §86.
-    tss = taxable_ss(combined_ss, ordinary_income, filing_status=hh.filing_status)
+    #
+    # Per IRC §86(b)(2), provisional income is MAGI (AGI + tax-exempt interest)
+    # not just ordinary income. ytd.magi_ytd captures all §86-modified-AGI
+    # components (wages, LTCG, qualified dividends, muni interest, etc.) and
+    # excludes SS, so it is the correct "other_income" arg here.
+    tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status=hh.filing_status)
     ordinary_income_with_ss = ordinary_income + tss
 
     # Step 3: standard deduction (indexed) + senior extras + OBBBA bonus.

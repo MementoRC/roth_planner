@@ -583,6 +583,111 @@ class TestRothBalanceTracking:
         )
 
 
+class TestA2AutoFillSS86ProvisionalIncomeMagi:
+    """A2 — autofill taxable-SS provisional base must include LTCG and QD from YTD snapshot.
+
+    IRC §86(b)(2): provisional income = AGI + tax-exempt interest + 0.5*SS.
+    Pre-fix code summed only ordinary YTD fields (wages, NEC, STCG, ordinary_dividends,
+    interest, conversions, distributions), omitting ltcg_ytd, qualified_dividends_ytd,
+    and tax_exempt_interest_ytd.  A household with meaningful LTCG/QD should have a
+    higher taxable SS and therefore less bracket room in the base year.
+    """
+
+    def _hh(self) -> "Household":
+        return Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=300_000.0,
+            your_ss_fra=2_500.0,
+            your_ss_start_age=70,
+            spouse_ss_fra=0.0,
+            grants=[],
+        )
+
+    def test_ltcg_in_ytd_raises_taxable_ss_reduces_bracket_room(self) -> None:
+        """LTCG in base-year YTD raises §86 provisional income → more taxable SS
+        → autofill finds less bracket room in the base year.
+
+        Scenario: household with small SS ($15K combined) and small wages ($10K).
+        Without LTCG: provisional = 10K + 0.5*15K = 17.5K < tier1 ($32K) → tss = 0.
+        With LTCG $30K: provisional = 40K + 0.5*15K = 47.5K > tier2 ($44K) → tss > 0.
+        The LTCG household must have a lower conversion amount because tss shrinks room.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        # Small SS so that provisional crosses the tier1 threshold only with LTCG.
+        # your_ss_start_age=61 so SS is active in the base year (ya=61 >= start=61).
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=300_000.0,
+            your_ss_fra=625.0,   # reduced early: ~$7.5K/yr (combined ~$7.5K, no spouse SS)
+            your_ss_start_age=61,  # claiming at 61: active in base year
+            spouse_ss_fra=0.0,
+            grants=[],
+        )
+        ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
+        ytd_with_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000, ltcg_ytd=30_000)
+
+        plan_no_ltcg = auto_fill_12(hh, early_exercise=False, ytd=ytd_no_ltcg)
+        plan_with_ltcg = auto_fill_12(hh, early_exercise=False, ytd=ytd_with_ltcg)
+
+        base_year = hh.base_year
+        conv_no_ltcg = plan_no_ltcg.your_conversions.get(base_year, 0.0)
+        conv_with_ltcg = plan_with_ltcg.your_conversions.get(base_year, 0.0)
+
+        # LTCG raises taxable SS → more ordinary income stacked → less room to 12% ceiling
+        assert conv_with_ltcg < conv_no_ltcg, (
+            f"Expected less conversion room with LTCG in YTD (SS taxed more), "
+            f"but got conv_with_ltcg={conv_with_ltcg:.0f} >= conv_no_ltcg={conv_no_ltcg:.0f}."
+        )
+
+    def test_qualified_dividends_in_ytd_raise_taxable_ss(self) -> None:
+        """QD in base-year YTD raises §86 provisional income → more taxable SS
+        → autofill finds less bracket room in the base year.
+
+        Scenario: household with small SS ($15K combined) and small wages ($10K).
+        Without QD: provisional = 10K + 7.5K = 17.5K < tier1 → tss = 0.
+        With QD $30K: provisional = 40K + 7.5K = 47.5K → tss > 0.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=300_000.0,
+            your_ss_fra=625.0,
+            your_ss_start_age=61,
+            spouse_ss_fra=0.0,
+            grants=[],
+        )
+        ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
+        ytd_with_qd = YTDSnapshot(
+            tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=30_000
+        )
+
+        plan_no_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_no_qd)
+        plan_with_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_with_qd)
+
+        base_year = hh.base_year
+        conv_no_qd = plan_no_qd.your_conversions.get(base_year, 0.0)
+        conv_with_qd = plan_with_qd.your_conversions.get(base_year, 0.0)
+
+        assert conv_with_qd < conv_no_qd, (
+            f"Expected less conversion room with QD in YTD (SS taxed more), "
+            f"but got conv_with_qd={conv_with_qd:.0f} >= conv_no_qd={conv_no_qd:.0f}."
+        )
+
+
 # ============================================================
 #  Tax Return Sync (TurboTax via FinExtract)
 # ============================================================
