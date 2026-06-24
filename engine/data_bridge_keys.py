@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import os
+import stat
 import warnings
 from pathlib import Path
 
@@ -51,6 +52,14 @@ def _try_load(env_name: str, path: Path) -> bytes | None:
         return _decode_keymaterial(env)
     if path.is_file():
         try:
+            file_mode = stat.S_IMODE(path.stat().st_mode)
+            if file_mode & 0o077:
+                warnings.warn(
+                    f"{path}: key file is group- or world-readable (mode {oct(file_mode)}); "
+                    "consider restricting to 0o600.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
             return _decode_keymaterial(path.read_text(encoding="utf-8"))
         except OSError:
             return None
@@ -91,8 +100,11 @@ def _write_keyfile(path: Path, text: str, mode: int) -> None:
     world-readable (the old ``write_text`` + ``chmod`` pattern left a 0644 window).
     ``os.fchmod`` re-asserts the exact mode so a force=True overwrite of a
     pre-existing looser-permissioned file is corrected, independent of umask.
+    ``os.O_NOFOLLOW`` causes ``os.open`` to raise ``OSError`` (ELOOP) if *path*
+    is a symlink, preventing a pre-planted symlink from redirecting the private
+    key to an attacker-readable location.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, mode)
     try:
         os.fchmod(fd, mode)
         os.write(fd, text.encode("utf-8"))
