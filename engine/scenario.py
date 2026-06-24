@@ -69,11 +69,7 @@ def run_scenario(
     spouse_ira = hh.spouse_ira
     your_roth = hh.your_roth
     spouse_roth = hh.spouse_roth
-    # TODO(math-audit-2026-06-12 P3): Brokerage starting balance not initialized from YTD
-    # snapshot. Projection always starts at 0.0, ignoring any brokerage balance already
-    # accumulated by the snapshot date. Fix requires adding a brokerage_balance field to
-    # YTDSnapshot (model extension deferred — see ai_docs/MATH_AUDIT_2026-06-12.md P3).
-    brokerage = 0.0
+    brokerage = hh.brokerage_start
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
     cum_aca = 0.0

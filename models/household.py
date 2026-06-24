@@ -133,6 +133,7 @@ class Household:
     filing_status: str = "MFJ"
 
     # Brokerage assumptions
+    brokerage_start: float = 0.0  # beginning-of-base-year taxable brokerage balance
     brok_turnover: float = 0.30  # 30% annual turnover
     ltcg_rate: float = 0.15
 
