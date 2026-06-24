@@ -247,6 +247,7 @@ class TestHeadroomOptionIncomeSubtract:
 # Helpers used across F8/F18/F26 tests
 # ---------------------------------------------------------------------------
 
+
 def _ss_household(your_ss_monthly: float = 2_000, spouse_ss_monthly: float = 2_000) -> Household:
     """Household where both spouses claim SS at 65 (FRA=67 → 86.67% of FRA benefit).
 
@@ -385,9 +386,7 @@ class TestHeadroomSSMAGIFixes:
         hh = _ss_household(your_ss_monthly=monthly, spouse_ss_monthly=monthly)
 
         ytd_no_divs = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
-        ytd_with_divs = YTDSnapshot(
-            tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=40_000
-        )
+        ytd_with_divs = YTDSnapshot(tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=40_000)
 
         hr_no_divs = compute_headroom(hh, ytd_no_divs)
         hr_with_divs = compute_headroom(hh, ytd_with_divs)

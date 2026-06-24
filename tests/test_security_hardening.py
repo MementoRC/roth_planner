@@ -45,8 +45,7 @@ class TestWritePiiJsonONofollow:
 
         source = inspect.getsource(secure_io.write_pii_json)
         assert "O_NOFOLLOW" in source, (
-            "write_pii_json is missing os.O_NOFOLLOW — "
-            "a pre-planted symlink can redirect the write"
+            "write_pii_json is missing os.O_NOFOLLOW — a pre-planted symlink can redirect the write"
         )
 
     def test_o_nofollow_in_actual_flags(self, tmp_path):

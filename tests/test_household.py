@@ -511,7 +511,7 @@ class TestSurvivorScenario:
             spouse_age=70,
             your_ira=1_000_000,
             spouse_ira=800_000,
-            your_ss_fra=4_000,   # you are the higher earner
+            your_ss_fra=4_000,  # you are the higher earner
             spouse_ss_fra=2_000,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
@@ -677,7 +677,7 @@ class TestSurvivorScenario:
         one_person_cost, _ = irmaa_for_year(
             230_000,
             73,  # your income-year age (ya - 2 = 75 - 2)
-            0,   # deceased spouse zeroed → not counted
+            0,  # deceased spouse zeroed → not counted
             filing_status="Single",
             year=2027,
         )

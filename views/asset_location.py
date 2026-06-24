@@ -103,7 +103,9 @@ def render(hh: Household):
             )
         )
 
-    fig_ira.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_ira.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_ira.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Combined IRA ($)",
@@ -159,7 +161,9 @@ def render(hh: Household):
         )
     )
 
-    fig_comp.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_comp.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_comp.update_layout(
         barmode="stack",
         xaxis_title="Your Age",

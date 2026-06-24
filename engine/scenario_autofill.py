@@ -135,10 +135,7 @@ def _auto_fill_core(
         # Uses taxable SS (tss) not gross combined_ss per IRC §86 + §1395r(i)(4).
         # Passed to room_fn so the IRMAA-safe variant can enforce its ceiling.
         base_magi = (
-            opt
-            + tss
-            + (taxable_rmd if ya >= hh.your_rmd_start_age else 0)
-            + spouse_taxable_rmd
+            opt + tss + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
         )
         if ytd_year is not None:
             base_magi += ytd_year.magi_ytd

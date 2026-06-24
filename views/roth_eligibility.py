@@ -222,7 +222,9 @@ def render(hh: Household):
 
     with col1:
         tax_year = st.selectbox("Tax Year", [2025, 2026], index=0)
-        filing = st.selectbox("Filing Status", ["MFJ", "Single"], index=0 if hh.filing_status == "MFJ" else 1)
+        filing = st.selectbox(
+            "Filing Status", ["MFJ", "Single"], index=0 if hh.filing_status == "MFJ" else 1
+        )
     with col2:
         magi = st.number_input(
             "Modified AGI" + (" (from TurboTax)" if tax_snap and tax_snap.server_available else ""),
