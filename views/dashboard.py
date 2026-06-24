@@ -209,7 +209,9 @@ def render(hh: Household):
     for yr_nc, yr_wc in zip(no_conv.years, with_conv.years, strict=False):
         cum_conv_tax = with_conv.total_conv_tax  # sunk cost paid during conv years
         cum_rmd_savings += (
-            yr_nc.federal_tax_amt - yr_wc.federal_tax_amt if yr_nc.your_age >= 75 else 0
+            yr_nc.federal_tax_amt - yr_wc.federal_tax_amt
+            if yr_nc.your_age >= hh.your_rmd_start_age
+            else 0
         )
         cum_brok_savings += yr_nc.brokerage_gain_tax - yr_wc.brokerage_gain_tax
         net_benefit.append(cum_rmd_savings + cum_brok_savings - cum_conv_tax)
@@ -234,7 +236,7 @@ def render(hh: Household):
     # Find break-even age
     breakeven = None
     for _i, (a, nb) in enumerate(zip(ages, net_benefit, strict=False)):
-        if nb >= 0 and a >= 75:
+        if nb >= 0 and a >= hh.your_rmd_start_age:
             breakeven = a
             break
 
@@ -260,12 +262,13 @@ def render(hh: Household):
 
     # --- Summary table ---
     st.markdown("### Key Age Milestones")
+    _rmd_age = hh.your_rmd_start_age
     milestones = [
-        (75, "RMDs begin"),
-        (80, "5 yrs of RMDs"),
-        (85, "10 yrs of RMDs"),
-        (90, "15 yrs of RMDs"),
-        (95, "20 yrs of RMDs"),
+        (_rmd_age, "RMDs begin"),
+        (_rmd_age + 5, "5 yrs of RMDs"),
+        (_rmd_age + 10, "10 yrs of RMDs"),
+        (_rmd_age + 15, "15 yrs of RMDs"),
+        (_rmd_age + 20, "20 yrs of RMDs"),
     ]
     cols = st.columns(len(milestones))
     for col, (age, label) in zip(cols, milestones, strict=False):

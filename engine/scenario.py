@@ -60,8 +60,8 @@ def run_scenario(
     """
     Run a full projection from base_year through end_age.
 
-    Phase 1 (your_age <= 74): Conversion years — you and/or spouse convert
-    Phase 2 (your_age >= 75): RMD years — forced distributions, spouse may still convert
+    Phase 1 (your_age < hh.your_rmd_start_age): Conversion years — you and/or spouse convert
+    Phase 2 (your_age >= hh.your_rmd_start_age): RMD years — forced distributions, spouse may still convert
     """
     results = []
     cpi = hh.cpi_assumption

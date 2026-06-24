@@ -179,28 +179,28 @@ def _auto_fill_core(
         you_first = (ya > sa) or (ya == sa and your_ira >= spouse_ira)
 
         if you_first:
-            if ya <= 74 and room > 0:
+            if ya < hh.your_rmd_start_age and room > 0:
                 yc = min(room, your_ira)
                 plan.your_conversions[year] = yc
                 room -= yc
             else:
                 yc = 0
 
-            if sa <= 74 and room > 0:
+            if sa < hh.spouse_rmd_start_age and room > 0:
                 sc = min(room, spouse_ira)
                 plan.spouse_conversions[year] = sc
                 room -= sc
             else:
                 sc = 0
         else:
-            if sa <= 74 and room > 0:
+            if sa < hh.spouse_rmd_start_age and room > 0:
                 sc = min(room, spouse_ira)
                 plan.spouse_conversions[year] = sc
                 room -= sc
             else:
                 sc = 0
 
-            if ya <= 74 and room > 0:
+            if ya < hh.your_rmd_start_age and room > 0:
                 yc = min(room, your_ira)
                 plan.your_conversions[year] = yc
                 room -= yc

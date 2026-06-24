@@ -365,7 +365,7 @@ def compute_cumulative_net_benefit(
     scenario: ScenarioResult,
     baseline: ScenarioResult,
     *,
-    rmd_start_age: int = 75,
+    rmd_start_age: int,
 ) -> list[float]:
     """For each year in scenario.years, compute cumulative net benefit.
 
