@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.aca import (
-    BENCHMARK_PREMIUM_ANNUAL,
     FPL_1,
     FPL_2,
     _aca_cap_schedule,
@@ -114,11 +113,15 @@ def render(hh: Household):
                     hovertemplate="MAGI: $%{x:,.0f}<br>You Pay: $%{y:,.0f}<extra></extra>",
                 )
             )
+            num_on_aca = (1 if aca_applies(hh.your_age, hh.your_aca_enrolled) else 0) + (
+                1 if aca_applies(hh.spouse_age, hh.spouse_aca_enrolled) else 0
+            )
+            effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
             fig_aca.add_hline(
-                y=BENCHMARK_PREMIUM_ANNUAL,
+                y=effective_benchmark,
                 line_dash="dot",
                 line_color="gray",
-                annotation_text=f"Full premium: {fmt_dollars(BENCHMARK_PREMIUM_ANNUAL)}",
+                annotation_text=f"Full premium: {fmt_dollars(effective_benchmark)}",
             )
 
             # Mark FPL thresholds
@@ -143,8 +146,8 @@ def render(hh: Household):
             )
             st.plotly_chart(fig_aca, width="stretch")
         else:
-            if hh.your_age >= 65:
-                st.info(f"You are {hh.your_age} — on Medicare. See IRMAA section.")
+            if hh.your_age >= 65 or hh.spouse_age >= 65:
+                st.info("On Medicare. See IRMAA section below.")
             else:
                 st.info(
                     "ACA not enrolled. Go to ⚙️ Setup → 📊 Parameters → Joint "

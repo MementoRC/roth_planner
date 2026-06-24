@@ -20,6 +20,7 @@ from engine.scenario_compare import (
     compute_survivor_snapshot,
     survivor_death_ages,
 )
+from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
@@ -330,9 +331,11 @@ def render(hh: Household):
 
         st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
 
-        st.markdown("""
+        _single_12 = fmt_dollars(BRACKETS_SINGLE[1][0])
+        _mfj_12 = fmt_dollars(BRACKETS_MFJ[1][0])
+        st.markdown(f"""
 **Why this matters**: When one spouse dies, the survivor:
-- Files **Single** — 12% bracket tops at $50K taxable (vs $101K for MFJ)
+- Files **Single** — 12% bracket tops at {_single_12} taxable (vs {_mfj_12} for MFJ)
 - Inherits the deceased's IRA — combined with their own, RMDs are massive
 - Gets only the **higher** of two SS benefits (not both)
 - Result: unconverted IRAs create an even worse squeeze for the survivor

@@ -128,8 +128,6 @@ def render(hh: Household):
         ya, sa = yr.your_age, yr.spouse_age
         you_can_conv = ya < hh.your_rmd_start_age
         sp_can_conv = sa < hh.spouse_rmd_start_age
-        qcd_ok = ya >= 71
-        sp_qcd_ok = sa >= 71
 
         cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2])
 
@@ -184,8 +182,8 @@ def render(hh: Household):
         else:
             cols[6].markdown("—")
 
-        # Your QCD input
-        if qcd_ok and ya >= 75:
+        # Your QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
+        if ya >= 70:
             qcd_key = f"qcd_{yr.year}"
             qcd_val = st.session_state.conv_plan_qcd.get(yr.year, 0)
             new_qcd = cols[7].number_input(
@@ -202,8 +200,8 @@ def render(hh: Household):
         else:
             cols[7].markdown("—")
 
-        # Spouse QCD input
-        if sp_qcd_ok and sa >= 75:
+        # Spouse QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
+        if sa >= 70:
             sp_qcd_key = f"sp_qcd_{yr.year}"
             sp_qcd_val = st.session_state.conv_plan_spouse_qcd.get(yr.year, 0)
             new_sp_qcd = cols[8].number_input(
