@@ -75,6 +75,46 @@ class TestSSBenefit:
         assert at_75 == approx(at_70), "Claiming at 75 must equal 70 (DRC capped)"
 
 
+class TestHouseholdSSCap:
+    """Regression: your_ss_at_70 / spouse_ss_at_70 must not exceed the age-70 benefit."""
+
+    def test_ss_at_70_capped_when_start_age_exceeds_70(self):
+        """your_ss_start_age > 70 must yield the same annual benefit as claiming at 70.
+
+        The old inline formula (1 + delay_years * 0.08) * monthly * 12 would produce
+        1.32 × 12 × fra for start_age=71 vs FRA=67, exceeding the 24% DRC maximum.
+        The fix delegates to ss_benefit_at_age with effective_age = min(start_age, 70).
+        """
+        hh_70 = Household(your_ss_fra=3_800.0, your_ss_start_age=70, your_fra_age=67)
+        hh_71 = Household(your_ss_fra=3_800.0, your_ss_start_age=71, your_fra_age=67)
+        hh_75 = Household(your_ss_fra=3_800.0, your_ss_start_age=75, your_fra_age=67)
+
+        at_70 = hh_70.your_ss_at_70()
+        assert hh_71.your_ss_at_70() == approx(at_70), (
+            "start_age=71 must equal start_age=70 (DRC capped)"
+        )
+        assert hh_75.your_ss_at_70() == approx(at_70), (
+            "start_age=75 must equal start_age=70 (DRC capped)"
+        )
+
+    def test_spouse_ss_at_70_capped_when_start_age_exceeds_70(self):
+        """spouse_ss_at_70 must not inflate the benefit when spouse_ss_start_age > 70."""
+        hh_70 = Household(spouse_ss_fra=3_200.0, spouse_ss_start_age=70, spouse_fra_age=67)
+        hh_72 = Household(spouse_ss_fra=3_200.0, spouse_ss_start_age=72, spouse_fra_age=67)
+
+        at_70 = hh_70.spouse_ss_at_70()
+        assert hh_72.spouse_ss_at_70() == approx(at_70), (
+            "spouse start_age=72 must equal start_age=70 (DRC capped)"
+        )
+
+    def test_ss_at_70_uses_correct_fra(self):
+        """your_ss_at_70 respects the per-person FRA (e.g., FRA=66 for older cohort)."""
+        # FRA=66: 4 years of DRC → 32% bonus (48 months × 2/3% = 32%)
+        hh = Household(your_ss_fra=3_000.0, your_ss_start_age=70, your_fra_age=66)
+        expected = ss_benefit_at_age(3_000.0, 70, 66)
+        assert hh.your_ss_at_70() == approx(expected)
+
+
 class TestSSProvisionalIncomeRegression:
     """Regression guards for three omissions in the other_inc block used by taxable_ss().
 
