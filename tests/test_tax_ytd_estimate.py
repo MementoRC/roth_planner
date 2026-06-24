@@ -1,10 +1,11 @@
-"""Tests for estimate_ytd_federal_tax — F1/F13/F14/F19/F20 bug fixes.
+"""Tests for estimate_ytd_federal_tax — F1/F13/F14/F19/F20/A1 bug fixes.
 
 Covers:
   F19 / F1  — standard deduction applied before ordinary bracket walk
   F13       — marginal_bracket_pct derived from taxable income, not gross
   F14       — room_to_next_bracket measured from taxable income vs bracket ceilings
   F20       — taxable Social Security included in ordinary income base
+  A1        — §86 provisional income includes LTCG, qualified dividends, tax-exempt interest
 """
 
 import pytest
@@ -207,3 +208,96 @@ class TestF20TaxableSocialSecurity:
         # Without SS: taxable = 90K - 32.2K = 57.8K → 12% bracket
         result_no_ss = estimate_ytd_federal_tax(ytd, _hh_mfj(), combined_ss=0.0)
         assert result.marginal_bracket_pct >= result_no_ss.marginal_bracket_pct
+
+
+class TestA1SS86ProvisionalIncomeMagi:
+    """A1 — §86 provisional income must include LTCG, qualified dividends, and tax-exempt interest.
+
+    IRC §86(b)(2): provisional income = AGI + tax-exempt interest + 0.5*SS.
+    Pre-fix code used total_ordinary_income (excludes LTCG/QD/muni), understating
+    taxable SS when a household has those income components.
+    """
+
+    def test_ltcg_raises_taxable_ss_vs_ordinary_only(self) -> None:
+        """LTCG in ytd raises provisional income → more taxable SS than ordinary-only base.
+
+        Scenario: $30K wages + $20K LTCG + $40K SS.
+        Ordinary-only provisional = 30K + 0.5*40K = 50K (just above MFJ tier2 $44K).
+        MAGI-based provisional     = 50K + 20K     = 70K (deeper into 85% tier).
+        """
+        ytd_with_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=30_000, ltcg_ytd=20_000)
+        ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
+        combined_ss = 40_000.0
+
+        result_with_ltcg = estimate_ytd_federal_tax(ytd_with_ltcg, _hh_mfj(), combined_ss=combined_ss)
+        result_no_ltcg = estimate_ytd_federal_tax(ytd_no_ltcg, _hh_mfj(), combined_ss=combined_ss)
+
+        # LTCG must increase taxable SS, so ordinary_tax (which includes tss) must be higher
+        assert result_with_ltcg.ordinary_tax > result_no_ltcg.ordinary_tax
+
+    def test_qualified_dividends_raise_taxable_ss(self) -> None:
+        """Qualified dividends raise §86 provisional income → higher taxable SS.
+
+        Scenario: $30K wages + $15K QD + $40K SS.
+        QD is excluded from ordinary brackets but per §86(b)(2) it IS in AGI
+        and therefore in provisional income.
+        """
+        ytd_with_qd = YTDSnapshot(
+            tax_year=2026, wages_ytd=30_000, qualified_dividends_ytd=15_000
+        )
+        ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
+        combined_ss = 40_000.0
+
+        result_with_qd = estimate_ytd_federal_tax(ytd_with_qd, _hh_mfj(), combined_ss=combined_ss)
+        result_no_qd = estimate_ytd_federal_tax(ytd_no_qd, _hh_mfj(), combined_ss=combined_ss)
+
+        assert result_with_qd.ordinary_tax > result_no_qd.ordinary_tax
+
+    def test_tax_exempt_interest_raises_taxable_ss(self) -> None:
+        """Muni interest raises §86 provisional income → higher taxable SS.
+
+        IRC §86(b)(2)(B) explicitly adds tax-exempt interest to provisional income.
+        Scenario: $30K wages + $10K muni + $40K SS.
+        """
+        ytd_with_muni = YTDSnapshot(
+            tax_year=2026, wages_ytd=30_000, tax_exempt_interest_ytd=10_000
+        )
+        ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
+        combined_ss = 40_000.0
+
+        result_with_muni = estimate_ytd_federal_tax(
+            ytd_with_muni, _hh_mfj(), combined_ss=combined_ss
+        )
+        result_no_muni = estimate_ytd_federal_tax(ytd_no_muni, _hh_mfj(), combined_ss=combined_ss)
+
+        assert result_with_muni.ordinary_tax > result_no_muni.ordinary_tax
+
+    def test_taxable_ss_uses_magi_not_ordinary_income(self) -> None:
+        """Numeric proof: tss computed from magi_ytd equals taxable_ss(ss, magi).
+
+        $20K wages + $10K LTCG + $5K QD + $3K muni + $36K SS.
+        magi_ytd = 20K + 10K + 5K + 3K + ordinary_dividends=0 + interest=0 = 38K
+        provisional = 38K + 0.5*36K = 56K → tier2 zone → taxable_ss = 0.85*(56K-44K)+6K = 16.2K
+        ordinary_income_with_ss should equal 20K + 16.2K = 36.2K
+        taxable_ordinary = 36.2K - 32.2K = 4K → federal_tax(4K) = 0.10 * 4K = $400
+        """
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=20_000,
+            ltcg_ytd=10_000,
+            qualified_dividends_ytd=5_000,
+            tax_exempt_interest_ytd=3_000,
+        )
+        combined_ss = 36_000.0
+        hh = _hh_mfj()
+
+        result = estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
+
+        # Cross-check: manual calculation using magi_ytd as provisional base
+        magi = ytd.magi_ytd  # 20K + 10K + 5K + 3K = 38K
+        expected_tss = taxable_ss(combined_ss, magi, filing_status="MFJ")
+        # provisional = 38K + 18K = 56K > 44K → tier2: 0.85*(56K-44K)+6K = 16.2K
+        assert expected_tss == pytest.approx(16_200.0, abs=1.0)
+        # ordinary_income_with_ss = 20K + 16.2K = 36.2K; taxable = 36.2K - 32.2K = 4K
+        taxable_ordinary = max(20_000 + expected_tss - STD_DEDUCTION_MFJ, 0.0)
+        assert result.ordinary_tax == pytest.approx(federal_tax(taxable_ordinary), abs=1.0)
