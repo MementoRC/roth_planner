@@ -353,7 +353,8 @@ def compute_multi_year_summary(
     rows: list[YearSummary] = []
     for yr in conv_years:
         cpi = hh.cpi_assumption
-        irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr, cpi)
+        # IRMAA 2-year lookback: threshold that applies is for the PAYMENT year (income_year+2).
+        irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr + 2, cpi)
 
         b = base_income_for_year(hh, yr, ytd=ytd if yr == hh.base_year else None)
         b_result = all_in_at_conversion(hh, b, 0, net_inv_income)
