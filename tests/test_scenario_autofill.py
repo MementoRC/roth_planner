@@ -3,7 +3,6 @@
 import pytest
 
 from engine.scenario import (
-    ConversionPlan,
     auto_fill_irmaa_safe,
 )
 from models.household import Household

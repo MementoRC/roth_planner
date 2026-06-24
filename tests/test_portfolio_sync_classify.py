@@ -2,8 +2,6 @@
 
 import pytest
 
-from models.household import Household
-
 
 def approx(expected, tol=1.0):
     return pytest.approx(expected, abs=tol)
