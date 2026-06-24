@@ -48,7 +48,7 @@ def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) 
         }
         for a in accounts
     ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
 def _render_holdings_table(accounts: list[AccountSummary]) -> None:
@@ -69,7 +69,7 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
             "No holdings loaded — use the Sync button below (local install) or upload a data file."
         )
         return
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
 def _render_grants_section(grants: list[EquityGrant]) -> None:
@@ -88,7 +88,7 @@ def _render_grants_section(grants: list[EquityGrant]) -> None:
         }
         for g in grants
     ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
 def _render_portfolio_sub_tabs(

@@ -53,11 +53,32 @@ def _collect_files(repo_root: Path) -> dict[str, str]:
     return files
 
 
+_INCOMPATIBLE_ARGS: list[tuple[str, str]] = [
+    # width="stretch" was introduced in Streamlit >=1.50 and is not supported
+    # by the stlite-bundled version (currently 0.75.x → Streamlit ~1.40.x).
+    # Use use_container_width=True instead.
+    ('width="stretch"', "use_container_width=True"),
+]
+
+
+def _guard_incompatible_args(files: dict[str, str]) -> None:
+    """Raise if any bundled file uses a Streamlit API not supported by stlite."""
+    for relpath, source in files.items():
+        for bad_arg, replacement in _INCOMPATIBLE_ARGS:
+            if bad_arg in source:
+                raise SystemExit(
+                    f"Build guard: {relpath!r} contains {bad_arg!r} which is "
+                    f"unsupported by the bundled Streamlit version.  "
+                    f"Replace with {replacement!r}."
+                )
+
+
 def build(repo_root: Path, out_dir: Path, stlite_version: str) -> Path:
     template_path = repo_root / "deploy" / "template.html"
     template = template_path.read_text(encoding="utf-8")
 
     files = _collect_files(repo_root)
+    _guard_incompatible_args(files)
     file_map_json = json.dumps(files, ensure_ascii=False, indent=2)
     requirements_json = json.dumps(REQUIREMENTS)
 
