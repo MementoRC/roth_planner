@@ -160,7 +160,7 @@ def _handle_personal_uploads() -> None:
             key="pc_upload",
         )
         col_a, col_b = st.columns(2)
-        if col_a.button("Apply", key="apply_uploads", use_container_width=True):
+        if col_a.button("Apply", key="apply_uploads", width="stretch"):
             applied: list[str] = []
             privkey = _resolve_privkey_bytes()
             if ud_file is not None:
@@ -199,7 +199,7 @@ def _handle_personal_uploads() -> None:
             if applied:
                 st.success(f"Applied: {', '.join(applied)}. Rerunning…")
                 st.rerun()
-        if col_b.button("Reset to demo", key="reset_demo", use_container_width=True):
+        if col_b.button("Reset to demo", key="reset_demo", width="stretch"):
             _clear_personal_session_state()
             st.success("Reset to demo defaults.")
             st.rerun()

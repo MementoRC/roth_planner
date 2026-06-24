@@ -90,7 +90,7 @@ def render(hh: Household):
     ]
 
     df_summary = pd.DataFrame(summary_rows)
-    st.dataframe(df_summary, hide_index=True, use_container_width=True)
+    st.dataframe(df_summary, hide_index=True, width="stretch")
 
     st.markdown("---")
 
@@ -115,7 +115,9 @@ def render(hh: Household):
             )
         )
 
-    fig_ira.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_ira.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_ira.update_layout(
         xaxis_title="Your Age",
         yaxis_title="IRA + Roth Balance ($)",
@@ -123,7 +125,7 @@ def render(hh: Household):
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_ira, use_container_width=True)
+    st.plotly_chart(fig_ira, width="stretch")
 
     # --- Chart 2: Annual Tax Comparison ---
     col_l, col_r = st.columns(2)
@@ -147,7 +149,7 @@ def render(hh: Household):
             yaxis_tickformat="$,.0s",
             height=350,
         )
-        st.plotly_chart(fig_tax, use_container_width=True)
+        st.plotly_chart(fig_tax, width="stretch")
 
     with col_r:
         st.markdown("### Marginal Bracket")
@@ -170,7 +172,7 @@ def render(hh: Household):
             yaxis={"dtick": 2},
             height=350,
         )
-        st.plotly_chart(fig_br, use_container_width=True)
+        st.plotly_chart(fig_br, width="stretch")
 
     # --- Chart 3: Cumulative Net Benefit ---
     st.markdown("### Cumulative Net Benefit vs No-Conversion Baseline")
@@ -202,7 +204,9 @@ def render(hh: Household):
         )
 
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig_net.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_net.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_net.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Net Benefit vs No Conversion ($)",
@@ -210,7 +214,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_net, use_container_width=True)
+    st.plotly_chart(fig_net, width="stretch")
 
     # --- Chart 4: RMD Comparison ---
     st.markdown("### RMD Size Comparison (Ages 75+)")
@@ -219,7 +223,9 @@ def render(hh: Household):
     rmd_ages = [a for a in ages if a >= hh.your_rmd_start_age]
 
     for i, s in enumerate(scenarios):
-        rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= hh.your_rmd_start_age]
+        rmd_vals = [
+            yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= hh.your_rmd_start_age
+        ]
         fig_rmd.add_trace(
             go.Bar(
                 x=rmd_ages,
@@ -238,7 +244,7 @@ def render(hh: Household):
         yaxis_tickformat="$,.0s",
         height=400,
     )
-    st.plotly_chart(fig_rmd, use_container_width=True)
+    st.plotly_chart(fig_rmd, width="stretch")
 
     # --- Milestone comparison table ---
     st.markdown("### Key Age Milestones")
@@ -264,7 +270,7 @@ def render(hh: Household):
                 row[f"{s.name} Bracket"] = "---"
         milestone_rows.append(row)
 
-    st.dataframe(pd.DataFrame(milestone_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(milestone_rows), hide_index=True, width="stretch")
 
     # --- Conversion detail per scenario ---
     with st.expander("📋 Conversion Detail by Scenario"):
@@ -285,7 +291,7 @@ def render(hh: Household):
                 }
                 for r in raw_conv_rows
             ]
-            st.dataframe(pd.DataFrame(conv_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(conv_rows), hide_index=True, width="stretch")
 
     # --- Surviving Spouse Analysis ---
     st.markdown("---")
@@ -314,7 +320,7 @@ def render(hh: Household):
 
     survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
 
-    st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
 
     st.markdown("""
 **Why this matters**: When one spouse dies, the survivor:

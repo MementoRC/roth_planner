@@ -1706,8 +1706,12 @@ class TestAuditF7ComputePhaseRmdStartAge:
         )
         phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year, hh=hh, early_exercise=False)
         phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 1, hh=hh, early_exercise=False)
-        assert phase_74 == "ss_conv", f"Age 74 with rmd_start=75 should be ss_conv, got '{phase_74}'"
-        assert phase_75 in ("rmd", "squeeze"), f"Age 75 with rmd_start=75 should be rmd/squeeze, got '{phase_75}'"
+        assert phase_74 == "ss_conv", (
+            f"Age 74 with rmd_start=75 should be ss_conv, got '{phase_74}'"
+        )
+        assert phase_75 in ("rmd", "squeeze"), (
+            f"Age 75 with rmd_start=75 should be rmd/squeeze, got '{phase_75}'"
+        )
 
     def test_f7_run_scenario_phase_73_rmd_start_73(self):
         """F7: run_scenario must label age-73 year as 'rmd' when rmd_start_age=73."""
@@ -1826,8 +1830,12 @@ class TestAutoFillCoreBaseMagiTaxableSS:
         ytd_no_ss = YTDSnapshot(tax_year=hh_no_ss.base_year, wages_ytd=wages_ytd)
         ytd_ss = YTDSnapshot(tax_year=hh_ss.base_year, wages_ytd=wages_ytd)
 
-        your_base = ss_benefit_at_age(hh_ss.your_ss_fra, hh_ss.your_ss_start_age, hh_ss.your_fra_age)
-        spouse_base = ss_benefit_at_age(hh_ss.spouse_ss_fra, hh_ss.spouse_ss_start_age, hh_ss.spouse_fra_age)
+        your_base = ss_benefit_at_age(
+            hh_ss.your_ss_fra, hh_ss.your_ss_start_age, hh_ss.your_fra_age
+        )
+        spouse_base = ss_benefit_at_age(
+            hh_ss.spouse_ss_fra, hh_ss.spouse_ss_start_age, hh_ss.spouse_fra_age
+        )
         combined_ss = your_base + spouse_base
         expected_tss = taxable_ss(combined_ss, wages_ytd, filing_status="MFJ")
 
@@ -1842,20 +1850,17 @@ class TestAutoFillCoreBaseMagiTaxableSS:
         plan_no_ss = auto_fill_irmaa_safe(hh_no_ss, ytd=ytd_no_ss)
         plan_ss = auto_fill_irmaa_safe(hh_ss, ytd=ytd_ss)
 
-        conv_no_ss = (
-            plan_no_ss.your_conversions.get(hh_no_ss.base_year, 0.0)
-            + plan_no_ss.spouse_conversions.get(hh_no_ss.base_year, 0.0)
-        )
-        conv_ss = (
-            plan_ss.your_conversions.get(hh_ss.base_year, 0.0)
-            + plan_ss.spouse_conversions.get(hh_ss.base_year, 0.0)
-        )
+        conv_no_ss = plan_no_ss.your_conversions.get(
+            hh_no_ss.base_year, 0.0
+        ) + plan_no_ss.spouse_conversions.get(hh_no_ss.base_year, 0.0)
+        conv_ss = plan_ss.your_conversions.get(
+            hh_ss.base_year, 0.0
+        ) + plan_ss.spouse_conversions.get(hh_ss.base_year, 0.0)
 
         # The SS household commits tss to MAGI -> less conversion room.
         reduction = conv_no_ss - conv_ss
         assert reduction >= 0.0, (
-            f"SS household must have <= conversion room: no_ss={conv_no_ss:.0f}, "
-            f"ss={conv_ss:.0f}"
+            f"SS household must have <= conversion room: no_ss={conv_no_ss:.0f}, ss={conv_ss:.0f}"
         )
         # Reduction must equal tss (fixed) not combined_ss (buggy pre-F9).
         # Tolerance: $100 for indexing/rounding across the two base years.

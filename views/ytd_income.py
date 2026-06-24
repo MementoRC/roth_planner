@@ -185,7 +185,7 @@ def render(hh: Household):
                         "Type": "LTCG" if e.is_ltcg else "STCG",
                     }
                 )
-            st.dataframe(pd.DataFrame(events_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(events_data), width="stretch")
 
     # --- Section 2: Conversion Headroom ---
     st.markdown("---")
@@ -271,7 +271,7 @@ def render(hh: Household):
                                 "Expiry": "—",
                             }
                         )
-                st.dataframe(rows, use_container_width=True, hide_index=True)
+                st.dataframe(rows, width="stretch", hide_index=True)
                 unmatched = sum(1 for r in rows if r["Expiry"] == "—")
                 if unmatched:
                     st.caption(
@@ -326,16 +326,15 @@ def render(hh: Household):
                     }
                     for src, v in sorted(by_source.items())
                 ]
-                st.dataframe(gain_rows, use_container_width=True, hide_index=True)
+                st.dataframe(gain_rows, width="stretch", hide_index=True)
 
     # --- Section B: Tax Bracket Position ---
     # --- Section C: Estimated YTD Federal Tax ---
     # F20: pass combined annual SS so taxable_ss() applies IRC §86 cap.
     # your_ss_at_70()/spouse_ss_at_70() return annual benefit at claimed age (monthly
     # FRA benefit * delay-credit factor * 12); guard on start-age so pre-claim = 0.
-    _combined_ss = (
-        (hh.your_ss_at_70() if hh.your_age >= hh.your_ss_start_age else 0.0)
-        + (hh.spouse_ss_at_70() if hh.spouse_age >= hh.spouse_ss_start_age else 0.0)
+    _combined_ss = (hh.your_ss_at_70() if hh.your_age >= hh.your_ss_start_age else 0.0) + (
+        hh.spouse_ss_at_70() if hh.spouse_age >= hh.spouse_ss_start_age else 0.0
     )
     estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh, combined_ss=_combined_ss)
 
@@ -528,7 +527,7 @@ def render(hh: Household):
                         "Part D Surcharge (annual/person)": fmt_dollars(part_d),
                     }
                 )
-            st.dataframe(pd.DataFrame(tier_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(tier_data), width="stretch")
 
     # --- Section 4: Integration Toggle ---
     st.markdown("---")

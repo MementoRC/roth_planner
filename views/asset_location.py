@@ -72,7 +72,7 @@ def render(hh: Household):
 
     import pandas as pd
 
-    st.dataframe(pd.DataFrame(summary_data), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(summary_data), hide_index=True, width="stretch")
 
     # Key insight callout
     eq_r = results["equity_first"]
@@ -103,7 +103,9 @@ def render(hh: Household):
             )
         )
 
-    fig_ira.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_ira.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_ira.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Combined IRA ($)",
@@ -111,7 +113,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_ira, use_container_width=True)
+    st.plotly_chart(fig_ira, width="stretch")
 
     # --- Roth Trajectory Chart ---
     st.markdown("### Roth Balance Over Time")
@@ -135,7 +137,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_roth, use_container_width=True)
+    st.plotly_chart(fig_roth, width="stretch")
 
     # --- IRA Composition Chart (equity vs bond) ---
     st.markdown("### IRA Composition — Equity First Strategy")
@@ -159,7 +161,9 @@ def render(hh: Household):
         )
     )
 
-    fig_comp.add_vline(x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin")
+    fig_comp.add_vline(
+        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+    )
     fig_comp.update_layout(
         barmode="stack",
         xaxis_title="Your Age",
@@ -168,7 +172,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_comp, use_container_width=True)
+    st.plotly_chart(fig_comp, width="stretch")
 
     # --- Blended Growth Rate Chart ---
     st.markdown("### IRA Blended Growth Rate")
@@ -195,7 +199,7 @@ def render(hh: Household):
         height=350,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_gr, use_container_width=True)
+    st.plotly_chart(fig_gr, width="stretch")
 
     # --- RMD Comparison ---
     st.markdown("### RMD Size Comparison")
@@ -221,7 +225,7 @@ def render(hh: Household):
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
-    st.plotly_chart(fig_rmd, use_container_width=True)
+    st.plotly_chart(fig_rmd, width="stretch")
 
     # --- Explanation ---
     st.markdown("---")

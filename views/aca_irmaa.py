@@ -141,7 +141,7 @@ def render(hh: Household):
                 height=400,
                 legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
             )
-            st.plotly_chart(fig_aca, use_container_width=True)
+            st.plotly_chart(fig_aca, width="stretch")
         else:
             if hh.your_age >= 65:
                 st.info(f"You are {hh.your_age} — on Medicare. See IRMAA section.")
@@ -188,7 +188,7 @@ def render(hh: Household):
             yaxis_tickformat="$,.0s",
             height=400,
         )
-        st.plotly_chart(fig_irmaa, use_container_width=True)
+        st.plotly_chart(fig_irmaa, width="stretch")
 
     # --- Chart 3: Combined Hidden Cost ---
     st.markdown("### Total Hidden Cost of Conversion Income")
@@ -269,7 +269,7 @@ def render(hh: Household):
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
-    st.plotly_chart(fig_hidden, use_container_width=True)
+    st.plotly_chart(fig_hidden, width="stretch")
 
     # --- Year-by-Year Timeline ---
     st.markdown("---")
@@ -300,7 +300,7 @@ def render(hh: Household):
         timeline.append(entry)
 
     df = pd.DataFrame(timeline)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
     # --- Reference Tables ---
     st.markdown("---")
@@ -322,7 +322,7 @@ def render(hh: Household):
                     "Surcharge/yr (×2)": fmt_dollars(surcharge_pp * 2),
                 }
             )
-        st.dataframe(pd.DataFrame(irmaa_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)
 
     with col_ref2:
         st.markdown(
@@ -342,7 +342,7 @@ def render(hh: Household):
                     "Premium Cap": f"{fmt_pct(cap_rate)} of income",
                 }
             )
-        st.dataframe(pd.DataFrame(aca_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(aca_data), width="stretch", hide_index=True)
 
         _fpl_label = "family of 1" if hh.filing_status == "Single" else "family of 2"
         _fpl_val = FPL_1 if hh.filing_status == "Single" else FPL_2
