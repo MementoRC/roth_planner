@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import stat
+import warnings
 
 import pytest
 
@@ -20,6 +21,7 @@ from engine.data_bridge_keys import (
     PRIVKEY_ENV,
     PUBKEY_ENV,
     _decode_keymaterial,
+    _try_load,
     load_privkey,
     load_pubkey,
     write_keypair,
@@ -410,3 +412,72 @@ class TestWriteKeypairPermissions:
         monkeypatch.setattr("engine.data_bridge_keys.PRIVKEY_PATH", priv_path)
         write_keypair(b"\x01" * 32, b"\x02" * 32, force=True)
         assert stat.S_IMODE(priv_path.stat().st_mode) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# TestKeyfileNofollow — L1/L2 security regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestKeyfileNofollow:
+    """Regression tests for L1 (O_NOFOLLOW) and L2 (permission warning)."""
+
+    def test_write_keyfile_refuses_symlink(self, tmp_path):
+        """L1: _write_keyfile must not follow a pre-planted symlink."""
+        import base64
+
+        from engine.data_bridge_keys import _write_keyfile
+
+        target = tmp_path / "attacker-file"
+        target.write_text("original", encoding="utf-8")
+        symlink = tmp_path / "data-bridge.priv"
+        symlink.symlink_to(target)
+
+        priv_text = base64.b64encode(b"\xaa" * 32).decode("ascii") + "\n"
+        with pytest.raises(OSError, match=".*"):
+            _write_keyfile(symlink, priv_text, 0o600)
+
+        # Confirm the symlink target was NOT overwritten
+        assert target.read_text(encoding="utf-8") == "original"
+
+    def test_write_keypair_priv_mode_600(self, monkeypatch, tmp_path):
+        """L1: write_keypair sets 0o600 on the private key file (non-symlink path)."""
+        pub_path = tmp_path / "data-bridge.pub"
+        priv_path = tmp_path / "data-bridge.priv"
+        monkeypatch.setattr("engine.data_bridge_keys.PUBKEY_PATH", pub_path)
+        monkeypatch.setattr("engine.data_bridge_keys.PRIVKEY_PATH", priv_path)
+        write_keypair(b"\x01" * 32, b"\x02" * 32)
+        assert stat.S_IMODE(priv_path.stat().st_mode) == 0o600
+
+    def test_load_warns_on_world_readable_keyfile(self, monkeypatch, tmp_path):
+        """L2: loading a world-readable key file emits a RuntimeWarning."""
+        import base64
+
+        raw = b"\xcc" * 32
+        key_path = tmp_path / "data-bridge.priv"
+        key_path.write_bytes(base64.b64encode(raw) + b"\n")
+        key_path.chmod(0o644)  # group+world readable — should warn
+
+        monkeypatch.delenv(PRIVKEY_ENV, raising=False)
+
+        with pytest.warns(RuntimeWarning, match="group- or world-readable"):
+            result = _try_load(PRIVKEY_ENV, key_path)
+
+        assert result == raw
+
+    def test_load_no_warning_on_600_keyfile(self, monkeypatch, tmp_path):
+        """L2: loading a 0o600 key file emits no permission warning."""
+        import base64
+
+        raw = b"\xdd" * 32
+        key_path = tmp_path / "data-bridge.priv"
+        key_path.write_bytes(base64.b64encode(raw) + b"\n")
+        key_path.chmod(0o600)
+
+        monkeypatch.delenv(PRIVKEY_ENV, raising=False)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            result = _try_load(PRIVKEY_ENV, key_path)
+
+        assert result == raw

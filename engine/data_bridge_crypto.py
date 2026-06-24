@@ -82,7 +82,7 @@ def open_uploaded_payload(file_bytes: bytes, privkey: bytes | None) -> bytes:
     decrypted using ``privkey``.
 
     Raises:
-        DataBridgeCryptoError: payload is empty or too short to be valid.
+        DataBridgeCryptoError: payload is empty.
         ValueError: magic-prefixed payload uploaded without a private key.
         DecryptionFailedError: re-raised from :func:`unseal` on wrong key
             or tampered ciphertext.
