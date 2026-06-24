@@ -1973,3 +1973,93 @@ class TestAutoFillCoreBaseMagiTaxableSS:
             f"IRMAA room reduction should equal tss={expected_tss:.0f}, "
             f"got {reduction:.0f} (gross-SS bug would give ~{combined_ss:.0f})"
         )
+
+
+class TestBrokerageStart:
+    """Regression: brokerage_start must seed year-0 brokerage_balance.
+
+    Prior to the fix, run_scenario initialised `brokerage = 0.0`, ignoring
+    any existing taxable-account balance. Households with a non-zero brokerage
+    produced zero brokerage_balance / brokerage_growth / brokerage_gain_tax in
+    year 0, under-projecting MAGI, NIIT, and LTCG tax from the first year.
+    """
+
+    def _hh(self, brokerage_start: float = 0.0, **kwargs) -> Household:
+        return Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=0,
+            grants=[],
+            brok_turnover=0.30,
+            brokerage_start=brokerage_start,
+            **kwargs,
+        )
+
+    def test_zero_start_default_is_backward_compatible(self):
+        """INVARIANT: default brokerage_start=0.0 produces zero year-0 brokerage figures."""
+        hh = self._hh(brokerage_start=0.0)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr0 = result.years[0]
+
+        assert yr0.brokerage_balance == pytest.approx(0.0)
+        assert yr0.brokerage_growth == pytest.approx(0.0)
+        assert yr0.brokerage_gain_tax == pytest.approx(0.0)
+
+    def test_nonzero_start_seeds_year0_balance(self):
+        """BEHAVIORAL: brokerage_start=500_000 must appear as year-0 brokerage_balance."""
+        start = 500_000.0
+        hh = self._hh(brokerage_start=start)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr0 = result.years[0]
+
+        assert yr0.brokerage_balance == pytest.approx(start), (
+            f"brokerage_balance in year 0 should equal brokerage_start={start:,.0f}; "
+            f"got {yr0.brokerage_balance:,.0f}"
+        )
+
+    def test_nonzero_start_produces_nonzero_growth_and_magi(self):
+        """BEHAVIORAL: non-zero starting balance must produce positive growth and feed MAGI.
+
+        Note: brokerage_gain_tax may be 0 if ordinary income + realized gains fall in the
+        0% LTCG band.  Instead assert brokerage_growth > 0 and that realized gains enter
+        MAGI (the two unconditional consequences of a non-zero starting balance).
+        """
+        start = 500_000.0
+        rate = 0.07
+        hh = self._hh(brokerage_start=start, growth_rate=rate)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr0 = result.years[0]
+
+        expected_growth = start * rate  # appreciation_rate == rate when no GrowthProfile
+        expected_realized = expected_growth * hh.brok_turnover
+        assert yr0.brokerage_growth == pytest.approx(expected_growth, rel=1e-6), (
+            f"brokerage_growth should be {expected_growth:,.0f}; got {yr0.brokerage_growth:,.0f}"
+        )
+        # realized_gains from brokerage_start must appear in MAGI
+        assert yr0.magi >= expected_realized, (
+            f"MAGI must include brokerage realized gains >= {expected_realized:,.0f}; "
+            f"got magi={yr0.magi:,.0f}"
+        )
+
+    def test_zero_start_vs_nonzero_start_magi_delta(self):
+        """BEHAVIORAL: brokerage_start delta drives a matching MAGI delta via realized gains."""
+        start = 200_000.0
+        rate = 0.07
+        hh_zero = self._hh(brokerage_start=0.0, growth_rate=rate)
+        hh_with = self._hh(brokerage_start=start, growth_rate=rate)
+        plan = ConversionPlan()
+
+        yr_zero = run_scenario(hh_zero, plan, end_age=hh_zero.your_age).years[0]
+        yr_with = run_scenario(hh_with, plan, end_age=hh_with.your_age).years[0]
+
+        expected_realized_gain = start * rate * hh_with.brok_turnover
+        magi_delta = yr_with.magi - yr_zero.magi
+        assert magi_delta == pytest.approx(expected_realized_gain, rel=1e-6), (
+            f"MAGI delta should equal realized gains from brokerage_start: "
+            f"expected {expected_realized_gain:,.0f}, got {magi_delta:,.0f}"
+        )
