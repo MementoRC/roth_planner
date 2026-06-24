@@ -253,9 +253,12 @@ def render(hh: Household):
     milestone_ages_list = [70, 75, 80, 85, 90, 95]
     # Build lookup: (scenario_name, age) -> MilestoneRow
     _ms_lookup = {(m.scenario_name, m.age): m for m in raw_milestones}
+    is_mfj = hh.filing_status == "MFJ"
     milestone_rows = []
     for age in milestone_ages_list:
-        row: dict[str, str] = {"Age": str(age), "Sp Age": str(age - hh.age_gap)}
+        row: dict[str, str] = {"Age": str(age)}
+        if is_mfj:
+            row["Sp Age"] = str(age - hh.age_gap)
         for s in scenarios:
             m = _ms_lookup.get((s.name, age))
             if m is not None:
@@ -280,9 +283,13 @@ def render(hh: Household):
             conv_rows = [
                 {
                     "Year": str(r.year),
-                    "You/Sp": f"{r.your_age}/{r.spouse_age}",
+                    **(
+                        {"You/Sp": f"{r.your_age}/{r.spouse_age}"}
+                        if is_mfj
+                        else {"Age": str(r.your_age)}
+                    ),
                     "Your Conv": fmt_dollars(r.your_conv),
-                    "Sp Conv": fmt_dollars(r.spouse_conv),
+                    **({"Sp Conv": fmt_dollars(r.spouse_conv)} if is_mfj else {}),
                     "Bracket": fmt_pct(r.bracket, 0),
                     "Conv Tax": fmt_dollars(r.conv_tax),
                     "IRMAA": fmt_dollars(r.irmaa_cost),
@@ -291,36 +298,37 @@ def render(hh: Household):
             ]
             st.dataframe(pd.DataFrame(conv_rows), hide_index=True, width="stretch")
 
-    # --- Surviving Spouse Analysis ---
-    st.markdown("---")
-    st.markdown("### Surviving Spouse Analysis")
-    st.caption(
-        "What happens if one spouse dies early? The survivor inherits both IRAs, "
-        "files Single (tighter brackets), and keeps the higher of two SS benefits."
-    )
-
-    who_dies, death_ages = survivor_death_ages(hh)
-
-    # Scenario source caption
-    surv = hh.survivor
-    if surv is not None:
-        base_age = hh.your_age if who_dies == "you" else hh.spouse_age
-        death_age_display = base_age + (surv.death_year - hh.base_year)
+    # --- Surviving Spouse Analysis (MFJ only) ---
+    if is_mfj:
+        st.markdown("---")
+        st.markdown("### Surviving Spouse Analysis")
         st.caption(
-            f"Modeling: **{who_dies}** dies in **{surv.death_year}** (age {death_age_display})."
-        )
-    else:
-        default_death_age = hh.your_age + 5
-        st.caption(
-            f"Default snapshot (you die at age {default_death_age}) — "
-            "set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
+            "What happens if one spouse dies early? The survivor inherits both IRAs, "
+            "files Single (tighter brackets), and keeps the higher of two SS benefits."
         )
 
-    survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
+        who_dies, death_ages = survivor_death_ages(hh)
 
-    st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
+        # Scenario source caption
+        surv = hh.survivor
+        if surv is not None:
+            base_age = hh.your_age if who_dies == "you" else hh.spouse_age
+            death_age_display = base_age + (surv.death_year - hh.base_year)
+            st.caption(
+                f"Modeling: **{who_dies}** dies in **{surv.death_year}** (age {death_age_display})."
+            )
+        else:
+            default_death_age = hh.your_age + 5
+            st.caption(
+                f"Default snapshot (you die at age {default_death_age}) — "
+                "set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
+            )
 
-    st.markdown("""
+        survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
+
+        st.dataframe(pd.DataFrame(survivor_rows), hide_index=True, width="stretch")
+
+        st.markdown("""
 **Why this matters**: When one spouse dies, the survivor:
 - Files **Single** — 12% bracket tops at $50K taxable (vs $101K for MFJ)
 - Inherits the deceased's IRA — combined with their own, RMDs are massive

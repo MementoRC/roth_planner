@@ -195,14 +195,20 @@ def compute_headroom(
     irmaa_cost, _ = irmaa_for_year(
         planned_magi, ya, sa, filing_status=filing_status, year=_year, cpi=_cpi
     )
-    result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)
+    if filing_status == "MFJ":
+        result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)
+    else:
+        result.irmaa_relevant = irmaa_cost > 0 or ya + 2 >= 65
 
     # Find first income year where IRMAA actually matters
     first_medicare_age = 65
-    years_until_medicare = max(
-        min(first_medicare_age - 2 - ya, first_medicare_age - 2 - sa),
-        0,
-    )
+    if filing_status == "MFJ":
+        years_until_medicare = max(
+            min(first_medicare_age - 2 - ya, first_medicare_age - 2 - sa),
+            0,
+        )
+    else:
+        years_until_medicare = max(first_medicare_age - 2 - ya, 0)
     result.irmaa_first_relevant_year = _year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)

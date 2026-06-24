@@ -188,7 +188,8 @@ def senior_bonus_deduction(
         return 0.0
     if filing_status == "MFS":
         return 0.0
-    eligible = sum(1 for age in [your_age, spouse_age] if age >= 65)
+    ages_to_count = [your_age, spouse_age] if filing_status == "MFJ" else [your_age]
+    eligible = sum(1 for age in ages_to_count if age >= 65)
     if eligible == 0:
         return 0.0
     if phaseout_start is None:
