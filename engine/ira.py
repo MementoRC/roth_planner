@@ -1,6 +1,6 @@
 """IRA projection, RMD calculations, and growth modeling."""
 
-# Uniform Lifetime Table (SECURE 2.0, age 72+)
+# Uniform Lifetime Table — IRS T.D. 9930 (eff. 2022); SECURE 2.0 §107 sets start age 73 (born 1951-1959) or 75 (born 1960+)
 RMD_DIVISORS = {
     72: 27.4,
     73: 26.5,
@@ -39,14 +39,34 @@ def rmd_divisor(age: int) -> float:
     return RMD_DIVISORS.get(age, 0.0)
 
 
-def calc_rmd(ira_balance: float, age: int, rmd_start_age: int = 75) -> float:
-    """Calculate Required Minimum Distribution."""
+def calc_rmd(
+    ira_balance: float,
+    age: int,
+    rmd_start_age: int = 75,
+    first_year_deferred: bool = False,
+    prior_year_balance: float = 0.0,
+) -> float:
+    """Calculate Required Minimum Distribution.
+
+    first_year_deferred: IRC §401(a)(9)(C)(ii) April-1 deferral election.
+      When True and age == rmd_start_age: returns 0 (deferred to next April 1).
+      When True and age == rmd_start_age + 1: returns normal RMD plus the
+      deferred prior-year RMD (computed from prior_year_balance).
+    """
     if age < rmd_start_age or ira_balance <= 0:
+        return 0.0
+    # April-1 deferral: skip first year, double second year
+    if first_year_deferred and age == rmd_start_age:
         return 0.0
     div = rmd_divisor(age)
     if div <= 0:
         return 0.0
-    return ira_balance / div
+    rmd = ira_balance / div
+    if first_year_deferred and age == rmd_start_age + 1 and prior_year_balance > 0:
+        prior_div = rmd_divisor(rmd_start_age)
+        if prior_div > 0:
+            rmd += prior_year_balance / prior_div
+    return rmd
 
 
 def project_ira(
