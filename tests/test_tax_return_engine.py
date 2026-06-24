@@ -105,10 +105,24 @@ class TestTaxReturnParsing:
         )
         # total_income = 102225 + 4150 + 92429 + 7397 + 895 = 207096
         assert snap.total_income == 207096
-        # estimated_magi = total - hsa_contributions - (nec * 0.0765)
-        se_ded = 4150 * 0.0765
+        # SE deduction = NEC × 0.9235 × 15.3% / 2 = NEC × 0.07065 (employer-equiv half)
+        # NOT 0.0765 (employee FICA rate) — see IRC §164(f) + §1402(a)
+        se_ded = 4150 * 0.07065
         expected = 207096 - 5300 - se_ded
         assert snap.estimated_magi == pytest.approx(expected, abs=1)
+
+    def test_se_deduction_rate_is_employer_equivalent_half(self):
+        """Regression: SE deduction must use 7.065% (0.9235 × 15.3% / 2), not 7.65%."""
+        from engine.portfolio_sync import TaxReturnSnapshot
+
+        snap = TaxReturnSnapshot(nec_income=10_000)
+        # Correct: 10_000 × 0.07065 = 706.50
+        # Wrong:   10_000 × 0.0765  = 765.00
+        # estimated_magi = total_income - 0 (no HSA) - se_deduction
+        expected_magi = snap.total_income - 10_000 * 0.07065
+        assert snap.estimated_magi == pytest.approx(expected_magi, abs=0.01)
+        # Pin the absolute value so any future constant drift is caught
+        assert snap.estimated_magi == pytest.approx(10_000 - 706.50, abs=0.01)
 
     def test_tax_snapshot_save_load_roundtrip(self, tmp_path, monkeypatch):
         from engine import portfolio_sync
