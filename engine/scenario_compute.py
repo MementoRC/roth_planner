@@ -110,6 +110,10 @@ def compute_conversions(
         remaining = max(your_conversion - ytd_year.ira_conversions_ytd, 0.0)
         your_conversion = remaining
 
+    if ytd_year is not None and ytd_year.spouse_ira_conversions_ytd > 0:
+        remaining_spouse = max(spouse_conversion - ytd_year.spouse_ira_conversions_ytd, 0.0)
+        spouse_conversion = remaining_spouse
+
     return your_conversion, spouse_conversion
 
 

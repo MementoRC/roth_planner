@@ -300,8 +300,10 @@ def run_scenario(
         # LTCG and qualified dividends are excluded (taxed at preferential rate).
         # nec_income_ytd and ira_distributions_ytd are ordinary income; include them.
         # ira_conversions_ytd: yr.your_conversion was already reduced by this amount
-        # (line 281), so adding it back here makes the full planned conversion stack
-        # into combined_gross correctly.
+        # (scenario_compute.py clamp), so adding it back here makes the full planned
+        # conversion stack into combined_gross correctly.
+        # spouse_ira_conversions_ytd: same symmetric logic — yr.spouse_conversion was
+        # reduced by this amount; re-add it so the full spouse conversion appears in gross.
         if ytd_year is not None:
             yr.combined_gross += (
                 ytd_year.wages_ytd
@@ -310,6 +312,7 @@ def run_scenario(
                 + ytd_year.ordinary_dividends_ytd
                 + ytd_year.interest_ytd
                 + ytd_year.ira_conversions_ytd
+                + ytd_year.spouse_ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
             )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
@@ -596,7 +599,7 @@ def run_scenario(
         cum_irmaa += yr.irmaa_cost
         cum_aca += yr.aca_loss
         cum_niit += yr.niit_cost
-        if ya >= hh.your_rmd_start_age:
+        if ya >= hh.your_rmd_start_age or sa >= hh.spouse_rmd_start_age:
             cum_rmd_tax += yr.federal_tax_amt
         cum_brok_tax += yr.brokerage_gain_tax
 
