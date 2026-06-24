@@ -144,8 +144,19 @@ def compute_survivor_snapshot(
             proj_years = 5
             survivor_age = _surv_age(death_age, proj_years)
             death_year_calc = hh.base_year + (death_age - deceased_base_age)
-            rate = _surv_rate(death_year_calc + proj_years)
-            ira_grown = inherited_ira * (1 + rate) ** proj_years
+
+            # Project IRA year-by-year, deducting RMD each year before growing.
+            # A single-rate end-compounding ignores ~5 years of RMD withdrawals and
+            # overstates the inherited balance fed into the tax projection.
+            ira_balance = float(inherited_ira)
+            for proj_offset in range(proj_years):
+                year_offset = proj_offset + 1
+                age_at_offset = _surv_age(death_age, year_offset)
+                year_at_offset = death_year_calc + year_offset
+                rmd_withdrawal = calc_rmd(ira_balance, age_at_offset, survivor_rmd_start)
+                ira_balance = max(ira_balance - rmd_withdrawal, 0.0)
+                ira_balance *= 1 + _surv_rate(year_at_offset)
+            ira_grown = ira_balance
 
             # FIX: use the surviving spouse's own rmd_start_age
             rmd = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
