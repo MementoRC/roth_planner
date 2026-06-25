@@ -83,11 +83,15 @@ def project_asset_location(
 
     years = []
     total_conv = 0.0
+    prev_your_ira_bal = 0.0
+    prev_spouse_ira_bal = 0.0
 
     for yr_idx in range(end_age - hh.your_age + 1):
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+        cur_your_begin = your_ira_bal
+        cur_spouse_begin = spouse_ira_bal
         ira_total = ira_eq + ira_bd
 
         yr = AssetLocationYear(
@@ -109,8 +113,14 @@ def project_asset_location(
 
         # RMD computed per-owner: each spouse only owes RMDs on their own IRA
         # once they reach their own required-beginning-date age.
-        rmd = calc_rmd(your_ira_bal, ya, hh.your_rmd_start_age) + calc_rmd(
-            spouse_ira_bal, sa, hh.spouse_rmd_start_age
+        rmd = calc_rmd(
+            your_ira_bal, ya, hh.your_rmd_start_age,
+            first_year_deferred=hh.your_defer_first_rmd,
+            prior_year_balance=prev_your_ira_bal,
+        ) + calc_rmd(
+            spouse_ira_bal, sa, hh.spouse_rmd_start_age,
+            first_year_deferred=hh.spouse_defer_first_rmd,
+            prior_year_balance=prev_spouse_ira_bal,
         )
         yr.rmd = rmd
 
@@ -158,6 +168,9 @@ def project_asset_location(
 
         yr.ira_total_end = ira_eq + ira_bd
         yr.roth_total_end = roth_eq + roth_bd
+
+        prev_your_ira_bal = cur_your_begin
+        prev_spouse_ira_bal = cur_spouse_begin
 
         years.append(yr)
 

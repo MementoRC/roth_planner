@@ -2,12 +2,69 @@
 
 import pytest
 
-from engine.scenario_autofill import auto_fill_irmaa_safe
+from engine.scenario_autofill import auto_fill_12, auto_fill_irmaa_safe
 from models.household import Household
 
 
 def approx(expected, tol=1.0):
     return pytest.approx(expected, abs=tol)
+
+
+class TestAutoFillRmdDeferral:
+    """your_defer_first_rmd=True must shift income, producing a different plan than False."""
+
+    def test_spouse_defer_flag_changes_autofill_plan(self) -> None:
+        """spouse_defer_first_rmd=True must yield a different autofill plan than False.
+
+        The spouse_taxable_rmd is included in ordinary_core regardless of your age,
+        so it directly reduces conversion room when the spouse reaches their RMD age
+        while you are still converting.
+
+        Setup:
+          - your_age=62, your_rmd_start_age=75: wide conversion window (13 yrs)
+          - spouse_age=74, spouse_rmd_start_age=75: spouse hits RMD at yr_idx=1 (sa=75)
+          - spouse_ira=1_000_000: large enough to produce a meaningful RMD
+
+        With spouse_defer_first_rmd=False: yr_idx=1 has positive spouse_taxable_rmd
+          -> reduces fixed_gross room -> lower conversions that year.
+        With spouse_defer_first_rmd=True: yr_idx=1 has spouse_taxable_rmd=0
+          -> more conversion room that year.
+        The conversion totals across the two runs must differ.
+        """
+        from dataclasses import replace
+
+        hh_base = replace(
+            Household(),
+            your_age=62,
+            your_ira=2_000_000.0,
+            spouse_age=74,
+            spouse_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        hh_no_defer = replace(hh_base, spouse_defer_first_rmd=False)
+        hh_defer = replace(hh_base, spouse_defer_first_rmd=True)
+
+        plan_no = auto_fill_12(hh_no_defer)
+        plan_yes = auto_fill_12(hh_defer)
+
+        # yr_idx=1 corresponds to base_year + 1, spouse age 75 (first RMD year)
+        first_spouse_rmd_year = hh_base.base_year + 1
+        conv_no = plan_no.your_conversions.get(first_spouse_rmd_year, 0.0)
+        conv_yes = plan_yes.your_conversions.get(first_spouse_rmd_year, 0.0)
+
+        # With defer: spouse RMD income = 0 that year -> more room for your conversions.
+        assert conv_yes >= conv_no, (
+            f"Deferred spouse start-age year conversion ({conv_yes:.0f}) should be >= "
+            f"no-defer ({conv_no:.0f}): deferred spouse RMD reduces fixed_gross"
+        )
+        # The two plans must produce different conversion amounts
+        total_no = sum(plan_no.your_conversions.values())
+        total_yes = sum(plan_yes.your_conversions.values())
+        assert total_no != pytest.approx(total_yes, rel=1e-6), (
+            f"Expected plans to differ: defer=False total={total_no:.0f}, "
+            f"defer=True total={total_yes:.0f}; spouse_defer_first_rmd has no effect"
+        )
 
 
 class TestAutoFillCoreBaseMagiTaxableSS:
