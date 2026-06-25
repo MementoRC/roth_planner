@@ -132,12 +132,34 @@ def compute_rmds(
     your_qcd_planned: float,
     spouse_qcd_planned: float,
     qcd_limit: float,
+    your_defer_first_rmd: bool = False,
+    spouse_defer_first_rmd: bool = False,
+    your_prior_year_balance: float = 0.0,
+    spouse_prior_year_balance: float = 0.0,
 ) -> tuple[float, float, float, float, float, float]:
-    """Return (your_rmd, qcd, taxable_rmd, spouse_rmd, spouse_qcd, spouse_taxable_rmd)."""
-    your_rmd = calc_rmd(your_ira, ya, your_rmd_start_age)
+    """Return (your_rmd, qcd, taxable_rmd, spouse_rmd, spouse_qcd, spouse_taxable_rmd).
+
+    your_defer_first_rmd / spouse_defer_first_rmd: IRC §401(a)(9)(C)(ii) April-1 deferral
+      election.  When True the first-year RMD is deferred (returns 0) and added to year 2.
+    your_prior_year_balance / spouse_prior_year_balance: IRA balance at the START of the
+      prior year; used to compute the deferred first-year RMD that lands in year 2.
+    """
+    your_rmd = calc_rmd(
+        your_ira,
+        ya,
+        your_rmd_start_age,
+        first_year_deferred=your_defer_first_rmd,
+        prior_year_balance=your_prior_year_balance,
+    )
     qcd = min(your_qcd_planned, your_rmd, qcd_limit)
     taxable_rmd = max(your_rmd - qcd, 0)
-    spouse_rmd = calc_rmd(spouse_ira, sa, spouse_rmd_start_age)
+    spouse_rmd = calc_rmd(
+        spouse_ira,
+        sa,
+        spouse_rmd_start_age,
+        first_year_deferred=spouse_defer_first_rmd,
+        prior_year_balance=spouse_prior_year_balance,
+    )
     spouse_qcd = min(spouse_qcd_planned, spouse_rmd, qcd_limit)
     spouse_taxable_rmd = max(spouse_rmd - spouse_qcd, 0)
     return your_rmd, qcd, taxable_rmd, spouse_rmd, spouse_qcd, spouse_taxable_rmd

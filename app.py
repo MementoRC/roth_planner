@@ -48,6 +48,8 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("spouse_ss_start_age", 70)
     st.session_state.setdefault("your_rmd_start_age", 75)
     st.session_state.setdefault("spouse_rmd_start_age", 75)
+    st.session_state.setdefault("your_defer_first_rmd", False)
+    st.session_state.setdefault("spouse_defer_first_rmd", False)
     st.session_state.setdefault("your_fra_age", 67)
     st.session_state.setdefault("spouse_fra_age", 67)
     st.session_state.setdefault("prior_year_magi", {})
@@ -186,6 +188,8 @@ def get_household() -> Household:
             "spouse_rmd_start_age",
             st.session_state.get("rmd_start_age", 75),
         ),
+        your_defer_first_rmd=st.session_state.get("your_defer_first_rmd", False),
+        spouse_defer_first_rmd=st.session_state.get("spouse_defer_first_rmd", False),
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
         prior_year_magi={

@@ -53,6 +53,28 @@ class TestIRA:
     def test_no_rmd_before_75(self):
         assert calc_rmd(4_000_000, 74, 75) == 0
 
+    def test_defer_first_rmd_returns_zero_at_start_age(self):
+        """IRC §401(a)(9)(C)(ii): with deferral elected, first-year RMD is zero."""
+        assert calc_rmd(4_000_000, 75, 75, first_year_deferred=True) == 0.0
+
+    def test_defer_first_rmd_doubles_year_two(self):
+        """Year 2 with deferral = normal year-2 RMD + deferred year-1 RMD."""
+        balance_year1 = 4_000_000.0
+        # Simulated year-2 balance after 7% growth and no year-1 withdrawal
+        balance_year2 = balance_year1 * 1.07
+        normal_year2 = balance_year2 / rmd_divisor(76)
+        deferred_year1 = balance_year1 / rmd_divisor(75)
+        result = calc_rmd(
+            balance_year2, 76, 75, first_year_deferred=True, prior_year_balance=balance_year1
+        )
+        assert result == approx(normal_year2 + deferred_year1, tol=1.0)
+
+    def test_no_deferral_is_unaffected(self):
+        """first_year_deferred=False at start age returns normal RMD (not zero)."""
+        balance = 2_000_000.0
+        expected = balance / rmd_divisor(75)
+        assert calc_rmd(balance, 75, 75, first_year_deferred=False) == approx(expected)
+
 
 class TestSSBenefit:
     def test_ss_at_70(self):

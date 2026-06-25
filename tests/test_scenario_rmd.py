@@ -425,3 +425,57 @@ class TestBrokerageStart:
             f"MAGI delta should equal realized gains from brokerage_start: "
             f"expected {expected_realized_gain:,.0f}, got {magi_delta:,.0f}"
         )
+
+
+class TestApril1DeferralScenario:
+    """IRC §401(a)(9)(C)(ii) April-1 deferral — integration tests via run_scenario.
+
+    Member reaches rmd_start_age within the window (starts 3 years before).
+    With deferral=False: year at start_age has your_rmd > 0.
+    With deferral=True:  year at start_age has your_rmd == 0;
+                         year at start_age+1 has your_rmd strictly greater than
+                         the corresponding non-deferred year (doubled RMD).
+    """
+
+    def _hh(self, defer: bool) -> Household:
+        from dataclasses import replace
+
+        return replace(
+            Household(grants=[]),
+            your_age=72,
+            spouse_age=65,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            your_ira=2_000_000.0,
+            spouse_ira=0.0,
+            your_defer_first_rmd=defer,
+        )
+
+    def test_no_deferral_rmd_positive_at_start_age(self):
+        """Without deferral, RMD is positive in the start-age year."""
+        result = run_scenario(self._hh(False), ConversionPlan(), end_age=78)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        assert yr75.your_rmd > 0.0, (
+            f"Expected positive RMD at start_age=75 without deferral; got {yr75.your_rmd}"
+        )
+
+    def test_deferral_rmd_zero_at_start_age(self):
+        """With deferral, RMD is zero in the start-age year."""
+        result = run_scenario(self._hh(True), ConversionPlan(), end_age=78)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        assert yr75.your_rmd == pytest.approx(0.0), (
+            f"Expected zero RMD at start_age=75 with deferral; got {yr75.your_rmd}"
+        )
+
+    def test_deferral_doubles_rmd_in_year_two(self):
+        """With deferral, year start_age+1 RMD exceeds the non-deferred year's RMD."""
+        result_no = run_scenario(self._hh(False), ConversionPlan(), end_age=78)
+        result_yes = run_scenario(self._hh(True), ConversionPlan(), end_age=78)
+
+        yr76_no = next(yr for yr in result_no.years if yr.your_age == 76)
+        yr76_yes = next(yr for yr in result_yes.years if yr.your_age == 76)
+
+        assert yr76_yes.your_rmd > yr76_no.your_rmd, (
+            f"Deferred year-2 RMD ({yr76_yes.your_rmd:,.0f}) should exceed "
+            f"non-deferred year-2 RMD ({yr76_no.your_rmd:,.0f})"
+        )

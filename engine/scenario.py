@@ -55,6 +55,8 @@ def run_scenario(
     spouse_ira = hh.spouse_ira
     your_roth = hh.your_roth
     spouse_roth = hh.spouse_roth
+    prev_your_ira_begin = 0.0
+    prev_spouse_ira_begin = 0.0
     brokerage = hh.brokerage_start
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
@@ -172,6 +174,10 @@ def run_scenario(
             plan.qcds.get(year, 0.0),
             plan.spouse_qcds.get(year, 0.0),
             hh.qcd_limit,
+            your_defer_first_rmd=hh.your_defer_first_rmd,
+            spouse_defer_first_rmd=hh.spouse_defer_first_rmd,
+            your_prior_year_balance=prev_your_ira_begin,
+            spouse_prior_year_balance=prev_spouse_ira_begin,
         )
 
         # === Extra voluntary withdrawals (bracket fill post-RMD) ===
@@ -581,6 +587,8 @@ def run_scenario(
         spouse_ira = yr.spouse_ira_end
         your_roth = yr.your_roth_end
         spouse_roth = yr.spouse_roth_end
+        prev_your_ira_begin = yr.your_ira_begin
+        prev_spouse_ira_begin = yr.spouse_ira_begin
 
         # Accumulate totals
         cum_conv_tax += yr.conversion_tax
