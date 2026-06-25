@@ -147,7 +147,6 @@ class Household:
     spouse_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
 
     # RMD
-    rmd_start_age: int = 75  # DEPRECATED — use your_rmd_start_age / spouse_rmd_start_age
     your_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
     spouse_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
 
