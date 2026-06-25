@@ -249,10 +249,17 @@ def compute_year_by_year_timeline(
     - If anyone on Medicare: compute IRMAA tier + room to next threshold
     - If ACA applies: compute current ACA subsidy + net cost
     """
-    is_mfj = hh.filing_status == "MFJ"
+    surv = hh.survivor
+    is_mfj_base = hh.filing_status == "MFJ"
     rows: list[TimelineRow] = []
     for yr_idx in range(years):
         year = hh.base_year + yr_idx
+
+        # === Survivor scenario: determine filing status for this year ===
+        survivor_active = surv is not None and year >= surv.death_year + 1
+        current_filing_status = "Single" if survivor_active else hh.filing_status
+        is_mfj = is_mfj_base and not survivor_active
+
         ya = hh.your_age_in(year)
         sa = hh.spouse_age_in(year) if is_mfj else None
 
@@ -260,6 +267,17 @@ def compute_year_by_year_timeline(
         sp_on_aca = aca_applies(sa, hh.spouse_aca_enrolled) if sa is not None else False
         on_medicare_you = ya >= 65
         on_medicare_sp = sa >= 65 if sa is not None else False
+
+        # When survivor_active, only the SURVIVOR's Medicare status counts.
+        if survivor_active and surv is not None:
+            if surv.who_dies == "spouse":
+                # survivor is "you" — drop the deceased spouse
+                on_medicare_sp = False
+            else:
+                # survivor is the spouse — base Medicare on the surviving
+                # spouse's actual age (sa is None here because is_mfj is False)
+                on_medicare_you = False
+                on_medicare_sp = hh.spouse_age_in(year) >= 65
         medicare_count = (1 if on_medicare_you else 0) + (1 if on_medicare_sp else 0)
 
         # Determine system per person
@@ -283,7 +301,9 @@ def compute_year_by_year_timeline(
 
         _yr_cpi = cpi
         irmaa_room = (
-            irmaa_next_threshold(base_magi, filing_status=hh.filing_status, year=year, cpi=_yr_cpi)
+            irmaa_next_threshold(
+                base_magi, filing_status=current_filing_status, year=year, cpi=_yr_cpi
+            )
             if medicare_count > 0
             else None
         )
@@ -297,7 +317,7 @@ def compute_year_by_year_timeline(
                 base_magi,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=hh.filing_status,
+                filing_status=current_filing_status,
                 year=year,
                 cpi=_yr_cpi,
             )
@@ -305,7 +325,7 @@ def compute_year_by_year_timeline(
                 base_magi,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=hh.filing_status,
+                filing_status=current_filing_status,
                 year=year,
                 cpi=_yr_cpi,
             )
@@ -317,7 +337,7 @@ def compute_year_by_year_timeline(
                 spouse_age=sa,
                 system=system,
                 irmaa_tier=irmaa_tier(
-                    base_magi, filing_status=hh.filing_status, year=year, cpi=_yr_cpi
+                    base_magi, filing_status=current_filing_status, year=year, cpi=_yr_cpi
                 )
                 if medicare_count > 0
                 else None,

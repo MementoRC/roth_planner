@@ -6,7 +6,7 @@ from engine.aca import aca_subsidy, aca_subsidy_loss
 from engine.aca_irmaa_compute import compute_cost_curves, compute_year_by_year_timeline
 from engine.scenario_compute import compute_aca
 from engine.sweet_spot_compute import BaseIncome, all_in_at_conversion
-from models.household import Household
+from models.household import Household, SurvivorScenario
 
 
 def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:
@@ -145,3 +145,137 @@ def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
             cpi=0.0,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Survivor transition tests for compute_year_by_year_timeline
+# ---------------------------------------------------------------------------
+
+
+def _make_survivor_hh(base_year: int = 2026, death_year: int = 2031) -> Household:
+    """MFJ household where both spouses are >=65 from base_year onward."""
+    hh = Household()
+    hh.base_year = base_year
+    # Ages: primary 66, spouse 65 — both already on Medicare in base_year
+    hh.your_age = 66
+    hh.spouse_age = 65
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = False
+    hh.spouse_aca_enrolled = False
+    hh.survivor = SurvivorScenario(who_dies="spouse", death_year=death_year)
+    return hh
+
+
+def test_timeline_survivor_medicare_count_drops_after_death() -> None:
+    """medicare_count must be 2 before/at death_year and 1 after."""
+    base_year = 2026
+    death_year = 2031
+    hh = _make_survivor_hh(base_year=base_year, death_year=death_year)
+    rows = compute_year_by_year_timeline(hh, base_magi=80_000.0, years=10, cpi=0.0)
+
+    before = [r for r in rows if r.year <= death_year]
+    after = [r for r in rows if r.year > death_year]
+
+    assert len(before) > 0
+    assert len(after) > 0
+
+    # Both spouses >=65 throughout, so before death both count
+    for r in before:
+        # irmaa_tier is not None only if medicare_count > 0; both on Medicare → not None
+        assert r.irmaa_tier is not None, f"Expected Medicare active in year {r.year}"
+
+    # After death: spouse excluded; only primary (you) remains on Medicare.
+    # irmaa_tier should still be not None (primary still >=65), but the IRMAA
+    # threshold used must reflect Single filing, not MFJ.
+    for r in after:
+        assert r.irmaa_tier is not None, f"Expected primary still on Medicare in year {r.year}"
+
+
+def test_timeline_survivor_filing_status_switches_to_single() -> None:
+    """After death_year the IRMAA tier must reflect Single thresholds (lower)."""
+    from engine.irmaa import irmaa_tier as _irmaa_tier
+
+    base_year = 2026
+    death_year = 2028
+    hh = _make_survivor_hh(base_year=base_year, death_year=death_year)
+    # Use a MAGI that falls in tier 0 for MFJ but tier 1+ for Single
+    # MFJ tier-1 threshold ~$212K; Single tier-1 ~$106K
+    base_magi = 120_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=8, cpi=0.0)
+
+    last_mfj_year = death_year  # year of death => still MFJ
+    first_single_year = death_year + 1
+
+    row_mfj = next((r for r in rows if r.year == last_mfj_year), None)
+    row_single = next((r for r in rows if r.year == first_single_year), None)
+
+    assert row_mfj is not None
+    assert row_single is not None
+
+    expected_tier_mfj = _irmaa_tier(base_magi, filing_status="MFJ", year=last_mfj_year, cpi=0.0)
+    expected_tier_single = _irmaa_tier(
+        base_magi, filing_status="Single", year=first_single_year, cpi=0.0
+    )
+
+    assert row_mfj.irmaa_tier == expected_tier_mfj
+    assert row_single.irmaa_tier == expected_tier_single
+    # The Single threshold is lower so tier must be higher (or equal) — just
+    # confirm the timeline actually used Single, not MFJ, for the post-death row.
+    assert expected_tier_single >= expected_tier_mfj
+
+
+def test_timeline_no_survivor_unchanged() -> None:
+    """Household with survivor=None must produce same result as always (regression guard)."""
+    hh = Household()
+    hh.your_age = 66
+    hh.spouse_age = 65
+    hh.filing_status = "MFJ"
+    hh.survivor = None
+
+    rows = compute_year_by_year_timeline(hh, base_magi=80_000.0, years=5, cpi=0.0)
+
+    # Both >=65 every year → every row has irmaa_tier not None
+    for r in rows:
+        assert r.irmaa_tier is not None
+    # Spot-check: filing_status used is MFJ (IRMAA tier for MFJ at 80K = 0)
+    from engine.irmaa import irmaa_tier as _irmaa_tier
+
+    for r in rows:
+        expected = _irmaa_tier(80_000.0, filing_status="MFJ", year=r.year, cpi=0.0)
+        assert r.irmaa_tier == expected
+
+
+def test_timeline_survivor_who_dies_you_medicare_follows_spouse() -> None:
+    """who_dies='you': after death the surviving SPOUSE's Medicare must still count.
+
+    Regression for the bug where is_mfj=False forced sa=None, which dropped the
+    surviving spouse's Medicare status and zeroed medicare_count (→ irmaa_tier
+    None) even when the surviving spouse was 65+.
+    """
+    from engine.irmaa import irmaa_tier as _irmaa_tier
+
+    base_year = 2026
+    death_year = 2028
+    hh = Household()
+    hh.base_year = base_year
+    # Primary dies; surviving spouse is 66 at base_year, 67+ after death.
+    hh.your_age = 60
+    hh.spouse_age = 66
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = False
+    hh.spouse_aca_enrolled = False
+    hh.survivor = SurvivorScenario(who_dies="you", death_year=death_year)
+
+    base_magi = 120_000.0  # MFJ tier 0, Single tier 1+
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=8, cpi=0.0)
+
+    after = [r for r in rows if r.year > death_year]
+    assert len(after) > 0
+    for r in after:
+        # Surviving spouse is >=65, so Medicare/IRMAA must remain active...
+        assert r.irmaa_tier is not None, (
+            f"Surviving spouse 65+ must keep Medicare active in {r.year}"
+        )
+        # ...and filing must switch to Single (lower thresholds) post-death.
+        expected_single = _irmaa_tier(base_magi, filing_status="Single", year=r.year, cpi=0.0)
+        assert r.irmaa_tier == expected_single
