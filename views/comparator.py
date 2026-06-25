@@ -191,7 +191,9 @@ def render(hh: Household):
         if i == baseline_idx:
             continue  # skip baseline vs itself
 
-        cum_benefit = compute_cumulative_net_benefit(s, baseline_s, rmd_start_age=hh.your_rmd_start_age)
+        cum_benefit = compute_cumulative_net_benefit(
+            s, baseline_s, rmd_start_age=hh.your_rmd_start_age
+        )
 
         fig_net.add_trace(
             go.Scatter(

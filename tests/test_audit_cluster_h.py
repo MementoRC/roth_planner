@@ -60,9 +60,9 @@ class TestAcaPremiumAnnotationF22:
         # The old pattern was add_hline(y=BENCHMARK_PREMIUM_ANNUAL, ...)
         # After fix, neither the y= nor annotation_text should use the raw constant.
         # We look for the pattern of passing it directly to add_hline.
-        assert (
-            "y=BENCHMARK_PREMIUM_ANNUAL" not in src
-        ), "add_hline still uses BENCHMARK_PREMIUM_ANNUAL as y-value directly"
+        assert "y=BENCHMARK_PREMIUM_ANNUAL" not in src, (
+            "add_hline still uses BENCHMARK_PREMIUM_ANNUAL as y-value directly"
+        )
 
     def test_hline_uses_effective_benchmark(self):
         import views.aca_irmaa as aca_mod
@@ -91,17 +91,15 @@ class TestAcaSpouseMedicareAdvisoryF56:
 
         src = inspect.getsource(aca_mod)
         # Old single check
-        assert (
-            "if hh.your_age >= 65:" not in src
-        ), "Advisory still only checks your_age >= 65 (missing spouse check)"
+        assert "if hh.your_age >= 65:" not in src, (
+            "Advisory still only checks your_age >= 65 (missing spouse check)"
+        )
 
     def test_advisory_includes_spouse_age_check(self):
         import views.aca_irmaa as aca_mod
 
         src = inspect.getsource(aca_mod)
-        assert (
-            "hh.spouse_age >= 65" in src
-        ), "Advisory does not check hh.spouse_age >= 65"
+        assert "hh.spouse_age >= 65" in src, "Advisory does not check hh.spouse_age >= 65"
 
 
 # ---------------------------------------------------------------------------
@@ -135,5 +133,7 @@ class TestComparatorBracketCeilingsF54:
         from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 
         # Verify the constants have expected 12% bracket ceilings (sanity check)
-        assert BRACKETS_SINGLE[1][0] == 50_400, f"BRACKETS_SINGLE[1][0] unexpected: {BRACKETS_SINGLE[1][0]}"
+        assert BRACKETS_SINGLE[1][0] == 50_400, (
+            f"BRACKETS_SINGLE[1][0] unexpected: {BRACKETS_SINGLE[1][0]}"
+        )
         assert BRACKETS_MFJ[1][0] == 100_800, f"BRACKETS_MFJ[1][0] unexpected: {BRACKETS_MFJ[1][0]}"
