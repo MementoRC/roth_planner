@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
+from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compare import compute_cumulative_net_benefit
 from models.household import Household
 
@@ -77,12 +78,8 @@ class TestC3CumulativeNetBenefit:
         baseline = run_no_conversion(hh, end_age=95)
         scenario = run_scenario(hh, plan, "Fill 12%", end_age=95)
 
-        benefit_73 = compute_cumulative_net_benefit(
-            scenario, baseline, rmd_start_age=73
-        )
-        benefit_75 = compute_cumulative_net_benefit(
-            scenario, baseline, rmd_start_age=75
-        )
+        benefit_73 = compute_cumulative_net_benefit(scenario, baseline, rmd_start_age=73)
+        benefit_75 = compute_cumulative_net_benefit(scenario, baseline, rmd_start_age=75)
         # With rmd_start_age=73 savings accumulate 2 years earlier — benefit_73
         # should diverge from benefit_75 at the ages between 73 and 74 inclusive.
         ages = [yr.your_age for yr in baseline.years]

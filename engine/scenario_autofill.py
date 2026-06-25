@@ -1,9 +1,7 @@
 """Auto-fill helpers for the scenario engine.
 
 Generates ConversionPlan instances that fill to a given bracket ceiling or
-IRMAA threshold. Imported back into engine.scenario via a bottom re-export
-so that all existing `from engine.scenario import auto_fill_*` callers are
-unaffected.
+IRMAA threshold. Callers import directly from engine.scenario_autofill.
 """
 
 from __future__ import annotations
@@ -111,32 +109,36 @@ def _auto_fill_core(
             spouse_ira, sa, hh.spouse_rmd_start_age
         )  # no spouse QCD in auto-fill
 
+        # Shared ordinary-income core (opt + your gated RMD + spouse RMD), reused
+        # below by other_fixed, base_magi, and fixed_gross so the three can never
+        # drift apart.
+        ordinary_core = (
+            opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
+        )
+
         # Taxable SS — computed first so base_magi uses only the includable
         # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
-        other_fixed = opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
         # Per IRC §86(b)(2), provisional income is MAGI (AGI + tax-exempt interest),
         # not just ordinary income. For the base year, ytd_year.magi_ytd captures
         # all §86-modified-AGI components (LTCG, qualified dividends, muni interest,
         # wages, etc.) and correctly excludes SS, making it the right provisional-
         # income proxy. Forecast years have no YTD snapshot; brokerage income is not
         # separately modeled in autofill so other_fixed remains ordinary-only there.
+        other_fixed = ordinary_core
         if ytd_year is not None:
             other_fixed += ytd_year.magi_ytd
         tss = taxable_ss(combined_ss, other_fixed, filing_status=hh.filing_status)
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA).
         # Uses taxable SS (tss) not gross combined_ss per IRC §86 + §1395r(i)(4).
+        # Equals other_fixed + tss since other_fixed already carries ytd magi_ytd.
         # Passed to room_fn so the IRMAA-safe variant can enforce its ceiling.
-        base_magi = (
-            opt + tss + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
-        )
-        if ytd_year is not None:
-            base_magi += ytd_year.magi_ytd
+        base_magi = other_fixed + tss
 
-        # Fixed gross (ordinary income — no LTCG)
-        fixed_gross = (
-            opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd + tss
-        )
+        # Fixed gross (ordinary income — no LTCG). Same ordinary core + taxable SS,
+        # but the base-year YTD add-back is the itemized ordinary components (not the
+        # full MAGI used for base_magi).
+        fixed_gross = ordinary_core + tss
         if ytd_year is not None:
             fixed_gross += (
                 ytd_year.wages_ytd

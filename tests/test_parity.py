@@ -17,11 +17,10 @@ import pytest
 
 from engine.scenario import (
     ConversionPlan,
-    add_bracket_fill_withdrawals,
-    auto_fill_22,
     run_no_conversion,
     run_scenario,
 )
+from engine.scenario_autofill import add_bracket_fill_withdrawals, auto_fill_22
 from models.household import GrowthProfile, Household
 
 

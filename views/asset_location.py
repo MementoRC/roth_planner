@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.asset_location import project_asset_location
-from engine.scenario import auto_fill_12
+from engine.scenario_autofill import auto_fill_12
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 

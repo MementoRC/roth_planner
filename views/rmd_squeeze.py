@@ -17,7 +17,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.ira import RMD_DIVISORS
-from engine.scenario import ConversionPlan, auto_fill_12, run_no_conversion, run_scenario
+from engine.scenario import ConversionPlan, run_no_conversion, run_scenario
+from engine.scenario_autofill import auto_fill_12
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household

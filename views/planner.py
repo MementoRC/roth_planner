@@ -12,7 +12,8 @@ Shows all 20 years of the spouse's conversion window with:
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.scenario import ConversionPlan, auto_fill_12, run_scenario
+from engine.scenario import ConversionPlan, run_scenario
+from engine.scenario_autofill import auto_fill_12
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household

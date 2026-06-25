@@ -2,9 +2,7 @@
 
 import pytest
 
-from engine.scenario import (
-    auto_fill_irmaa_safe,
-)
+from engine.scenario_autofill import auto_fill_irmaa_safe
 from models.household import Household
 
 
