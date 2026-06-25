@@ -149,6 +149,8 @@ class Household:
     # RMD
     your_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
     spouse_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
+    your_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer first RMD to April 1 of following year (two RMDs land in year 2)
+    spouse_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer spouse's first RMD likewise
 
     # Healthcare coverage
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)

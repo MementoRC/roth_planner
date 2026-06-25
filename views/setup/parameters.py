@@ -399,6 +399,14 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
         )
+        st.session_state.your_defer_first_rmd = st.checkbox(
+            "Defer first RMD to April 1 (two RMDs in year 2)",
+            value=st.session_state.get("your_defer_first_rmd", False),
+            help=(
+                "IRC §401(a)(9)(C)(ii): delay the first RMD to April 1 of the following year. "
+                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
+            ),
+        )
         st.session_state.your_fra_age = st.number_input(
             "Your FRA (Full Retirement Age)",
             min_value=65,
@@ -467,6 +475,15 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
             help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
+            disabled=_is_single,
+        )
+        st.session_state.spouse_defer_first_rmd = st.checkbox(
+            "Defer spouse's first RMD to April 1 (two RMDs in year 2)",
+            value=st.session_state.get("spouse_defer_first_rmd", False),
+            help=(
+                "IRC §401(a)(9)(C)(ii): delay the spouse's first RMD to April 1 of the following year. "
+                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
+            ),
             disabled=_is_single,
         )
         st.session_state.spouse_fra_age = st.number_input(
