@@ -70,6 +70,8 @@ def _auto_fill_core(
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
     _cpi = hh.cpi_assumption
+    prev_your_ira = 0.0
+    prev_spouse_ira = 0.0
 
     for yr_idx in range(
         hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
@@ -77,6 +79,8 @@ def _auto_fill_core(
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+        cur_your_begin = your_ira
+        cur_spouse_begin = spouse_ira
         ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
         if ya > 80:
@@ -103,10 +107,16 @@ def _auto_fill_core(
         combined_ss = your_ss + spouse_ss
 
         # RMD
-        rmd = calc_rmd(your_ira, ya, hh.your_rmd_start_age)
+        rmd = calc_rmd(
+            your_ira, ya, hh.your_rmd_start_age,
+            first_year_deferred=hh.your_defer_first_rmd,
+            prior_year_balance=prev_your_ira,
+        )
         taxable_rmd = rmd  # no QCD in auto-fill (QCDs reduce income but not conversion room)
         spouse_taxable_rmd = calc_rmd(
-            spouse_ira, sa, hh.spouse_rmd_start_age
+            spouse_ira, sa, hh.spouse_rmd_start_age,
+            first_year_deferred=hh.spouse_defer_first_rmd,
+            prior_year_balance=prev_spouse_ira,
         )  # no spouse QCD in auto-fill
 
         # Shared ordinary-income core (opt + your gated RMD + spouse RMD), reused
@@ -203,8 +213,15 @@ def _auto_fill_core(
         your_withdrawal = yc + rmd
         your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
-        spouse_rmd = calc_rmd(spouse_ira, sa, hh.spouse_rmd_start_age)
+        spouse_rmd = calc_rmd(
+            spouse_ira, sa, hh.spouse_rmd_start_age,
+            first_year_deferred=hh.spouse_defer_first_rmd,
+            prior_year_balance=prev_spouse_ira,
+        )
         spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
+
+        prev_your_ira = cur_your_begin
+        prev_spouse_ira = cur_spouse_begin
 
     return plan
 
