@@ -7,6 +7,7 @@ import streamlit as st
 from engine.data_bridge_browser import (
     is_pyodide,
 )
+from engine.irmaa import BASE_PART_B
 from engine.tax_return_pdf import (
     Form1040ParseError,
     load_pdf_tax_records,
@@ -541,7 +542,7 @@ def render_parameters_tab(hh: Household) -> None:
             "Medicare Part B Base Premium ($/mo)",
             min_value=0.0,
             max_value=1000.0,
-            value=float(st.session_state.get("medicare_part_b_base_monthly", 202.90)),
+            value=float(st.session_state.get("medicare_part_b_base_monthly", BASE_PART_B / 12)),
             step=1.0,
             format="%.2f",
             help=(
