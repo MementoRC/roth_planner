@@ -11,6 +11,7 @@ st.set_page_config(
 
 
 from config.loader import load_defaults  # noqa: E402
+from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import load_pdf_tax_records, merge_pdf_magi  # noqa: E402
 
 
@@ -42,7 +43,7 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
     st.session_state.setdefault("aca_enhanced_subsidies_active", False)
     st.session_state.setdefault("advance_aptc_annual", 0)
-    st.session_state.setdefault("medicare_part_b_base_monthly", 202.90)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
     st.session_state.setdefault("your_ss_start_age", 70)
     st.session_state.setdefault("spouse_ss_start_age", 70)
     st.session_state.setdefault("your_rmd_start_age", 75)
@@ -166,7 +167,9 @@ def get_household() -> Household:
         aca_benchmark_premium_annual=st.session_state.get("aca_benchmark_premium_annual", 21_600.0),
         aca_enhanced_subsidies_active=st.session_state.get("aca_enhanced_subsidies_active", False),
         advance_aptc_annual=float(st.session_state.get("advance_aptc_annual", 0)),
-        medicare_part_b_base_monthly=st.session_state.get("medicare_part_b_base_monthly", 202.90),
+        medicare_part_b_base_monthly=st.session_state.get(
+            "medicare_part_b_base_monthly", BASE_PART_B / 12
+        ),
         your_ss_start_age=st.session_state.get(
             "your_ss_start_age",
             st.session_state.get("ss_start_age", 70),

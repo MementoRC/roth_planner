@@ -22,6 +22,7 @@ from engine.scenario_compute import (
 )
 from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
 from engine.tax import (
+    LTCG_RATES_MFJ,
     LTCG_THRESHOLDS_MFJ,
     LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
@@ -469,7 +470,9 @@ def run_scenario(
             _ytd_ltcg_at_20 = max(
                 0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1])
             )
-            yr.ytd_ltcg_tax = _ytd_ltcg_at_15 * 0.15 + _ytd_ltcg_at_20 * 0.20
+            yr.ytd_ltcg_tax = (
+                _ytd_ltcg_at_15 * LTCG_RATES_MFJ[1] + _ytd_ltcg_at_20 * LTCG_RATES_MFJ[2]
+            )
             # grid-05: YTD realized LTCG tax is a real federal tax for the base year
             # but was previously orphaned (computed, never counted in any total). Fold
             # it into federal_tax_amt so lifetime tax / all-in cost reflect it.
@@ -539,7 +542,7 @@ def run_scenario(
             min(_ltcg_end, ltcg_thresholds[1]) - max(_ltcg_start, ltcg_thresholds[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, ltcg_thresholds[1]))
-        yr.brokerage_gain_tax = _ltcg_at_15 * 0.15 + _ltcg_at_20 * 0.20
+        yr.brokerage_gain_tax = _ltcg_at_15 * LTCG_RATES_MFJ[1] + _ltcg_at_20 * LTCG_RATES_MFJ[2]
         total_div = qual_div_this_year + ord_div_this_year
 
         brokerage = (

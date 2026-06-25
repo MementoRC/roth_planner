@@ -15,7 +15,7 @@ import streamlit as st
 from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_surcharge
-from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import (
     LTCG_RATES_MFJ,
     SafeHarborGuidance,
@@ -373,7 +373,7 @@ def render(hh: Household):
     t1, t2, t3, t4 = st.columns(4)
     t1.metric("Ordinary bracket tax", fmt_dollars(estimate.ordinary_tax))
     t2.metric("LTCG / qualified div tax", fmt_dollars(estimate.ltcg_tax))
-    t3.metric("NIIT (3.8%)", fmt_dollars(estimate.niit))
+    t3.metric(f"NIIT ({fmt_pct(NIIT_RATE)})", fmt_dollars(estimate.niit))
     t4.metric("Total federal", fmt_dollars(estimate.total))
     st.caption(
         "Estimate assumes today were Dec 31 (current YTD income only — not annualized). "
