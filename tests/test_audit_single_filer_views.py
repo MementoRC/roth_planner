@@ -266,7 +266,7 @@ class TestComparatorSingleFilerGating:
         assert 'is_mfj = hh.filing_status == "MFJ"' in src, (
             "comparator.py must define is_mfj from filing_status"
         )
-        assert 'if is_mfj:' in src, "comparator.py must gate Sp Age column on is_mfj"
+        assert "if is_mfj:" in src, "comparator.py must gate Sp Age column on is_mfj"
         assert '"Sp Age"' in src, "comparator.py must still contain the Sp Age key (inside gate)"
 
     def test_surviving_spouse_section_gated_on_mfj(self):

@@ -24,9 +24,7 @@ class TestSurvivorIRACompounding:
     this overstatement is material (hundreds of thousands of dollars).
     """
 
-    def _make_scenario(
-        self, hh: Household, death_age: int, ira: float
-    ) -> "ScenarioResult":  # noqa: F821 — imported at runtime
+    def _make_scenario(self, hh: Household, death_age: int, ira: float) -> "ScenarioResult":  # noqa: F821 — imported at runtime
         from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
 
         yr = YearResult(
@@ -76,9 +74,9 @@ class TestSurvivorIRACompounding:
             year_offset = offset + 1
             surv_age = (death_age - hh.age_gap) + year_offset
             rmd_w = calc_rmd(balance, surv_age, survivor_rmd_start)
-            balance = max(balance - rmd_w, 0.0) * (1 + hh.spouse_ira_rate(
-                hh.base_year + (death_age - hh.your_age) + year_offset
-            ))
+            balance = max(balance - rmd_w, 0.0) * (
+                1 + hh.spouse_ira_rate(hh.base_year + (death_age - hh.your_age) + year_offset)
+            )
         correct_grown = balance
 
         # The correct (net-of-RMD) balance must be strictly less than the naive value.

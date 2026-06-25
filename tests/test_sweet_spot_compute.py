@@ -178,8 +178,12 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
 
         # irmaa_safe must use the payment-year threshold (larger value → larger room).
         base_magi = row2026.base_magi
-        expected_irmaa_safe = max(payment_year_t1 - base_magi, 0.0) if (payment_year_t1 - base_magi) > 0 else None
-        buggy_irmaa_safe = max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
+        expected_irmaa_safe = (
+            max(payment_year_t1 - base_magi, 0.0) if (payment_year_t1 - base_magi) > 0 else None
+        )
+        buggy_irmaa_safe = (
+            max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
+        )
 
         # The two values differ (payment-year threshold is ~$27K higher).
         assert expected_irmaa_safe != buggy_irmaa_safe, (

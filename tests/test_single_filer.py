@@ -151,9 +151,7 @@ class TestSeniorBonusSingleFilerNoSpouseCount:
         Correct:  eligible=1 → $6,000 (MAGI below phaseout start $75K)
         Buggy:    eligible=2 → $12,000 (double-counts spouse)
         """
-        result = senior_bonus_deduction(
-            70, 68, magi=50_000, year=2026, filing_status="Single"
-        )
+        result = senior_bonus_deduction(70, 68, magi=50_000, year=2026, filing_status="Single")
         assert result == approx(6_000)
 
     def test_single_filer_spouse_65_not_counted(self):
@@ -162,16 +160,12 @@ class TestSeniorBonusSingleFilerNoSpouseCount:
         Correct:  eligible=1 → $6,000
         Buggy:    eligible=2 → $12,000 (would incorrectly count spouse)
         """
-        result = senior_bonus_deduction(
-            70, 65, magi=50_000, year=2026, filing_status="Single"
-        )
+        result = senior_bonus_deduction(70, 65, magi=50_000, year=2026, filing_status="Single")
         assert result == approx(6_000)
 
     def test_mfj_both_65_still_counts_two(self):
         """MFJ control: both >=65 must still yield $12,000 (behavior unchanged)."""
-        result = senior_bonus_deduction(
-            70, 65, magi=50_000, year=2026, filing_status="MFJ"
-        )
+        result = senior_bonus_deduction(70, 65, magi=50_000, year=2026, filing_status="MFJ")
         assert result == approx(12_000)
 
 

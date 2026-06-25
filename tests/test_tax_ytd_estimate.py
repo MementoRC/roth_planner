@@ -229,7 +229,9 @@ class TestA1SS86ProvisionalIncomeMagi:
         ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
         combined_ss = 40_000.0
 
-        result_with_ltcg = estimate_ytd_federal_tax(ytd_with_ltcg, _hh_mfj(), combined_ss=combined_ss)
+        result_with_ltcg = estimate_ytd_federal_tax(
+            ytd_with_ltcg, _hh_mfj(), combined_ss=combined_ss
+        )
         result_no_ltcg = estimate_ytd_federal_tax(ytd_no_ltcg, _hh_mfj(), combined_ss=combined_ss)
 
         # LTCG must increase taxable SS, so ordinary_tax (which includes tss) must be higher
@@ -242,9 +244,7 @@ class TestA1SS86ProvisionalIncomeMagi:
         QD is excluded from ordinary brackets but per §86(b)(2) it IS in AGI
         and therefore in provisional income.
         """
-        ytd_with_qd = YTDSnapshot(
-            tax_year=2026, wages_ytd=30_000, qualified_dividends_ytd=15_000
-        )
+        ytd_with_qd = YTDSnapshot(tax_year=2026, wages_ytd=30_000, qualified_dividends_ytd=15_000)
         ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
         combined_ss = 40_000.0
 
@@ -259,9 +259,7 @@ class TestA1SS86ProvisionalIncomeMagi:
         IRC §86(b)(2)(B) explicitly adds tax-exempt interest to provisional income.
         Scenario: $30K wages + $10K muni + $40K SS.
         """
-        ytd_with_muni = YTDSnapshot(
-            tax_year=2026, wages_ytd=30_000, tax_exempt_interest_ytd=10_000
-        )
+        ytd_with_muni = YTDSnapshot(tax_year=2026, wages_ytd=30_000, tax_exempt_interest_ytd=10_000)
         ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=30_000)
         combined_ss = 40_000.0
 
