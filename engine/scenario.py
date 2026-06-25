@@ -9,21 +9,6 @@ from __future__ import annotations
 from engine.ira import inherited_ira_drain
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
-from engine.scenario_autofill import (
-    _auto_fill_core as _auto_fill_core,
-)
-from engine.scenario_autofill import (
-    add_bracket_fill_withdrawals as add_bracket_fill_withdrawals,
-)
-from engine.scenario_autofill import (
-    auto_fill_12 as auto_fill_12,
-)
-from engine.scenario_autofill import (
-    auto_fill_22 as auto_fill_22,
-)
-from engine.scenario_autofill import (
-    auto_fill_irmaa_safe as auto_fill_irmaa_safe,
-)
 from engine.scenario_compute import (
     compute_aca,
     compute_bracket_room,

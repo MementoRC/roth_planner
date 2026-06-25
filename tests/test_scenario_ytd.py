@@ -5,10 +5,9 @@ import pytest
 from engine.headroom import compute_headroom
 from engine.scenario import (
     ConversionPlan,
-    auto_fill_12,
-    auto_fill_22,
     run_scenario,
 )
+from engine.scenario_autofill import auto_fill_12, auto_fill_22
 from models.grants import StockGrant
 from models.household import Household
 
@@ -61,7 +60,7 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
             cpi_assumption=0.0,
             your_ira=500_000.0,
             spouse_ira=300_000.0,
-            your_ss_fra=625.0,   # reduced early: ~$7.5K/yr (combined ~$7.5K, no spouse SS)
+            your_ss_fra=625.0,  # reduced early: ~$7.5K/yr (combined ~$7.5K, no spouse SS)
             your_ss_start_age=61,  # claiming at 61: active in base year
             spouse_ss_fra=0.0,
             grants=[],
@@ -105,9 +104,7 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
             grants=[],
         )
         ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
-        ytd_with_qd = YTDSnapshot(
-            tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=30_000
-        )
+        ytd_with_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=30_000)
 
         plan_no_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_no_qd)
         plan_with_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_with_qd)

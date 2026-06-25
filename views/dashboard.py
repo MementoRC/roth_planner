@@ -10,7 +10,8 @@ Shows:
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine.scenario import auto_fill_12, run_no_conversion, run_scenario
+from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario_autofill import auto_fill_12
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
