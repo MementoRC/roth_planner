@@ -99,9 +99,8 @@ class TestComputeSurvivorSnapshot:
     def test_uses_spouse_rmd_start_when_you_die(
         self, base_hh: Household, base_scenarios: list
     ) -> None:
-        """Survivor (spouse) uses spouse_rmd_start_age=75, not deprecated rmd_start_age."""
+        """Survivor (spouse) uses spouse_rmd_start_age=75."""
         base_hh.spouse_rmd_start_age = 73
-        base_hh.rmd_start_age = 75  # deprecated field differs — must be ignored
         # At death_age=70 projected 5 years: survivor_age=69 — below 73, so RMD=0
         # At death_age=75 projected 5 years: survivor_age=74 — below 73 is False (74>=73) → RMD > 0
         rows_75 = _compute_survivor_snapshot(base_hh, base_scenarios, "you", [75])
@@ -112,9 +111,8 @@ class TestComputeSurvivorSnapshot:
     def test_uses_your_rmd_start_when_spouse_dies(
         self, base_hh: Household, base_scenarios: list
     ) -> None:
-        """Survivor (you) uses your_rmd_start_age, not deprecated rmd_start_age."""
+        """Survivor (you) uses your_rmd_start_age."""
         base_hh.your_rmd_start_age = 75
-        base_hh.rmd_start_age = 99  # deprecated field set absurdly high — must be ignored
         # At spouse death_age=55, projected 5 years: survivor (you) age = 61+5 = 66 — no RMD
         rows_55 = _compute_survivor_snapshot(base_hh, base_scenarios, "spouse", [55])
         # survivor too young for RMD under either start age — test structural correctness

@@ -32,7 +32,7 @@ class TestHouseholdProperties:
         """spouse_conv_window mirrors your_conv_window formula for spouse_age."""
         from dataclasses import replace
 
-        hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
+        hh = replace(Household(), your_age=61, spouse_age=55)
         assert hh.your_conv_window == max(75 - 1 - 61 + 1, 0)  # 14
         assert hh.spouse_conv_window == max(75 - 1 - 55 + 1, 0)  # 20
         assert hh.spouse_conv_window > hh.your_conv_window
@@ -41,7 +41,7 @@ class TestHouseholdProperties:
         """Under me<->spouse swap, the windows swap correctly."""
         from dataclasses import replace
 
-        hh = replace(Household(), your_age=61, spouse_age=55, rmd_start_age=75)
+        hh = replace(Household(), your_age=61, spouse_age=55)
         hh_sw = replace(hh, your_age=hh.spouse_age, spouse_age=hh.your_age)
         assert hh_sw.your_conv_window == hh.spouse_conv_window
         assert hh_sw.spouse_conv_window == hh.your_conv_window
