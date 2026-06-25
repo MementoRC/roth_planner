@@ -491,6 +491,55 @@ class TestScenarioWithYTD:
         assert len(loaded.gain_events) == 1
         assert loaded.gain_events[0].gain_loss == approx(200_000)
 
+    def test_spouse_conversions_done_subtracted(self):
+        """Fix #1: spouse_ira_conversions_ytd must reduce effective spouse_conversion
+        symmetrically to how ira_conversions_ytd reduces your_conversion.
+
+        Plan spouse $80K, already done $30K → effective spouse_conversion must be $50K.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            grants=[],
+        )
+        ytd = YTDSnapshot(tax_year=2026, spouse_ira_conversions_ytd=30_000)
+        plan = ConversionPlan(spouse_conversions={2026: 80_000})
+        result = run_scenario(hh, plan, "spouse_clamp", end_age=65, ytd=ytd)
+        yr2026 = result.years[0]
+
+        assert yr2026.spouse_conversion == pytest.approx(50_000, abs=1.0), (
+            f"Expected spouse_conversion=50_000 (80K planned - 30K done); "
+            f"got {yr2026.spouse_conversion:.0f}"
+        )
+
+    def test_spouse_conversions_done_zero_is_symmetric_to_your_side(self):
+        """Symmetry: zero spouse_ira_conversions_ytd leaves spouse_conversion unchanged."""
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            grants=[],
+        )
+        ytd_no_done = YTDSnapshot(tax_year=2026, spouse_ira_conversions_ytd=0)
+        ytd_no_ytd = None
+        plan = ConversionPlan(spouse_conversions={2026: 60_000})
+
+        result_no_done = run_scenario(hh, plan, "sp_no_done", end_age=65, ytd=ytd_no_done)
+        result_no_ytd = run_scenario(hh, plan, "sp_no_ytd", end_age=65, ytd=ytd_no_ytd)
+
+        assert result_no_done.years[0].spouse_conversion == pytest.approx(
+            result_no_ytd.years[0].spouse_conversion, abs=1.0
+        ), "Zero spouse_ira_conversions_ytd must not alter spouse_conversion"
+
     def test_ytd_ltcg_bracket_walk_zero_percent_band(self):
         """YTD LTCG fully inside the 0% band must produce zero LTCG tax.
 

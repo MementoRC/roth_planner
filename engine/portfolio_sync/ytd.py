@@ -151,6 +151,8 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         # investment_income above to prevent double-count.
         ytd.qualified_dividends_ytd = parsed.get("qualified_dividends", 0.0)
         ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
+        # spouse_ira_conversions_ytd: FinExtract ytd_income endpoint provides no
+        # per-owner split; leave at default 0.0 (entered manually via YTD view).
         ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
         # Audit D-4: investment_income endpoint is the preferred owner of
         # ordinary_dividends_ytd; only fall back to 1099-DIV box 1a here when

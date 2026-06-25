@@ -248,6 +248,95 @@ class TestAuditF7ComputePhaseRmdStartAge:
         )
 
 
+class TestCumRmdTaxSpouseOlderGate:
+    """Fix #2: cum_rmd_tax must accumulate in years where EITHER spouse is in RMD.
+
+    Bug: the gate was `ya >= hh.your_rmd_start_age` only, so households where
+    the spouse reaches RMD age before the primary planner had their RMD-phase
+    federal tax excluded from total_rmd_tax in those spouse-only-RMD years.
+    """
+
+    def _hh_spouse_older_rmd(self) -> "Household":
+        """Spouse is 75 (in RMD), primary is 70 (NOT yet in RMD at rmd_start_age=75).
+
+        This means year-1 the primary is 70 and spouse is 75 — spouse is in RMD,
+        primary is not. After the fix, cum_rmd_tax must include year-1 federal tax.
+        """
+        from dataclasses import replace
+
+        return replace(
+            Household(grants=[]),
+            your_age=70,
+            spouse_age=75,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            your_ira=500_000.0,
+            spouse_ira=1_500_000.0,  # large so spouse RMD is material
+            living_expenses=40_000.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+
+    def test_total_rmd_tax_nonzero_when_only_spouse_in_rmd(self):
+        """total_rmd_tax must be > 0 in years where only the spouse is in RMD.
+
+        With spouse IRA $1.5M and spouse_rmd_start_age=75, year-1 (primary age 70)
+        the spouse has a material RMD that drives federal tax.  The buggy gate
+        (ya >= your_rmd_start_age only) would exclude these years → total_rmd_tax=0
+        for the first 5 years.  The fix (or sa >= spouse_rmd_start_age) must
+        accumulate them.
+        """
+        from engine.scenario import ConversionPlan, run_scenario
+
+        hh = self._hh_spouse_older_rmd()
+        plan = ConversionPlan()
+        # Run only to age 74 — primary still below rmd_start_age=75 throughout
+        result = run_scenario(hh, plan, end_age=74)
+
+        # All years are spouse-in-RMD, primary-NOT-in-RMD
+        for yr in result.years:
+            assert yr.your_age < hh.your_rmd_start_age, "test setup: primary not in RMD"
+            assert yr.spouse_age >= hh.spouse_rmd_start_age, "test setup: spouse in RMD"
+
+        # Without fix total_rmd_tax == 0; with fix it must be > 0
+        assert result.total_rmd_tax > 0, (
+            f"total_rmd_tax should be > 0 when spouse is in RMD but primary is not; "
+            f"got {result.total_rmd_tax:.0f}"
+        )
+
+    def test_total_rmd_tax_larger_with_spouse_gate(self):
+        """Household where BOTH eventually reach RMD: total_rmd_tax with the fix
+        must be >= the buggy result (only primary's RMD years counted).
+
+        We compare two households: one with spouse in RMD before primary
+        (spouse 5 years older) vs. same household with spouse IRA=0 so spouse
+        RMD doesn't matter.  The fixed version should accumulate more total_rmd_tax.
+        """
+        from dataclasses import replace
+
+        from engine.scenario import ConversionPlan, run_scenario
+
+        base = replace(
+            Household(grants=[]),
+            your_age=70,
+            spouse_age=75,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            your_ira=800_000.0,
+            living_expenses=40_000.0,
+        )
+        hh_with_spouse_ira = replace(base, spouse_ira=1_000_000.0)
+        hh_no_spouse_ira = replace(base, spouse_ira=0.0)
+
+        plan = ConversionPlan()
+        result_with = run_scenario(hh_with_spouse_ira, plan, end_age=80)
+        result_no = run_scenario(hh_no_spouse_ira, plan, end_age=80)
+
+        assert result_with.total_rmd_tax >= result_no.total_rmd_tax, (
+            "total_rmd_tax with active spouse IRA should be >= no-spouse-IRA baseline"
+        )
+
+
 class TestBrokerageStart:
     """Regression: brokerage_start must seed year-0 brokerage_balance.
 

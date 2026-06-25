@@ -48,7 +48,8 @@ class YTDSnapshot:
     # Ordinary income components
     wages_ytd: float = 0.0
     nec_income_ytd: float = 0.0  # 1099-NEC / self-employment
-    ira_conversions_ytd: float = 0.0  # conversions already done this year
+    ira_conversions_ytd: float = 0.0  # conversions already done this year (your side)
+    spouse_ira_conversions_ytd: float = 0.0  # spouse's conversions already done this year
     ira_distributions_ytd: float = 0.0  # non-conversion IRA withdrawals
 
     # Investment income components

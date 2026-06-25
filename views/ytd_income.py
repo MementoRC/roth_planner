@@ -153,6 +153,13 @@ def render(hh: Household):
                 format="%d",
                 help="Conversions already completed this year",
             )
+            spouse_conversions_done = st.number_input(
+                "Spouse Roth Conversions Done YTD",
+                value=int(ytd.spouse_ira_conversions_ytd),
+                step=5_000,
+                format="%d",
+                help="Spouse conversions already completed this year",
+            )
 
         ytd = YTDSnapshot(
             tax_year=hh.base_year,
@@ -163,6 +170,7 @@ def render(hh: Household):
             ordinary_dividends_ytd=float(ordinary_dividends),
             interest_ytd=float(interest),
             ira_conversions_ytd=float(conversions_done),
+            spouse_ira_conversions_ytd=float(spouse_conversions_done),
             gain_events=ytd.gain_events,
             manually_entered=True,
         ).with_snapshot_date()
