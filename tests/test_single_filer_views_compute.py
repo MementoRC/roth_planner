@@ -88,3 +88,115 @@ class TestSurvivorAcaEnrolleeExclusion:
         for a, b in post:
             assert a.aca_clawback == pytest.approx(b.aca_clawback)
             assert a.aca_loss == pytest.approx(b.aca_loss)
+
+
+class TestSingleFilerIrmaaNoPhantoSpouse:
+    """Regression for 42 U.S.C. §1395r(i): Single filer has one Medicare beneficiary.
+
+    compute_cost_curves previously summed both your_age_in(year) and
+    spouse_age_in(year) for on_medicare with no filing-status gate.  For a
+    Single household with a default-age phantom spouse that eventually crosses
+    65, on_medicare became 2 and doubled the IRMAA surcharge.
+    """
+
+    def test_single_filer_irmaa_not_doubled_when_phantom_spouse_over_65(self) -> None:
+        """Single filer at age 70 with phantom spouse age 70 must get 1-person IRMAA."""
+        from engine.irmaa import irmaa_surcharge
+
+        # Build a Single household where your_age_in(year) >= 65 AND
+        # spouse_age (phantom, default 0 but we force it high) >= 65,
+        # so the pre-fix bug would produce on_medicare=2.
+        hh_single = Household(
+            filing_status="Single",
+            your_age=70,
+            spouse_age=70,  # phantom spouse also over 65 — triggers the bug
+            spouse_ira=0,
+            spouse_roth=0,
+            spouse_ss_fra=0,
+        )
+        year = 2026
+        magi_above_tier1 = 250_000.0  # above IRMAA Tier 1 threshold
+        magi_points = [magi_above_tier1]
+
+        cc = compute_cost_curves(magi_points, magi_above_tier1, 0.0, hh_single, year=year, cpi=0.0)
+
+        # Ground truth: irmaa_surcharge with exactly 1 beneficiary
+        expected_single = irmaa_surcharge(
+            magi_above_tier1,
+            num_people=1,
+            base_part_b=hh_single.medicare_part_b_base_monthly * 12,
+            filing_status="Single",
+            year=year,
+            cpi=0.0,
+        )
+        double_amount = irmaa_surcharge(
+            magi_above_tier1,
+            num_people=2,
+            base_part_b=hh_single.medicare_part_b_base_monthly * 12,
+            filing_status="Single",
+            year=year,
+            cpi=0.0,
+        )
+        # Verify the bug would have produced a different (doubled) value
+        assert double_amount != pytest.approx(expected_single), (
+            "Test setup failure: 1-person and 2-person IRMAA happen to be equal"
+        )
+        # Assert fix: curve must match 1-person amount
+        assert cc.irmaa_vals[0] == pytest.approx(expected_single, rel=1e-9), (
+            f"Single filer IRMAA is {cc.irmaa_vals[0]:.0f}; expected single-beneficiary "
+            f"{expected_single:.0f}. Got 2-person amount {double_amount:.0f} — "
+            "phantom spouse is being counted (on_medicare=2 bug)."
+        )
+
+    def test_single_filer_base_irmaa_not_doubled(self) -> None:
+        """base_irmaa (hoisted outside loop) must also use 1-person count for Single."""
+        from engine.irmaa import irmaa_surcharge
+
+        hh_single = Household(
+            filing_status="Single",
+            your_age=70,
+            spouse_age=70,
+            spouse_ira=0,
+            spouse_roth=0,
+            spouse_ss_fra=0,
+        )
+        year = 2026
+        base_magi = 250_000.0
+        cc = compute_cost_curves([base_magi], base_magi, 0.0, hh_single, year=year, cpi=0.0)
+
+        expected_base = irmaa_surcharge(
+            base_magi,
+            num_people=1,
+            base_part_b=hh_single.medicare_part_b_base_monthly * 12,
+            filing_status="Single",
+            year=year,
+            cpi=0.0,
+        )
+        assert cc.base_irmaa == pytest.approx(expected_base, rel=1e-9), (
+            f"base_irmaa={cc.base_irmaa:.0f} != single-beneficiary {expected_base:.0f}"
+        )
+
+    def test_mfj_both_over_65_still_gets_two_person_irmaa(self) -> None:
+        """MFJ filer with both spouses over 65 must still count both (no regression)."""
+        from engine.irmaa import irmaa_surcharge
+
+        hh_mfj = Household(
+            filing_status="MFJ",
+            your_age=70,
+            spouse_age=70,
+        )
+        year = 2026
+        magi = 250_000.0
+        cc = compute_cost_curves([magi], magi, 0.0, hh_mfj, year=year, cpi=0.0)
+
+        expected_two = irmaa_surcharge(
+            magi,
+            num_people=2,
+            base_part_b=hh_mfj.medicare_part_b_base_monthly * 12,
+            filing_status="MFJ",
+            year=year,
+            cpi=0.0,
+        )
+        assert cc.irmaa_vals[0] == pytest.approx(expected_two, rel=1e-9), (
+            "MFJ with both spouses over 65 should still get 2-person IRMAA"
+        )

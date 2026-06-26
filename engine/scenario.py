@@ -184,6 +184,21 @@ def run_scenario(
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
         yr.spouse_extra_withdrawal = plan.spouse_extra_withdrawals.get(year, 0.0)
 
+        # === Survivor income gate ===
+        # Per IRC §408A(d)(3), a decedent cannot be the distributee of a conversion;
+        # the deceased's IRA was rolled to the survivor at death_year+1 (above), so
+        # their RMDs already self-zero via the 0 IRA balance.  Conversions and extra
+        # withdrawals, however, are read directly from the plan dict and must be
+        # explicitly cleared here — before they reach combined_gross / MAGI / tax /
+        # and the Roth carry-forward lines (~:572-573).
+        if survivor_active and surv is not None:
+            if surv.who_dies == "spouse":
+                yr.spouse_conversion = 0.0
+                yr.spouse_extra_withdrawal = 0.0
+            else:  # who_dies == "you"
+                yr.your_conversion = 0.0
+                yr.extra_withdrawal = 0.0
+
         # === Inherited IRA drains (SECURE Act 10-year rule) ===
         your_inherited_distribution = 0.0
         spouse_inherited_distribution = 0.0
