@@ -31,11 +31,37 @@ RMD_DIVISORS = {
     98: 7.3,
     99: 6.8,
     100: 6.4,
+    101: 6.0,
+    102: 5.6,
+    103: 5.2,
+    104: 4.9,
+    105: 4.6,
+    106: 4.3,
+    107: 4.1,
+    108: 3.9,
+    109: 3.7,
+    110: 3.5,
+    111: 3.4,
+    112: 3.3,
+    113: 3.1,
+    114: 3.0,
+    115: 2.9,
+    116: 2.8,
+    117: 2.7,
+    118: 2.5,
+    119: 2.3,
+    120: 2.0,
 }
 
 
 def rmd_divisor(age: int) -> float:
-    """Get RMD divisor for a given age. Returns 0 if below RMD age."""
+    """Get RMD divisor for a given age. Returns 0 if below RMD age.
+
+    The IRS Uniform Lifetime Table terminates at "120 and older"
+    (divisor 2.0), so any age above 120 uses the age-120 divisor.
+    """
+    if age > 120:
+        return RMD_DIVISORS[120]
     return RMD_DIVISORS.get(age, 0.0)
 
 

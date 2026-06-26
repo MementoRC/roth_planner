@@ -46,6 +46,22 @@ class TestIRA:
         assert rmd_divisor(85) == 16.0
         assert rmd_divisor(95) == 8.9
 
+    def test_rmd_divisors_extend_past_100(self):
+        """Uniform Lifetime Table runs to age 120 (26 CFR 1.401(a)(9)-9(c))."""
+        assert rmd_divisor(101) == 6.0
+        assert rmd_divisor(110) == 3.5
+        assert rmd_divisor(120) == 2.0
+
+    def test_rmd_divisor_120_and_older(self):
+        """Ages beyond 120 use the age-120 divisor, not 0."""
+        assert rmd_divisor(121) == 2.0
+        assert rmd_divisor(130) == 2.0
+
+    def test_rmd_nonzero_past_100(self):
+        """Regression: RMDs must continue past age 100 (table previously ended at 100)."""
+        rmd = calc_rmd(1_000_000, 101, 75)
+        assert rmd == approx(1_000_000 / 6.0, tol=1.0)
+
     def test_rmd_at_75(self):
         rmd = calc_rmd(4_383_508, 75, 75)
         assert rmd == approx(4_383_508 / 24.6, tol=10)
