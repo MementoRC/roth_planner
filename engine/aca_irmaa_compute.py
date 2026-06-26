@@ -88,7 +88,14 @@ def compute_cost_curves(
         )
 
     # Hoist base-state computations outside the loop
-    on_medicare = sum(1 for a in (hh.your_age_in(year), hh.spouse_age_in(year)) if a >= 65)
+    # Single filers have only one Medicare beneficiary (42 U.S.C. §1395r(i)).
+    # Mirror the is_mfj guard used in compute_year_by_year_timeline so a
+    # phantom default-age spouse cannot inflate on_medicare to 2 for Single HHs.
+    _is_mfj_curves = hh.filing_status == "MFJ"
+    if _is_mfj_curves:
+        on_medicare = sum(1 for a in (hh.your_age_in(year), hh.spouse_age_in(year)) if a >= 65)
+    else:
+        on_medicare = 1 if hh.your_age_in(year) >= 65 else 0
     base_irmaa = irmaa_surcharge(
         base_magi,
         num_people=on_medicare,
