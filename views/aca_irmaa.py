@@ -170,10 +170,10 @@ def render(hh: Household):
             )
         )
 
-        # Mark tier thresholds (indexed for base year)
+        # Mark tier thresholds (IRMAA 2-yr lookback: indexed to payment year = base_year + 2)
         _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
         _irmaa_tiers = index_irmaa_tier_thresholds(
-            _base_irmaa_tiers, year=_view_year, cpi=_view_cpi
+            _base_irmaa_tiers, year=_view_year + 2, cpi=_view_cpi
         )
         for threshold, _part_b, _ in _irmaa_tiers:
             if magi_range[0] <= threshold <= magi_range[1]:

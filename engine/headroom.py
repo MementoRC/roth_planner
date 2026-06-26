@@ -192,8 +192,9 @@ def compute_headroom(
 
     # === IRMAA relevance check (age-aware) ===
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
+    # IRMAA 2-yr lookback: index thresholds to the payment year (income_year + 2)
     irmaa_cost, _ = irmaa_for_year(
-        planned_magi, ya, sa, filing_status=filing_status, year=_year, cpi=_cpi
+        planned_magi, ya, sa, filing_status=filing_status, year=_year + 2, cpi=_cpi
     )
     if filing_status == "MFJ":
         result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)
@@ -212,8 +213,9 @@ def compute_headroom(
     result.irmaa_first_relevant_year = _year + years_until_medicare
 
     # IRMAA tier based on locked MAGI (what's already done)
+    # IRMAA 2-yr lookback: index thresholds to the payment year (income_year + 2)
     result.irmaa_tier_current = irmaa_tier(
-        locked_magi, filing_status=filing_status, year=_year, cpi=_cpi
+        locked_magi, filing_status=filing_status, year=_year + 2, cpi=_cpi
     )
     result.irmaa_already_triggered = result.irmaa_tier_current > 0 and result.irmaa_relevant
 

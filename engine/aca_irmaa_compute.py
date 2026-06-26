@@ -92,16 +92,22 @@ def compute_cost_curves(
     # Mirror the is_mfj guard used in compute_year_by_year_timeline so a
     # phantom default-age spouse cannot inflate on_medicare to 2 for Single HHs.
     _is_mfj_curves = hh.filing_status == "MFJ"
+    # IRMAA 2-year lookback: income realized in `year` is judged against the
+    # thresholds published for, and paid in, year + 2. ACA (below) stays on `year`
+    # because it is a same-year effect.
+    _irmaa_year = year + 2
     if _is_mfj_curves:
-        on_medicare = sum(1 for a in (hh.your_age_in(year), hh.spouse_age_in(year)) if a >= 65)
+        on_medicare = sum(
+            1 for a in (hh.your_age_in(_irmaa_year), hh.spouse_age_in(_irmaa_year)) if a >= 65
+        )
     else:
-        on_medicare = 1 if hh.your_age_in(year) >= 65 else 0
+        on_medicare = 1 if hh.your_age_in(_irmaa_year) >= 65 else 0
     base_irmaa = irmaa_surcharge(
         base_magi,
         num_people=on_medicare,
         base_part_b=hh.medicare_part_b_base_monthly * 12,
         filing_status=hh.filing_status,
-        year=year,
+        year=_irmaa_year,
         cpi=cpi,
     )
     base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
@@ -162,11 +168,13 @@ def compute_cost_curves(
             num_people=on_medicare,
             base_part_b=hh.medicare_part_b_base_monthly * 12,
             filing_status=hh.filing_status,
-            year=year,
+            year=_irmaa_year,
             cpi=cpi,
         )
         irmaa_vals.append(surcharge)
-        irmaa_tier_vals.append(irmaa_tier(magi, filing_status=hh.filing_status, year=year, cpi=cpi))
+        irmaa_tier_vals.append(
+            irmaa_tier(magi, filing_status=hh.filing_status, year=_irmaa_year, cpi=cpi)
+        )
 
         # NIIT
         niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
