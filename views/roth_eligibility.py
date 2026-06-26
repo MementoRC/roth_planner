@@ -339,7 +339,7 @@ def render(hh: Household):
         remaining = max(0, limit - trad_contrib)
 
         st.write(
-            f"**IRA contribution limit**: {fmt_dollars(limit)} ({'includes $1,100 catch-up' if age >= 50 else 'under 50'})"
+            f"**IRA contribution limit**: {fmt_dollars(limit)} ({f'includes {fmt_dollars(_catchup_50)} catch-up' if age >= 50 else 'under 50'})"
         )
         if trad_contrib > 0:
             st.write(

@@ -392,7 +392,7 @@ def render_parameters_tab(hh: Household) -> None:
         )
         st.session_state.your_rmd_start_age = st.number_input(
             "Your RMD start age",
-            min_value=72,
+            min_value=73,
             max_value=75,
             value=st.session_state.get("your_rmd_start_age", 75),
             step=1,
@@ -469,7 +469,7 @@ def render_parameters_tab(hh: Household) -> None:
         )
         st.session_state.spouse_rmd_start_age = st.number_input(
             "Spouse RMD start age",
-            min_value=72,
+            min_value=73,
             max_value=75,
             value=st.session_state.get("spouse_rmd_start_age", 75),
             step=1,

@@ -124,12 +124,12 @@ def render(hh: Household):
 
     with c1:
         st.metric(
-            "IRA at 75 (No Conv)",
+            f"IRA at {hh.your_rmd_start_age} (No Conv)",
             fmt_dollars_short(yr75_nc.your_ira_begin + yr75_nc.spouse_ira_begin, decimals=2),
         )
     with c2:
         st.metric(
-            "IRA at 75 (With Conv)",
+            f"IRA at {hh.your_rmd_start_age} (With Conv)",
             fmt_dollars_short(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin, decimals=2),
             fmt_dollars_short(
                 yr75_wc.your_ira_begin
@@ -143,7 +143,7 @@ def render(hh: Household):
         total_rmd_nc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_nc)
         total_rmd_wc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_wc)
         st.metric(
-            "Total RMDs (75-95)",
+            f"Total RMDs ({hh.your_rmd_start_age}-95)",
             fmt_dollars_short(total_rmd_nc),
             f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct((total_rmd_wc - total_rmd_nc) / total_rmd_nc, 0, sign=True)})",
         )

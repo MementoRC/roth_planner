@@ -84,7 +84,7 @@ def render(hh: Household):
     with col3:
         tax_saved = no_conv.total_rmd_tax - with_conv.total_rmd_tax
         st.metric(
-            "RMD Tax Saved (75-95)",
+            f"RMD Tax Saved ({hh.your_rmd_start_age}-95)",
             fmt_dollars(tax_saved),
             f"{fmt_dollars(no_conv.total_rmd_tax)} → {fmt_dollars(with_conv.total_rmd_tax)}",
         )

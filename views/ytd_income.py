@@ -377,8 +377,8 @@ def render(hh: Household):
     t4.metric("Total federal", fmt_dollars(estimate.total))
     st.caption(
         "Estimate assumes today were Dec 31 (current YTD income only — not annualized). "
-        "Excludes state tax, IRMAA premium impact, and quarterly underpayment penalties. "
-        "MFJ standard deduction NOT applied — figures represent gross liability before deductions."
+        "Standard deduction and OBBBA senior bonus are applied. "
+        "Excludes state tax, IRMAA, and quarterly underpayment penalties."
     )
 
     # --- Section D: Mid-Year Safe-Harbor Payment ---
