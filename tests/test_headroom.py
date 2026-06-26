@@ -505,3 +505,53 @@ class TestHeadroomSSMAGIFixes:
 
         # IRMAA room must be positive (threshold ~$212K indexed, locked_magi ~$135K)
         assert hr.room_to_irmaa_t1 > 0
+
+    def test_irmaa_tier_current_uses_payment_year_indexing(self):
+        """compute_headroom indexes irmaa_tier_current to payment year (_year + 2).
+
+        Setup: base_year=2030, cpi_assumption=0.025, ages 55/55 (no SS → locked_magi = magi_ytd).
+
+        MFJ tier-1 base $218k indexed to:
+          income year 2030 → 218_000 * (1.025)^4 ≈ $240,631
+          payment year 2032 → 218_000 * (1.025)^6 ≈ $252,813
+
+        locked_magi = $246,000 sits between the two thresholds.
+
+        Discriminator: income-year indexing gives tier 1; payment-year gives tier 0.
+        The fixed engine must produce tier 0 (payment-year) for irmaa_tier_current.
+        """
+        from engine.headroom import compute_headroom
+        from engine.irmaa import irmaa_tier
+        from models.ytd_income import YTDSnapshot
+
+        # Ages 55: no SS (start age defaults to 70) → locked_tss = 0 → locked_magi = magi_ytd
+        hh = Household(your_age=55, spouse_age=55, base_year=2030, cpi_assumption=0.025)
+        # _year = hh.base_year = 2030; _cpi = hh.cpi_assumption = 0.025
+        _year = hh.base_year
+        _cpi = hh.cpi_assumption
+
+        magi_target = 246_000
+        ytd = YTDSnapshot(tax_year=2030, ltcg_ytd=magi_target)
+
+        hr = compute_headroom(hh, ytd)
+
+        # Sanity: locked_magi really is at the target (zero SS)
+        assert abs(hr.locked_magi - magi_target) < 1.0, (
+            f"Expected locked_magi ≈ {magi_target}, got {hr.locked_magi}"
+        )
+
+        # Discriminator: the two indexing conventions must disagree at this MAGI.
+        tier_income_year = irmaa_tier(hr.locked_magi, filing_status=hh.filing_status, year=_year, cpi=_cpi)
+        tier_payment_year = irmaa_tier(hr.locked_magi, filing_status=hh.filing_status, year=_year + 2, cpi=_cpi)
+        assert tier_income_year != tier_payment_year, (
+            f"Discriminator failed: both conventions give tier {tier_income_year} at MAGI={hr.locked_magi}. "
+            "Choose a different magi_target that sits between the income-year and payment-year thresholds."
+        )
+
+        # Primary assertion: headroom uses payment-year indexing
+        assert hr.irmaa_tier_current == tier_payment_year, (
+            f"Expected payment-year tier {tier_payment_year}, got {hr.irmaa_tier_current}"
+        )
+        assert hr.irmaa_tier_current != tier_income_year, (
+            "irmaa_tier_current must NOT equal income-year tier (that is the old broken behavior)"
+        )
