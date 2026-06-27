@@ -35,6 +35,8 @@ class AssetLocationYear:
     # End of year
     ira_total_end: float = 0.0
     roth_total_end: float = 0.0
+    your_ira_end: float = 0.0
+    spouse_ira_end: float = 0.0
 
     # IRA blended growth rate (weighted)
     ira_growth_rate: float = 0.0
@@ -112,16 +114,23 @@ def project_asset_location(
             yr.ira_growth_rate = 0.0
 
         # RMD computed per-owner: each spouse only owes RMDs on their own IRA
-        # once they reach their own required-beginning-date age.
-        rmd = calc_rmd(
-            your_ira_bal, ya, hh.your_rmd_start_age,
+        # once they reach their own required-beginning-date age. Kept separate so
+        # each owner's balance is drained by their OWN RMD below.
+        your_rmd = calc_rmd(
+            your_ira_bal,
+            ya,
+            hh.your_rmd_start_age,
             first_year_deferred=hh.your_defer_first_rmd,
             prior_year_balance=prev_your_ira_bal,
-        ) + calc_rmd(
-            spouse_ira_bal, sa, hh.spouse_rmd_start_age,
+        )
+        spouse_rmd = calc_rmd(
+            spouse_ira_bal,
+            sa,
+            hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira_bal,
         )
+        rmd = your_rmd + spouse_rmd
         yr.rmd = rmd
 
         # Conversion: capped to post-RMD balance so RMD priority is enforced
@@ -150,17 +159,28 @@ def project_asset_location(
         ira_eq *= 1 + equity_return
         ira_bd *= 1 + bond_return
 
-        # Update per-owner balances to mirror the combined pool trajectory.
-        # Withdrawals (RMD + conversion) and growth are applied proportionally
-        # by ownership share so that next year's per-owner RMD is correct.
+        # Update per-owner balances by draining each owner's OWN withdrawals, then
+        # applying the pool's realized growth so the two owners still sum to the
+        # combined pool. RMDs are per-owner; conversions are household-level so are
+        # attributed proportionally to each owner's beginning balance. (The old code
+        # split the whole pool by ownership share, which wrongly drained the
+        # non-RMD-age spouse and corrupted future per-owner RMDs.)
         combined_after = ira_eq + ira_bd
-        prior_total = your_ira_bal + spouse_ira_bal
+        prior_total = cur_your_begin + cur_spouse_begin
         if prior_total > 0:
-            your_ira_bal = combined_after * (your_ira_bal / prior_total)
-            spouse_ira_bal = combined_after * (spouse_ira_bal / prior_total)
+            your_conv = conv * (cur_your_begin / prior_total)
+            spouse_conv = conv * (cur_spouse_begin / prior_total)
+            your_post = max(cur_your_begin - your_rmd - your_conv, 0.0)
+            spouse_post = max(cur_spouse_begin - spouse_rmd - spouse_conv, 0.0)
+            pool_post = your_post + spouse_post
+            realized_growth = combined_after / pool_post if pool_post > 0 else 0.0
+            your_ira_bal = your_post * realized_growth
+            spouse_ira_bal = spouse_post * realized_growth
         else:
             your_ira_bal = 0.0
             spouse_ira_bal = 0.0
+        yr.your_ira_end = your_ira_bal
+        yr.spouse_ira_end = spouse_ira_bal
 
         # Update Roth (conversions flow in, then grow)
         roth_eq = (roth_eq + conv_eq) * (1 + equity_return)
