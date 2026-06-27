@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.ira import RMD_DIVISORS
-from engine.irmaa import IRMAA_TIERS_MFJ
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario import ConversionPlan, run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compute import QCD_MIN_AGE
@@ -477,12 +477,19 @@ def render(hh: Household):
     # --- Squeeze explanation ---
     st.markdown("---")
     st.markdown("### The RMD Squeeze Explained")
+    _irmaa_tiers = IRMAA_TIERS_MFJ if _is_mfj else IRMAA_TIERS_SINGLE
+    # IRMAA surcharges are assessed per Medicare beneficiary: 2026 Tier-1 is
+    # ~$1,150/yr per person (Part B $974.40 + Part D $174.00); a two-beneficiary
+    # household pays ~$2,300/yr.
+    _irmaa_surcharge_note = (
+        "~$2,300/yr for a couple" if _is_mfj else "~$1,150/yr individually"
+    )
     st.markdown(f"""
 - **The problem**: At 75, you *must* take distributions from your IRA — the IRS sets the amount
 - **Divisor shrinks**: At 75 you withdraw ~4.1%, by 85 it's ~6.3%, by 95 it's ~11.2%
 - **Growth amplifies**: If your IRA grew from $1.7M to $4.4M untouched, RMDs are huge
 - **Bracket escalation**: Large RMDs + SS push you from 12% into 22-24% brackets
-- **IRMAA trigger**: MAGI over ${IRMAA_TIERS_MFJ[0][0] / 1000:.0f}K means Medicare surcharges (~$2,300/yr for couple at Tier 1)
+- **IRMAA trigger**: MAGI over ${_irmaa_tiers[0][0] / 1000:.0f}K means Medicare surcharges ({_irmaa_surcharge_note} at Tier 1)
 - **Brokerage overflow**: RMDs exceeding living expenses create taxable investment accounts
 - **The fix**: Converting during low-income years (ages 61-74) shrinks the IRA *before* RMDs start
 - **QCD option**: At 70½+, donating up to ${hh.qcd_limit / 1000:.0f}K/yr directly from IRA to charity bypasses taxation
