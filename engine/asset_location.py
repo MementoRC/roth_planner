@@ -139,11 +139,6 @@ def project_asset_location(
         yr.conversion = conv
         total_conv += conv
 
-        # Allocate conversion by strategy
-        conv_eq, conv_bd = _allocate_conversion(conv, ira_eq, ira_bd, strategy)
-        yr.conv_equity = conv_eq
-        yr.conv_bond = conv_bd
-
         # RMD is always proportional to current allocation
         if ira_total > 0:
             rmd_eq = rmd * (ira_eq / ira_total)
@@ -151,9 +146,19 @@ def project_asset_location(
         else:
             rmd_eq = rmd_bd = 0.0
 
+        # Draw the mandatory RMD from each sleeve FIRST (RMDs have statutory
+        # priority — IRC §401(a)(9)), then allocate the conversion against the
+        # POST-RMD sleeve balances. This prevents a sleeve-first strategy from
+        # exhausting a sleeve and silently flooring away part of the RMD.
+        eq_after_rmd = max(ira_eq - rmd_eq, 0.0)
+        bd_after_rmd = max(ira_bd - rmd_bd, 0.0)
+        conv_eq, conv_bd = _allocate_conversion(conv, eq_after_rmd, bd_after_rmd, strategy)
+        yr.conv_equity = conv_eq
+        yr.conv_bond = conv_bd
+
         # Update IRA after withdrawals
-        ira_eq = max(ira_eq - conv_eq - rmd_eq, 0)
-        ira_bd = max(ira_bd - conv_bd - rmd_bd, 0)
+        ira_eq = max(eq_after_rmd - conv_eq, 0.0)
+        ira_bd = max(bd_after_rmd - conv_bd, 0.0)
 
         # Grow IRA
         ira_eq *= 1 + equity_return

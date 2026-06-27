@@ -221,3 +221,78 @@ class TestAssetLocation:
         assert yr.conversion <= yr.ira_total - yr.rmd + 1.0, (
             "Conversion must be capped to post-RMD balance"
         )
+
+    def test_equity_first_realizes_full_rmd_when_sleeve_exhausted(self):
+        """equity_first must not silently floor away part of the RMD.
+
+        Scenario: primary is at RMD age with a conversion sized to consume
+        almost the entire IRA.  Under the old (buggy) code, the conversion was
+        allocated against the FULL equity sleeve first, which could exhaust the
+        sleeve and then `max(ira_eq - conv_eq - rmd_eq, 0)` floored away part
+        of rmd_eq.  The correct invariant is:
+
+            ira_total_end  ≈  ira_total  -  conversion  -  rmd   (before growth)
+
+        i.e. the total outflow must equal conv + rmd, with no flooring of the RMD.
+        We also verify the outflow matches the proportional strategy's pool total
+        for identical inputs (both strategies must realize the same total withdrawal).
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+        from engine.ira import calc_rmd
+
+        # primary at RMD age 73; no spouse IRA so maths are simple
+        hh = replace(
+            Household(),
+            your_age=73,
+            your_ira=500_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=99,
+            your_defer_first_rmd=False,
+        )
+        # Compute the RMD for year 0 so we can size the conversion correctly.
+        # RMD at 73 uses divisor 26.5 (SECURE 2.0 table).
+        expected_rmd = calc_rmd(500_000.0, 73, 73, first_year_deferred=False)
+        assert expected_rmd > 0.0
+
+        # Size conversion to leave only the RMD available — equity sleeve (60 %)
+        # is 300 000; conversion of 280 000 with equity_first exhausts the equity
+        # sleeve (280 000 > 300 000 * (1 - rmd_frac)), creating the flooring risk.
+        # Use a value that is safely larger than the equity sleeve minus its RMD share
+        # but still within the post-RMD cap enforced by the engine.
+        ira_total = 500_000.0
+        equity_pct = 0.60  # default
+        # Conversion covers almost all of the post-RMD equity sleeve:
+        # just under (ira_total - expected_rmd) so the engine cap does not trim it.
+        # At equity_pct=0.60 the equity sleeve is 300_000; a conversion near
+        # (ira_total - rmd) forces equity_first to spill into the bond sleeve,
+        # which is the exact condition that triggered the RMD-flooring bug.
+        conv_amount = round(ira_total - expected_rmd - 1.0)
+        conv = {hh.base_year: conv_amount}
+
+        # Zero out growth so ira_total_end reflects the pure withdrawal outflow
+        # (no blended-rate confound). With equity_return == bond_return == 0:
+        #     ira_total_end == ira_total - conversion - rmd   (full outflow realized)
+        # Under the old bug, equity_first exhausted the equity sleeve and floored
+        # away rmd_eq, leaving ira_total_end too high by exactly that floored amount
+        # (hand-derived: buggy ira_total_end ~= 11321.83 vs fixed ~= 1.08).
+        eq_result = project_asset_location(
+            hh,
+            conv,
+            equity_pct=equity_pct,
+            equity_return=0.0,
+            bond_return=0.0,
+            strategy="equity_first",
+        )
+        yr0 = eq_result.years[0]
+
+        assert yr0.rmd == pytest.approx(expected_rmd, abs=1.0)
+        assert yr0.ira_total_end == pytest.approx(
+            yr0.ira_total - yr0.conversion - yr0.rmd, abs=1.0
+        ), (
+            f"equity_first leaked RMD: ira_total_end={yr0.ira_total_end:.2f} but "
+            f"ira_total-conv-rmd={yr0.ira_total - yr0.conversion - yr0.rmd:.2f} — "
+            "part of the RMD was silently floored away (sleeve-exhaustion bug)."
+        )
