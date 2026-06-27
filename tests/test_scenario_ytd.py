@@ -571,17 +571,17 @@ class TestScenarioWithYTD:
         # $400K brokerage + large income pushes MAGI above $250K NIIT threshold so
         # niit_cost is meaningful (not trivially zero) and variance would be detectable.
         # Two households differ ONLY in brok_turnover (30% vs 0%).
-        common_kwargs = dict(
-            your_age=61,
-            spouse_age=55,
-            base_year=2026,
-            your_ira=500_000.0,
-            spouse_ira=500_000.0,
-            brokerage_start=400_000.0,
-            your_ss_fra=2_500.0,
-            your_ss_start_age=67,
-            grants=[],
-        )
+        common_kwargs = {
+            "your_age": 61,
+            "spouse_age": 55,
+            "base_year": 2026,
+            "your_ira": 500_000.0,
+            "spouse_ira": 500_000.0,
+            "brokerage_start": 400_000.0,
+            "your_ss_fra": 2_500.0,
+            "your_ss_start_age": 67,
+            "grants": [],
+        }
         hh_high = Household(**common_kwargs, brok_turnover=0.30)
         hh_zero = Household(**common_kwargs, brok_turnover=0.0)
 
