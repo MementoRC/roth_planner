@@ -496,19 +496,21 @@ def render(hh: Household):
             f"This means 2-year lookback will affect **{hh.base_year + 2} Medicare premiums**."
         )
 
-        # Show surcharge amounts
+        # IRMAA 2-year lookback: the surcharge shown is what will be charged in
+        # base_year + 2 Medicare premiums, so index the MAGI thresholds to the
+        # payment year (base_year + 2), not the income year.
         surcharge_1p = irmaa_surcharge(
             headroom.projected_magi_base,
             1,
             filing_status=hh.filing_status,
-            year=hh.base_year,
+            year=hh.base_year + 2,
             cpi=hh.cpi_assumption,
         )
         surcharge_2p = irmaa_surcharge(
             headroom.projected_magi_base,
             2,
             filing_status=hh.filing_status,
-            year=hh.base_year,
+            year=hh.base_year + 2,
             cpi=hh.cpi_assumption,
         )
 

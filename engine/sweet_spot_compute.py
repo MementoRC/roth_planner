@@ -216,10 +216,15 @@ def all_in_at_conversion(
 
     conv_tax = tax - base_tax
 
-    # IRMAA (2-year lookback)
-    irmaa_cost, _ = irmaa_for_year(magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi)
+    # IRMAA (2-year lookback): irmaa_for_year indexes thresholds to the PAYMENT
+    # year (income_year + 2). ya/sa stay income-year ages — irmaa_for_year adds 2
+    # internally for the Medicare-eligibility gate. Matches the yr + 2 already used
+    # in compute_multi_year_summary.
+    irmaa_cost, _ = irmaa_for_year(
+        magi, ya, sa, filing_status=hh.filing_status, year=year + 2, cpi=cpi
+    )
     base_irmaa, _ = irmaa_for_year(
-        base.base_magi, ya, sa, filing_status=hh.filing_status, year=year, cpi=cpi
+        base.base_magi, ya, sa, filing_status=hh.filing_status, year=year + 2, cpi=cpi
     )
     irmaa_delta = irmaa_cost - base_irmaa
 

@@ -3,7 +3,7 @@
 import pytest
 
 from engine.aca import aca_subsidy_loss
-from engine.irmaa import IRMAA_TIERS_MFJ, _index_irmaa_tiers
+from engine.irmaa import IRMAA_TIERS_MFJ, _index_irmaa_tiers, irmaa_for_year
 from engine.sweet_spot_compute import (
     BaseIncome,
     all_in_at_conversion,
@@ -194,4 +194,95 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
             f"irmaa_safe={row2026.irmaa_safe} does not match payment-year threshold "
             f"({payment_year_t1:.0f} - {base_magi:.0f} = {expected_irmaa_safe}); "
             f"income-year buggy value would be {buggy_irmaa_safe}"
+        )
+
+
+class TestAllInAtConversionIrmaaPaymentYear:
+    """Regression: all_in_at_conversion must index IRMAA thresholds to the
+    PAYMENT year (income_year + 2), not the income year.
+
+    MFJ Tier-1 base = $218,000; cpi = 2.5%:
+      indexed to income year 2030 = 218_000 * 1.025^4 ≈ $240,631
+      indexed to payment year 2032 = 218_000 * 1.025^6 ≈ $252,813
+
+    MAGI = $246,000 sits between the two thresholds:
+      - income-year indexing  → tier 1 triggered → positive surcharge  (WRONG)
+      - payment-year indexing → tier 0            → no surcharge        (CORRECT)
+    """
+
+    def _make_household(self) -> Household:
+        # your_age=59 in base_year=2026:
+        #   income year 2030 → age 63 (not yet on Medicare)
+        #   irmaa_for_year adds +2 internally → Medicare age 65 ✓
+        # No SS (both claim at 70, age 63 < 70), no option income → base_magi ≈ 0.
+        return Household(
+            your_age=59,
+            spouse_age=59,
+            base_year=2026,
+            cpi_assumption=0.025,
+            ss_cola=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+        )
+
+    def test_all_in_irmaa_uses_payment_year_thresholds(self) -> None:
+        hh = self._make_household()
+        income_year = 2030
+        cpi = hh.cpi_assumption
+
+        b = base_income_for_year(hh, income_year)
+        ya, sa = b.ya, b.sa  # income-year ages (63/63)
+
+        # Discriminator sanity: verify the two conventions genuinely disagree.
+        # irmaa_for_year adds +2 internally for Medicare eligibility gate;
+        # the year= param controls MAGI threshold indexing only.
+        income_yr_surcharge, _ = irmaa_for_year(
+            246_000, ya, sa, filing_status="MFJ", year=income_year, cpi=cpi
+        )
+        payment_yr_surcharge, _ = irmaa_for_year(
+            246_000, ya, sa, filing_status="MFJ", year=income_year + 2, cpi=cpi
+        )
+        assert income_yr_surcharge > 0, (
+            "precondition: income-year indexing must trigger tier-1 at MAGI=246_000"
+        )
+        assert payment_yr_surcharge == 0.0, (
+            "precondition: payment-year indexing must produce no surcharge at MAGI=246_000"
+        )
+
+        # base_magi must be well below both thresholds so base_irmaa == 0
+        # under both conventions (isolates the conversion-MAGI effect).
+        assert b.base_magi < 218_000, (
+            f"base_magi={b.base_magi} must be below MFJ tier-1 base so base_irmaa==0"
+        )
+
+        # conv chosen so result.magi ≈ 246_000 (sits in the disagreement window).
+        # magi = opt + tss + ytd_magi + conv; with base_magi ≈ 0, conv ≈ 246_000.
+        conv = 246_000.0 - b.base_magi
+        result = all_in_at_conversion(hh, b, conv, net_inv_income=0.0)
+
+        # Confirm magi is in the discriminator window.
+        threshold_income = 218_000 * (1 + cpi) ** 4  # ~240_631
+        threshold_payment = 218_000 * (1 + cpi) ** 6  # ~252_813
+        assert threshold_income < result.magi < threshold_payment, (
+            f"result.magi={result.magi:.0f} must sit between income-year threshold "
+            f"({threshold_income:.0f}) and payment-year threshold ({threshold_payment:.0f})"
+        )
+
+        # PRIMARY ASSERTION: payment-year indexing → no IRMAA surcharge above base.
+        # base_irmaa == 0 (base_magi << tier-1), payment-year conv_irmaa == 0
+        # → irmaa_delta == 0.0.
+        assert result.irmaa_delta == pytest.approx(0.0), (
+            f"irmaa_delta={result.irmaa_delta} must be 0.0 under payment-year indexing; "
+            f"income-year (bug) would produce {income_yr_surcharge:.0f}"
+        )
+
+        # EQUIVALENCE ASSERTION: result matches direct recompute with payment-year args.
+        expected_irmaa, _ = irmaa_for_year(
+            result.magi, ya, sa, filing_status="MFJ", year=income_year + 2, cpi=cpi
+        )
+        base_irmaa_direct, _ = irmaa_for_year(
+            b.base_magi, ya, sa, filing_status="MFJ", year=income_year + 2, cpi=cpi
+        )
+        assert result.irmaa_delta == pytest.approx(expected_irmaa - base_irmaa_direct), (
+            "irmaa_delta must equal direct recompute with year=income_year+2"
         )
