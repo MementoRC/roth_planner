@@ -22,12 +22,36 @@ up changes to the override file.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 from importlib import util
 from pathlib import Path
 
 from .defaults import DEFAULTS
+
+_log = logging.getLogger(__name__)
+
+
+def _warn_if_insecure_permissions(path: Path) -> None:
+    """Warn (do not modify) if *path* is group/world-accessible.
+
+    ``.user_defaults.json`` may hold financial PII but is user-created — the app
+    reads it without owning it, so it cannot safely chmod it. Surface a startup
+    warning so the user can tighten the mode themselves.
+    """
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return
+    if mode & 0o077:
+        _log.warning(
+            "%s is group/world-accessible (mode %#o); it may contain financial "
+            "data. Restrict it with: chmod 600 %s",
+            path,
+            mode & 0o777,
+            path,
+        )
 
 
 def _load_overrides_from_py(path: Path) -> dict:
@@ -74,6 +98,7 @@ def load_defaults() -> dict:
     # 2. .user_defaults.json (preferred local file)
     json_path = Path(".user_defaults.json")
     if json_path.exists():
+        _warn_if_insecure_permissions(json_path)
         overrides = dict(_load_overrides_from_json(json_path))
         if overrides:
             return {**DEFAULTS, **overrides}

@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     pass
@@ -14,6 +15,22 @@ _log = logging.getLogger(__name__)
 
 
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
+
+
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _token_transport_is_safe(base_url: str) -> bool:
+    """True if a bearer token may be sent to *base_url* without plaintext exposure.
+
+    Safe when the target host is loopback (any scheme) or the scheme is HTTPS.
+    A non-local HTTP endpoint would transmit the token in cleartext, so it is
+    treated as unsafe and the Authorization header is omitted by the caller.
+    """
+    parsed = urlparse(base_url)
+    if parsed.hostname in _LOCAL_HOSTS:
+        return True
+    return parsed.scheme == "https"
 
 
 def _load_token() -> str:
@@ -39,7 +56,15 @@ def _headers() -> dict[str, str]:
     h = {"Accept": "application/json"}
     tok = _load_token()
     if tok:
-        h["Authorization"] = f"Bearer {tok}"
+        if _token_transport_is_safe(BASE_URL):
+            h["Authorization"] = f"Bearer {tok}"
+        else:
+            _log.warning(
+                "Refusing to attach FinExtract bearer token: %s is neither a "
+                "loopback host nor HTTPS, so the token would be sent in cleartext. "
+                "Authorization header omitted. Use https:// or a loopback host.",
+                BASE_URL,
+            )
     return h
 
 
