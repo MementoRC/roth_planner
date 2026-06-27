@@ -178,7 +178,9 @@ class TestAssetLocation:
         yr_next_def = next(y for y in res_def.years if y.your_age == 74)
 
         # No-defer: first RMD year has positive RMD
-        assert yr_start_no.rmd > 0.0, f"Expected positive RMD at 73 (no defer), got {yr_start_no.rmd}"
+        assert yr_start_no.rmd > 0.0, (
+            f"Expected positive RMD at 73 (no defer), got {yr_start_no.rmd}"
+        )
         # Defer: first RMD year is zero
         assert yr_start_def.rmd == pytest.approx(0.0, abs=0.01), (
             f"Expected zero RMD at 73 (deferred), got {yr_start_def.rmd}"

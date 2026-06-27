@@ -541,8 +541,12 @@ class TestHeadroomSSMAGIFixes:
         )
 
         # Discriminator: the two indexing conventions must disagree at this MAGI.
-        tier_income_year = irmaa_tier(hr.locked_magi, filing_status=hh.filing_status, year=_year, cpi=_cpi)
-        tier_payment_year = irmaa_tier(hr.locked_magi, filing_status=hh.filing_status, year=_year + 2, cpi=_cpi)
+        tier_income_year = irmaa_tier(
+            hr.locked_magi, filing_status=hh.filing_status, year=_year, cpi=_cpi
+        )
+        tier_payment_year = irmaa_tier(
+            hr.locked_magi, filing_status=hh.filing_status, year=_year + 2, cpi=_cpi
+        )
         assert tier_income_year != tier_payment_year, (
             f"Discriminator failed: both conventions give tier {tier_income_year} at MAGI={hr.locked_magi}. "
             "Choose a different magi_target that sits between the income-year and payment-year thresholds."

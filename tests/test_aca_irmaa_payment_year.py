@@ -41,9 +41,7 @@ def test_cost_curve_irmaa_tier_uses_payment_year_thresholds():
     assert cc.irmaa_tier_vals[0] == 0, (
         "cost curve must index IRMAA tiers to payment year (income+2)"
     )
-    assert cc.irmaa_vals[0] == 0.0, (
-        "no surcharge below the payment-year tier-1 threshold"
-    )
+    assert cc.irmaa_vals[0] == 0.0, "no surcharge below the payment-year tier-1 threshold"
 
 
 def test_cost_curve_medicare_gate_uses_payment_year_age():
@@ -69,6 +67,4 @@ def test_cost_curve_medicare_gate_uses_payment_year_age():
         year=income_year,
         cpi=cpi,
     )
-    assert cc.irmaa_vals[0] > 0.0, (
-        "payment-year age >=65 must trigger IRMAA on this year's MAGI"
-    )
+    assert cc.irmaa_vals[0] > 0.0, "payment-year age >=65 must trigger IRMAA on this year's MAGI"
