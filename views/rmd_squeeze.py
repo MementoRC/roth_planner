@@ -20,6 +20,7 @@ from engine.ira import RMD_DIVISORS
 from engine.irmaa import IRMAA_TIERS_MFJ
 from engine.scenario import ConversionPlan, run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
+from engine.scenario_compute import QCD_MIN_AGE
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
@@ -77,12 +78,12 @@ def render(hh: Household):
         your_qcd_years = {
             yr: qcd_annual
             for yr in range(hh.base_year, hh.base_year + 35)
-            if hh.your_age_in(yr) >= hh.your_rmd_start_age
+            if hh.your_age_in(yr) >= QCD_MIN_AGE
         }
         spouse_qcd_years = {
             yr: spouse_qcd_annual
             for yr in range(hh.base_year, hh.base_year + 35)
-            if hh.spouse_age_in(yr) >= hh.spouse_rmd_start_age
+            if hh.spouse_age_in(yr) >= QCD_MIN_AGE
         }
         qcd_plan = ConversionPlan(
             your_conversions=dict(plan_12.your_conversions),

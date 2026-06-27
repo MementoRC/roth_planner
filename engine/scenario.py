@@ -530,7 +530,7 @@ def run_scenario(
         years_from_base = yr_idx
         yr.living_expenses = hh.living_expenses * (1 + hh.expense_inflation) ** years_from_base
 
-        after_tax_rmd = (yr.your_rmd - yr.qcd) + yr.spouse_taxable_rmd  # taxable RMDs (net of QCDs)
+        after_tax_rmd = yr.taxable_rmd + yr.spouse_taxable_rmd  # taxable RMDs (net of QCDs)
         available_income = (
             after_tax_rmd
             + yr.extra_withdrawal
@@ -575,8 +575,13 @@ def run_scenario(
         )
 
         # === IRA end of year ===
-        your_withdrawal = yr.your_conversion + yr.your_rmd + yr.extra_withdrawal
-        spouse_withdrawal = yr.spouse_conversion + yr.spouse_rmd + yr.spouse_extra_withdrawal
+        # QCD distributions leave the IRA: a QCD exceeding the RMD pulls an extra
+        # income-excluded distribution (max(rmd, qcd)), shrinking future RMDs. The
+        # excess goes to charity, so it is NOT reinvested (excess_rmd uses taxable_rmd).
+        your_withdrawal = yr.your_conversion + max(yr.your_rmd, yr.qcd) + yr.extra_withdrawal
+        spouse_withdrawal = (
+            yr.spouse_conversion + max(yr.spouse_rmd, yr.spouse_qcd) + yr.spouse_extra_withdrawal
+        )
 
         yr.your_ira_end = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
         yr.spouse_ira_end = max(spouse_ira - spouse_withdrawal, 0) * (1 + hh.spouse_ira_rate(year))
