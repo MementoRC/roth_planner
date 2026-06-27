@@ -23,6 +23,10 @@ from engine.tax_indexing import index_value as _index_value
 from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
 
+# QCD eligibility begins at age 70½ (IRC §408(d)(8)(B)) — independent of the RMD
+# beginning age. Whole-age arithmetic: 70½ rounds to 70.
+QCD_MIN_AGE = 70
+
 # ---------------------------------------------------------------------------
 # Block 1 — Phase classification
 # ---------------------------------------------------------------------------
@@ -151,8 +155,8 @@ def compute_rmds(
         first_year_deferred=your_defer_first_rmd,
         prior_year_balance=your_prior_year_balance,
     )
-    qcd = min(your_qcd_planned, your_rmd, qcd_limit)
-    taxable_rmd = max(your_rmd - qcd, 0)
+    qcd = min(your_qcd_planned, qcd_limit) if ya >= QCD_MIN_AGE else 0.0
+    taxable_rmd = max(your_rmd - min(qcd, your_rmd), 0)
     spouse_rmd = calc_rmd(
         spouse_ira,
         sa,
@@ -160,8 +164,8 @@ def compute_rmds(
         first_year_deferred=spouse_defer_first_rmd,
         prior_year_balance=spouse_prior_year_balance,
     )
-    spouse_qcd = min(spouse_qcd_planned, spouse_rmd, qcd_limit)
-    spouse_taxable_rmd = max(spouse_rmd - spouse_qcd, 0)
+    spouse_qcd = min(spouse_qcd_planned, qcd_limit) if sa >= QCD_MIN_AGE else 0.0
+    spouse_taxable_rmd = max(spouse_rmd - min(spouse_qcd, spouse_rmd), 0)
     return your_rmd, qcd, taxable_rmd, spouse_rmd, spouse_qcd, spouse_taxable_rmd
 
 
