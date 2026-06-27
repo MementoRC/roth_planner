@@ -108,13 +108,17 @@ def _auto_fill_core(
 
         # RMD
         rmd = calc_rmd(
-            your_ira, ya, hh.your_rmd_start_age,
+            your_ira,
+            ya,
+            hh.your_rmd_start_age,
             first_year_deferred=hh.your_defer_first_rmd,
             prior_year_balance=prev_your_ira,
         )
         taxable_rmd = rmd  # no QCD in auto-fill (QCDs reduce income but not conversion room)
         spouse_taxable_rmd = calc_rmd(
-            spouse_ira, sa, hh.spouse_rmd_start_age,
+            spouse_ira,
+            sa,
+            hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira,
         )  # no spouse QCD in auto-fill
@@ -214,7 +218,9 @@ def _auto_fill_core(
         your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
         spouse_rmd = calc_rmd(
-            spouse_ira, sa, hh.spouse_rmd_start_age,
+            spouse_ira,
+            sa,
+            hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira,
         )
