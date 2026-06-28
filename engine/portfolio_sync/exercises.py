@@ -11,7 +11,7 @@ from models.ytd_income import YTDSnapshot
 if TYPE_CHECKING:
     from models.household import Household
 
-from .client import BASE_URL, _flatten_query_rows, _headers
+from .client import _flatten_query_rows, _get
 from .shapes import OptionExercisesSnapshot, PortfolioSnapshot
 
 
@@ -27,10 +27,9 @@ def fetch_option_exercises() -> OptionExercisesSnapshot:
     (older FinExtract builds that do not honour mode=history).
     """
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/equity_compensation",
+        resp = _get(
+            "/query/equity_compensation",
             params={"data_type": "order_detail_summary", "mode": "history"},
-            headers=_headers(),
             timeout=5,
         )
         if resp.status_code == 404:

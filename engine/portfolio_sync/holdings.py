@@ -12,7 +12,7 @@ import requests  # type: ignore[import-untyped]
 if TYPE_CHECKING:
     pass
 
-from .client import BASE_URL, _flatten_query_rows, _headers
+from .client import _flatten_query_rows, _get
 from .shapes import AccountSummary, Holding, PortfolioSnapshot
 
 
@@ -164,12 +164,7 @@ def positions_for_forecast_multi(accounts: Iterable[AccountSummary]) -> list:
 def fetch_holdings() -> list[dict[str, Any]]:
     """Fetch brokerage holdings from the ingestion server."""
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/brokerage",
-            params={"data_type": "holdings"},
-            headers=_headers(),
-            timeout=5,
-        )
+        resp = _get("/query/brokerage", params={"data_type": "holdings"}, timeout=5)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         return _flatten_query_rows(data)

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import requests  # type: ignore[import-untyped]
+
 if TYPE_CHECKING:
     pass
 
@@ -66,6 +68,36 @@ def _headers() -> dict[str, str]:
                 BASE_URL,
             )
     return h
+
+
+def _get(
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    timeout: float,
+) -> requests.Response:
+    """GET ``BASE_URL + path`` with auth headers and redirects disabled.
+
+    Token-bearing FinExtract requests must never auto-follow a 3xx to an
+    attacker-controlled ``Location`` (audit H2). ``allow_redirects=False`` plus an
+    explicit 3xx->error guard keeps the redirect policy and :func:`_headers` from
+    drifting apart across call sites. Raising :class:`requests.HTTPError` (a
+    ``RequestException`` subclass) means existing ``except requests.RequestException``
+    handlers treat an unexpected redirect as a normal transport failure.
+    """
+    resp = requests.get(
+        f"{BASE_URL}{path}",
+        params=params,
+        headers=_headers(),
+        timeout=timeout,
+        allow_redirects=False,
+    )
+    if 300 <= resp.status_code < 400:
+        raise requests.HTTPError(
+            f"Unexpected redirect ({resp.status_code}) from {path}; refusing to follow.",
+            response=resp,
+        )
+    return resp
 
 
 def _flatten_query_rows(data: dict[str, Any]) -> list[dict[str, Any]]:

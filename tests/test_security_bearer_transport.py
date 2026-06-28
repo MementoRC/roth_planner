@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import requests
 
 from engine.portfolio_sync import client as client_module
-from engine.portfolio_sync.client import _headers, _token_transport_is_safe
+from engine.portfolio_sync.client import _get, _headers, _token_transport_is_safe
 
 
 class TestBearerTransportGuard:
@@ -49,6 +52,45 @@ class TestBearerTransportGuard:
         monkeypatch.setattr(client_module, "BASE_URL", "https://example.com")
         headers = _headers()
         assert headers["Authorization"] == "Bearer secret"
+
+
+class TestRedirectHardening:
+    def test_redirect_response_raises_http_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_get() must raise HTTPError on any 3xx — never silently follow."""
+        captured: dict[str, object] = {}
+
+        def fake_get(url: str, **kwargs: object) -> SimpleNamespace:
+            captured.update(kwargs)
+            return SimpleNamespace(status_code=302, headers={"Location": "http://attacker/x"})
+
+        monkeypatch.setattr(client_module.requests, "get", fake_get)
+        with pytest.raises(requests.HTTPError):
+            _get("/status", timeout=3)
+
+    def test_redirect_get_called_with_allow_redirects_false(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """requests.get must be invoked with allow_redirects=False."""
+        captured: dict[str, object] = {}
+
+        def fake_get(url: str, **kwargs: object) -> SimpleNamespace:
+            captured.update(kwargs)
+            return SimpleNamespace(status_code=302, headers={})
+
+        monkeypatch.setattr(client_module.requests, "get", fake_get)
+        with contextlib.suppress(requests.HTTPError):
+            _get("/status", timeout=3)
+        assert captured.get("allow_redirects") is False
+
+    def test_ok_response_returned_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_get() returns the response object untouched on a 200."""
+        fake_resp = SimpleNamespace(status_code=200, text="ok")
+
+        monkeypatch.setattr(
+            client_module.requests, "get", lambda url, **kw: fake_resp
+        )
+        result = _get("/status", timeout=3)
+        assert result is fake_resp
 
 
 class TestUserDefaultsPermissionWarning:

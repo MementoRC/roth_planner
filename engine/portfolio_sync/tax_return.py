@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from engine.secure_io import write_pii_json
 
-from .client import BASE_URL, _flatten_query_rows, _headers
+from .client import _flatten_query_rows, _get
 from .shapes import TaxReturnSnapshot
 
 
@@ -59,7 +59,7 @@ def fetch_tax_return() -> TaxReturnSnapshot:
     snap = TaxReturnSnapshot()
 
     try:
-        resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
+        resp = _get("/status", timeout=3)
         resp.raise_for_status()
         snap.server_available = True
     except requests.RequestException as e:
@@ -69,12 +69,7 @@ def fetch_tax_return() -> TaxReturnSnapshot:
     # Fetch income rows
     income_rows: list[dict[str, Any]] = []
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/tax_return",
-            params={"data_type": "income"},
-            headers=_headers(),
-            timeout=5,
-        )
+        resp = _get("/query/tax_return", params={"data_type": "income"}, timeout=5)
         resp.raise_for_status()
         income_rows = _flatten_query_rows(resp.json())
     except (requests.RequestException, ValueError):
@@ -83,12 +78,7 @@ def fetch_tax_return() -> TaxReturnSnapshot:
     # Fetch deduction rows
     deduction_rows: list[dict[str, Any]] = []
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/tax_return",
-            params={"data_type": "deductions"},
-            headers=_headers(),
-            timeout=5,
-        )
+        resp = _get("/query/tax_return", params={"data_type": "deductions"}, timeout=5)
         resp.raise_for_status()
         deduction_rows = _flatten_query_rows(resp.json())
     except (requests.RequestException, ValueError):
