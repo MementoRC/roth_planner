@@ -30,7 +30,7 @@ from engine.tax import (
     deductions,
     senior_bonus_deduction,
 )
-from engine.tax_indexing import index_tuple as _index_tuple
+from engine.tax_indexing import index_tuple as _index_tuple, index_value as _index_value
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
@@ -173,7 +173,8 @@ def run_scenario(
             hh.spouse_rmd_start_age,
             plan.qcds.get(year, 0.0),
             plan.spouse_qcds.get(year, 0.0),
-            hh.qcd_limit,
+            # QCD cap is inflation-indexed forward (SECURE 2.0 §307)
+            _index_value(hh.qcd_limit, year, cpi),
             your_defer_first_rmd=hh.your_defer_first_rmd,
             spouse_defer_first_rmd=hh.spouse_defer_first_rmd,
             your_prior_year_balance=prev_your_ira_begin,
