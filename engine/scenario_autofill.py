@@ -285,7 +285,10 @@ def auto_fill_irmaa_safe(
 
     def _irmaa_room(fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float) -> float:
         # Room to IRMAA threshold (indexed), capped at 22% bracket room
-        irmaa_threshold = _iv(irmaa_base_threshold, yr, cpi)
+        # C3: IRMAA 2-year lookback — index the tier-1 ceiling to the payment year
+        # (yr + 2), matching sweet_spot_compute._index_irmaa_tiers(yr + 2) and
+        # all_in_at_conversion. Income year `yr` under-indexed the ceiling by 2 CPI-years.
+        irmaa_threshold = _iv(irmaa_base_threshold, yr + 2, cpi)
         irmaa_room = max(irmaa_threshold - base_magi, 0.0)
         return min(
             irmaa_room,
