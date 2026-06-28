@@ -4,7 +4,7 @@ Verifies:
 1. QCD is NOT capped at rmd when planned QCD > rmd (pre-fix bug).
 2. QCD is active at age 71 even when rmd_start_age is 73 (no RMD yet).
 3. QCD is zero below QCD_MIN_AGE (age 69).
-4. run_scenario: early QCD (ages 70-72, before rmd_start_age=73) shrinks IRA balance.
+4. run_scenario: early QCD (ages 71-72, before rmd_start_age=73) shrinks IRA balance.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class TestQcdAge70HalfEngine:
         assert your_rmd == pytest.approx(0.0, abs=0.01), (
             f"Expected zero RMD at age 71 (rmd_start=73); got {your_rmd}"
         )
-        # But QCD gate is open (71 >= QCD_MIN_AGE=70)
+        # But QCD gate is open (71 >= QCD_MIN_AGE=71)
         assert qcd == pytest.approx(min(planned_qcd, QCD_LIMIT), abs=0.01), (
             f"QCD should be active at age 71; got {qcd:,.0f}"
         )
@@ -115,7 +115,7 @@ class TestQcdAge70HalfEngine:
     # ------------------------------------------------------------------
 
     def test_qcd_zero_below_min_age(self):
-        """Age 69 (< QCD_MIN_AGE=70) → qcd must be 0 regardless of planned amount."""
+        """Age 69 (< QCD_MIN_AGE=71) → qcd must be 0 regardless of planned amount."""
         ya = 69
         assert ya < QCD_MIN_AGE  # sanity
 
@@ -130,14 +130,39 @@ class TestQcdAge70HalfEngine:
         )
 
     # ------------------------------------------------------------------
-    # 4. run_scenario: early QCD (ages 70-72) shrinks IRA vs no-QCD baseline
+    # 3b. QCD zero AT age 70 — not yet 70½ for the whole year (D1)
+    # ------------------------------------------------------------------
+
+    def test_qcd_zero_at_age_70_not_yet_70half(self):
+        """Age 70 (< QCD_MIN_AGE=71) → qcd must be 0 (D1 regression).
+
+        The engine carries whole-year ages only and cannot represent the
+        mid-year 70½ attainment date, so eligibility opens the first whole
+        year the taxpayer is past 70½ for its entirety — age 71. A taxpayer in
+        the calendar year they turn 70 has not necessarily attained 70½ (Jul–Dec
+        births never do that year), so no exclusion is granted. Pre-fix (gate at
+        70) wrongly granted a full-year QCD here.
+        """
+        your_rmd, qcd, taxable_rmd, *_ = _call_compute_rmds(
+            your_ira=1_000_000.0,
+            ya=70,
+            your_qcd_planned=50_000.0,
+            rmd_start_age=73,
+        )
+        assert qcd == pytest.approx(0.0, abs=0.01), (
+            f"QCD must be 0 at age 70 (< QCD_MIN_AGE={QCD_MIN_AGE}); got {qcd:,.0f}"
+        )
+
+    # ------------------------------------------------------------------
+    # 4. run_scenario: early QCD (ages 71-72) shrinks IRA vs no-QCD baseline
     # ------------------------------------------------------------------
 
     def test_early_qcd_shrinks_ira_before_rmd_start_age(self):
-        """QCD active at 70-72 (pre-RMD) pulls money from IRA → lower end balance.
+        """QCD active at 71-72 (pre-RMD) pulls money from IRA → lower end balance.
 
         Household: your_age=70, rmd_start_age=73 so RMDs begin in year 3.
-        With QCD plan starting year 1, IRA should be smaller than no-QCD run.
+        Age 70 (2026) is gated out (not yet 70½ for the whole year, D1), so only
+        ages 71-72 fire. IRA should still be smaller than the no-QCD run.
         """
         hh = Household(
             your_age=70,
@@ -151,8 +176,9 @@ class TestQcdAge70HalfEngine:
             grants=[],
         )
 
-        # QCD active years 2026-2028 (ages 70-72, before rmd_start_age=73)
-        early_qcd_years = {2026: 50_000.0, 2027: 50_000.0, 2028: 50_000.0}
+        # QCD active years 2027-2028 (ages 71-72, before rmd_start_age=73).
+        # Age 70 (2026) is gated out — not yet 70½ for the whole year (D1).
+        early_qcd_years = {2027: 50_000.0, 2028: 50_000.0}
 
         plan_no_qcd = ConversionPlan()
         plan_with_qcd = ConversionPlan(qcds=early_qcd_years)
@@ -168,10 +194,44 @@ class TestQcdAge70HalfEngine:
             f"IRA at age 73 should be smaller with early QCDs; "
             f"no_qcd={yr73_no.your_ira_end:,.0f} vs with_qcd={yr73_qcd.your_ira_end:,.0f}"
         )
-        # Difference should be roughly 3 × 50K grown for 0-2 years at 7%
-        expected_min_reduction = 3 * 50_000 * 0.9  # conservative (ignoring growth)
+        # Difference should be roughly 2 × 50K grown for 0-1 years at 7%
+        expected_min_reduction = 2 * 50_000 * 0.9  # conservative (ignoring growth)
         actual_reduction = yr73_no.your_ira_end - yr73_qcd.your_ira_end
         assert actual_reduction >= expected_min_reduction, (
             f"IRA reduction ({actual_reduction:,.0f}) smaller than expected "
             f"minimum ({expected_min_reduction:,.0f})"
+        )
+
+
+class TestQcdCapInflationIndexed:
+    """D2: the QCD annual cap is inflation-indexed across the projection
+    (SECURE 2.0 §307), not frozen at the 2026 $111K limit."""
+
+    def test_qcd_cap_indexed_in_out_year(self):
+        """A planned QCD above the 2026 $111K cap but below the indexed out-year
+        cap is fully excluded — proving scenario.py indexes hh.qcd_limit to the
+        projection year instead of passing the flat 2026 value.
+
+        Pre-fix (flat 111K cap) would clip the 130K QCD to 111K.
+        """
+        hh = Household(
+            your_age=65,
+            spouse_age=60,
+            base_year=2026,
+            your_ira=3_000_000.0,
+            spouse_ira=0.0,
+            growth_rate=0.05,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=75,
+            cpi_assumption=0.025,
+            grants=[],
+        )
+        # Age 79 in 2040 (QCD gate open). 2040 indexed cap = 111K × 1.025^14
+        # ≈ 156.8K, so a 130K planned QCD is NOT clipped.
+        plan = ConversionPlan(qcds={2040: 130_000.0})
+        result = run_scenario(hh, plan, "indexed_qcd_cap", end_age=80)
+        yr40 = next(yr for yr in result.years if yr.your_age == 79)
+        assert yr40.qcd == pytest.approx(130_000.0, abs=1.0), (
+            f"QCD cap should be inflation-indexed: expected 130K not clipped, "
+            f"got {yr40.qcd:,.0f}"
         )

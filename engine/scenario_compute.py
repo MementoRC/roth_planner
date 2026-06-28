@@ -24,8 +24,12 @@ from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
 
 # QCD eligibility begins at age 70½ (IRC §408(d)(8)(B)) — independent of the RMD
-# beginning age. Whole-age arithmetic: 70½ rounds to 70.
-QCD_MIN_AGE = 70
+# beginning age. The engine carries only whole-year ages, so it cannot represent
+# the mid-year 70½ attainment date. To avoid granting an exclusion that is not yet
+# legally available (a Jul–Dec birthday never reaches 70½ during the year they turn
+# 70), eligibility is gated at the first whole year in which the taxpayer is past
+# 70½ for its entirety — i.e. the year they attain age 71.
+QCD_MIN_AGE = 71
 
 # ---------------------------------------------------------------------------
 # Block 1 — Phase classification
