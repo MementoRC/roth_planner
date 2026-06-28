@@ -296,3 +296,19 @@ class TestDividendsRollupFetchAndMap:
         apply_dividends_rollup(snap, rollup)
         holding = self._all_holdings(snap)[0]
         assert holding.dividends_by_year == {"2024": 423.5}
+
+
+class TestDividendForecastTTMPerShare:
+    """E2 characterisation — ttm_per_share divides by CURRENT shares."""
+
+    def test_ttm_per_share_stable_position(self):
+        from engine.dividend_forecast import Position
+
+        pos = Position(ticker="VTI", shares=200, balance=40_000, ttm_dividends=600.0)
+        assert pos.ttm_per_share == 3.0
+
+    def test_zero_shares_does_not_raise(self):
+        from engine.dividend_forecast import Position
+
+        pos = Position(ticker="VTI", shares=0, balance=0, ttm_dividends=100.0)
+        assert pos.ttm_per_share == 0.0
