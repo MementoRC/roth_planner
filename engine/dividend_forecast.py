@@ -3,7 +3,7 @@
 Produces a forward-looking yield estimate that the planner can use BEFORE
 the 1099-DIV arrives (conversions must be set by Dec 31, 1099-DIV arrives
 in February). Strategy chain:
-    1. TTM derive: trailing 12-month per-position dividends / shares-at-payment
+    1. TTM derive: trailing 12-month per-position dividends / current shares
     2. yfinance lookup: Ticker.info['dividendRate'] for newly purchased positions
        with no payment history (optional dependency — gracefully skip on ImportError)
     3. Manual override: .dividend_rates.json {ticker: {"annual_rate": x, "qualified_fraction": y}}
@@ -66,6 +66,15 @@ class Position:
 
     @property
     def ttm_per_share(self) -> float:
+        """Trailing-12-month dividends per CURRENT share.
+
+        Divides by the current share count, not a shares-at-payment average
+        (the Position shape carries no per-payment share history). For a
+        position whose share count was stable across the TTM window this is
+        exact; for a materially changed position it is only approximate and the
+        forecast degrades to a dollar-carryforward of last year's TTM total —
+        use the manual ``annual_rate`` override (strategy 3) for such positions.
+        """
         return self.ttm_dividends / self.shares if self.shares > 0 else 0.0
 
 
