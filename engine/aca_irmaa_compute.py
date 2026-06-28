@@ -315,9 +315,16 @@ def compute_year_by_year_timeline(
         system = " + ".join(parts)
 
         _yr_cpi = cpi
+        # A2: IRMAA 2-year lookback — income realized in `year` is judged against the
+        # thresholds published for, and paid in, year + 2. Mirror compute_cost_curves
+        # (`_irmaa_year`) and engine.irmaa.irmaa_for_year so the timeline and cost-curve
+        # views no longer disagree on tier/room for the same MAGI by ~2 CPI-years. ACA
+        # stays on `year` below (a same-year effect), as does the medicare_count gate
+        # and the system label (income-year insurance status).
+        _irmaa_year = year + 2
         irmaa_room = (
             irmaa_next_threshold(
-                base_magi, filing_status=current_filing_status, year=year, cpi=_yr_cpi
+                base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
             )
             if medicare_count > 0
             else None
@@ -352,7 +359,7 @@ def compute_year_by_year_timeline(
                 spouse_age=sa,
                 system=system,
                 irmaa_tier=irmaa_tier(
-                    base_magi, filing_status=current_filing_status, year=year, cpi=_yr_cpi
+                    base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
                 )
                 if medicare_count > 0
                 else None,
