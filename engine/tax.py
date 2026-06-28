@@ -42,7 +42,7 @@ SENIOR_EXTRA_SINGLE = 2_050  # single filer 65+ — IRC §63(f), Rev. Proc. 2025
 STD_DEDUCTION_MFJ = 32_200
 SENIOR_EXTRA_MFJ = 1_650  # per spouse 65+
 
-# OBBBA senior bonus deduction (2026-2028, sunsets thereafter)
+# OBBBA senior bonus deduction (2025-2028, sunsets thereafter)
 OBBBA_BONUS_PER_PERSON = 6_000
 OBBBA_PHASEOUT_START_MFJ = 150_000  # Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)
 OBBBA_PHASEOUT_START_SINGLE = 75_000  # Single / HoH — same citation
@@ -167,10 +167,10 @@ def senior_bonus_deduction(
     phaseout_rate: float = OBBBA_PHASEOUT_RATE,
 ) -> float:
     """
-    OBBBA Senior Bonus Deduction (2026-2028).
+    OBBBA Senior Bonus Deduction (2025-2028).
 
     $6,000 per person age 65+, phases out linearly at 6% per $1 above threshold.
-    Sunset: returns 0.0 for year < 2026 or year > 2028 (Pub. L. 119-21 §70103).
+    Sunset: returns 0.0 for year < 2025 or year > 2028 (Pub. L. 119-21 §70103).
     Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
       MFJ:    phase-out starts $150,000, ends $250,000
       Single/HoH: phase-out starts $75,000, ends $175,000
@@ -184,7 +184,7 @@ def senior_bonus_deduction(
     """
     if year > 2028:
         return 0.0
-    if year < 2026:
+    if year < 2025:
         return 0.0
     if filing_status == "MFS":
         return 0.0

@@ -544,7 +544,7 @@ def render(hh: Household):
     st.markdown("### Integration with Conversion Planner")
 
     apply_ytd = st.checkbox(
-        "Apply YTD actuals to 2026 projection",
+        f"Apply YTD actuals to {hh.base_year} projection",
         value=st.session_state.get("apply_ytd_to_projection", False),
         help="When enabled, the Conversion Planner page will use these YTD numbers "
         "for the base year instead of projecting from zero.",
@@ -553,8 +553,8 @@ def render(hh: Household):
 
     if apply_ytd:
         st.success(
-            "YTD data will be used in the Conversion Planner. "
-            "Switch to that page to see the updated 2026 row."
+            f"YTD data will be used in the Conversion Planner. "
+            f"Switch to that page to see the updated {hh.base_year} row."
         )
     else:
         st.info(

@@ -144,6 +144,20 @@ class TestTaxReturnParsing:
         assert loaded.hsa_contributions == 5_000
         assert loaded.server_available is True
 
+    def test_hsa_1099sa_contribution_label_routes_to_deduction(self):
+        # H1 operator-precedence fix: "1099-sa" in label AND "contribution" in label
+        # must NOT match hsa_distributions (the `contribution` guard must cover both
+        # disjuncts).  Pre-fix: `"1099-sa" in label_lower` short-circuits the `and`
+        # → matched hsa_distributions.  Post-fix: parenthesised → blocked correctly.
+        from engine.portfolio_sync import _parse_tax_rows
+
+        rows = [
+            {"form_label": "Form 1099-SA HSA contribution", "amount_current": 750, "amount_prior": 0},
+        ]
+        parsed = _parse_tax_rows(rows, "amount_current")
+        assert "hsa_distributions" not in parsed
+        assert parsed["hsa_contributions"] == 750
+
 
 class TestForm8606NotModeled:
     """Document and lock the 100%-pretax conversion assumption (no Form 8606 basis).
