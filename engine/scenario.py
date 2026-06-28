@@ -231,7 +231,17 @@ def run_scenario(
             brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year)
         else:
             brok_appreciation_rate = brok_rate
-        realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
+        # B1/B2: in the base year, YTD actuals (ytd_year.ltcg_ytd) are the source of
+        # truth for realized capital gains and are already wired into the LTCG stack
+        # (ytd_ltcg_tax), NIIT (ytd_year.total_investment_income), MAGI (magi_ytd), and
+        # SS provisional income. Suppress the forecast estimate in the base year to avoid
+        # double-counting the same gains — mirroring the forecast-dividend suppression in
+        # compute_brokerage_dividends. ytd_year is non-None only in the base year.
+        realized_gains = (
+            0.0
+            if ytd_year is not None
+            else brokerage * brok_appreciation_rate * hh.brok_turnover
+        )
 
         # === Social Security + taxable SS ===
         # SS survivor step-up: survivor keeps max(your_ss, spouse_ss); implemented in compute_social_security.
@@ -502,11 +512,11 @@ def run_scenario(
         # === NIIT (3.8% surtax on investment income when MAGI > $250K) ===
         # Net investment income = realized appreciation gains + all dividends (qual + ord)
         # Computed on beginning brokerage balance (carry-forward from prior year)
-        net_investment_income = (
-            brokerage * brok_appreciation_rate * hh.brok_turnover
-            + qual_div_this_year
-            + ord_div_this_year
-        )
+        # Reuse `realized_gains` (identical operands) so the base-year suppression above
+        # also zeroes the forecast NII term; ytd_year.total_investment_income below is then
+        # the sole base-year source. Non-base years are unchanged (realized_gains is the
+        # same brokerage * brok_appreciation_rate * hh.brok_turnover product).
+        net_investment_income = realized_gains + qual_div_this_year + ord_div_this_year
         # YTD: add realized gains, dividends, interest to investment income
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income

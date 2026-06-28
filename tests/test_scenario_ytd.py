@@ -558,3 +558,61 @@ class TestScenarioWithYTD:
         assert yr2026.taxable_income < 98_900
         # All $40K LTCG sits in the 0% band — no LTCG tax owed
         assert yr2026.ytd_ltcg_tax == approx(0.0)
+
+    def test_base_year_realized_gains_not_double_counted_with_ytd(self):
+        """B1+B2: base-year forecast realized gains must not stack on top of YTD actuals.
+
+        With a YTD snapshot present, the base-year row's MAGI, NIIT cost, and LTCG tax
+        must be invariant to the forecast realized-gains config (brok_turnover), and the
+        forecast LTCG stack (brokerage_gain_tax) must be 0 in the base year.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        # $400K brokerage + large income pushes MAGI above $250K NIIT threshold so
+        # niit_cost is meaningful (not trivially zero) and variance would be detectable.
+        # Two households differ ONLY in brok_turnover (30% vs 0%).
+        common_kwargs = {
+            "your_age": 61,
+            "spouse_age": 55,
+            "base_year": 2026,
+            "your_ira": 500_000.0,
+            "spouse_ira": 500_000.0,
+            "brokerage_start": 400_000.0,
+            "your_ss_fra": 2_500.0,
+            "your_ss_start_age": 67,
+            "grants": [],
+        }
+        hh_high = Household(**common_kwargs, brok_turnover=0.30)
+        hh_zero = Household(**common_kwargs, brok_turnover=0.0)
+
+        # YTD snapshot with meaningful LTCG ($50K) and enough other income to clear
+        # the $250K NIIT threshold once conversions are added.
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=50_000.0,
+            ltcg_ytd=50_000.0,
+        )
+        plan = ConversionPlan(your_conversions={2026: 100_000})
+
+        results_high = run_scenario(hh_high, plan, "b1b2_high", end_age=62, ytd=ytd)
+        results_zero = run_scenario(hh_zero, plan, "b1b2_zero", end_age=62, ytd=ytd)
+
+        yr_high = results_high.years[0]
+        yr_zero = results_zero.years[0]
+
+        # MAGI must be identical regardless of brok_turnover — YTD actuals are the sole source
+        assert yr_high.magi == pytest.approx(yr_zero.magi), (
+            f"Base-year MAGI differs: high={yr_high.magi}, zero={yr_zero.magi}"
+        )
+        # NIIT cost must be identical — forecast NII term must be suppressed in base year
+        assert yr_high.niit_cost == pytest.approx(yr_zero.niit_cost), (
+            f"Base-year niit_cost differs: high={yr_high.niit_cost}, zero={yr_zero.niit_cost}"
+        )
+        # Forecast LTCG stack (brokerage_gain_tax) must be zero in the base year for both —
+        # the YTD LTCG tax (ytd_ltcg_tax) is the sole source via the existing ytd_ltcg_tax path
+        assert yr_high.brokerage_gain_tax == pytest.approx(0.0), (
+            f"Base-year brokerage_gain_tax should be 0 with ytd, got {yr_high.brokerage_gain_tax}"
+        )
+        assert yr_zero.brokerage_gain_tax == pytest.approx(0.0), (
+            f"Base-year brokerage_gain_tax should be 0 with ytd, got {yr_zero.brokerage_gain_tax}"
+        )
