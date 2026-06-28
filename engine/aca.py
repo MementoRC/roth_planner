@@ -135,6 +135,12 @@ def aca_subsidy(
     if not enhanced_subsidies_active and magi > 4.0 * _fpl(filing_status, year=year, cpi=cpi):
         return 0.0
 
+    # Symmetric 100% FPL floor (pre-ARP): below 100% FPL the household is
+    # PTC-ineligible (IRC §36B(c)(1)(A) — Medicaid / coverage-gap territory),
+    # so no subsidy. Mirrors the 400% cliff above (audit E1).
+    if not enhanced_subsidies_active and magi < 1.0 * _fpl(filing_status, year=year, cpi=cpi):
+        return 0.0
+
     cap_rate = aca_premium_cap_rate(
         magi, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
     )

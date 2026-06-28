@@ -50,8 +50,8 @@ class TestACA:
     def test_household_benchmark_field_wires_through_scenario(self):
         """Household.aca_benchmark_premium_annual flows into run_scenario aca_loss.
 
-        Uses a low base income so the household is below 400% FPL in base year
-        and the 30k conversion pushes new_magi above the cliff.
+        Base SS keeps the no-conversion MAGI in-band (~148% FPL) so a real
+        subsidy exists; the 100k conversion pushes new MAGI above the 400% cliff.
         """
         from dataclasses import replace
 
@@ -60,20 +60,21 @@ class TestACA:
             spouse_age=65,  # spouse already on Medicare — only "you" trigger ACA
             your_ira=200_000,
             spouse_ira=200_000,
-            your_ss_fra=0.0,
+            your_ss_fra=4_000.0,  # ~$31.2K/yr SS at age 61 → base MAGI in-band (~148% FPL)
             spouse_ss_fra=0.0,
             your_aca_enrolled=True,
             grants=[],
             txn_price_now=0.0,
             txn_price_late=0.0,
-            your_ss_start_age=70,
+            your_ss_start_age=61,  # claim now so SS flows in the base year
             spouse_ss_start_age=70,
         )
         hh_double = replace(hh_default, aca_benchmark_premium_annual=43_200.0)
 
-        # Conversion of 100k in base year — pushes MAGI above 400% FPL ($84,600)
-        # while base MAGI (no conversion) is 0 → subsidy loss = aca_subsidy(0) - 0
-        # With higher benchmark, aca_subsidy(0) is larger → loss_double > loss_default
+        # "You" claim ~$31.2K/yr SS at age 61 → base MAGI ~148% FPL (in-band, a
+        # real subsidy exists to lose). A 100k conversion pushes new MAGI above
+        # the 400% FPL cliff ($84,600) → subsidy(new)=0, so loss = subsidy(base).
+        # A higher benchmark raises subsidy(base) → loss_double > loss_default.
         plan = ConversionPlan(your_conversions={2026: 100_000})
         result_default = run_scenario(hh_default, plan)
         result_double = run_scenario(hh_double, plan)
@@ -103,8 +104,9 @@ class TestACA:
     def test_household_aca_toggle_wires_through_scenario(self):
         """Household.aca_enhanced_subsidies_active flows into run_scenario aca_loss.
 
-        At MAGI above 400% FPL, pre-ARP returns 0 loss (cliff absorbs it);
-        enhanced returns positive loss (8.5% cap applies with no cliff).
+        Base SS keeps MAGI in-band; a 60k conversion pushes new MAGI above the
+        400% FPL cliff. Pre-ARP: loss = full base subsidy (cliff zeroes new).
+        Enhanced: loss is partial (8.5% cap, new MAGI below the ~127K break-even).
         """
         from dataclasses import replace
 
@@ -113,30 +115,47 @@ class TestACA:
             spouse_age=65,  # spouse on Medicare — only "you" triggers ACA
             your_ira=2_000_000,
             spouse_ira=0,
-            your_ss_fra=0.0,
+            your_ss_fra=4_000.0,  # ~$31.2K/yr SS at age 61 → base MAGI in-band (~148% FPL)
             spouse_ss_fra=0.0,
             your_aca_enrolled=True,
             grants=[],
             txn_price_now=0.0,
             txn_price_late=0.0,
-            your_ss_start_age=70,
+            your_ss_start_age=61,  # claim now so SS flows in the base year
             spouse_ss_start_age=70,
             aca_enhanced_subsidies_active=False,
         )
-        # Conversion of 100k pushes MAGI above 400% FPL ($84,600).
-        # base_magi (0) is below cliff so pre-ARP subsidy(base) > 0,
-        # but new_magi (100k) is above cliff so pre-ARP subsidy(new) = 0 → loss = $10,800.
-        # With enhanced=True at MAGI=$100K: 8.5%×$100K=$8,500 < $10,800 benchmark
-        # → enhanced subsidy(new) = $2,300 > 0 → loss = $8,500 < $10,800 → smaller loss.
-        plan = ConversionPlan(your_conversions={2026: 100_000})
+        # Base SS → no-conversion MAGI ~148% FPL (in-band, subsidy(base) > 0).
+        # A 60k conversion pushes new MAGI just above the 400% FPL cliff (~91K):
+        #   pre-ARP  → subsidy(new) = 0 (cliff)    → loss = full subsidy(base)
+        #   enhanced → subsidy(new) > 0 (8.5% cap, ~91K < 127K break-even) → loss is partial
+        # so pre-ARP loss exceeds the enhanced loss.
+        plan = ConversionPlan(your_conversions={2026: 60_000})
         result_pre_arp = run_scenario(hh_base, plan)
         result_enhanced = run_scenario(replace(hh_base, aca_enhanced_subsidies_active=True), plan)
 
         loss_pre_arp = result_pre_arp.years[0].aca_loss
         loss_enhanced = result_enhanced.years[0].aca_loss
-        # Pre-ARP: new_magi above cliff → subsidy(new) = 0 → loss = benchmark/2 = $10,800
-        # Enhanced: subsidy(new) > 0 (8.5% cap, partial) → loss is smaller ($8,500)
+        # Pre-ARP: subsidy(new)=0 (cliff) → loss = full base subsidy (~$9,500).
+        # Enhanced: subsidy(new)>0 (8.5% cap partial, new<127K break-even) → smaller loss.
         assert loss_pre_arp > loss_enhanced
+
+    def test_pre_arp_below_100pct_fpl_no_subsidy(self):
+        """Pre-ARP: below 100% FPL the household is PTC-ineligible (audit E1).
+
+        IRC §36B(c)(1)(A) limits the PTC to 100%-400% FPL. The pre-ARP first
+        band has no lower bound, so without the floor a family of 2 at ~47% FPL
+        was granted a near-full subsidy. The enhanced schedule keeps no floor.
+        """
+        from engine.aca import FPL_2
+
+        # ~47% FPL (family of 2, 2026 FPL_2=$21,150) — statutorily ineligible
+        assert aca_subsidy(10_000, enhanced_subsidies_active=False) == 0.0
+        assert aca_subsidy(0.0, enhanced_subsidies_active=False) == 0.0
+        # At/above 100% FPL → eligible again
+        assert aca_subsidy(FPL_2, enhanced_subsidies_active=False) > 0.0
+        # Enhanced (ARPA/IRA) schedule unchanged — no sub-100% floor
+        assert aca_subsidy(10_000, enhanced_subsidies_active=True) > 0.0
 
 
 class TestACAMedicareSplit:
@@ -149,7 +168,7 @@ class TestACAMedicareSplit:
             your_ira=200_000,
             spouse_ira=200_000,
             your_ss_fra=0.0,
-            spouse_ss_fra=0.0,
+            spouse_ss_fra=4_000.0,  # ~$31.2K/yr SS (spouse age 61) → base MAGI in-band
             your_aca_enrolled=True,
             spouse_aca_enrolled=True,
             aca_benchmark_premium_annual=21_600.0,
@@ -158,7 +177,7 @@ class TestACAMedicareSplit:
             txn_price_now=0.0,
             txn_price_late=0.0,
             your_ss_start_age=70,
-            spouse_ss_start_age=70,
+            spouse_ss_start_age=61,  # spouse claims now so SS flows in the base year
         )
 
     def test_solo_aca_benchmark_halved_vs_couple(self):
@@ -168,9 +187,11 @@ class TestACAMedicareSplit:
         # Solo household (you on Medicare, spouse on ACA): ages 65/61
         hh_solo = self._make_hh(your_age=65, spouse_age=61)
 
-        # A $100K conversion pushes MAGI ~$100K, above 400% FPL cliff ($84,600 MFJ
-        # pre-ARP) → subsidy(new) = 0 → loss = subsidy(base_magi=0) = benchmark.
-        # Couple benchmark $21,600, solo halved benchmark $10,800.
+        # Spouse (age 61 in BOTH households) claims ~$31.2K/yr SS → identical base
+        # MAGI ~148% FPL. A $100K conversion pushes new MAGI above the 400% FPL
+        # cliff ($84,600 MFJ pre-ARP) → subsidy(new)=0 → loss = subsidy(base).
+        # Couple benchmark $21,600; solo (you on Medicare) halved to $10,800, so
+        # solo loss ~ half the couple loss.
         plan = ConversionPlan(your_conversions={2026: 100_000})
         result_couple = run_scenario(hh_couple, plan)
         result_solo = run_scenario(hh_solo, plan)
