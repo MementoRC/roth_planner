@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from .awards import fetch_equity_awards, fetch_shares
 from .classify import _classify_account, _classify_symbol, _parse_quantity
-from .client import BASE_URL, _headers
+from .client import _get
 from .holdings import fetch_holdings
 from .shapes import AccountSummary, EquityGrant, Holding, PortfolioSnapshot
 
@@ -34,7 +34,7 @@ def fetch_portfolio(
 
     # Check server availability
     try:
-        resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
+        resp = _get("/status", timeout=3)
         resp.raise_for_status()
         snap.server_available = True
     except requests.RequestException as e:
