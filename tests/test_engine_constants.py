@@ -122,6 +122,11 @@ class TestEngineConstantsCharacterization:
         # 2028 is the last active year; full bonus at MAGI below threshold
         assert senior_bonus_deduction(70, 70, magi=100_000, year=2028) == approx(12_000)
 
+    def test_senior_bonus_year_2025_is_first_active_year(self):
+        # G1 off-by-one fix: statute is effective 2025-2028 (Pub. L. 119-21 §70103).
+        # MFJ, both spouses 65+, MAGI below $150K phaseout → full 2 × $6,000 = $12,000.
+        assert senior_bonus_deduction(65, 65, magi=100_000, year=2025) == approx(12_000)
+
     # --- audit regression: dual-senior MFJ phaseout endpoint (A2) ---
 
     def test_senior_bonus_dual_mfj_phaseout_endpoint(self):

@@ -22,12 +22,12 @@ class TestObbbaSeniorDeduction:
         assert ded == approx((6_000 - 120) * 2)  # 11_760, not 12_000
         assert ded < 12_000
 
-    def test_sunsets_before_2026(self):
-        """D5 (modern-currency-7): the deduction exists only for tax years after 2025;
-        year 2025 must return 0 (pre-fix returned the full $12k)."""
-        assert senior_bonus_deduction(66, 66, 100_000, year=2025) == 0.0
-        # sanity: it IS active in-window
-        assert senior_bonus_deduction(66, 66, 100_000, year=2026) > 0
+    def test_sunsets_before_2025(self):
+        """G1 (audit-cleanup): the deduction is effective for tax years 2025-2028
+        (Pub. L. 119-21 §70103); year 2024 must return 0, year 2025 must be active."""
+        assert senior_bonus_deduction(66, 66, 100_000, year=2024) == 0.0
+        # sanity: 2025 is the first active year
+        assert senior_bonus_deduction(66, 66, 100_000, year=2025) > 0
 
     def test_estimate_applies_obbba_to_ltcg_base(self):
         """A1 (tax-core-4): estimate_ytd_federal_tax must fold the OBBBA bonus into the

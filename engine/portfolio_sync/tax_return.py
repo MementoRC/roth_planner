@@ -38,7 +38,7 @@ def _parse_tax_rows(
             result["investment_income"] = result.get("investment_income", 0) + amount
         elif "1099-r" in label_lower or "pension" in label_lower:
             result["ira_distributions"] = result.get("ira_distributions", 0) + amount
-        elif "1099-sa" in label_lower or "hsa" in label_lower and "contribution" not in label_lower:
+        elif ("1099-sa" in label_lower or "hsa" in label_lower) and "contribution" not in label_lower:
             result["hsa_distributions"] = result.get("hsa_distributions", 0) + amount
         elif "miscellaneous" in label_lower or "1099-a" in label_lower or "1099-c" in label_lower:
             result["misc_income"] = result.get("misc_income", 0) + amount
