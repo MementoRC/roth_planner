@@ -13,6 +13,9 @@ from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers
 from engine.niit import niit
 from engine.tax import (
     BRACKETS_SINGLE,
+    LTCG_RATES_MFJ,
+    LTCG_THRESHOLDS_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
@@ -58,6 +61,7 @@ class ConversionResult:
     irmaa_delta: float
     aca_loss: float
     niit_delta: float
+    ltcg_delta: float
     all_in: float
     magi: float
     taxable_inc: float
@@ -85,6 +89,7 @@ class MarginalCosts:
     marginal_irmaa: list[float]
     marginal_aca: list[float]
     marginal_niit: list[float]
+    marginal_ltcg: list[float]
 
 
 @dataclass
@@ -107,6 +112,33 @@ class YearSummary:
 def _fmt_dollars_simple(v: float) -> str:
     """Minimal dollar formatter used only for SweetSpotJump.label inside this module."""
     return f"${v:,.0f}"
+
+
+def _ltcg_stack_tax(start: float, eligible: float, thresholds: tuple[float, float]) -> float:
+    """LTCG/qualified-dividend tax via the 0%/15%/20% stack-walk, mirroring
+    engine.scenario:564-576. `start` is ordinary taxable income (the stack base),
+    `eligible` is realized LTCG + qualified dividends, `thresholds` are the
+    (0%→15%, 15%→20%) ceilings already indexed for the year. Uses LTCG_RATES_MFJ
+    for both filing statuses (no separate Single rates exist)."""
+    start = max(0.0, start)
+    end = start + max(0.0, eligible)
+    at_15 = max(0.0, min(end, thresholds[1]) - max(start, thresholds[0]))
+    at_20 = max(0.0, end - max(start, thresholds[1]))
+    return at_15 * LTCG_RATES_MFJ[1] + at_20 * LTCG_RATES_MFJ[2]
+
+
+def estimate_ltcg_eligible(hh: Household, year: int) -> float:
+    """Estimate realized LTCG + qualified dividends for `year` from the begin
+    brokerage balance, mirroring engine.scenario's ltcg_eligible. Returns 0.0 when
+    no brokerage data is available."""
+    brokerage = hh.brokerage_start
+    if hh.brokerage_growth is not None:
+        appr = hh.brokerage_growth.appreciation_for(year)
+        qual_div = hh.brokerage_growth.qualified_div_for(year, brokerage)
+    else:
+        appr = hh.brokerage_rate(year)
+        qual_div = 0.0
+    return brokerage * appr * hh.brok_turnover + qual_div
 
 
 def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> BaseIncome:
@@ -179,7 +211,11 @@ def bracket_boundary_conversion(base: BaseIncome, bracket_ceiling: float) -> flo
 
 
 def all_in_at_conversion(
-    hh: Household, base: BaseIncome, conv: float, net_inv_income: float
+    hh: Household,
+    base: BaseIncome,
+    conv: float,
+    net_inv_income: float,
+    ltcg_eligible: float = 0.0,
 ) -> ConversionResult:
     """Compute all-in costs at a given conversion amount."""
     ya, sa = base.ya, base.sa
@@ -259,7 +295,20 @@ def all_in_at_conversion(
     niit_without = niit(niit_base_magi, net_inv_income, filing_status=hh.filing_status)
     niit_delta = niit_with - niit_without
 
-    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta
+    # LTCG bracket-stacking (C1): a conversion lifts ordinary taxable income, raising
+    # the start of the preferential-rate stack and pushing realized LTCG + qualified
+    # dividends into higher 0%/15%/20% bands. Mirror engine.scenario:564-576. LTCG
+    # thresholds index to the INCOME year (same-year tax — NOT the IRMAA +2 payment year).
+    _base_ltcg_thr = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
+    _ltcg_thr = (
+        _index_value(_base_ltcg_thr[0], year, cpi),
+        _index_value(_base_ltcg_thr[1], year, cpi),
+    )
+    ltcg_with = _ltcg_stack_tax(taxable_inc, ltcg_eligible, _ltcg_thr)
+    ltcg_without = _ltcg_stack_tax(base_taxable, ltcg_eligible, _ltcg_thr)
+    ltcg_delta = ltcg_with - ltcg_without
+
+    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta + ltcg_delta
 
     return ConversionResult(
         conv=conv,
@@ -267,6 +316,7 @@ def all_in_at_conversion(
         irmaa_delta=irmaa_delta,
         aca_loss=aca_loss,
         niit_delta=niit_delta,
+        ltcg_delta=ltcg_delta,
         all_in=all_in,
         magi=magi,
         taxable_inc=taxable_inc,
@@ -328,6 +378,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     marginal_irmaa = [0.0]
     marginal_aca = [0.0]
     marginal_niit = [0.0]
+    marginal_ltcg = [0.0]
 
     for i in range(1, len(results)):
         m = (results[i].all_in - results[i - 1].all_in) / STEP * 1000
@@ -336,6 +387,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
         marginal_irmaa.append((results[i].irmaa_delta - results[i - 1].irmaa_delta) / STEP * 1000)
         marginal_aca.append((results[i].aca_loss - results[i - 1].aca_loss) / STEP * 1000)
         marginal_niit.append((results[i].niit_delta - results[i - 1].niit_delta) / STEP * 1000)
+        marginal_ltcg.append((results[i].ltcg_delta - results[i - 1].ltcg_delta) / STEP * 1000)
 
     return MarginalCosts(
         marginals=marginals,
@@ -343,11 +395,16 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
         marginal_irmaa=marginal_irmaa,
         marginal_aca=marginal_aca,
         marginal_niit=marginal_niit,
+        marginal_ltcg=marginal_ltcg,
     )
 
 
 def compute_multi_year_summary(
-    hh: Household, *, net_inv_income: float = 0.0, ytd: YTDSnapshot | None = None
+    hh: Household,
+    *,
+    net_inv_income: float = 0.0,
+    ytd: YTDSnapshot | None = None,
+    include_ltcg_stacking: bool = False,
 ) -> list[YearSummary]:
     """Compute sweet-spot summary rows for all conversion years."""
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
@@ -362,7 +419,8 @@ def compute_multi_year_summary(
         irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr + 2, cpi)
 
         b = base_income_for_year(hh, yr, ytd=ytd if yr == hh.base_year else None)
-        b_result = all_in_at_conversion(hh, b, 0, net_inv_income)
+        _le = estimate_ltcg_eligible(hh, yr) if include_ltcg_stacking else 0.0
+        b_result = all_in_at_conversion(hh, b, 0, net_inv_income, ltcg_eligible=_le)
         r12 = b_result.room_12
         r22 = b_result.room_22
 
@@ -370,8 +428,12 @@ def compute_multi_year_summary(
         irmaa_max = tier1_threshold - b.base_magi
         irmaa_safe: float | None = max(irmaa_max, 0) if irmaa_max > 0 else None
 
-        r12_res = all_in_at_conversion(hh, b, r12, net_inv_income) if r12 > 0 else None
-        r22_res = all_in_at_conversion(hh, b, r22, net_inv_income) if r22 > 0 else None
+        r12_res = (
+            all_in_at_conversion(hh, b, r12, net_inv_income, ltcg_eligible=_le) if r12 > 0 else None
+        )
+        r22_res = (
+            all_in_at_conversion(hh, b, r22, net_inv_income, ltcg_eligible=_le) if r22 > 0 else None
+        )
 
         rows.append(
             YearSummary(

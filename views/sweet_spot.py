@@ -19,6 +19,7 @@ from engine.sweet_spot_compute import (
     bracket_boundary_conversion,
     compute_marginal_costs,
     compute_multi_year_summary,
+    estimate_ltcg_eligible,
     find_sweet_spots,
 )
 from engine.tax import BRACKETS_MFJ
@@ -83,7 +84,8 @@ def render(hh: Household) -> None:
     c2.metric("Combined SS", fmt_dollars(base.combined_ss))
     c3.metric("Deductions", fmt_dollars(base.total_ded))
 
-    base_result = all_in_at_conversion(hh, base, 0, net_inv_income)
+    _ltcg_eligible = estimate_ltcg_eligible(hh, selected_year)
+    base_result = all_in_at_conversion(hh, base, 0, net_inv_income, ltcg_eligible=_ltcg_eligible)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
@@ -106,7 +108,10 @@ def render(hh: Household) -> None:
     max_conv = min(max_conv, 800_000)  # cap at $800K for performance
 
     convs = list(range(0, max_conv + STEP, STEP))
-    results = [all_in_at_conversion(hh, base, c, net_inv_income) for c in convs]
+    results = [
+        all_in_at_conversion(hh, base, c, net_inv_income, ltcg_eligible=_ltcg_eligible)
+        for c in convs
+    ]
 
     # --- Marginal cost chart ---
     st.markdown("### Marginal All-In Cost per $1,000 Converted")
@@ -222,14 +227,18 @@ def render(hh: Household) -> None:
     with z1:
         st.markdown("#### Fill to 12%")
         st.metric("Conversion", fmt_dollars(room_12))
-        r12_result = all_in_at_conversion(hh, base, room_12, net_inv_income)
+        r12_result = all_in_at_conversion(
+            hh, base, room_12, net_inv_income, ltcg_eligible=_ltcg_eligible
+        )
         avg_rate = r12_result.all_in / max(room_12, 1)
         st.metric("All-In Cost", fmt_dollars(r12_result.all_in), f"Avg {fmt_pct(avg_rate)}")
 
     with z2:
         st.markdown("#### Fill to 22%")
         st.metric("Conversion", fmt_dollars(room_22))
-        r22_result = all_in_at_conversion(hh, base, room_22, net_inv_income)
+        r22_result = all_in_at_conversion(
+            hh, base, room_22, net_inv_income, ltcg_eligible=_ltcg_eligible
+        )
         avg_rate_22 = r22_result.all_in / max(room_22, 1)
         st.metric("All-In Cost", fmt_dollars(r22_result.all_in), f"Avg {fmt_pct(avg_rate_22)}")
 
@@ -239,7 +248,9 @@ def render(hh: Household) -> None:
         irmaa_safe = max(irmaa_tiers[0][0] - base.base_magi, 0)
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
-            irmaa_result = all_in_at_conversion(hh, base, irmaa_safe, net_inv_income)
+            irmaa_result = all_in_at_conversion(
+                hh, base, irmaa_safe, net_inv_income, ltcg_eligible=_ltcg_eligible
+            )
             avg_rate_i = irmaa_result.all_in / max(irmaa_safe, 1)
             st.metric("All-In Cost", fmt_dollars(irmaa_result.all_in), f"Avg {fmt_pct(avg_rate_i)}")
         else:
@@ -333,7 +344,9 @@ def render(hh: Household) -> None:
     st.markdown("### Multi-Year Sweet Spot Summary")
     st.caption("Quick comparison of recommended zones across all conversion years.")
 
-    summary_rows = compute_multi_year_summary(hh, net_inv_income=net_inv_income, ytd=_ytd)
+    summary_rows = compute_multi_year_summary(
+        hh, net_inv_income=net_inv_income, ytd=_ytd, include_ltcg_stacking=True
+    )
 
     import pandas as pd
 
