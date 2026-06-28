@@ -6,6 +6,7 @@ from engine.aca import aca_subsidy_loss
 from engine.irmaa import IRMAA_TIERS_MFJ, _index_irmaa_tiers, irmaa_for_year
 from engine.sweet_spot_compute import (
     BaseIncome,
+    _ltcg_stack_tax,
     all_in_at_conversion,
     base_income_for_year,
     bracket_boundary_conversion,
@@ -286,3 +287,73 @@ class TestAllInAtConversionIrmaaPaymentYear:
         assert result.irmaa_delta == pytest.approx(expected_irmaa - base_irmaa_direct), (
             "irmaa_delta must equal direct recompute with year=income_year+2"
         )
+
+
+class TestConversionLtcgStacking:
+    """C1: conversion lifts ordinary income, stacking LTCG into higher rate bands."""
+
+    def test_ltcg_stack_tax_matches_audit_numbers(self) -> None:
+        # thresholds: 0%→15% at $98,900, 15%→20% at $613,700 (2026 MFJ, cpi=0)
+        thr = (98_900.0, 613_700.0)
+
+        # start=90_000, eligible=20_000 → stack end=110_000
+        # At-15% slice: min(110_000, 613_700) - max(90_000, 98_900) = 110_000 - 98_900 = 11_100
+        # At-20% slice: max(0, 110_000 - 613_700) = 0
+        # Tax = 11_100 * 0.15 = 1_665.0
+        assert _ltcg_stack_tax(90_000.0, 20_000.0, thr) == pytest.approx(1_665.0)
+
+        # start=120_000, eligible=20_000 → stack end=140_000
+        # At-15% slice: min(140_000, 613_700) - max(120_000, 98_900) = 140_000 - 120_000 = 20_000
+        # At-20% slice: 0
+        # Tax = 20_000 * 0.15 = 3_000.0
+        assert _ltcg_stack_tax(120_000.0, 20_000.0, thr) == pytest.approx(3_000.0)
+
+    def test_all_in_includes_ltcg_delta_when_eligible_passed(self) -> None:
+        """When ltcg_eligible > 0 and conversion crosses the 0%→15% LTCG boundary,
+        ltcg_delta > 0 and all_in exceeds the default (ltcg_eligible=0) case by
+        exactly ltcg_delta. Default case must have ltcg_delta == 0.0."""
+        # MFJ, no SS, no options, cpi=0 → base_taxable ≈ 0.
+        # LTCG 0%→15% threshold = $98,900.  Deductions for ages 66/64 = 30,000 (std MFJ).
+        # Convert $120,000 → taxable_inc ≈ 120,000 - 30,000 = 90,000 (below threshold).
+        # That keeps base_taxable at 0 and conv_taxable at ~90,000.
+        # With ltcg_eligible=20_000: stack tax jumps because ordinary income pushes into
+        # the 15% band starting at 98,900.  We choose conv=120,000 so taxable_inc ≈ 90,000
+        # (below 98,900) — but with conv=140,000, taxable_inc ≈ 110,000 (above 98,900),
+        # confirming ltcg_delta > 0.
+        hh = Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            filing_status="MFJ",
+        )
+        year = 2026
+        b = base_income_for_year(hh, year)
+
+        # base_taxable should be essentially 0 (no income).
+        # Choose conv that crosses the 0%→15% LTCG stack boundary.
+        # With std MFJ deduction ~$30,000 and threshold $98,900,
+        # need taxable_inc > 98,900  →  conv > 98,900 + 30,000 ≈ 128,900.
+        conv = 140_000.0
+        ltcg_eligible = 20_000.0
+
+        result_with = all_in_at_conversion(hh, b, conv, 0.0, ltcg_eligible=ltcg_eligible)
+        result_default = all_in_at_conversion(hh, b, conv, 0.0)
+
+        # Default case: no LTCG stacking
+        assert result_default.ltcg_delta == pytest.approx(0.0), (
+            f"default ltcg_delta should be 0.0, got {result_default.ltcg_delta}"
+        )
+
+        # Eligible case: stacking cost is positive (ordinary income crossed threshold)
+        assert result_with.ltcg_delta > 0.0, (
+            f"ltcg_delta should be > 0 when conversion crosses LTCG threshold, got {result_with.ltcg_delta}"
+        )
+
+        # all_in excess equals ltcg_delta exactly
+        assert result_with.all_in - result_default.all_in == pytest.approx(
+            result_with.ltcg_delta
+        ), "all_in excess over default must equal ltcg_delta"
