@@ -30,7 +30,8 @@ from engine.tax import (
     deductions,
     senior_bonus_deduction,
 )
-from engine.tax_indexing import index_tuple as _index_tuple, index_value as _index_value
+from engine.tax_indexing import index_tuple as _index_tuple
+from engine.tax_indexing import index_value as _index_value
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
