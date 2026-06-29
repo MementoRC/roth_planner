@@ -146,6 +146,14 @@ def render(hh: Household):
                 step=1_000,
                 format="%d",
             )
+            tax_exempt_interest = st.number_input(
+                "Tax-exempt (muni) interest YTD",
+                value=int(ytd.tax_exempt_interest_ytd),
+                step=1_000,
+                format="%d",
+                help="Muni bond interest — counts toward MAGI/IRMAA and SS provisional income, not ordinary brackets.",
+                key="ytd_tax_exempt_interest",
+            )
             conversions_done = st.number_input(
                 "Roth Conversions Done YTD",
                 value=int(ytd.ira_conversions_ytd),
@@ -169,6 +177,7 @@ def render(hh: Household):
             qualified_dividends_ytd=float(qualified_dividends),
             ordinary_dividends_ytd=float(ordinary_dividends),
             interest_ytd=float(interest),
+            tax_exempt_interest_ytd=float(tax_exempt_interest),
             ira_conversions_ytd=float(conversions_done),
             spouse_ira_conversions_ytd=float(spouse_conversions_done),
             gain_events=ytd.gain_events,

@@ -628,6 +628,63 @@ class TestFetchMagi:
         assert fetch_magi(2024) is None
 
 
+class TestTaxExemptInterestParsing:
+    """PR-3: tax-exempt (muni) interest rows must route to their own bucket,
+    not the taxable interest bucket, in _parse_ytd_income_rows."""
+
+    def test_tax_exempt_interest_label_routes_to_own_bucket(self):
+        """A row labeled 'Tax-exempt interest' must populate tax_exempt_interest,
+        NOT interest, in the parser result dict."""
+        from engine.portfolio_sync.ytd import _parse_ytd_income_rows
+
+        rows = [{"label": "Tax-exempt interest", "amount": 4_200.0}]
+        result = _parse_ytd_income_rows(rows)
+        assert result.get("tax_exempt_interest", 0.0) == 4_200.0, (
+            f"Expected tax_exempt_interest=4200; got {result}"
+        )
+        # Must NOT bleed into the taxable interest bucket
+        assert result.get("interest", 0.0) == 0.0, (
+            f"Muni interest must not be in taxable 'interest' bucket; got {result}"
+        )
+
+    def test_municipal_interest_label_routes_to_own_bucket(self):
+        """A row labeled 'Municipal bond interest' must populate tax_exempt_interest."""
+        from engine.portfolio_sync.ytd import _parse_ytd_income_rows
+
+        rows = [{"label": "Municipal bond interest", "amount": 1_500.0}]
+        result = _parse_ytd_income_rows(rows)
+        assert result.get("tax_exempt_interest", 0.0) == 1_500.0
+        assert result.get("interest", 0.0) == 0.0
+
+    def test_taxable_interest_still_routes_to_interest_bucket(self):
+        """A plain 'Interest income' row must still populate the taxable interest bucket."""
+        from engine.portfolio_sync.ytd import _parse_ytd_income_rows
+
+        rows = [{"label": "Interest income (1099-INT)", "amount": 3_000.0}]
+        result = _parse_ytd_income_rows(rows)
+        assert result.get("interest", 0.0) == 3_000.0
+        assert result.get("tax_exempt_interest", 0.0) == 0.0
+
+
+class TestTaxExemptInterestSaveLoad:
+    """PR-3: tax_exempt_interest_ytd must survive a save_ytd_snapshot/load round-trip."""
+
+    def test_save_load_roundtrip_preserves_tax_exempt_interest(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_muni.json")
+
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=80_000.0, tax_exempt_interest_ytd=6_000.0)
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.tax_exempt_interest_ytd == 6_000.0, (
+            f"Expected tax_exempt_interest_ytd=6000 after round-trip; got {loaded.tax_exempt_interest_ytd}"
+        )
+
+
 class TestEstimateYtdFederalTax:
     """Tests for engine.tax.estimate_ytd_federal_tax."""
 

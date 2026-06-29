@@ -151,6 +151,9 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         # spouse_ira_conversions_ytd: FinExtract ytd_income endpoint provides no
         # per-owner split; leave at default 0.0 (entered manually via YTD view).
         ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
+        # Best-effort: FinExtract may not separately label muni interest; defaults to 0.0
+        # if the label doesn't match "tax-exempt"/"municipal"/"muni".
+        ytd.tax_exempt_interest_ytd = parsed.get("tax_exempt_interest", 0.0)
         # Audit D-4: investment_income endpoint is the preferred owner of
         # ordinary_dividends_ytd; only fall back to 1099-DIV box 1a here when
         # that endpoint was unavailable (field still zero after its try-block).
@@ -186,6 +189,9 @@ def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
         elif "dividend" in label or "1099-div" in label:
             # 1099-DIV box 1a — total ordinary dividends (includes qualified)
             result["total_dividends"] = result.get("total_dividends", 0) + amount
+        elif "tax-exempt" in label or "tax exempt" in label or "municipal" in label or "muni" in label:
+            # Tax-exempt (muni bond) interest: in MAGI/IRMAA but NOT in ordinary brackets.
+            result["tax_exempt_interest"] = result.get("tax_exempt_interest", 0) + amount
         elif "interest" in label:
             result["interest"] = result.get("interest", 0) + amount
         elif "conversion" in label:
@@ -215,6 +221,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "qualified_dividends_ytd": ytd.qualified_dividends_ytd,
         "ordinary_dividends_ytd": ytd.ordinary_dividends_ytd,
         "interest_ytd": ytd.interest_ytd,
+        "tax_exempt_interest_ytd": ytd.tax_exempt_interest_ytd,
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "manually_entered": ytd.manually_entered,
