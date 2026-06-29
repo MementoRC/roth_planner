@@ -99,15 +99,55 @@ key file to fall back to V1 plaintext export (with a deprecation warning).
 ### Browser side
 
 The public Streamlit site shows a "🔑 V2 private key" widget on the ⚙️ Setup → 🔗 Data Bridge tab
-on first use. Paste your data-bridge private key (base64). The key is
-cached in `localStorage` under `roth_planner.data_bridge.priv_b64` so
-it survives page reloads. Click "Clear" in the widget (or wipe browser
-data) to remove it.
+on first use. Paste your data-bridge private key (base64). The key lives
+only in the Streamlit session (`st.session_state`) — it is **not** persisted
+to `localStorage` or disk, so you must re-paste it after a page reload.
+Click "Clear" in the widget to drop it immediately.
 
-Encrypted `.json.enc` uploads are auto-decrypted with the cached private
-key. Encrypted exports use a public key derived from the same private key
-on the fly — no separate paste needed.
+Encrypted `.json.enc` uploads are auto-decrypted with the pasted private
+key. Encrypted exports for **yourself** use a public key derived from that
+same private key on the fly — no separate paste needed. To encrypt for
+**someone else**, use the "Recipient public key" field instead (see
+"Sending data to a third party" below).
 
 The public site refuses to produce V1 plaintext exports: with no V2 key
 configured, the "📦 Export my data" widget shows a "🔒 Paste your
 private key first" hint instead of any download button.
+
+### Sending data to a third party
+
+The data bridge is not limited to moving *your own* data between hosts —
+`crypto_box_seal` lets you encrypt an export for any recipient, and only
+their private key can open it. Use this to hand your planner data to a
+financial advisor, family member, or co-planner over an untrusted channel.
+
+1. **Recipient generates a keypair** on their primary host:
+
+   ```bash
+   pixi run gen-data-bridge-keypair
+   ```
+
+   They keep `~/.finextract/data-bridge.priv` secret and send you their
+   `~/.finextract/data-bridge.pub`. Public keys are safe to share over any
+   channel — plain email is fine.
+
+2. **You seal the export for them.** On ⚙️ Setup → 🔗 Data Bridge →
+   "📦 Export my data", paste their public key (base64 or hex) into the
+   **"Recipient public key"** field. The download is now sealed for that
+   recipient (a 🔐 caption confirms it is *not* encrypted for yourself).
+   You do **not** need a keypair of your own to send — the recipient's
+   public key is all that is required.
+
+3. **Send the `.json.enc` file** over your channel of choice. Because it is
+   sealed for the recipient, the transport does not need to be trusted
+   (encrypted email is a sensible belt-and-suspenders).
+
+4. **Recipient decrypts.** They paste their *private* key into the
+   "🔑 V2 private key" widget, then upload the `.json.enc` via
+   "🔓 Use my real data" — it is auto-decrypted by magic-prefix sniff.
+
+> **Confidentiality, not authentication.** A sealed box proves only that the
+> file was encrypted for the recipient — it does **not** prove who sent it.
+> Anyone holding the recipient's public key can produce a valid sealed file.
+> If the recipient needs to verify origin, that requires an authenticated
+> scheme (signed payloads), which the bridge does not yet provide.
