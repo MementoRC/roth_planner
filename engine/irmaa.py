@@ -40,6 +40,17 @@ BASE_PART_B = 202.90 * 12  # annual per person
 BASE_PART_D = 0.0  # base Part D surcharge is $0
 
 
+# Medicare Part B/D premium growth rate. Premiums — and therefore the IRMAA
+# surcharge *dollars* — have historically risen materially faster than general
+# CPI (the 2026 Medicare Trustees Report projects long-run per-capita Part B
+# growth in the ~5-6%/yr range vs ~2.5% CPI). The MAGI *thresholds* are
+# CPI-indexed (see _index_irmaa_tiers); the surcharge dollars are indexed by
+# this medical-inflation rate so out-year IRMAA cost is not frozen at 2026
+# levels (audit A1). Pass medical_cpi=0.0 to irmaa_surcharge to restore the
+# legacy frozen-dollar behavior.
+MEDICAL_INFLATION = 0.055
+
+
 def _index_irmaa_tiers(
     base_tiers: Sequence[tuple[float, float, float]],
     year: int,
@@ -68,6 +79,7 @@ def irmaa_surcharge(
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
+    medical_cpi: float = MEDICAL_INFLATION,
 ) -> float:
     """
     Calculate total annual IRMAA surcharge for household.
@@ -79,6 +91,8 @@ def irmaa_surcharge(
         filing_status: "MFJ" (default) or "Single" — selects threshold table
         year: calendar year (used to index MAGI thresholds forward from 2026 base)
         cpi: annual CPI rate for indexing (default 2.5%)
+        medical_cpi: annual growth rate for surcharge dollars (default MEDICAL_INFLATION);
+            pass 0.0 to freeze at 2026 dollars.
 
     Returns:
         Total annual surcharge above base premiums.
@@ -89,6 +103,10 @@ def irmaa_surcharge(
     for threshold, part_b_annual, part_d_annual in reversed(tiers):
         if magi > threshold:
             surcharge_per_person = (part_b_annual - base_part_b) + (part_d_annual - BASE_PART_D)
+            # Index surcharge dollars forward at the medical-inflation rate (audit A1).
+            # Both tier and base premiums share this rate, so scaling the net
+            # surcharge is exact; at year==BASE_YEAR the factor is 1.0 (no change).
+            surcharge_per_person = index_value(surcharge_per_person, year, medical_cpi)
             return surcharge_per_person * num_people
     return 0.0
 

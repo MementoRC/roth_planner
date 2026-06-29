@@ -190,7 +190,7 @@ class TestMagiOrderingAndLtcgCost:
             70 - 2,  # spouse_age_income_year
             hh.medicare_part_b_base_monthly * 12,
             "MFJ",
-            year=2025,  # income_year = 2027 - 2
+            year=2027,  # projection/payment year passed by engine (audit A1: year param indexes surcharge dollars)
             cpi=hh.cpi_assumption,
         )
         assert yr2027.irmaa_cost == pytest.approx(expected_irmaa, abs=1.0), (
