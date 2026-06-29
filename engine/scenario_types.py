@@ -75,6 +75,7 @@ class YearResult:
     aca_loss: float = 0.0
     aca_clawback: float = 0.0  # Form 8962 excess-APTC repayment (positive = owed, negative = refund); added to federal_tax_amt
     niit_cost: float = 0.0
+    conversion_ltcg_cost: float = 0.0  # C2: conversion-induced LTCG bracket-stacking cost; added to all_in_cost only (NOT conversion_tax) to avoid double-counting cum_brok_tax
     all_in_cost: float = 0.0
 
     # Bracket room

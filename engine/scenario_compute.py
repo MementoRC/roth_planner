@@ -330,13 +330,18 @@ def compute_federal_tax(
     current_filing_status: str,
     year: int,
     cpi: float,
-) -> tuple[float, float, float]:
-    """Return (federal_tax_amt, marginal_bracket, conversion_tax).
+) -> tuple[float, float, float, float]:
+    """Return (federal_tax_amt, marginal_bracket, conversion_tax, base_taxable).
 
     ``current_filing_status`` is the effective status for the year ("Single" for
     survivor years and single-from-the-start households; "MFJ" otherwise).
     Dispatching on it (rather than a raw survivor flag) lets a non-survivor
     Single household use the single brackets while MFJ/survivor math is unchanged.
+
+    ``base_taxable`` is the ordinary taxable income WITHOUT the conversion
+    (i.e. max(combined_gross - conversions - base_total_deductions, 0)).  The
+    caller needs it to compute the conversion-induced LTCG bracket-stacking
+    cost (C2) without recomputing it independently.
     """
     if current_filing_status == "Single":
         federal_tax_amt = federal_tax_single(taxable_income, year=year, cpi=cpi)
@@ -356,7 +361,7 @@ def compute_federal_tax(
             base_taxable, year=year, cpi=cpi
         )
 
-    return federal_tax_amt, marginal_bracket, conversion_tax
+    return federal_tax_amt, marginal_bracket, conversion_tax, base_taxable
 
 
 # ---------------------------------------------------------------------------

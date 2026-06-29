@@ -35,10 +35,10 @@ class TestConversionTaxBaselineDeduction:
         combined_gross = 210_000.0
         taxable_with = max(combined_gross - phased_ded, 0.0)
 
-        _, _, conv_tax_correct = compute_federal_tax(
+        _, _, conv_tax_correct, _ = compute_federal_tax(
             taxable_with, combined_gross, 60_000.0, 0.0, full_ded, "MFJ", year, cpi
         )
-        _, _, conv_tax_buggy = compute_federal_tax(
+        _, _, conv_tax_buggy, _ = compute_federal_tax(
             taxable_with, combined_gross, 60_000.0, 0.0, phased_ded, "MFJ", year, cpi
         )
 
