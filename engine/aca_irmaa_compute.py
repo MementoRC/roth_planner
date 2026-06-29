@@ -44,10 +44,8 @@ class CostCurves:
     irmaa_increase_vals: list[float]
     niit_increase_vals: list[float]
     # Base-state scalars (computed once, hoisted from inside the original loop)
-    base_aca_subsidy: float
     base_irmaa: float
     base_niit: float
-    base_fed_tax: float
 
 
 def compute_cost_curves(
@@ -111,8 +109,6 @@ def compute_cost_curves(
         cpi=cpi,
     )
     base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
-    base_aca_subsidy: float = 0.0
-    base_fed_tax: float = 0.0
 
     aca_subsidy_vals: list[float] = []
     aca_net_cost_vals: list[float] = []
@@ -228,10 +224,8 @@ def compute_cost_curves(
         total_hidden_cost_vals=total_hidden_cost,
         irmaa_increase_vals=irmaa_increase,
         niit_increase_vals=niit_increase,
-        base_aca_subsidy=base_aca_subsidy,
         base_irmaa=base_irmaa,
         base_niit=base_niit,
-        base_fed_tax=base_fed_tax,
     )
 
 

@@ -46,7 +46,8 @@ SENIOR_EXTRA_MFJ = 1_650  # per spouse 65+
 OBBBA_BONUS_PER_PERSON = 6_000
 OBBBA_PHASEOUT_START_MFJ = 150_000  # Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)
 OBBBA_PHASEOUT_START_SINGLE = 75_000  # Single / HoH — same citation
-OBBBA_PHASEOUT_RATE = 0.06  # per $1 of MAGI above threshold
+# $0.06 reduction per $1 of excess MAGI ($60 per $1,000; phases out over $100K range)
+OBBBA_PHASEOUT_RATE = 0.06
 
 # Social Security taxation tiers (MFJ provisional-income thresholds)
 SS_TIER_1_MFJ = 32_000
@@ -169,7 +170,7 @@ def senior_bonus_deduction(
     """
     OBBBA Senior Bonus Deduction (2025-2028).
 
-    $6,000 per person age 65+, phases out linearly at 6% per $1 above threshold.
+    $6,000 per person age 65+, phases out at $0.06 per $1 of excess MAGI ($60/$1,000) above threshold.
     Sunset: returns 0.0 for year < 2025 or year > 2028 (Pub. L. 119-21 §70103).
     Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
       MFJ:    phase-out starts $150,000, ends $250,000
