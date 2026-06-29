@@ -16,7 +16,7 @@ from models.ytd_income import RealizedGainEvent, YTDSnapshot
 if TYPE_CHECKING:
     pass
 
-from .client import BASE_URL, _flatten_query_rows, _headers
+from .client import _flatten_query_rows, _get
 
 
 def fetch_ytd_snapshot() -> YTDSnapshot:
@@ -31,7 +31,7 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     # Check server availability; skip the early-return so individual endpoint
     # try/except blocks can still succeed even when /status is unreachable.
     try:
-        resp = requests.get(f"{BASE_URL}/status", headers=_headers(), timeout=3)
+        resp = _get("/status", timeout=3)
         resp.raise_for_status()
         ytd.manually_entered = False
     except requests.RequestException:
@@ -39,10 +39,9 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
 
     # Realized gains
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/brokerage",
+        resp = _get(
+            "/query/brokerage",
             params={"data_type": "realized_gains"},
-            headers=_headers(),
             timeout=5,
         )
         resp.raise_for_status()
@@ -116,10 +115,9 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     # those values → wrong total_ordinary_income → wrong MAGI → wrong IRMAA tier.
     # (Surfaced by math audit 2026-06-12, finding #4.)
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/brokerage",
+        resp = _get(
+            "/query/brokerage",
             params={"data_type": "investment_income"},
-            headers=_headers(),
             timeout=5,
         )
         resp.raise_for_status()
@@ -135,10 +133,9 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     #       ira_conversions_ytd, ira_distributions_ytd.
     # Does NOT touch ordinary_dividends_ytd or interest_ytd (see contract above).
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/tax_return",
+        resp = _get(
+            "/query/tax_return",
             params={"data_type": "ytd_income"},
-            headers=_headers(),
             timeout=5,
         )
         resp.raise_for_status()
