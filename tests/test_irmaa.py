@@ -2,7 +2,13 @@
 
 import pytest
 
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_next_threshold, irmaa_surcharge
+from engine.irmaa import (
+    IRMAA_TIERS_MFJ,
+    IRMAA_TIERS_SINGLE,
+    MEDICAL_INFLATION,
+    irmaa_next_threshold,
+    irmaa_surcharge,
+)
 from engine.scenario import (
     ConversionPlan,
     run_scenario,
@@ -348,16 +354,24 @@ class TestIRMAATier5Frozen:
         Pre-fix: the top threshold would drift to ~$768,800 so $760K MAGI would
         fall into Tier 4 in 2028. Post-fix: threshold is frozen at $750K so $760K
         still triggers Tier 5 surcharge.
+
+        Note (audit A1): surcharge *dollars* are now indexed by MEDICAL_INFLATION,
+        so the 2028 dollar amount is higher than 2026 — but both are Tier 5 entries.
+        We verify tier membership (surcharge > 0 in both years) rather than equality.
         """
         magi = 760_000  # above frozen $750K threshold but below drifted ~$768,800
         # In 2026 (base year) this is unambiguously Tier 5
         surcharge_2026 = irmaa_surcharge(magi, year=2026)
-        # In 2028 post-fix it must still be Tier 5 (same surcharge amount)
+        # In 2028 post-fix it must still be Tier 5 (threshold frozen → same tier)
         surcharge_2028 = irmaa_surcharge(magi, year=2028)
         assert surcharge_2026 > 0, "Sanity: $760K MFJ must be in Tier 5 in 2026"
-        assert surcharge_2028 == pytest.approx(surcharge_2026, abs=1), (
-            "Tier 5 surcharge for $760K must be identical in 2026 and 2028 "
-            "(frozen threshold means same tier entry point)"
+        assert surcharge_2028 > 0, (
+            "Tier 5 threshold is frozen: $760K must still trigger Tier 5 in 2028"
+        )
+        # A1: surcharge dollars grow by medical inflation (not equal to 2026 anymore)
+        expected_2028 = surcharge_2026 * (1 + MEDICAL_INFLATION) ** 2
+        assert surcharge_2028 == pytest.approx(expected_2028, abs=1), (
+            "Tier 5 surcharge in 2028 must be 2026 value grown by MEDICAL_INFLATION^2"
         )
 
     def test_irmaa_next_threshold_above_top_tier_returns_zero_in_2028(self):
@@ -365,3 +379,39 @@ class TestIRMAATier5Frozen:
         # $800K is above $750K even without drift — should be 0.0 in any year
         result = irmaa_next_threshold(800_000, year=2028)
         assert result == pytest.approx(0.0, abs=1)
+
+
+class TestSurchargeDollarIndexing:
+    """Audit A1: IRMAA surcharge dollars are indexed by MEDICAL_INFLATION (not frozen at 2026)."""
+
+    # Top-tier frozen surcharge at 2026 base values (MAGI=1_000_000 always hits Tier 5)
+    # (689.90 - 202.90)*12 + 91.00*12
+    _BASE_SURCHARGE_1P = (689.90 - 202.90) * 12 + 91.00 * 12
+
+    def test_base_year_surcharge_unchanged(self):
+        """year=2026: surcharge equals legacy frozen 2026 dollars (factor=1.0)."""
+        result = irmaa_surcharge(1_000_000, num_people=1, year=2026)
+        assert result == pytest.approx(self._BASE_SURCHARGE_1P, abs=0.01)
+
+    def test_out_year_2027_grows_by_one_factor(self):
+        """year=2027: surcharge = 2026 value * MEDICAL_INFLATION^1."""
+        result_2027 = irmaa_surcharge(1_000_000, num_people=1, year=2027)
+        expected = self._BASE_SURCHARGE_1P * (1 + MEDICAL_INFLATION) ** 1
+        assert result_2027 == pytest.approx(expected, abs=0.01)
+
+    def test_out_year_2036_grows_by_ten_factors(self):
+        """year=2036: surcharge = 2026 value * MEDICAL_INFLATION^10."""
+        result_2036 = irmaa_surcharge(1_000_000, num_people=1, year=2036)
+        expected = self._BASE_SURCHARGE_1P * (1 + MEDICAL_INFLATION) ** 10
+        assert result_2036 == pytest.approx(expected, abs=0.10)
+
+    def test_freeze_escape_hatch_medical_cpi_zero(self):
+        """medical_cpi=0.0 restores legacy frozen-dollar behavior for any year."""
+        frozen_2040 = irmaa_surcharge(1_000_000, num_people=1, year=2040, medical_cpi=0.0)
+        assert frozen_2040 == pytest.approx(self._BASE_SURCHARGE_1P, abs=0.01)
+
+    def test_num_people_scaling_still_holds(self):
+        """num_people=2 produces exactly 2× the num_people=1 surcharge (out-year)."""
+        s1 = irmaa_surcharge(1_000_000, num_people=1, year=2030)
+        s2 = irmaa_surcharge(1_000_000, num_people=2, year=2030)
+        assert s2 == pytest.approx(s1 * 2, abs=0.01)

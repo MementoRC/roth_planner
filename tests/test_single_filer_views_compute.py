@@ -120,13 +120,16 @@ class TestSingleFilerIrmaaNoPhantoSpouse:
 
         cc = compute_cost_curves(magi_points, magi_above_tier1, 0.0, hh_single, year=year, cpi=0.0)
 
-        # Ground truth: irmaa_surcharge with exactly 1 beneficiary
+        # Ground truth: irmaa_surcharge with exactly 1 beneficiary.
+        # compute_cost_curves applies the 2-year IRMAA lookback (_irmaa_year = year+2),
+        # so reference calculations must use the same payment year (audit A1).
+        irmaa_year = year + 2
         expected_single = irmaa_surcharge(
             magi_above_tier1,
             num_people=1,
             base_part_b=hh_single.medicare_part_b_base_monthly * 12,
             filing_status="Single",
-            year=year,
+            year=irmaa_year,
             cpi=0.0,
         )
         double_amount = irmaa_surcharge(
@@ -134,7 +137,7 @@ class TestSingleFilerIrmaaNoPhantoSpouse:
             num_people=2,
             base_part_b=hh_single.medicare_part_b_base_monthly * 12,
             filing_status="Single",
-            year=year,
+            year=irmaa_year,
             cpi=0.0,
         )
         # Verify the bug would have produced a different (doubled) value
@@ -164,12 +167,13 @@ class TestSingleFilerIrmaaNoPhantoSpouse:
         base_magi = 250_000.0
         cc = compute_cost_curves([base_magi], base_magi, 0.0, hh_single, year=year, cpi=0.0)
 
+        # compute_cost_curves uses _irmaa_year = year+2; match that payment year (audit A1).
         expected_base = irmaa_surcharge(
             base_magi,
             num_people=1,
             base_part_b=hh_single.medicare_part_b_base_monthly * 12,
             filing_status="Single",
-            year=year,
+            year=year + 2,
             cpi=0.0,
         )
         assert cc.base_irmaa == pytest.approx(expected_base, rel=1e-9), (
@@ -189,12 +193,13 @@ class TestSingleFilerIrmaaNoPhantoSpouse:
         magi = 250_000.0
         cc = compute_cost_curves([magi], magi, 0.0, hh_mfj, year=year, cpi=0.0)
 
+        # compute_cost_curves uses _irmaa_year = year+2; match that payment year (audit A1).
         expected_two = irmaa_surcharge(
             magi,
             num_people=2,
             base_part_b=hh_mfj.medicare_part_b_base_monthly * 12,
             filing_status="MFJ",
-            year=year,
+            year=year + 2,
             cpi=0.0,
         )
         assert cc.irmaa_vals[0] == pytest.approx(expected_two, rel=1e-9), (
