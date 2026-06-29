@@ -40,3 +40,25 @@ def write_pii_json(path: Path, obj: Any, *, indent: int = 2) -> None:
         os.write(fd, payload)
     finally:
         os.close(fd)
+
+
+def read_pii_json(path: Path) -> Any:
+    """Read JSON from *path*, refusing to follow a symlink.
+
+    Read-side mirror of :func:`write_pii_json`'s ``O_NOFOLLOW`` protection: a
+    pre-planted symlink at *path* makes ``os.open`` raise ``OSError`` (ELOOP),
+    so a PII cache read cannot be redirected to an attacker-controlled file.
+    Raises ``OSError`` (including the symlink case) or ``json.JSONDecodeError``
+    on malformed content — both already handled by the cache-load call sites.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return json.loads(b"".join(chunks))

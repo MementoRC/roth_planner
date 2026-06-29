@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.secure_io import write_pii_json
+from engine.secure_io import read_pii_json, write_pii_json
 from models.ytd_income import RealizedGainEvent, YTDSnapshot
 
 if TYPE_CHECKING:
@@ -229,7 +229,7 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     if not _YTD_CACHE_PATH.exists():
         return None
     try:
-        data = json.loads(_YTD_CACHE_PATH.read_text())
+        data = read_pii_json(_YTD_CACHE_PATH)
     except (json.JSONDecodeError, OSError):
         return None
 

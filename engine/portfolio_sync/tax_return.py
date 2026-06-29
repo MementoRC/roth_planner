@@ -12,7 +12,7 @@ import requests  # type: ignore[import-untyped]
 if TYPE_CHECKING:
     pass
 
-from engine.secure_io import write_pii_json
+from engine.secure_io import read_pii_json, write_pii_json
 
 from .client import _flatten_query_rows, _get
 from .shapes import TaxReturnSnapshot
@@ -115,7 +115,7 @@ def load_tax_snapshot() -> TaxReturnSnapshot | None:
     if not _TAX_CACHE_PATH.exists():
         return None
     try:
-        data = json.loads(_TAX_CACHE_PATH.read_text())
+        data = read_pii_json(_TAX_CACHE_PATH)
     except (json.JSONDecodeError, OSError):
         return None
     return TaxReturnSnapshot(**data)
