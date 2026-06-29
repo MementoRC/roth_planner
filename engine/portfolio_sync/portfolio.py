@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.secure_io import write_pii_json
+from engine.secure_io import read_pii_json, write_pii_json
 
 if TYPE_CHECKING:
     pass
@@ -131,7 +131,7 @@ def save_snapshot(snap: PortfolioSnapshot) -> None:
     existing: dict[str, Any] = {}
     if _CACHE_PATH.exists():
         try:
-            existing = json.loads(_CACHE_PATH.read_text())
+            existing = read_pii_json(_CACHE_PATH)
         except (json.JSONDecodeError, OSError):
             existing = {}
 
@@ -156,7 +156,7 @@ def load_snapshot() -> PortfolioSnapshot | None:
     if not _CACHE_PATH.exists():
         return None
     try:
-        data = json.loads(_CACHE_PATH.read_text())
+        data = read_pii_json(_CACHE_PATH)
     except (json.JSONDecodeError, OSError):
         return None
 
