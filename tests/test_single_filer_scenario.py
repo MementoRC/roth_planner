@@ -69,15 +69,15 @@ def _large_ira_mfj() -> Household:
 class TestComputeFederalTaxFilingStatus:
     def test_single_uses_single_brackets(self) -> None:
         ti, cg = 120_000.0, 120_000.0
-        fed_single, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "Single", 2026, 1.0)
-        fed_mfj, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "MFJ", 2026, 1.0)
+        fed_single, _, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "Single", 2026, 1.0)
+        fed_mfj, _, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "MFJ", 2026, 1.0)
         assert fed_single == pytest.approx(federal_tax_single(ti, year=2026, cpi=1.0))
         assert fed_mfj == pytest.approx(federal_tax(ti, year=2026, cpi=1.0))
         assert fed_single > fed_mfj
 
     def test_mfj_matches_plain_mfj_tax(self) -> None:
         ti, cg = 90_000.0, 90_000.0
-        fed_mfj, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "MFJ", 2026, 1.0)
+        fed_mfj, _, _, _ = compute_federal_tax(ti, cg, 0.0, 0.0, 0.0, "MFJ", 2026, 1.0)
         assert fed_mfj == pytest.approx(federal_tax(ti, year=2026, cpi=1.0))
 
 

@@ -392,7 +392,7 @@ def run_scenario(
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
         # === Federal tax + conversion tax (incremental) ===
-        yr.federal_tax_amt, yr.marginal_bracket, yr.conversion_tax = compute_federal_tax(
+        yr.federal_tax_amt, yr.marginal_bracket, yr.conversion_tax, base_taxable = compute_federal_tax(
             yr.taxable_income,
             yr.combined_gross,
             yr.your_conversion,
@@ -576,6 +576,26 @@ def run_scenario(
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, ltcg_thresholds[1]))
         yr.brokerage_gain_tax = _ltcg_at_15 * LTCG_RATES_MFJ[1] + _ltcg_at_20 * LTCG_RATES_MFJ[2]
+
+        # C2: the conversion-induced LTCG bracket-stacking bump is a real marginal
+        # cost of converting this year. It is already captured in brokerage_gain_tax
+        # (and thus lifetime tax), but was missing from the per-year all_in_cost
+        # optimization signal. Re-stack the SAME ltcg_eligible at the without-conversion
+        # ordinary start and attribute the difference. Kept SEPARATE from conversion_tax
+        # so cum_conv_tax / lifetime totals are not double-counted against cum_brok_tax.
+        _ltcg_start_base = max(0.0, base_taxable)
+        _ltcg_end_base = _ltcg_start_base + max(0.0, ltcg_eligible)
+        _ltcg_at_15_base = max(
+            0.0,
+            min(_ltcg_end_base, ltcg_thresholds[1]) - max(_ltcg_start_base, ltcg_thresholds[0]),
+        )
+        _ltcg_at_20_base = max(0.0, _ltcg_end_base - max(_ltcg_start_base, ltcg_thresholds[1]))
+        _brokerage_gain_tax_base = (
+            _ltcg_at_15_base * LTCG_RATES_MFJ[1] + _ltcg_at_20_base * LTCG_RATES_MFJ[2]
+        )
+        yr.conversion_ltcg_cost = max(0.0, yr.brokerage_gain_tax - _brokerage_gain_tax_base)
+        yr.all_in_cost += yr.conversion_ltcg_cost
+
         total_div = qual_div_this_year + ord_div_this_year
 
         brokerage = (

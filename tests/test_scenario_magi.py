@@ -476,3 +476,154 @@ class TestAuditF5BaseYearQualDivLTCGWalk:
         assert yr_both.ytd_ltcg_tax > yr_ltcg.ytd_ltcg_tax, (
             "Adding qualified_dividends_ytd to ltcg_ytd must increase ytd_ltcg_tax"
         )
+
+
+class TestAuditC2ConversionLtcgCost:
+    """C2: conversion-induced LTCG bracket-stacking cost in all_in_cost.
+
+    A Roth conversion lifts ordinary taxable income, pushing LTCG-eligible
+    income (realized gains + qualified dividends) up through the 0%/15%/20%
+    bands.  The incremental LTCG tax is already captured in brokerage_gain_tax
+    (and thus lifetime totals), but was missing from the per-year all_in_cost
+    optimization signal.  C2 adds a new YearResult.conversion_ltcg_cost field
+    that holds the counterfactual difference and folds it into all_in_cost ONLY.
+
+    Audit worked-numbers fixture (MFJ, 2026, cpi=0):
+      ordinary taxable = $90,000 WITHOUT conversion, ltcg_eligible = $20,000
+      0%-ceiling = $98,900   15%-ceiling = $613,700
+
+      No conversion  → start=$90k, end=$110k → $8,900@0% + $11,100@15% = $1,665
+      +$20k conversion → start=$110k, end=$130k → all $20k@15%           = $3,000
+      conversion_ltcg_cost = $3,000 − $1,665 = $1,335
+
+    Fixture strategy:
+      - ages 61/55, no RMD (starts at 75), grants=[], SS deferred → zero ordinary
+      - extra_withdrawal = 122_200 sets combined_gross_base = 122_200
+        → base_taxable = 122_200 - 32_200 (std_deduction MFJ) = 90_000
+      - your_conversions = {2026: 20_000} → WITH-conv taxable = 110_000
+      - brokerage_start=200_000, GrowthProfile(default_rate=0.10, yield_rate=0.0)
+        + brok_turnover=1.0 → realized_gains = 200_000 * 0.10 * 1.0 = 20_000
+    """
+
+    def _hh(self, brokerage_start: float = 0.0) -> Household:
+        """MFJ, no NQO grants, SS deferred past projection, controlled income."""
+        from models.household import GrowthProfile
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=1_700_000,
+            spouse_ira=0,
+            your_ss_start_age=999,   # deferred out of projection window
+            spouse_ss_start_age=999,
+            grants=[],               # strip NQO option income
+            brokerage_start=brokerage_start,
+            brok_turnover=1.0,       # 100% turnover → realized_gains = balance * rate
+        )
+        if brokerage_start > 0.0:
+            # Pure appreciation, no yield → realized_gains = brokerage * rate * turnover
+            # qual_div = 0 so ltcg_eligible = realized_gains only
+            hh.brokerage_growth = GrowthProfile(default_rate=0.10, yield_rate=0.0)
+        return hh
+
+    # ------------------------------------------------------------------
+    # Test 1 — audit worked numbers: $20k conversion, $20k realized gains
+    # ------------------------------------------------------------------
+
+    def test_c2_conversion_ltcg_cost_audit_worked_numbers(self):
+        """C2: $20k conversion + $20k realized gains → conversion_ltcg_cost ≈ $1,335.
+
+        extra_withdrawal=122_200 sets base ordinary gross=122_200.
+        std_deduction MFJ 2026 = 32_200 (ages 61/55, neither 65+).
+        base_taxable = 122_200 - 32_200 = 90_000.
+        With 20k conversion: WITH-conv taxable = 110_000.
+        realized_gains = 200_000 * 0.10 * 1.0 = 20_000 = ltcg_eligible.
+
+        WITHOUT-conv LTCG: start=90k, end=110k
+          → 8,900 @ 0% + 11,100 @ 15% = 1,665
+        WITH-conv LTCG:    start=110k, end=130k
+          → 20,000 @ 15% = 3,000
+        conversion_ltcg_cost = 3,000 - 1,665 = 1,335
+        """
+        hh = self._hh(brokerage_start=200_000)
+        plan = ConversionPlan(
+            your_conversions={2026: 20_000},
+            extra_withdrawals={2026: 122_200},  # sets base ordinary income = 122_200
+        )
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr = result.years[0]
+
+        # Core C2 assertion
+        assert yr.conversion_ltcg_cost == approx(1_335.0, tol=50.0), (
+            f"Expected conversion_ltcg_cost ≈ 1335, got {yr.conversion_ltcg_cost:.2f}"
+        )
+        # all_in_cost must include conversion_ltcg_cost (C2)
+        assert yr.all_in_cost == approx(
+            yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost,
+            tol=1.0,
+        ), "all_in_cost must equal conversion_tax+irmaa+aca+niit+conversion_ltcg_cost (C2)"
+
+        # conversion_tax and lifetime totals must be UNCHANGED by C2
+        assert result.total_conv_tax == approx(yr.conversion_tax, tol=1.0), (
+            "total_conv_tax must not include conversion_ltcg_cost"
+        )
+        assert result.total_brok_tax == approx(yr.brokerage_gain_tax, tol=1.0), (
+            "total_brok_tax must not include conversion_ltcg_cost"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 2 — no LTCG-eligible income → conversion_ltcg_cost == 0
+    # ------------------------------------------------------------------
+
+    def test_c2_no_ltcg_eligible_yields_zero(self):
+        """When there are no realized gains and no qual dividends, cost is 0."""
+        # brokerage_start=0 → realized_gains=0, qual_div=0 → ltcg_eligible=0
+        hh = self._hh(brokerage_start=0.0)
+        plan = ConversionPlan(your_conversions={2026: 50_000})
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr = result.years[0]
+        assert yr.conversion_ltcg_cost == pytest.approx(0.0), (
+            "conversion_ltcg_cost must be 0 when ltcg_eligible=0"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 3 — no conversion → conversion_ltcg_cost == 0
+    # ------------------------------------------------------------------
+
+    def test_c2_no_conversion_yields_zero(self):
+        """Without a conversion, base and with-conv stacks are identical → cost is 0."""
+        hh = self._hh(brokerage_start=200_000)
+        plan = ConversionPlan()  # no conversions
+        result = run_scenario(hh, plan, end_age=hh.your_age)
+        yr = result.years[0]
+        assert yr.conversion_ltcg_cost == pytest.approx(0.0), (
+            "conversion_ltcg_cost must be 0 when no conversion is made"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 4 — conversion_ltcg_cost is NOT in any lifetime total
+    # ------------------------------------------------------------------
+
+    def test_c2_lifetime_totals_exclude_conversion_ltcg_cost(self):
+        """conversion_ltcg_cost must not leak into total_conv_tax or total_brok_tax.
+
+        Multi-year run: confirm total_conv_tax == sum(yr.conversion_tax) and
+        total_brok_tax == sum(yr.brokerage_gain_tax).
+        """
+        hh = self._hh(brokerage_start=500_000)
+        plan = ConversionPlan(
+            your_conversions={2026: 30_000, 2027: 30_000, 2028: 30_000},
+            extra_withdrawals={2026: 100_000, 2027: 100_000, 2028: 100_000},
+        )
+        result = run_scenario(hh, plan, end_age=hh.your_age + 2)
+
+        sum_conv_tax = sum(yr.conversion_tax for yr in result.years)
+        assert result.total_conv_tax == approx(sum_conv_tax, tol=1.0), (
+            "total_conv_tax must equal sum of yr.conversion_tax only (no C2 leakage)"
+        )
+
+        sum_brok_tax = sum(yr.brokerage_gain_tax for yr in result.years)
+        assert result.total_brok_tax == approx(sum_brok_tax, tol=1.0), (
+            "total_brok_tax must equal sum of yr.brokerage_gain_tax only (no C2 leakage)"
+        )
