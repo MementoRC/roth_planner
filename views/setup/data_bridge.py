@@ -101,6 +101,16 @@ def _handle_v2_privkey() -> None:
                 st.error(f"Invalid key: {e}")
                 return
             val = key_input.strip()
+            # Security note (audit M13 — accepted limitation, won't-fix): the V2 private
+            # key cannot be meaningfully zeroized in this Streamlit/Pyodide context. It is
+            # held as an immutable Python str here in session_state and in the text_input
+            # widget state for the session lifetime, and decoding yields immutable bytes —
+            # none can be wiped in place (CPython may also copy/intern them). A partial
+            # bytearray-wipe of the decoded 32-byte copy would protect it for only
+            # microseconds while these str copies remain, and public-site (Pyodide) users
+            # face XSS rather than process-memory risk. The meaningful mitigation in place
+            # is that the key is intentionally NOT persisted to localStorage (see
+            # engine/data_bridge_browser.py).
             st.session_state["data_bridge_privkey_b64"] = val
             st.success("Private key saved.")
             st.rerun()
