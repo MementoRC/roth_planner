@@ -481,3 +481,52 @@ class TestKeyfileNofollow:
             result = _try_load(PRIVKEY_ENV, key_path)
 
         assert result == raw
+
+
+class TestRecipientPubkeyParse:
+    def test_blank_returns_none_none(self):
+        from views.setup.data_bridge import _parse_recipient_pubkey
+
+        assert _parse_recipient_pubkey("") == (None, None)
+        assert _parse_recipient_pubkey(None) == (None, None)
+        assert _parse_recipient_pubkey("   ") == (None, None)
+
+    def test_valid_base64_pubkey(self):
+        from views.setup.data_bridge import _parse_recipient_pubkey
+
+        pub, _ = generate_keypair()
+        b64 = base64.b64encode(pub).decode("ascii")
+        parsed, err = _parse_recipient_pubkey(b64)
+        assert err is None
+        assert parsed == pub
+
+    def test_valid_hex_pubkey(self):
+        from views.setup.data_bridge import _parse_recipient_pubkey
+
+        pub, _ = generate_keypair()
+        parsed, err = _parse_recipient_pubkey(pub.hex())
+        assert err is None
+        assert parsed == pub
+
+    def test_invalid_returns_error(self):
+        from views.setup.data_bridge import _parse_recipient_pubkey
+
+        parsed, err = _parse_recipient_pubkey("not-a-key")
+        assert parsed is None
+        assert err is not None
+        assert "Invalid recipient public key" in err
+
+
+class TestThirdPartySeal:
+    def test_sender_seals_to_recipient_only_recipient_opens(self):
+        # Recipient shares only their public key; sender needs no key of their own.
+        recipient_pub, recipient_priv = generate_keypair()
+        ct = seal(b'{"household": "data"}', recipient_pub)
+        assert unseal(ct, recipient_priv) == b'{"household": "data"}'
+
+    def test_wrong_recipient_cannot_open(self):
+        recipient_pub, _ = generate_keypair()
+        _, other_priv = generate_keypair()
+        ct = seal(b"secret", recipient_pub)
+        with pytest.raises(DecryptionFailedError):
+            unseal(ct, other_priv)

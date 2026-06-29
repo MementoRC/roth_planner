@@ -64,6 +64,22 @@ def _resolve_privkey_bytes() -> bytes | None:
     return load_privkey()
 
 
+def _parse_recipient_pubkey(raw: str | None) -> tuple[bytes | None, str | None]:
+    """Parse an optional third-party recipient public key for export sealing.
+
+    Returns:
+        ``(pubkey, None)`` for a valid 32-byte key (base64 or hex);
+        ``(None, None)`` for blank/whitespace input (seal for yourself instead);
+        ``(None, error_message)`` for malformed input.
+    """
+    if not raw or not raw.strip():
+        return None, None
+    try:
+        return decode_keymaterial(raw), None
+    except ValueError as e:
+        return None, f"Invalid recipient public key: {e}"
+
+
 def _handle_v2_privkey() -> None:
     """Widget for entering the V2 data-bridge private key.
 
@@ -221,17 +237,45 @@ def _handle_personal_exports() -> None:
     When a V2 data-bridge public key is configured (see ``deploy/README.md``),
     exports are sealed with ``crypto_box_seal`` and emitted as ``.json.enc``.
     Otherwise the V1 plaintext export is shown with a deprecation warning.
+
+    A "Recipient public key" field lets you instead seal the export for a
+    third party: paste their data-bridge PUBLIC key and the download is sealed
+    so that only *their* private key can open it. This takes priority over your
+    own key and needs no key of your own, enabling send-only transmission to
+    another planner (e.g. via encrypted email).
     """
     # Deferred: nacl unavailable in Pyodide
     from engine.data_bridge_crypto import seal
 
     with st.expander("📦 Export my data", expanded=False):
-        pubkey = _resolved_pubkey()
         defaults = _user_defaults_from_session()
         cache_path = Path(__file__).resolve().parent.parent.parent / ".portfolio_cache.json"
 
+        # Optional: seal for a third-party recipient instead of yourself.
+        recipient_raw = st.text_input(
+            "Recipient public key (base64/hex) — optional",
+            key="_export_recipient_pubkey",
+            help=(
+                "Paste a third party's data-bridge PUBLIC key to seal this export "
+                "for them — only their private key can open it. Leave blank to "
+                "encrypt for yourself. Public keys are safe to share over any channel."
+            ),
+        )
+        recipient_pubkey, recipient_err = _parse_recipient_pubkey(recipient_raw)
+        if recipient_err:
+            st.error(recipient_err)
+
+        sealing_for_third_party = recipient_pubkey is not None
+        pubkey = recipient_pubkey if sealing_for_third_party else _resolved_pubkey()
+
         if pubkey is not None:
-            st.caption("🔐 V2 encrypted export active — files are sealed for your private key.")
+            if sealing_for_third_party:
+                st.caption(
+                    "🔐 Sealing for the recipient's public key — only their private "
+                    "key can open these files."
+                )
+            else:
+                st.caption("🔐 V2 encrypted export active — files are sealed for your private key.")
             if defaults:
                 payload = json.dumps(defaults, indent=2, default=str).encode("utf-8")
                 st.download_button(
