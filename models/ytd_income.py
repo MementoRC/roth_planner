@@ -86,6 +86,7 @@ class YTDSnapshot:
             + self.nec_income_ytd
             + self.stcg_ytd
             + self.ira_conversions_ytd
+            + self.spouse_ira_conversions_ytd
             + self.ira_distributions_ytd
             + self.ordinary_dividends_ytd
             + self.interest_ytd
@@ -115,6 +116,7 @@ class YTDSnapshot:
             + self.nec_income_ytd
             + self.stcg_ytd
             + self.ira_conversions_ytd
+            + self.spouse_ira_conversions_ytd
             + self.ira_distributions_ytd
             + self.ltcg_ytd
             + self.dividends_ytd

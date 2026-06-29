@@ -248,6 +248,7 @@ def compute_social_security(
             + ytd_year.stcg_ytd
             + ytd_year.ordinary_dividends_ytd
             + ytd_year.ira_conversions_ytd
+            + ytd_year.spouse_ira_conversions_ytd
             + ytd_year.ira_distributions_ytd
             + ytd_year.interest_ytd  # C-3: fully taxable ordinary interest (IRC §86(b)(2))
             # F3: LTCG and qualified dividends are AGI items per IRC §86(b)(2) provisional-income

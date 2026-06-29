@@ -208,6 +208,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "wages_ytd": ytd.wages_ytd,
         "nec_income_ytd": ytd.nec_income_ytd,
         "ira_conversions_ytd": ytd.ira_conversions_ytd,
+        "spouse_ira_conversions_ytd": ytd.spouse_ira_conversions_ytd,
         "ira_distributions_ytd": ytd.ira_distributions_ytd,
         "ltcg_ytd": ytd.ltcg_ytd,
         "stcg_ytd": ytd.stcg_ytd,
