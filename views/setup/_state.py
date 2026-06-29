@@ -151,6 +151,10 @@ def _clear_personal_session_state() -> None:
         "account_type_overrides",
         "data_bridge_privkey_b64",
         "_v2_privkey_input",
+        "tax_return_snapshot",
+        "ytd_snapshot",
+        "apply_ytd_to_projection",
+        "ytd_manual_entry",
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)

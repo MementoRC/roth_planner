@@ -337,12 +337,12 @@ def render(hh: Household):
             )
 
     # --- RMD detail table ---
-    with st.expander("📋 RMD Year Detail (Ages 75-95)"):
+    with st.expander(f"📋 RMD Year Detail (from age {hh.your_rmd_start_age})"):
         import pandas as pd
 
         rmd_years = []
         for yr_nc, yr_wc in zip(no_conv.years, with_conv.years, strict=False):
-            if yr_nc.your_age >= 75:
+            if yr_nc.your_age >= hh.your_rmd_start_age:
                 rmd_years.append(
                     {
                         "Year": yr_nc.year,

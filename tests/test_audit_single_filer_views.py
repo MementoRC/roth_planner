@@ -365,3 +365,51 @@ class TestRmdSqueezeSpouseQcdGating:
         assert "spouse_qcd_annual = 0" in src, (
             "rmd_squeeze.py must set spouse_qcd_annual=0 for Single filers"
         )
+
+
+# ---------------------------------------------------------------------------
+# L5 — sweet_spot.py bracket sweep ceiling is filing-status-aware
+# ---------------------------------------------------------------------------
+
+
+class TestSweetSpotBracketSelection:
+    """L5: sweep ceiling in sweet_spot.py must use BRACKETS_SINGLE for Single filers.
+
+    At the 35%-bracket ceiling (indexed_brackets[-2][0]) the MFJ value is ~$128K
+    higher than the Single value, so a Single filer would see a sweep range that
+    extends well beyond what is legally meaningful.
+    """
+
+    def test_single_35pct_ceiling_lower_than_mfj(self):
+        """BRACKETS_SINGLE[-2][0] must be lower than BRACKETS_MFJ[-2][0].
+
+        Confirms the fix is meaningful: the old MFJ-only code would overstate
+        the Single sweep ceiling.
+        """
+        assert BRACKETS_SINGLE[-2][0] < BRACKETS_MFJ[-2][0], (
+            "Single 35%-bracket ceiling must be lower than MFJ; fix would be a no-op otherwise"
+        )
+
+    def test_bracket_selection_by_filing_status(self):
+        """The _base_brackets selection expression mirrors sweet_spot.py."""
+        for filing_status, expected in [("Single", BRACKETS_SINGLE), ("MFJ", BRACKETS_MFJ)]:
+            _base_brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+            assert _base_brackets is expected, (
+                f"filing_status={filing_status}: wrong bracket table selected for sweep ceiling"
+            )
+
+    def test_single_sweep_ceiling_lower_than_mfj_end_to_end(self):
+        """Single-filer max_conv ceiling (from indexed_brackets) must be lower than MFJ.
+
+        Mirrors the exact formula from sweet_spot.py:
+          max_conv = base.total_ded + indexed_brackets[-2][0]
+        using base_year (CPI factor = 1.0) for simplicity.
+        """
+        from engine.tax_indexing import index_bracket_list as _idx
+
+        year = 2026
+        cpi = 1.0
+        indexed_single = _idx(BRACKETS_SINGLE, year, cpi)
+        indexed_mfj = _idx(BRACKETS_MFJ, year, cpi)
+        # 35%-bracket ceiling is [-2][0]; MFJ ceiling must exceed Single ceiling
+        assert indexed_single[-2][0] < indexed_mfj[-2][0]

@@ -23,12 +23,23 @@ class TestQcdAgeGateF32:
         assert "ya >= 75" not in src, "QCD render guard still uses >= 75; should be >= 70"
         assert "sa >= 75" not in src, "Spouse QCD render guard still uses >= 75; should be >= 70"
 
-    def test_qcd_render_guard_uses_70(self):
+    def test_qcd_render_guard_uses_qcd_min_age(self):
+        """M14: QCD gate must use the engine constant QCD_MIN_AGE (71), not a literal."""
         import views.planner as planner_mod
 
         src = inspect.getsource(planner_mod)
-        assert "ya >= 70" in src, "QCD render guard should use ya >= 70"
-        assert "sa >= 70" in src, "Spouse QCD render guard should use sa >= 70"
+        # Literal 70 must no longer appear — the guard now references QCD_MIN_AGE
+        assert "ya >= 70" not in src, (
+            "QCD render guard still uses literal 70; should use QCD_MIN_AGE"
+        )
+        assert "sa >= 70" not in src, (
+            "Spouse QCD render guard still uses literal 70; should use QCD_MIN_AGE"
+        )
+        assert "QCD_MIN_AGE" in src, (
+            "views/planner.py must import and use QCD_MIN_AGE for the QCD age gate"
+        )
+        assert "ya >= QCD_MIN_AGE" in src, "Your QCD guard must be 'ya >= QCD_MIN_AGE'"
+        assert "sa >= QCD_MIN_AGE" in src, "Spouse QCD guard must be 'sa >= QCD_MIN_AGE'"
 
     def test_dead_qcd_flags_removed(self):
         import views.planner as planner_mod
