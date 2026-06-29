@@ -121,15 +121,16 @@ The data bridge is not limited to moving *your own* data between hosts —
 their private key can open it. Use this to hand your planner data to a
 financial advisor, family member, or co-planner over an untrusted channel.
 
-1. **Recipient generates a keypair** on their primary host:
+1. **Recipient generates a keypair.** On a local host, run:
 
    ```bash
    pixi run gen-data-bridge-keypair
    ```
 
-   They keep `~/.finextract/data-bridge.priv` secret and send you their
-   `~/.finextract/data-bridge.pub`. Public keys are safe to share over any
-   channel — plain email is fine.
+   On the public site (no shell), use the **"🆕 Generate a data-bridge
+   keypair"** expander on ⚙️ Setup → 🔗 Data Bridge instead. Either way the
+   recipient keeps their private key secret and sends you their **public**
+   key — safe to share over any channel, plain email is fine.
 
 2. **You seal the export for them.** On ⚙️ Setup → 🔗 Data Bridge →
    "📦 Export my data", paste their public key (base64 or hex) into the
@@ -149,5 +150,11 @@ financial advisor, family member, or co-planner over an untrusted channel.
 > **Confidentiality, not authentication.** A sealed box proves only that the
 > file was encrypted for the recipient — it does **not** prove who sent it.
 > Anyone holding the recipient's public key can produce a valid sealed file.
-> If the recipient needs to verify origin, that requires an authenticated
-> scheme (signed payloads), which the bridge does not yet provide.
+>
+> In practice, **sender identity is established by your transport**: if the
+> `.json.enc` arrives as an attachment in an encrypted email from a person
+> you know, the channel already tells you who sent it. Cryptographic origin
+> proof (a signed-payload scheme — e.g. a detached Ed25519 signature the
+> recipient verifies against the sender's known key) is **not currently
+> built**; rely on the channel for authentication, and treat an unexpected
+> or out-of-band file with suspicion.
