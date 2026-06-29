@@ -713,3 +713,45 @@ class TestSpouseIraConversionsYTDWiring:
             f"Expected autofill to reduce base-year conversion by ~{self._SPOUSE_CONV:.0f} "
             f"due to spouse YTD, got delta={conv_zero - conv_with:.0f}"
         )
+
+
+class TestTaxExemptInterestSSProvisional:
+    """PR-3: tax_exempt_interest_ytd must flow into SS provisional income (IRC §86(b)(2)).
+
+    §86(b)(2) provisional income includes tax-exempt interest; adding muni interest
+    when SS is near the taxability thresholds must raise taxable_ss_amt, and therefore
+    reduce available bracket room for Roth conversions in the base year.
+    """
+
+    def test_tax_exempt_interest_raises_taxable_ss_via_run_scenario(self) -> None:
+        """run_scenario base-year taxable_ss_amt must be higher when tax_exempt_interest_ytd > 0.
+
+        Mirrors the compute_social_security unit test above using the full engine path.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=300_000.0,
+            your_ss_fra=625.0,  # small SS: ~$7.5K/yr
+            your_ss_start_age=61,  # active in base year
+            spouse_ss_fra=0.0,
+            grants=[],
+        )
+        ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
+        ytd_with_muni = YTDSnapshot(
+            tax_year=2026, wages_ytd=10_000, tax_exempt_interest_ytd=25_000
+        )
+        plan = ConversionPlan()
+
+        yr_no_muni = run_scenario(hh, plan, "no_muni", end_age=62, ytd=ytd_no_muni).years[0]
+        yr_with_muni = run_scenario(hh, plan, "with_muni", end_age=62, ytd=ytd_with_muni).years[0]
+
+        assert yr_with_muni.taxable_ss_amt > yr_no_muni.taxable_ss_amt, (
+            f"Expected muni interest to raise taxable SS: "
+            f"no_muni={yr_no_muni.taxable_ss_amt:.0f}, with_muni={yr_with_muni.taxable_ss_amt:.0f}"
+        )
