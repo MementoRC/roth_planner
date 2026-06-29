@@ -530,3 +530,20 @@ class TestThirdPartySeal:
         ct = seal(b"secret", recipient_pub)
         with pytest.raises(DecryptionFailedError):
             unseal(ct, other_priv)
+
+
+class TestGeneratedKeypairRoundTrip:
+    def test_generated_keypair_b64_decodes_and_decrypts(self):
+        from engine.data_bridge_crypto import derive_pubkey
+
+        pub, priv = generate_keypair()
+        pub_b64 = base64.b64encode(pub).decode("ascii")
+        priv_b64 = base64.b64encode(priv).decode("ascii")
+        # The privkey widget re-decodes via decode_keymaterial (== _decode_keymaterial).
+        assert _decode_keymaterial(pub_b64) == pub
+        recovered_priv = _decode_keymaterial(priv_b64)
+        assert recovered_priv == priv
+        assert derive_pubkey(recovered_priv) == pub
+        # End to end: sender seals to the shared public key, recipient unseals.
+        ct = seal(b"recipient payload", _decode_keymaterial(pub_b64))
+        assert unseal(ct, recovered_priv) == b"recipient payload"

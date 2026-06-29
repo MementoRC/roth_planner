@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -78,6 +79,64 @@ def _parse_recipient_pubkey(raw: str | None) -> tuple[bytes | None, str | None]:
         return decode_keymaterial(raw), None
     except ValueError as e:
         return None, f"Invalid recipient public key: {e}"
+
+
+def _handle_keypair_generation() -> None:
+    """Generate a data-bridge keypair in-session (no CLI needed).
+
+    The public Pyodide site has no shell, so ``pixi run
+    gen-data-bridge-keypair`` is unavailable to a recipient. This widget
+    generates an X25519 keypair in the browser: the public key is shown for
+    sharing with whoever will encrypt data for you, and the private key is
+    shown once for you to save (and optionally loaded into this session so
+    you can immediately decrypt an upload). Neither key is written to disk or
+    ``localStorage`` — copy them before clearing or reloading.
+    """
+    with st.expander("\U0001f195 Generate a data-bridge keypair"):
+        st.caption(
+            "No install needed. Generate a keypair here, send the **public** key "
+            "to whoever is encrypting data for you, and keep the **private** key "
+            "secret. Neither key is saved — copy them somewhere safe now."
+        )
+        if st.button("Generate keypair", key="gen_keypair"):
+            # Deferred: nacl import kept function-local (module convention)
+            from engine.data_bridge_crypto import generate_keypair
+
+            pub, priv = generate_keypair()
+            st.session_state["_generated_pub_b64"] = base64.b64encode(pub).decode("ascii")
+            st.session_state["_generated_priv_b64"] = base64.b64encode(priv).decode("ascii")
+
+        pub_b64 = st.session_state.get("_generated_pub_b64")
+        priv_b64 = st.session_state.get("_generated_priv_b64")
+        if not (pub_b64 and priv_b64):
+            return
+
+        st.markdown("**Public key** — share this with the sender:")
+        st.code(pub_b64, language=None)
+        st.markdown("**Private key** — keep this secret:")
+        st.code(priv_b64, language=None)
+        st.warning(
+            "⚠️ Not saved to disk or localStorage. Copy the private key "
+            "somewhere safe now — after you click Clear or reload the page it is gone."
+        )
+        st.download_button(
+            label="⬇️ data-bridge.priv",
+            data=priv_b64 + "\n",
+            file_name="data-bridge.priv",
+            mime="text/plain",
+            key="download_gen_priv",
+        )
+        col_a, col_b = st.columns(2)
+        if col_a.button("Use this key for decryption now", key="use_gen_key"):
+            st.session_state["data_bridge_privkey_b64"] = priv_b64
+            st.session_state.pop("_generated_pub_b64", None)
+            st.session_state.pop("_generated_priv_b64", None)
+            st.success("Private key loaded for this session.")
+            st.rerun()
+        if col_b.button("Clear", key="clear_gen_key"):
+            st.session_state.pop("_generated_pub_b64", None)
+            st.session_state.pop("_generated_priv_b64", None)
+            st.rerun()
 
 
 def _handle_v2_privkey() -> None:
@@ -340,6 +399,7 @@ def _handle_personal_exports() -> None:
 
 def render_data_bridge_tab(hh: Household) -> None:
     """Extracted from setup.py render() — data_bridge tab body."""
+    _handle_keypair_generation()
     _handle_v2_privkey()
     _handle_personal_uploads()
     _handle_personal_exports()
