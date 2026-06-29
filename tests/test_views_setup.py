@@ -370,3 +370,29 @@ class TestClearPersonalSessionState:
             "_clear_personal_session_state does not clear _v2_privkey_input — "
             "the text_input widget retains the pasted key after Reset to demo"
         )
+
+    def test_tax_return_snapshot_cleared(self):
+        """tax_return_snapshot must be cleared on Reset-to-demo (M16)."""
+        source = self._state_source()
+        assert "tax_return_snapshot" in source, (
+            "_clear_personal_session_state does not clear tax_return_snapshot — "
+            "stale prior-year MAGI survives a Reset to demo"
+        )
+
+    def test_ytd_snapshot_cleared(self):
+        """ytd_snapshot must be cleared on Reset-to-demo (M16)."""
+        source = self._state_source()
+        assert "ytd_snapshot" in source, (
+            "_clear_personal_session_state does not clear ytd_snapshot — "
+            "stale YTD income drives the YTD Income page after Reset to demo"
+        )
+
+    def test_ytd_toggles_cleared(self):
+        """apply_ytd_to_projection and ytd_manual_entry must be cleared (M16)."""
+        source = self._state_source()
+        assert "apply_ytd_to_projection" in source, (
+            "_clear_personal_session_state does not clear apply_ytd_to_projection"
+        )
+        assert "ytd_manual_entry" in source, (
+            "_clear_personal_session_state does not clear ytd_manual_entry"
+        )

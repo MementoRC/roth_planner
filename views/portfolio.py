@@ -292,6 +292,6 @@ def render(hh: Household):
     st.dataframe(pd.DataFrame(rate_rows), hide_index=True, width="stretch")
 
     st.info(
-        "**Auto-sync**: Your pre-tax IRA balance and growth rate are computed from "
-        "Rollover IRA + 403(b) holdings. Spouse IRA data not yet available from scraper."
+        "**Auto-sync**: Pre-tax IRA balances and growth rates are computed from "
+        "Rollover IRA + 403(b) holdings for each owner."
     )

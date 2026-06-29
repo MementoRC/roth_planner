@@ -14,6 +14,7 @@ import streamlit as st
 
 from engine.scenario import ConversionPlan, run_scenario
 from engine.scenario_autofill import auto_fill_12
+from engine.scenario_compute import QCD_MIN_AGE
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
@@ -184,7 +185,7 @@ def render(hh: Household):
             cols[6].markdown("—")
 
         # Your QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
-        if ya >= 70:
+        if ya >= QCD_MIN_AGE:
             qcd_key = f"qcd_{yr.year}"
             qcd_val = st.session_state.conv_plan_qcd.get(yr.year, 0)
             new_qcd = cols[7].number_input(
@@ -202,7 +203,7 @@ def render(hh: Household):
             cols[7].markdown("—")
 
         # Spouse QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
-        if sa >= 70:
+        if sa >= QCD_MIN_AGE:
             sp_qcd_key = f"sp_qcd_{yr.year}"
             sp_qcd_val = st.session_state.conv_plan_spouse_qcd.get(yr.year, 0)
             new_sp_qcd = cols[8].number_input(

@@ -22,7 +22,7 @@ from engine.sweet_spot_compute import (
     estimate_ltcg_eligible,
     find_sweet_spots,
 )
-from engine.tax import BRACKETS_MFJ
+from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
@@ -68,7 +68,8 @@ def render(hh: Household) -> None:
     # Index IRMAA tiers and brackets for the selected year
     _cpi = hh.cpi_assumption
     irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year, _cpi)
-    indexed_brackets_mfj = _index_brackets(BRACKETS_MFJ, selected_year, _cpi)
+    _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    indexed_brackets = _index_brackets(_base_brackets, selected_year, _cpi)
 
     # --- Compute base income ---
     # Inject base-year realized YTD income into MAGI when the user opted in (niit-5).
@@ -101,7 +102,7 @@ def render(hh: Household) -> None:
     # --- Sweep conversion amounts ---
     max_conv = int(
         min(
-            base.total_ded + indexed_brackets_mfj[-2][0],  # up to 35% bracket
+            base.total_ded + indexed_brackets[-2][0],  # up to 35% bracket
             hh.your_ira + hh.spouse_ira,
         )
     )
@@ -168,7 +169,7 @@ def render(hh: Household) -> None:
 
     # Add bracket boundary lines
     bracket_boundaries = []
-    for ceil, rate in indexed_brackets_mfj[:-1]:
+    for ceil, rate in indexed_brackets[:-1]:
         boundary_conv = bracket_boundary_conversion(base, ceil)
         # Adjust for the fact that conversion changes taxable SS
         if 0 < boundary_conv < max_conv:
