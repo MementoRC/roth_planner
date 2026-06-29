@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Per-security-type qualified-dividend defaults. Override per ticker via
-# .dividend_rates.json. Conservative defaults — REITs/MLPs/bond funds are
-# ordinary (Section 199A REIT divs are non-qualified at federal level).
+# .dividend_rates.json. REITs/MLPs/bond funds are non-qualified (Section 199A
+# REIT divs are non-qualified at federal level); etf_equity=1.0 is an
+# optimistic approximation (broad ETFs ~92-95% qualified due to REIT holdings).
 QUALIFIED_DEFAULTS: dict[str, float] = {
     "equity": 1.0,  # individual stocks (TXN, AAPL, etc.)
     "etf_equity": 1.0,  # broad-market equity ETFs

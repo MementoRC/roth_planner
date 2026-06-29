@@ -136,6 +136,6 @@ class YTDSnapshot:
         return self.magi_ytd - self.tax_exempt_interest_ytd
 
     def with_snapshot_date(self) -> YTDSnapshot:
-        """Return copy with snapshot_date set to today."""
+        """Set snapshot_date to today (in place) and return self for chaining."""
         self.snapshot_date = date.today().isoformat()
         return self
