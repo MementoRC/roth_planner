@@ -7,7 +7,11 @@ curves must index IRMAA thresholds — and gate Medicare eligibility — to Y+2.
 
 import pytest
 
-from engine.aca_irmaa_compute import compute_cost_curves, compute_year_by_year_timeline
+from engine.aca_irmaa_compute import (
+    _nontaxable_ss,
+    compute_cost_curves,
+    compute_year_by_year_timeline,
+)
 from engine.irmaa import irmaa_next_threshold, irmaa_tier
 from models.household import Household
 
@@ -114,3 +118,111 @@ def test_timeline_irmaa_tier_room_uses_payment_year_indexing():
     assert income_year_tier != expected_tier, (
         "discriminator check: income-year and payment-year tier must differ at this MAGI/cpi"
     )
+
+
+class TestNontaxableSsAddback:
+    """IRC §36B(d)(2)(B)(iii) non-taxable SS add-back to ACA MAGI."""
+
+    def test_nontaxable_ss_zero_for_default_household(self) -> None:
+        """Default HH claims SS at 70 — outside the ACA window (pre-65).
+
+        _nontaxable_ss must return exactly 0.0 for ages 61-64 with ss_start_age=70.
+        """
+        hh = Household(your_age=61, spouse_age=55, your_aca_enrolled=True)
+        # At ACA-year ages (61-64) no one is drawing SS yet (start_age defaults to 70).
+        for your_age_in_year in (61, 62, 63, 64):
+            result = _nontaxable_ss(
+                hh,
+                your_age_in_year,
+                your_age_in_year - 6,  # spouse 6 years younger, also pre-70
+                other_income=80_000.0,
+                filing_status="MFJ",
+            )
+            assert result == 0.0, (
+                f"expected 0.0 at age {your_age_in_year} with ss_start_age=70, got {result}"
+            )
+
+    def test_nontaxable_ss_positive_when_claiming_during_aca_years(self) -> None:
+        """Someone claiming SS at 62 while on ACA (ages 62-64) must yield > 0.
+
+        Set your_ss_start_age=62 so the person is drawing SS while still in the
+        ACA window. Non-taxable portion = combined_ss − taxable_ss > 0 at modest
+        income levels where the 85% cap is not fully reached.
+        """
+        hh = Household(
+            your_age=62,
+            spouse_age=58,
+            your_ss_start_age=62,
+            your_ss_fra=2_000.0,  # $2,000/month at FRA → $24,000/year raw
+            your_fra_age=67,
+            ss_cola=0.025,
+            your_aca_enrolled=True,
+        )
+        # At age 62, ya==your_ss_start_age: they just started claiming.
+        result = _nontaxable_ss(
+            hh,
+            62,
+            None,  # Single filer perspective for simplicity
+            other_income=30_000.0,
+            filing_status="Single",
+        )
+        assert result > 0.0, (
+            f"expected non-taxable SS > 0 for age-62 claimant at $30k other income, got {result}"
+        )
+
+    def test_compute_cost_curves_higher_aca_magi_when_claiming_ss(self) -> None:
+        """compute_cost_curves must produce a lower ACA subsidy when SS is claimed
+        during ACA years — because the non-taxable SS add-back raises ACA MAGI.
+
+        Baseline (ss_start_age=70, no SS yet at age 62) vs claimant (ss_start_age=62).
+        Both households are Single filers on ACA at the same MAGI sweep point.
+        The claimant's ACA subsidy must be strictly lower (higher effective MAGI).
+        """
+        cpi = 0.025
+        year = 2026
+        magi_point = 35_000.0  # modest income; subsidy non-zero here
+
+        # Baseline: no SS drawn during ACA years
+        hh_base = Household(
+            your_age=62,
+            spouse_age=62,
+            filing_status="Single",
+            your_ss_start_age=70,
+            your_aca_enrolled=True,
+            aca_benchmark_premium_annual=12_000.0,
+        )
+        cc_base = compute_cost_curves(
+            [magi_point],
+            base_magi=magi_point,
+            net_inv_income=0.0,
+            hh=hh_base,
+            year=year,
+            cpi=cpi,
+        )
+
+        # Claimant: drawing SS at 62 while still on ACA
+        hh_claim = Household(
+            your_age=62,
+            spouse_age=62,
+            filing_status="Single",
+            your_ss_start_age=62,
+            your_ss_fra=2_000.0,
+            your_fra_age=67,
+            ss_cola=0.025,
+            your_aca_enrolled=True,
+            aca_benchmark_premium_annual=12_000.0,
+        )
+        cc_claim = compute_cost_curves(
+            [magi_point],
+            base_magi=magi_point,
+            net_inv_income=0.0,
+            hh=hh_claim,
+            year=year,
+            cpi=cpi,
+        )
+
+        assert cc_claim.aca_subsidy_vals[0] <= cc_base.aca_subsidy_vals[0], (
+            "SS claimant ACA subsidy must be <= baseline (non-taxable SS raises ACA MAGI); "
+            f"claimant={cc_claim.aca_subsidy_vals[0]:.2f}, "
+            f"baseline={cc_base.aca_subsidy_vals[0]:.2f}"
+        )
