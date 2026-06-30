@@ -338,6 +338,9 @@ def run_scenario(
         yr.combined_gross += ord_div_this_year
 
         # === Deductions ===
+        # OBBBA phaseout is measured on AGI (muni-excluded), matching estimate_ytd_federal_tax
+        # which passes niit_magi_ytd. yr.magi is IRMAA MAGI (includes muni), so strip muni here.
+        _phaseout_muni = ytd_year.tax_exempt_interest_ytd if ytd_year is not None else 0.0
         if survivor_active:
             assert surv is not None  # narrowing: survivor_active implies surv is not None
             # Use single-filer std deduction + senior extra; zero deceased age so
@@ -348,7 +351,7 @@ def run_scenario(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
             )
             yr.total_deductions += senior_bonus_deduction(
-                ya_eff, sa_eff, yr.magi, year=year, cpi=cpi, filing_status="Single"
+                ya_eff, sa_eff, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
             )
         else:
             # Non-survivor path. A single-from-the-start household (filing_status
@@ -362,7 +365,7 @@ def run_scenario(
                 _std_ded, _senior_extra = hh.std_deduction, hh.senior_extra
             yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, year=year, cpi=cpi)
             yr.total_deductions += senior_bonus_deduction(
-                ya, sa, yr.magi, year=year, cpi=cpi, filing_status=current_filing_status
+                ya, sa, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
             )
 
         # Baseline (no-conversion) deductions for the incremental conversion tax:
@@ -373,7 +376,7 @@ def run_scenario(
             base_total_deductions = deductions(
                 ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
             ) + senior_bonus_deduction(
-                ya_eff, sa_eff, base_magi, year=year, cpi=cpi, filing_status="Single"
+                ya_eff, sa_eff, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
             )
         else:
             _b_std_ded: float
@@ -385,7 +388,7 @@ def run_scenario(
             base_total_deductions = deductions(
                 ya, sa, _b_std_ded, _b_senior_extra, year=year, cpi=cpi
             ) + senior_bonus_deduction(
-                ya, sa, base_magi, year=year, cpi=cpi, filing_status=current_filing_status
+                ya, sa, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
             )
 
         # === Taxable income ===
