@@ -411,7 +411,7 @@ def estimate_ytd_federal_tax(
     niit_amount = niit(magi, net_investment_income, filing_status=hh.filing_status)
 
     total = ordinary_tax + ltcg_tax + niit_amount
-    effective_rate = total / magi if magi > 0 else 0.0
+    effective_rate = total / ytd.magi_ytd if ytd.magi_ytd > 0 else 0.0
 
     # Step 7: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).
     marginal = (marginal_rate_single if is_single else marginal_rate)(

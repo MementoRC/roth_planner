@@ -755,3 +755,64 @@ class TestTaxExemptInterestSSProvisional:
             f"Expected muni interest to raise taxable SS: "
             f"no_muni={yr_no_muni.taxable_ss_amt:.0f}, with_muni={yr_with_muni.taxable_ss_amt:.0f}"
         )
+
+
+class TestOBBBAPhaseoutMAGIConsistency:
+    """M2/M3: OBBBA senior-bonus phaseout must use AGI (muni-excluded), not IRMAA MAGI.
+
+    IRC §151(d)(5)(C) / Pub. L. 119-21 §70103: phaseout is measured on AGI.
+    AGI ≡ magi - tax_exempt_interest (same as niit_magi).
+    Pre-fix scenario.py passed yr.magi (IRMAA MAGI, muni-included), causing
+    households with muni interest to phase out their OBBBA deduction too early.
+
+    Differential test: two identical runs differing only in tax_exempt_interest_ytd.
+    AGI is held constant inside the OBBBA phaseout band ($150K–$250K MFJ).
+    Because muni is NOT part of AGI, the OBBBA deduction must be identical.
+    """
+
+    def _hh_in_phaseout_band(self) -> "Household":
+        """Household aged 66/66 so both spouses are OBBBA-eligible (65+), base_year=2026."""
+        return Household(
+            your_age=66,
+            spouse_age=66,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=500_000.0,
+            your_ss_fra=0.0,  # zero SS to keep MAGI simple
+            spouse_ss_fra=0.0,
+            grants=[],
+        )
+
+    def test_obbba_deduction_identical_regardless_of_muni_interest(self) -> None:
+        """OBBBA bonus must be the same whether muni=0 or muni=30_000.
+
+        Setup: wages_ytd=$190_000, so AGI ≈ $190K (inside MFJ phaseout band $150K–$250K).
+        Run A: tax_exempt_interest_ytd=0       → IRMAA MAGI = AGI = $190K
+        Run B: tax_exempt_interest_ytd=$30_000 → IRMAA MAGI = $220K, AGI still = $190K
+
+        Pre-fix: Run B would use MAGI=$220K, phasing out more → smaller total_deductions.
+        Post-fix: both runs use AGI=$190K → identical OBBBA bonus → equal total_deductions.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._hh_in_phaseout_band()
+        plan = ConversionPlan()  # zero conversions — isolate deduction path
+
+        ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=190_000)
+        ytd_with_muni = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=190_000,
+            tax_exempt_interest_ytd=30_000,
+        )
+
+        yr_no_muni = run_scenario(hh, plan, "no_muni", end_age=67, ytd=ytd_no_muni).years[0]
+        yr_with_muni = run_scenario(
+            hh, plan, "with_muni", end_age=67, ytd=ytd_with_muni
+        ).years[0]
+
+        assert yr_no_muni.total_deductions == pytest.approx(yr_with_muni.total_deductions, abs=1.0), (
+            f"OBBBA deduction must not depend on muni interest: "
+            f"no_muni={yr_no_muni.total_deductions:.0f}, "
+            f"with_muni={yr_with_muni.total_deductions:.0f}"
+        )
