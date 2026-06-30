@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.aca import aca_applies, aca_net_cost, aca_subsidy, aca_subsidy_loss
+from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
 from engine.tax import (
@@ -20,8 +21,59 @@ from engine.tax import (
     marginal_rate,
     marginal_rate_single,
     senior_bonus_deduction,
+    taxable_ss,
 )
 from models.household import Household
+
+
+def _nontaxable_ss(
+    hh: Household,
+    ya: int,
+    sa: int | None,
+    *,
+    other_income: float,
+    filing_status: str,
+) -> float:
+    """Non-taxable Social Security for the ACA MAGI add-back (IRC §36B(d)(2)(B)(iii)).
+
+    IRMAA MAGI (§1839(i)(4)) excludes the non-taxable portion of Social Security;
+    ACA MAGI must add it back. Returns ``combined_ss - taxable_ss`` floored at 0.
+
+    Returns ``0.0`` when no SS is claimed at these ages — e.g. the default
+    household claims at 70, after the ACA window closes at 65 — so this is a
+    no-op for households not drawing SS during the ACA years.
+
+    ``other_income`` is the non-SS provisional-income proxy (the Explorer's base
+    MAGI). At ACA-relevant incomes SS inclusion is pinned at the 85% cap, so the
+    proxy's slight over-count of provisional income is immaterial. Mirrors the
+    canonical add-back in engine/scenario_compute.compute_aca and
+    engine/sweet_spot_compute. The SSA survivor step-up (survivor keeps the
+    larger benefit) is not separately modeled here — a second-order effect on
+    the already-narrow SS-while-on-ACA case, tracked under the deferred
+    survivor/ACA interaction.
+    """
+    your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+    your_ss = (
+        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
+        if ya >= hh.your_ss_start_age
+        else 0.0
+    )
+    if filing_status == "MFJ" and sa is not None:
+        spouse_ss_base = ss_benefit_at_age(
+            hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age
+        )
+        spouse_ss = (
+            ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+            if sa >= hh.spouse_ss_start_age
+            else 0.0
+        )
+    else:
+        spouse_ss = 0.0
+    combined_ss = your_ss + spouse_ss
+    if combined_ss <= 0:
+        return 0.0
+    taxable = taxable_ss(combined_ss, other_income, filing_status=filing_status)
+    return max(combined_ss - taxable, 0.0)
 
 
 @dataclass
@@ -90,6 +142,18 @@ def compute_cost_curves(
     # Mirror the is_mfj guard used in compute_year_by_year_timeline so a
     # phantom default-age spouse cannot inflate on_medicare to 2 for Single HHs.
     _is_mfj_curves = hh.filing_status == "MFJ"
+
+    # ACA MAGI adds back non-taxable SS (IRC §36B(d)(2)(B)(iii)); IRMAA MAGI does
+    # not. Constant offset at the base point applied to every swept MAGI below.
+    # 0.0 unless someone is drawing SS during the ACA years (no-op for default HH).
+    nontaxable_ss = _nontaxable_ss(
+        hh,
+        hh.your_age_in(year),
+        hh.spouse_age_in(year) if _is_mfj_curves else None,
+        other_income=base_magi,
+        filing_status=hh.filing_status,
+    )
+
     # IRMAA 2-year lookback: income realized in `year` is judged against the
     # thresholds published for, and paid in, year + 2. ACA (below) stays on `year`
     # because it is a same-year effect.
@@ -124,7 +188,7 @@ def compute_cost_curves(
         # ACA (only meaningful if enrolled and pre-65)
         if anyone_on_aca:
             sub = aca_subsidy(
-                magi,
+                magi + nontaxable_ss,
                 benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
@@ -134,7 +198,7 @@ def compute_cost_curves(
             aca_subsidy_vals.append(sub)
             aca_net_cost_vals.append(
                 aca_net_cost(
-                    magi,
+                    magi + nontaxable_ss,
                     benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
@@ -144,8 +208,8 @@ def compute_cost_curves(
             )
             aca_loss_vals.append(
                 aca_subsidy_loss(
-                    base_magi,
-                    magi,
+                    base_magi + nontaxable_ss,
+                    magi + nontaxable_ss,
                     benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
@@ -195,8 +259,8 @@ def compute_cost_curves(
         # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
         hidden = (
             aca_subsidy_loss(
-                base_magi,
-                magi,
+                base_magi + nontaxable_ss,
+                magi + nontaxable_ss,
                 benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
@@ -329,8 +393,18 @@ def compute_year_by_year_timeline(
         aca_sub: float | None = None
         aca_pay: float | None = None
         if you_on_aca or sp_on_aca:
+            # ACA MAGI adds back non-taxable SS (IRC §36B(d)(2)(B)(iii)). Survivor
+            # years keep the existing behavior (offset 0): the survivor-SS step-up
+            # interaction with ACA is deferred to a separate design pass.
+            nontaxable_ss_yr = (
+                _nontaxable_ss(
+                    hh, ya, sa, other_income=base_magi, filing_status=current_filing_status
+                )
+                if not survivor_active
+                else 0.0
+            )
             aca_sub = aca_subsidy(
-                base_magi,
+                base_magi + nontaxable_ss_yr,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
@@ -338,7 +412,7 @@ def compute_year_by_year_timeline(
                 cpi=_yr_cpi,
             )
             aca_pay = aca_net_cost(
-                base_magi,
+                base_magi + nontaxable_ss_yr,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
