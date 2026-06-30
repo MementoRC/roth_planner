@@ -396,3 +396,29 @@ class TestClearPersonalSessionState:
         assert "ytd_manual_entry" in source, (
             "_clear_personal_session_state does not clear ytd_manual_entry"
         )
+
+
+class TestNoDataMsg:
+    """Unit tests for views.setup.portfolio._no_data_msg (U4/U5/U13)."""
+
+    def test_pyodide_true_returns_upload_message(self, monkeypatch: pytest.MonkeyPatch):
+        import views.setup.portfolio as mod
+
+        monkeypatch.setattr(mod, "is_pyodide", lambda: True)
+        msg = mod._no_data_msg("accounts")
+        assert "upload a data file" in msg
+        assert "Sync button" not in msg
+
+    def test_pyodide_false_returns_sync_message(self, monkeypatch: pytest.MonkeyPatch):
+        import views.setup.portfolio as mod
+
+        monkeypatch.setattr(mod, "is_pyodide", lambda: False)
+        msg = mod._no_data_msg("holdings")
+        assert "Sync button" in msg
+        assert "upload a data file" in msg
+
+    def test_noun_interpolated(self, monkeypatch: pytest.MonkeyPatch):
+        import views.setup.portfolio as mod
+
+        monkeypatch.setattr(mod, "is_pyodide", lambda: False)
+        assert "widgets" in mod._no_data_msg("widgets")
