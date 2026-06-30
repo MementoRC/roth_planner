@@ -49,3 +49,39 @@ class TestRothEligibility2026Constants:
 
         assert CONTRIB_LIMIT == 7_500  # under-50 base
         assert CONTRIB_LIMIT + CATCHUP_50 == 8_600  # 50+ total
+
+
+class TestPyodideGatingRothEligibility:
+    """Verify the TurboTax sync block is gated behind is_pyodide() in roth_eligibility.py."""
+
+    def test_fetch_tax_return_inside_pyodide_else_branch(self):
+        """fetch_tax_return must appear AFTER the is_pyodide() guard in render() source."""
+        import inspect
+
+        import views.roth_eligibility as mod
+
+        source = inspect.getsource(mod.render)
+        guard_pos = source.find("is_pyodide()")
+        fetch_pos = source.find("fetch_tax_return(")
+        assert guard_pos != -1, "is_pyodide() guard not found in render()"
+        assert fetch_pos != -1, "fetch_tax_return( call not found in render()"
+        assert guard_pos < fetch_pos, (
+            "fetch_tax_return() appears before is_pyodide() guard — "
+            "sync block is not properly gated on Pyodide"
+        )
+
+    def test_sync_button_inside_pyodide_else_branch(self):
+        """'Sync TurboTax Data' button must appear AFTER the is_pyodide() guard."""
+        import inspect
+
+        import views.roth_eligibility as mod
+
+        source = inspect.getsource(mod.render)
+        guard_pos = source.find("is_pyodide()")
+        button_pos = source.find("Sync TurboTax Data")
+        assert guard_pos != -1, "is_pyodide() guard not found in render()"
+        assert button_pos != -1, "'Sync TurboTax Data' button not found in render()"
+        assert guard_pos < button_pos, (
+            "'Sync TurboTax Data' button appears before is_pyodide() guard — "
+            "button is visible on Pyodide web build"
+        )

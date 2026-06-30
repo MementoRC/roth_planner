@@ -32,12 +32,17 @@ from engine.upload_merge import derive_ira_balances, derive_roth_balances
 from models.household import Household
 
 
+def _no_data_msg(noun: str) -> str:
+    """Return an empty-state message adapted for the current runtime environment."""
+    if is_pyodide():
+        return f"No {noun} loaded — upload a data file in ⚙️ Setup → \U0001f517 Data Bridge."
+    return f"No {noun} loaded — use the Sync button below (local install) or upload a data file."
+
+
 def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) -> None:
     """Render a read-only accounts dataframe, or an info banner when empty."""
     if not accounts:
-        st.info(
-            "No accounts loaded — use the Sync button below (local install) or upload a data file."
-        )
+        st.info(_no_data_msg("accounts"))
         return
     rows = [
         {
@@ -65,9 +70,7 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
         for h in a.holdings
     ]
     if not rows:
-        st.info(
-            "No holdings loaded — use the Sync button below (local install) or upload a data file."
-        )
+        st.info(_no_data_msg("holdings"))
         return
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
@@ -100,9 +103,7 @@ def _render_portfolio_sub_tabs(
     if snap is None:
         for tab in (me_tab, spouse_tab, all_tab):
             with tab:
-                st.info(
-                    "No accounts loaded — use the Sync button below (local install) or upload a data file."
-                )
+                st.info(_no_data_msg("accounts"))
         return
 
     me_accounts = [a for a in snap.accounts if a.owner == "you"]

@@ -10,6 +10,7 @@ figures and IRA contribution amounts.
 
 import streamlit as st
 
+from engine.data_bridge_browser import is_pyodide
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
@@ -165,24 +166,30 @@ def render(hh: Household):
     # --- TurboTax data sync ---
     tax_snap = st.session_state.get("tax_return_snapshot")
 
-    col_sync, col_status = st.columns([1, 3])
-    with col_sync:
-        sync_tax = st.button(
-            "Sync TurboTax Data",
-            help="Pull income & deduction data from FinExtract ingestion server",
+    if is_pyodide():
+        st.caption(
+            "Live TurboTax sync via FinExtract requires a local install. "
+            "Upload your data in ⚙️ Setup → \U0001f517 Data Bridge."
         )
-    if sync_tax:
-        from engine.portfolio_sync import fetch_tax_return, save_tax_snapshot
+    else:
+        col_sync, col_status = st.columns([1, 3])
+        with col_sync:
+            sync_tax = st.button(
+                "Sync TurboTax Data",
+                help="Pull income & deduction data from FinExtract ingestion server",
+            )
+        if sync_tax:
+            from engine.portfolio_sync import fetch_tax_return, save_tax_snapshot
 
-        tax_snap = fetch_tax_return()
-        if tax_snap.server_available:
-            st.session_state.tax_return_snapshot = tax_snap
-            save_tax_snapshot(tax_snap)
-            with col_status:
-                st.success("Synced TurboTax data from FinExtract")
-        else:
-            with col_status:
-                st.error(f"Server unavailable: {tax_snap.error}")
+            tax_snap = fetch_tax_return()
+            if tax_snap.server_available:
+                st.session_state.tax_return_snapshot = tax_snap
+                save_tax_snapshot(tax_snap)
+                with col_status:
+                    st.success("Synced TurboTax data from FinExtract")
+            else:
+                with col_status:
+                    st.error(f"Server unavailable: {tax_snap.error}")
 
     # Load cached on first visit
     if tax_snap is None and "tax_return_snapshot" not in st.session_state:
