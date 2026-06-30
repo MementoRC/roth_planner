@@ -1,6 +1,7 @@
 """Tests for engine.portfolio_sync — option exercises fetch/apply, grant_id normalization, equity sales cache."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -630,3 +631,37 @@ class TestEquitySalesCacheConsumer:
 
         result = json.loads(cache.read_text())
         assert "equity_sales" in result
+
+
+class TestAwardsRedirectGuard:
+    """S2/S3 — fetch_equity_awards and fetch_shares must not follow 3xx redirects (audit H2)."""
+
+    def test_fetch_equity_awards_302_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 302 from FinExtract must yield [] for fetch_equity_awards, not follow the redirect."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync import fetch_equity_awards
+
+        def fake_get(url: str, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status_code=302,
+                headers={"Location": "http://attacker.example/steal"},
+            )
+
+        monkeypatch.setattr(client_module.requests, "get", fake_get)
+        result = fetch_equity_awards()
+        assert result == []
+
+    def test_fetch_shares_302_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 302 from FinExtract must yield [] for fetch_shares, not follow the redirect."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync import fetch_shares
+
+        def fake_get(url: str, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status_code=302,
+                headers={"Location": "http://attacker.example/steal"},
+            )
+
+        monkeypatch.setattr(client_module.requests, "get", fake_get)
+        result = fetch_shares()
+        assert result == []

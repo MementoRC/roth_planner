@@ -9,7 +9,7 @@ import requests  # type: ignore[import-untyped]
 if TYPE_CHECKING:
     pass
 
-from .client import BASE_URL, _headers
+from .client import _get
 from .shapes import DividendsRollupSnapshot, PortfolioSnapshot
 
 
@@ -17,17 +17,16 @@ def fetch_dividends_rollup() -> DividendsRollupSnapshot:
     """Fetch dividends rollup from FinExtract /query/brokerage endpoint.
 
     Returns a DividendsRollupSnapshot with server_available=False on any
-    failure (timeout, non-200, malformed JSON). Caller decides whether to
-    apply or skip.
+    failure (timeout, non-200, malformed JSON, or unexpected redirect).
+    Caller decides whether to apply or skip.
 
     NOTE: dividends_rollup returns {rollup: {...}}, NOT a rows[] shape.
     _flatten_query_rows is for rows-shaped endpoints and does NOT apply here.
     """
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/brokerage",
+        resp = _get(
+            "/query/brokerage",
             params={"data_type": "dividends_rollup"},
-            headers=_headers(),
             timeout=5,
         )
         if resp.status_code != 200:

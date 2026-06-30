@@ -9,16 +9,15 @@ import requests  # type: ignore[import-untyped]
 if TYPE_CHECKING:
     pass
 
-from .client import BASE_URL, _flatten_query_rows, _headers
+from .client import _flatten_query_rows, _get
 
 
 def fetch_equity_awards() -> list[dict[str, Any]]:
     """Fetch equity compensation awards."""
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/equity_comp",
+        resp = _get(
+            "/query/equity_comp",
             params={"data_type": "equity_awards"},
-            headers=_headers(),
             timeout=5,
         )
         resp.raise_for_status()
@@ -31,10 +30,9 @@ def fetch_equity_awards() -> list[dict[str, Any]]:
 def fetch_shares() -> list[dict[str, Any]]:
     """Fetch equity compensation shares held."""
     try:
-        resp = requests.get(
-            f"{BASE_URL}/query/equity_comp",
+        resp = _get(
+            "/query/equity_comp",
             params={"data_type": "shares"},
-            headers=_headers(),
             timeout=5,
         )
         resp.raise_for_status()

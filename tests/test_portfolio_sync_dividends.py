@@ -1,5 +1,7 @@
 """Tests for engine.portfolio_sync — dividend forecast, rollup fetch/apply, TTM derivation."""
 
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -107,19 +109,19 @@ class TestDividendsRollupFetchAndMap:
     def test_fetch_handles_server_unavailable(self, monkeypatch):
         import requests as req
 
+        from engine.portfolio_sync import client as client_module
         from engine.portfolio_sync import fetch_dividends_rollup
 
         def _raise(*args, **kwargs):
             raise req.exceptions.ConnectionError("refused")
 
-        monkeypatch.setattr(req, "get", _raise)
+        monkeypatch.setattr(client_module.requests, "get", _raise)
         result = fetch_dividends_rollup()
         assert result.server_available is False
         assert result.error is not None
 
     def test_fetch_parses_rollup_payload(self, monkeypatch):
-        import requests as req
-
+        from engine.portfolio_sync import client as client_module
         from engine.portfolio_sync import fetch_dividends_rollup
 
         payload = {
@@ -141,7 +143,7 @@ class TestDividendsRollupFetchAndMap:
             def json(self):
                 return payload
 
-        monkeypatch.setattr(req, "get", lambda *a, **kw: _FakeResp())
+        monkeypatch.setattr(client_module.requests, "get", lambda *a, **kw: _FakeResp())
         result = fetch_dividends_rollup()
         assert result.server_available is True
         assert "AAPL" in result.by_symbol
@@ -296,6 +298,25 @@ class TestDividendsRollupFetchAndMap:
         apply_dividends_rollup(snap, rollup)
         holding = self._all_holdings(snap)[0]
         assert holding.dividends_by_year == {"2024": 423.5}
+
+
+class TestDividendsRollupRedirectGuard:
+    """S1 — fetch_dividends_rollup must not follow 3xx redirects (audit H2)."""
+
+    def test_302_returns_server_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 302 from FinExtract must yield server_available=False, not follow the redirect."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync import fetch_dividends_rollup
+
+        def fake_get(url: str, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status_code=302,
+                headers={"Location": "http://attacker.example/steal"},
+            )
+
+        monkeypatch.setattr(client_module.requests, "get", fake_get)
+        result = fetch_dividends_rollup()
+        assert result.server_available is False
 
 
 class TestDividendForecastTTMPerShare:
