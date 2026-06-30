@@ -140,7 +140,7 @@ def compute_survivor_snapshot(
                 row[f"{s.name} Bracket"] = "---"
                 continue
 
-            inherited_ira = yr_death.your_ira_begin + yr_death.spouse_ira_begin
+            inherited_ira = yr_death.your_ira_end + yr_death.spouse_ira_end
             survivor_ss = max(yr_death.your_ss, yr_death.spouse_ss)
 
             proj_years = 5
