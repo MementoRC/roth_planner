@@ -189,7 +189,13 @@ def senior_bonus_deduction(
         return 0.0
     if filing_status == "MFS":
         return 0.0
-    ages_to_count = [your_age, spouse_age] if filing_status == "MFJ" else [your_age]
+    if filing_status == "MFJ":
+        ages_to_count = [your_age, spouse_age]
+    else:
+        # Single/HoH: exactly one eligible filer; the real filer's age may be in
+        # either slot (scenario zeroes the deceased spouse's age), so use the
+        # non-zero one. max() picks the survivor since the deceased slot is 0.
+        ages_to_count = [max(your_age, spouse_age)]
     eligible = sum(1 for age in ages_to_count if age >= 65)
     if eligible == 0:
         return 0.0
@@ -238,8 +244,10 @@ def room_to_12(
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
+    filing_status: str = "MFJ",
 ) -> float:
-    ceiling = index_value(BRACKETS_MFJ[1][0], year, cpi)
+    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+    ceiling = index_value(brackets[1][0], year, cpi)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
@@ -249,8 +257,10 @@ def room_to_22(
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
+    filing_status: str = "MFJ",
 ) -> float:
-    ceiling = index_value(BRACKETS_MFJ[2][0], year, cpi)
+    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+    ceiling = index_value(brackets[2][0], year, cpi)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 

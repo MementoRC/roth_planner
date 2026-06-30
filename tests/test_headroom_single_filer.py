@@ -51,3 +51,36 @@ def test_headroom_threads_filing_status_to_taxable_ss() -> None:
     # Single thresholds ($25K/$34K) are lower than MFJ ($32K/$44K) -> more taxable SS
     # -> higher ordinary gross -> less room under the 22% bracket top.
     assert hr_single.room_to_22pct < hr_mfj.room_to_22pct
+
+
+# --- M1+M2: filing-status-aware bracket ceiling + Single std deduction ---
+
+
+def test_headroom_single_bracket_ceiling_and_std_deduction() -> None:
+    """M1+M2: compute_headroom("Single") uses Single bracket ceilings AND Single std deduction.
+
+    With zero income, room_to_12pct = Single_std_ded + Single_12_ceiling
+                                     = 16_100 + 50_400 = 66_500
+    which is materially less than the MFJ equivalent (32_200 + 100_800 = 133_000).
+    This fails before M1+M2 because headroom uses MFJ ceilings + MFJ deductions for Single.
+    """
+    hh = Household()
+    hh.your_age = 61
+    hh.spouse_age = 55
+    hh.your_ss_start_age = 70
+    hh.spouse_ss_start_age = 70
+    ytd = YTDSnapshot(tax_year=2026)  # zero income
+
+    hr_mfj, hr_single = _mfj_single(hh, ytd)
+
+    # MFJ: room = 32_200 + 100_800 = 133_000
+    assert hr_mfj.room_to_12pct > 100_000
+
+    # Single must be materially LESS — not just slightly less
+    # Expected: 16_100 + 50_400 = 66_500 (roughly half MFJ)
+    assert hr_single.room_to_12pct < 75_000  # well below MFJ
+    assert hr_single.room_to_12pct > 50_000  # sanity lower bound
+
+    # room_to_22pct similarly reduced
+    assert hr_single.room_to_22pct < hr_mfj.room_to_22pct
+    assert hr_single.room_to_22pct < 130_000  # Single: ~16_100 + 105_700 = 121_800
