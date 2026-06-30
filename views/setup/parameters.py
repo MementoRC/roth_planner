@@ -51,9 +51,8 @@ def spouse_single_overrides() -> dict[str, object]:
     }
 
 
-def _render_survivor_scenario() -> None:
+def _render_survivor_scenario(base_year: int) -> None:
     """Render the Survivor scenario expander in the Joint sub-tab."""
-    base_year: int = 2026
     current: dict = st.session_state.get("survivor") or {}
 
     with st.expander("Survivor scenario (advanced sensitivity)", expanded=False):
@@ -98,9 +97,8 @@ def _render_survivor_scenario() -> None:
             st.session_state["survivor"] = None
 
 
-def _render_inherited_iras() -> None:
+def _render_inherited_iras(base_year: int) -> None:
     """Render the Inherited IRAs expander in the Joint sub-tab."""
-    base_year: int = 2026
 
     with st.expander("Inherited IRAs (non-spousal, 10-year rule)", expanded=False):
         st.caption(
@@ -581,5 +579,5 @@ def render_parameters_tab(hh: Household) -> None:
         )
         _render_prior_year_magi_anchor()
         _render_pdf_1040_import()
-        _render_survivor_scenario()
-        _render_inherited_iras()
+        _render_survivor_scenario(hh.base_year)
+        _render_inherited_iras(hh.base_year)

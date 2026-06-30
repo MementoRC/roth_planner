@@ -147,8 +147,12 @@ class Household:
     spouse_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
 
     # RMD
-    your_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
-    spouse_rmd_start_age: int = 75  # SECURE 2.0 default; pre-1960 cohort uses 73
+    your_rmd_start_age: int = (
+        75  # SECURE 2.0 default; 1951-1959 cohort uses 73 per IRC §401(a)(9)(C)(v)(I)
+    )
+    spouse_rmd_start_age: int = (
+        75  # SECURE 2.0 default; 1951-1959 cohort uses 73 per IRC §401(a)(9)(C)(v)(I)
+    )
     your_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer first RMD to April 1 of following year (two RMDs land in year 2)
     spouse_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer spouse's first RMD likewise
 
