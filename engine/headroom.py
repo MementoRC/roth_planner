@@ -15,7 +15,15 @@ from dataclasses import dataclass
 
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year, irmaa_tier
 from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
-from engine.tax import deductions, room_to_12, room_to_22, senior_bonus_deduction, taxable_ss
+from engine.tax import (
+    SENIOR_EXTRA_SINGLE,
+    STD_DEDUCTION_SINGLE,
+    deductions,
+    room_to_12,
+    room_to_22,
+    senior_bonus_deduction,
+    taxable_ss,
+)
 from engine.tax_indexing import index_value
 from models.household import Household
 from models.ytd_income import YTDSnapshot
@@ -145,9 +153,16 @@ def compute_headroom(
     result.locked_magi = locked_magi
 
     # Deductions use locked MAGI for phaseout (conservative — planned income may change).
+    # M2: Single filers use Single std deduction / senior extra (not MFJ household defaults).
+    if filing_status == "Single":
+        _std_ded: float = STD_DEDUCTION_SINGLE
+        _senior_extra: float = SENIOR_EXTRA_SINGLE
+    else:
+        _std_ded = hh.std_deduction
+        _senior_extra = hh.senior_extra
     # FIX #5: senior_bonus_deduction phaseout must use muni-EXCLUDED MAGI (niit_magi),
     # consistent with engine/tax.py which passes ytd.niit_magi_ytd.
-    ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
+    ded = deductions(ya, sa, _std_ded, _senior_extra, year=_year, cpi=_cpi)
     ded += senior_bonus_deduction(
         ya, sa, locked_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
@@ -156,8 +171,12 @@ def compute_headroom(
     # from brackets per IRC §1(h)); conversions are ordinary income and stay in.
     locked_gross = ytd.total_ordinary_income + locked_tss
 
-    result.room_to_12pct = room_to_12(locked_gross, ded, year=_year, cpi=_cpi)
-    result.room_to_22pct = room_to_22(locked_gross, ded, year=_year, cpi=_cpi)
+    result.room_to_12pct = room_to_12(
+        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
+    )
+    result.room_to_22pct = room_to_22(
+        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
+    )
     base_irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     # FIX #6: IRMAA 2-year lookback — the threshold that applies is for the PAYMENT year
     # (income year + 2), not the income year itself.
@@ -180,13 +199,18 @@ def compute_headroom(
 
     # Recalculate deductions with full planned MAGI.
     # FIX #5 (planned path): same muni-excluded MAGI for senior_bonus_deduction phaseout.
-    ded_planned = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=_year, cpi=_cpi)
+    # M2 (planned path): same Single std deduction as locked path.
+    ded_planned = deductions(ya, sa, _std_ded, _senior_extra, year=_year, cpi=_cpi)
     ded_planned += senior_bonus_deduction(
         ya, sa, planned_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
 
-    result.room_to_12pct_with_planned = room_to_12(planned_gross, ded_planned, year=_year, cpi=_cpi)
-    result.room_to_22pct_with_planned = room_to_22(planned_gross, ded_planned, year=_year, cpi=_cpi)
+    result.room_to_12pct_with_planned = room_to_12(
+        planned_gross, ded_planned, year=_year, cpi=_cpi, filing_status=filing_status
+    )
+    result.room_to_22pct_with_planned = room_to_22(
+        planned_gross, ded_planned, year=_year, cpi=_cpi, filing_status=filing_status
+    )
     result.room_to_irmaa_t1_with_planned = max(irmaa_t1 - planned_magi, 0.0)
     result.room_to_niit_with_planned = max(niit_threshold - planned_niit_magi, 0.0)
 

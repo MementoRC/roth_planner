@@ -210,6 +210,84 @@ class TestSafeHarborPayment:
         assert room_to_22(0, 0) == pytest.approx(bracket_22_ceiling)
         assert room_to_22(0, 32_200) == pytest.approx(bracket_22_ceiling + 32_200)
 
+    # --- M1: filing_status param on room_to_12 / room_to_22 ---
+
+    def test_room_to_12_single_uses_single_ceiling(self):
+        """Single filer sees the 12% Single ceiling ($50,400), not MFJ ceiling ($100,800)."""
+        from engine.tax import BRACKETS_SINGLE, room_to_12
+
+        single_12_ceiling = BRACKETS_SINGLE[1][0]  # 50_400
+        # With zero income and zero deductions, room == ceiling
+        assert room_to_12(0, 0, filing_status="Single") == pytest.approx(single_12_ceiling)
+        # With a deduction the room grows by the deduction amount
+        assert room_to_12(0, 16_100, filing_status="Single") == pytest.approx(
+            single_12_ceiling + 16_100
+        )
+
+    def test_room_to_22_single_uses_single_ceiling(self):
+        """Single filer sees the 22% Single ceiling ($105,700), not MFJ ceiling ($211,400)."""
+        from engine.tax import BRACKETS_SINGLE, room_to_22
+
+        single_22_ceiling = BRACKETS_SINGLE[2][0]  # 105_700
+        assert room_to_22(0, 0, filing_status="Single") == pytest.approx(single_22_ceiling)
+        assert room_to_22(0, 16_100, filing_status="Single") == pytest.approx(
+            single_22_ceiling + 16_100
+        )
+
+    def test_room_to_12_default_unchanged_mfj(self):
+        """Default (no filing_status) still returns the MFJ ceiling — regression guard."""
+        from engine.tax import BRACKETS_MFJ, room_to_12
+
+        mfj_12_ceiling = BRACKETS_MFJ[1][0]  # 100_800
+        assert room_to_12(0, 0) == pytest.approx(mfj_12_ceiling)
+
+    def test_room_to_22_default_unchanged_mfj(self):
+        """Default (no filing_status) still returns the MFJ ceiling — regression guard."""
+        from engine.tax import BRACKETS_MFJ, room_to_22
+
+        mfj_22_ceiling = BRACKETS_MFJ[2][0]  # 211_400
+        assert room_to_22(0, 0) == pytest.approx(mfj_22_ceiling)
+
+    # --- M3: senior_bonus_deduction survivor (who_dies=="you") ---
+
+    def test_senior_bonus_survivor_who_dies_you(self):
+        """Survivor where you died: spouse_age holds survivor's age, your_age==0.
+        Single path must count max(0, survivor_age) → full $6,000 bonus."""
+        from engine.tax import senior_bonus_deduction
+
+        # who_dies=="you": scenario sets your_age=0, spouse_age=survivor's real age
+        result = senior_bonus_deduction(
+            your_age=0, spouse_age=67, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == pytest.approx(6_000.0)
+
+    def test_senior_bonus_survivor_who_dies_spouse(self):
+        """Survivor where spouse died: your_age holds survivor's age, spouse_age==0."""
+        from engine.tax import senior_bonus_deduction
+
+        result = senior_bonus_deduction(
+            your_age=67, spouse_age=0, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == pytest.approx(6_000.0)
+
+    def test_senior_bonus_genuine_single_unchanged(self):
+        """Genuine single filer (spouse_age always 0): your_age drives eligibility."""
+        from engine.tax import senior_bonus_deduction
+
+        result = senior_bonus_deduction(
+            your_age=67, spouse_age=0, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == pytest.approx(6_000.0)
+
+    def test_senior_bonus_single_too_young(self):
+        """Single filer under 65: no bonus (regression guard)."""
+        from engine.tax import senior_bonus_deduction
+
+        result = senior_bonus_deduction(
+            your_age=62, spouse_age=0, magi=50_000, year=2026, filing_status="Single"
+        )
+        assert result == pytest.approx(0.0)
+
 
 class TestLoadPriorYearFederalTax:
     """Tests for engine.tax.load_prior_year_federal_tax.
