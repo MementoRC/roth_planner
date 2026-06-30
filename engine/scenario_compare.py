@@ -22,6 +22,7 @@ from engine.scenario_autofill import (
     auto_fill_22,
     auto_fill_irmaa_safe,
 )
+from engine.scenario_compute import compute_brokerage_dividends
 from engine.tax import (
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
@@ -41,16 +42,33 @@ def survivor_year_tax(
     *,
     year: int,
     cpi: float,
+    brok_ord_income: float = 0.0,  # ordinary brokerage income (ordinary divs + interest + STCG)
+    brok_ltcg_income: float = 0.0,  # LTCG-rate brokerage income (qualified divs + realized gains)
 ) -> tuple[float, float, float]:
-    """Tax, marginal rate, and taxable income for a Single survivor in a future year."""
-    # Index the standard deduction and brackets to the projection year (via cpi) so
-    # inflation-grown income is taxed against indexed thresholds, matching the main
-    # engine (scenario.py) rather than raw BASE_YEAR (2026) constants.
-    tss = taxable_ss(survivor_ss, rmd, filing_status="Single")
-    gross = rmd + tss
+    """Tax, marginal rate, and taxable income for a Single survivor in a future year.
+
+    The function handles brokerage income in three distinct buckets (IRC §86(b)(2)):
+    - brok_ord_income: enters ordinary SS-provisional income AND the federal-tax base
+    - brok_ltcg_income: enters SS-provisional income and OBBBA senior-bonus MAGI
+                        but NOT the ordinary federal-tax base (taxed at LTCG rates —
+                        a known pre-existing limitation: this function returns ordinary
+                        tax only; LTCG stack-walk on brok_ltcg_income is out of scope)
+
+    Index the standard deduction and brackets to the projection year (via cpi) so
+    inflation-grown income is taxed against indexed thresholds, matching the main
+    engine (scenario.py) rather than raw BASE_YEAR (2026) constants.
+    """
+    # (a) Taxable SS provisional income includes ALL brokerage income (IRC §86(b)(2))
+    tss = taxable_ss(survivor_ss, rmd + brok_ord_income + brok_ltcg_income, filing_status="Single")
+    # (b) Ordinary gross adds ONLY ordinary brokerage income (NOT LTCG/qualified divs)
+    gross = rmd + tss + brok_ord_income
     ded = deductions(survivor_age, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi)
+    # (c) senior_bonus_deduction uses full MAGI: ordinary gross + LTCG-rate income
+    _survivor_magi = (
+        gross + brok_ltcg_income
+    )  # gross already has brok_ord_income; add LTCG-rate income for MAGI
     ded += senior_bonus_deduction(
-        survivor_age, 0, gross, year=year, cpi=cpi, filing_status="Single"
+        survivor_age, 0, _survivor_magi, year=year, cpi=cpi, filing_status="Single"
     )
     taxable = max(gross - ded, 0.0)
     return (
@@ -165,14 +183,55 @@ def compute_survivor_snapshot(
 
             ss_grown = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0.0
 
+            # Project brokerage balance 5 years forward from the death-year balance,
+            # mirroring the IRA loop pattern above (compare-M3ss / compare-M7senior fix).
+            # The survivor's brokerage income (ordinary divs + qualified divs) is
+            # material for taxable SS and the OBBBA senior-bonus MAGI phase-out.
+            brok_balance = yr_death.brokerage_balance
+            proj_year = death_year_calc + proj_years
+            for proj_offset in range(proj_years):
+                year_at_offset = death_year_calc + proj_offset + 1
+                brok_rate = hh.brokerage_rate(year_at_offset)
+                if hh.brokerage_growth is not None:
+                    brok_appreciation_rate = hh.brokerage_growth.appreciation_for(year_at_offset)
+                else:
+                    brok_appreciation_rate = brok_rate
+                # Realized gains: turnover fraction of appreciation (mirrors engine/scenario.py)
+                brok_realized = brok_balance * brok_appreciation_rate * hh.brok_turnover
+                # Dividends for this growth year (no YTD actuals in the survivor projection)
+                brok_qual, brok_ord = compute_brokerage_dividends(
+                    year_at_offset, hh.base_year, brok_balance, hh.brokerage_growth, None
+                )
+                total_div = brok_qual + brok_ord
+                # Grow balance: appreciation only (dividends reinvested, realized gains taxed out)
+                brok_balance = (
+                    brok_balance + brok_balance * brok_appreciation_rate - brok_realized + total_div
+                )
+            # Derive the projection-year income split from the grown balance
+            brok_qual_proj, brok_ord_proj = compute_brokerage_dividends(
+                proj_year, hh.base_year, brok_balance, hh.brokerage_growth, None
+            )
+            brok_appreciation_rate_proj = (
+                hh.brokerage_growth.appreciation_for(proj_year)
+                if hh.brokerage_growth is not None
+                else hh.brokerage_rate(proj_year)
+            )
+            # Realized gains modeled as turnover × appreciation (same formula as main engine)
+            brok_realized_proj = brok_balance * brok_appreciation_rate_proj * hh.brok_turnover
+            # Map to buckets: ordinary (ordinary divs) vs LTCG-rate (qualified divs + realized gains)
+            brok_ord_income = brok_ord_proj
+            brok_ltcg_income = brok_qual_proj + brok_realized_proj
+
             # Single survivor, indexed to the projection year so inflation-grown
             # income is taxed against indexed brackets + deduction (not raw 2026).
             tax, bracket, _taxable = survivor_year_tax(
                 survivor_age,
                 rmd,
                 ss_grown,
-                year=death_year_calc + proj_years,
+                year=proj_year,
                 cpi=hh.cpi_assumption,
+                brok_ord_income=brok_ord_income,
+                brok_ltcg_income=brok_ltcg_income,
             )
 
             from views._format import fmt_dollars, fmt_dollars_short, fmt_pct  # noqa: PLC0415
