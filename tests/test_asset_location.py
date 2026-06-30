@@ -296,3 +296,73 @@ class TestAssetLocation:
             f"ira_total-conv-rmd={yr0.ira_total - yr0.conversion - yr0.rmd:.2f} — "
             "part of the RMD was silently floored away (sleeve-exhaustion bug)."
         )
+
+
+class TestIraAtAgeMilestoneUsesEndBalance:
+    """M6: ira_at_75 / ira_at_85 must report the END-of-year IRA balance.
+
+    Before the fix the milestones read yr.ira_total (begin-of-year, pre-RMD /
+    pre-growth) instead of yr.ira_total_end (post-RMD, post-growth).  With zero
+    growth and a non-zero RMD the two values differ by exactly the RMD amount,
+    making the old code over-report the IRA milestone.
+    """
+
+    def test_ira_at_75_uses_end_not_begin(self) -> None:
+        """ira_at_75 equals yr75.ira_total_end, not yr75.ira_total.
+
+        With zero growth the difference equals the RMD withdrawn that year.
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=65,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=99,
+        )
+        result = project_asset_location(
+            hh, {}, strategy="proportional", equity_return=0.0, bond_return=0.0
+        )
+
+        yr75 = next(y for y in result.years if y.your_age == 75)
+
+        # With zero growth: ira_total_end = ira_total - rmd
+        assert yr75.rmd > 0.0, "Sanity: RMD must be positive at age 75"
+        assert yr75.ira_total_end == pytest.approx(yr75.ira_total - yr75.rmd, abs=1.0)
+
+        # The reported milestone must equal end-of-year, not begin-of-year.
+        assert result.ira_at_75 == pytest.approx(yr75.ira_total_end, abs=0.01), (
+            f"ira_at_75={result.ira_at_75:.0f} should equal ira_total_end="
+            f"{yr75.ira_total_end:.0f}, not ira_total={yr75.ira_total:.0f}"
+        )
+        assert result.ira_at_75 != pytest.approx(yr75.ira_total, abs=1.0), (
+            "ira_at_75 must differ from begin-of-year ira_total (pre-RMD) — "
+            "the old bug returned the begin balance"
+        )
+
+    def test_ira_at_85_uses_end_not_begin(self) -> None:
+        """ira_at_85 equals yr85.ira_total_end, not yr85.ira_total."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=65,
+            your_ira=2_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=99,
+        )
+        result = project_asset_location(
+            hh, {}, strategy="proportional", equity_return=0.0, bond_return=0.0
+        )
+
+        yr85 = next(y for y in result.years if y.your_age == 85)
+        assert yr85.rmd > 0.0
+        assert result.ira_at_85 == pytest.approx(yr85.ira_total_end, abs=0.01)
+        assert result.ira_at_85 != pytest.approx(yr85.ira_total, abs=1.0)
