@@ -150,7 +150,7 @@ def render(hh: Household):
                 st.info("On Medicare. See IRMAA section below.")
             else:
                 st.info(
-                    "ACA not enrolled. Go to ⚙️ Setup → 📊 Parameters → Joint "
+                    "ACA not enrolled. Go to ⚙️ Setup → 📊 Parameters → Me (or Spouse) "
                     "and toggle 'On ACA Marketplace' to model ACA subsidies."
                 )
 
@@ -338,7 +338,12 @@ def render(hh: Household):
                 {
                     "FPL Range": fpl_label,
                     "MAGI ≤": fmt_dollars(
-                        upper_fpl * (FPL_1 if hh.filing_status == "Single" else FPL_2)
+                        upper_fpl
+                        * _index_value(
+                            FPL_1 if hh.filing_status == "Single" else FPL_2,
+                            _view_year,
+                            _view_cpi,
+                        )
                     )
                     if upper_fpl != float("inf")
                     else "No limit",

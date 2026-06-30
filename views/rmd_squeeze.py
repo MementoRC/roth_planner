@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.ira import RMD_DIVISORS
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_surcharge
 from engine.scenario import ConversionPlan, run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compute import QCD_MIN_AGE
@@ -478,11 +478,26 @@ def render(hh: Household):
     st.markdown("---")
     st.markdown("### The RMD Squeeze Explained")
     _irmaa_tiers = IRMAA_TIERS_MFJ if _is_mfj else IRMAA_TIERS_SINGLE
-    # IRMAA surcharges are assessed per Medicare beneficiary: 2026 Tier-1 is
-    # ~$1,150/yr per person (Part B $974.40 + Part D $174.00); a two-beneficiary
-    # household pays ~$2,300/yr.
+    # Compute Tier-1 surcharge at the IRMAA payment year (base_year + 2).
+    _tier1_magi = _irmaa_tiers[0][0] + 1  # just above Tier-1 threshold
+    _irmaa_tier1_2p = irmaa_surcharge(
+        _tier1_magi,
+        2,
+        filing_status=hh.filing_status,
+        year=hh.base_year + 2,
+        cpi=hh.cpi_assumption,
+    )
+    _irmaa_tier1_1p = irmaa_surcharge(
+        _tier1_magi,
+        1,
+        filing_status=hh.filing_status,
+        year=hh.base_year + 2,
+        cpi=hh.cpi_assumption,
+    )
     _irmaa_surcharge_note = (
-        "~$2,300/yr for a couple" if _is_mfj else "~$1,150/yr individually"
+        f"{fmt_dollars(_irmaa_tier1_2p)}/yr for a couple"
+        if _is_mfj
+        else f"{fmt_dollars(_irmaa_tier1_1p)}/yr individually"
     )
     st.markdown(f"""
 - **The problem**: At 75, you *must* take distributions from your IRA — the IRS sets the amount

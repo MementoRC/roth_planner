@@ -14,7 +14,7 @@ import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
-from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_surcharge
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import (
     LTCG_RATES_MFJ,
@@ -535,7 +535,10 @@ def render(hh: Household):
 
         # Tier table
         with st.expander("IRMAA Tier Details"):
-            _irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+            _base_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+            _irmaa_tiers = _index_irmaa_tiers(
+                _base_tiers, year=hh.base_year + 2, cpi=hh.cpi_assumption
+            )
             tier_data = []
             for i, (threshold, part_b, part_d) in enumerate(_irmaa_tiers, 1):
                 tier_data.append(
