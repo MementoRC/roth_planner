@@ -24,6 +24,8 @@ from engine.scenario_autofill import (
 )
 from engine.scenario_compute import compute_brokerage_dividends
 from engine.tax import (
+    LTCG_RATES_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
@@ -32,6 +34,7 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
+from engine.tax_indexing import index_tuple
 from models.household import Household, SurvivorScenario
 
 
@@ -49,14 +52,16 @@ def survivor_year_tax(
 
     The function handles brokerage income in three distinct buckets (IRC §86(b)(2)):
     - brok_ord_income: enters ordinary SS-provisional income AND the federal-tax base
-    - brok_ltcg_income: enters SS-provisional income and OBBBA senior-bonus MAGI
-                        but NOT the ordinary federal-tax base (taxed at LTCG rates —
-                        a known pre-existing limitation: this function returns ordinary
-                        tax only; LTCG stack-walk on brok_ltcg_income is out of scope)
+    - brok_ltcg_income: enters SS-provisional income and OBBBA senior-bonus MAGI,
+                        and is taxed at preferential 0/15/20% LTCG rates (IRC §1(h))
+                        via a stack-walk stacked on top of taxable_ordinary.
 
     Index the standard deduction and brackets to the projection year (via cpi) so
     inflation-grown income is taxed against indexed thresholds, matching the main
     engine (scenario.py) rather than raw BASE_YEAR (2026) constants.
+
+    Returns (total_tax, marginal_rate, taxable_ordinary) where total_tax includes
+    both the ordinary bracket tax and the LTCG preferential tax.
     """
     # (a) Taxable SS provisional income includes ALL brokerage income (IRC §86(b)(2))
     tss = taxable_ss(survivor_ss, rmd + brok_ord_income + brok_ltcg_income, filing_status="Single")
@@ -70,11 +75,27 @@ def survivor_year_tax(
     ded += senior_bonus_deduction(
         survivor_age, 0, _survivor_magi, year=year, cpi=cpi, filing_status="Single"
     )
-    taxable = max(gross - ded, 0.0)
+    taxable_ordinary = max(gross - ded, 0.0)
+    ordinary_tax = federal_tax_single(taxable_ordinary, year=year, cpi=cpi)
+
+    # (d) LTCG stack-walk: brok_ltcg_income taxed at 0/15/20% stacked on taxable_ordinary
+    # (IRC §1(h); mirrors estimate_ytd_federal_tax in engine/tax.py:391-405)
+    ltcg_tax = 0.0
+    if brok_ltcg_income > 0.0:
+        _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi)
+        ltcg_start = taxable_ordinary
+        ltcg_end = taxable_ordinary + brok_ltcg_income
+        ltcg_at_15 = max(
+            0.0,
+            min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
+        )
+        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
+        ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
+
     return (
-        federal_tax_single(taxable, year=year, cpi=cpi),
-        marginal_rate_single(taxable, year=year, cpi=cpi),
-        taxable,
+        ordinary_tax + ltcg_tax,
+        marginal_rate_single(taxable_ordinary, year=year, cpi=cpi),
+        taxable_ordinary,
     )
 
 
@@ -169,6 +190,7 @@ def compute_survivor_snapshot(
             # A single-rate end-compounding ignores ~5 years of RMD withdrawals and
             # overstates the inherited balance fed into the tax projection.
             ira_balance = float(inherited_ira)
+            rmd = 0.0
             for proj_offset in range(proj_years):
                 year_offset = proj_offset + 1
                 age_at_offset = _surv_age(death_age, year_offset)
@@ -176,10 +198,13 @@ def compute_survivor_snapshot(
                 rmd_withdrawal = calc_rmd(ira_balance, age_at_offset, survivor_rmd_start)
                 ira_balance = max(ira_balance - rmd_withdrawal, 0.0)
                 ira_balance *= 1 + _surv_rate(year_at_offset)
-            ira_grown = ira_balance
-
-            # FIX: use the surviving spouse's own rmd_start_age
-            rmd = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
+                if proj_offset == proj_years - 1:
+                    # scenario-compare-1 fix: capture the proj-year RMD taken at
+                    # survivor_age on the START-of-proj-year balance (pre-growth).
+                    # Re-computing calc_rmd on the post-growth ira_grown balance
+                    # overstates the RMD by ~one year of growth (Treas. Reg.
+                    # §1.401(a)(9)-9; RMD denominator = prior-year-end balance).
+                    rmd = rmd_withdrawal
 
             ss_grown = ss_with_cola(survivor_ss, proj_years, hh.ss_cola) if survivor_ss > 0 else 0.0
 
@@ -203,9 +228,25 @@ def compute_survivor_snapshot(
                     year_at_offset, hh.base_year, brok_balance, hh.brokerage_growth, None
                 )
                 total_div = brok_qual + brok_ord
-                # Grow balance: appreciation only (dividends reinvested, realized gains taxed out)
+                # scenario-compare-3 fix: subtract only the LTCG TAX on realized gains
+                # (not the full realized amount).  The main engine (scenario.py:605-611)
+                # subtracts brokerage_gain_tax, not the principal.  Subtracting the full
+                # brok_realized treats realized gains as a cash outflow (like a withdrawal)
+                # rather than a tax liability, understating the balance by ~turnover×gain
+                # per year (≈3.5% annually vs ≈0.5% under the correct tax-only drain).
+                # Use the same LTCG 0/15/20 stack-walk as survivor_year_tax; stack on
+                # taxable_ordinary=0 (conservative: survivor has no other taxable income
+                # in the projection loop — the tax calc below happens separately for the
+                # final year).  This matches engine/scenario.py's brokerage_gain_tax logic.
+                _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption)
+                _ltcg_at_15 = max(0.0, min(brok_realized, _ltcg_thr[1]) - _ltcg_thr[0])
+                _ltcg_at_20 = max(0.0, brok_realized - _ltcg_thr[1])
+                brok_gain_tax = (
+                    _ltcg_at_15 * LTCG_RATES_MFJ[1] + _ltcg_at_20 * LTCG_RATES_MFJ[2]
+                )
+                # Grow balance: subtract only the tax on realized gains (not the gains themselves)
                 brok_balance = (
-                    brok_balance + brok_balance * brok_appreciation_rate - brok_realized + total_div
+                    brok_balance + brok_balance * brok_appreciation_rate - brok_gain_tax + total_div
                 )
             # Derive the projection-year income split from the grown balance
             brok_qual_proj, brok_ord_proj = compute_brokerage_dividends(

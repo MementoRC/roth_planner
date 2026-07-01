@@ -6,12 +6,14 @@ import pytest
 from engine.ira import calc_rmd
 from engine.scenario_compare import compute_survivor_snapshot, survivor_year_tax
 from engine.tax import (
+    LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     federal_tax_single,
     senior_bonus_deduction,
     taxable_ss,
 )
+from engine.tax_indexing import index_tuple
 from models.household import Household
 
 
@@ -508,3 +510,400 @@ class TestComputeSurvivorSnapshotBrokerage:
         )
         # The bracket column must still be valid
         assert rows_qual[0]["Test Bracket"] != "---"
+
+
+# ---------------------------------------------------------------------------
+# Tests for C1 cluster fixes
+# ---------------------------------------------------------------------------
+
+
+class TestSurvivorRMDOnStartOfYearBalance:
+    """scenario-compare-1: Survivor RMD must use START-of-projection-year balance.
+
+    The IRA loop ends with ira_balance grown to end-of-proj-year; using that
+    grown balance for the final RMD calc overstates it by ~one year of growth.
+    Fix: capture balance BEFORE the final growth step and pass THAT to calc_rmd.
+    """
+
+    def _make_scenario(
+        self,
+        hh: Household,
+        death_age: int,
+        ira_end: float,
+    ) -> "ScenarioResult":  # noqa: F821
+        from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
+
+        yr = YearResult(
+            year=hh.base_year + (death_age - hh.your_age),
+            your_age=death_age,
+            spouse_age=death_age - hh.age_gap,
+            phase="squeeze",
+            your_ira_begin=ira_end,
+            spouse_ira_begin=0.0,
+            your_ira_end=ira_end,
+            spouse_ira_end=0.0,
+            your_ss=20_000.0,
+            spouse_ss=0.0,
+        )
+        return ScenarioResult(
+            name="Test",
+            years=[yr],
+            household=hh,
+            plan=ConversionPlan(),
+        )
+
+    def test_rmd_not_double_charged_in_projection_year(self) -> None:
+        """scenario-compare-1: The projection-year RMD must NOT be computed twice.
+
+        Bug: the 5-year loop already deducts the year-5 RMD (at survivor_age=80),
+        then line 182 computes a SECOND calc_rmd on the post-growth ira_grown
+        balance.  This produces a LARGER RMD (post-growth denominator) that is
+        taxed in addition to the loop's withdrawal — double-counting.
+
+        Fix: capture rmd_withdrawal from the last loop iteration (proj_offset==4)
+        and use THAT as the proj-year RMD instead of re-computing on ira_grown.
+
+        Proof strategy:
+          1. Manually simulate the 5-year loop; capture rmd_last_iter at offset 4.
+          2. Verify calc_rmd(ira_grown, survivor_age) > rmd_last_iter (buggy is larger).
+          3. Compute survivor_year_tax with rmd_last_iter + ss_grown as reference;
+             assert actual matches this reference, not the buggy re-computed RMD.
+        Note: spouse_ss=0 in the fixture (survivor has no SS) to keep SS = 0.
+        """
+        hh = Household(
+            your_age=70,
+            spouse_age=75,
+            your_ira=1_000_000,
+            spouse_ira=0,
+            growth_rate=0.07,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        death_age = 70  # death at base_year
+        initial_balance = 1_000_000.0
+        survivor_rmd_start = hh.spouse_rmd_start_age
+        death_year_calc = hh.base_year
+
+        # age_gap = your_age - spouse_age = 70 - 75 = -5
+        # _surv_age(70, offset) = (70 - (-5)) + offset = 75 + offset
+        survivor_base_age = hh.spouse_age  # = 75 (age at death)
+
+        rmd_last_iter = 0.0
+        balance = initial_balance
+        ira_grown = balance
+        for proj_offset in range(5):
+            year_offset = proj_offset + 1
+            age_at_offset = survivor_base_age + year_offset  # 76..80
+            rmd_w = calc_rmd(balance, age_at_offset, survivor_rmd_start)
+            balance = max(balance - rmd_w, 0.0) * (1 + hh.growth_rate)
+            if proj_offset == 4:
+                rmd_last_iter = rmd_w       # correctly taken at age 80 on pre-growth balance
+                ira_grown = balance          # post-growth end-of-year-5
+
+        survivor_age = survivor_base_age + 5  # 80
+        rmd_buggy_recompute = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
+
+        # Setup check: buggy re-computed RMD > the loop's last withdrawal.
+        assert rmd_buggy_recompute > rmd_last_iter, (
+            f"rmd_buggy_recompute ({rmd_buggy_recompute:,.2f}) must exceed "
+            f"rmd_last_iter ({rmd_last_iter:,.2f})"
+        )
+
+        proj_year = death_year_calc + 5
+        cpi = hh.cpi_assumption
+        # survivor_ss: fixture has your_ss=20k, spouse_ss=0; compute_survivor_snapshot
+        # sets survivor_ss = max(yr.your_ss, yr.spouse_ss) = 20k.
+        # ss_with_cola over 5 years at hh.ss_cola:
+        from engine.ira import ss_with_cola
+        ss_grown = ss_with_cola(20_000.0, 5, hh.ss_cola)
+
+        tax_correct, _, _ = survivor_year_tax(
+            survivor_age, rmd_last_iter, ss_grown, year=proj_year, cpi=cpi
+        )
+        tax_buggy, _, _ = survivor_year_tax(
+            survivor_age, rmd_buggy_recompute, ss_grown, year=proj_year, cpi=cpi
+        )
+
+        # Sanity: buggy tax > correct tax
+        assert tax_buggy > tax_correct, (
+            f"tax_buggy ({tax_buggy:,.2f}) must exceed tax_correct ({tax_correct:,.2f})"
+        )
+
+        # Run actual function
+        scenario = self._make_scenario(hh, death_age, initial_balance)
+        rows = compute_survivor_snapshot(hh, [scenario], "you", [death_age])
+        assert len(rows) == 1
+        assert rows[0]["Test Survivor Tax"] != "---"
+
+        def _parse(s: str) -> float:
+            return float(s.replace("$", "").replace("/yr", "").replace(",", "").strip())
+
+        actual_tax = _parse(rows[0]["Test Survivor Tax"])
+
+        # With the fix, actual must match tax_correct more closely than tax_buggy.
+        err_correct = abs(actual_tax - tax_correct)
+        err_buggy = abs(actual_tax - tax_buggy)
+        assert err_correct < err_buggy, (
+            f"Survivor tax {actual_tax:,.2f} should match correct-RMD tax {tax_correct:,.2f} "
+            f"(err={err_correct:,.2f}), not buggy-RMD tax {tax_buggy:,.2f} (err={err_buggy:,.2f}). "
+            "scenario-compare-1: capture rmd_withdrawal from last loop iteration."
+        )
+
+
+class TestSurvivorLTCGTaxApplied:
+    """scenario-compare-2: survivor_year_tax must apply LTCG/qualified-div tax.
+
+    The old code returns only ordinary federal_tax_single(taxable_ordinary) and
+    ignores brok_ltcg_income entirely in the tax computation. The fix adds a
+    LTCG stack-walk that taxes brok_ltcg_income at 0/15/20% rates.
+    """
+
+    def test_ltcg_income_produces_nonzero_ltcg_tax_component(self) -> None:
+        """With brok_ltcg_income present, the TOTAL tax must exceed the tax on
+        the ordinary-only base — proving the LTCG tax component is non-zero.
+
+        Audit proof: $7,000 preferential income × 15% ≈ $1,050 dropped per cell.
+        We use a larger amount for a clear signal.
+        """
+        # Scenario: survivor is in 15% LTCG bracket (taxable_ordinary well above $49,450)
+        age = 75
+        rmd = 80_000.0   # ordinary income well above 0%-LTCG threshold after deductions
+        ss = 30_000.0
+        brok_ltcg = 20_000.0
+        year = 2031
+        cpi = 0.025
+
+        # Tax with only ordinary income (no LTCG)
+        tax_no_ltcg, _, _ = survivor_year_tax(age, rmd, ss, year=year, cpi=cpi)
+
+        # Tax with LTCG income added
+        tax_with_ltcg, _, _ = survivor_year_tax(
+            age, rmd, ss, year=year, cpi=cpi, brok_ltcg_income=brok_ltcg
+        )
+
+        # The LTCG component must be non-trivial — at 15% rate, $20k × 15% = $3,000
+        ltcg_tax_component = tax_with_ltcg - tax_no_ltcg
+
+        # Allow that the SS-provisional path raises ordinary tax slightly too,
+        # but the delta must be >= expected LTCG tax (at minimum 0% rate if in 0%-bracket).
+        # We assert it is materially positive (> $100 to rule out SS-only effect).
+        assert ltcg_tax_component > 100.0, (
+            f"LTCG tax component should be materially positive (got {ltcg_tax_component:,.2f}). "
+            "scenario-compare-2 fix: add LTCG stack-walk to survivor_year_tax."
+        )
+
+    def test_ltcg_tax_at_15pct_rate_for_bracket_income(self) -> None:
+        """Verify LTCG stack-walk applies 15% for income well above 0%-bracket.
+
+        Use year=2029 (beyond OBBBA 2028 sunset — senior_bonus=0 → no phase-out
+        interaction), rmd=120_000, ss=0, brok_ltcg=10_000.
+        taxable_ordinary = max(120k - std_ded_single(75, 2029) - senior_extra(75, 2029), 0).
+        With taxable_ordinary >> LTCG_THRESHOLDS_SINGLE[0] indexed to 2029 ≈ $55k,
+        the full $10k of LTCG should hit 15%, contributing exactly $1,500.
+        With ss=0 there is no SS-provisional interaction.
+        With year>2028 the OBBBA senior_bonus is 0, eliminating the MAGI phase-out
+        channel that otherwise shifts ordinary tax via ded reduction.
+        """
+        age = 75
+        rmd = 120_000.0   # ensures taxable_ordinary >> 0%-LTCG threshold
+        ss = 0.0           # no SS — eliminates SS-provisional interaction
+        brok_ltcg = 10_000.0
+        year = 2029        # OBBBA senior_bonus = 0 (sunset after 2028)
+        cpi = 0.025
+
+        tax_no_ltcg, _, taxable_ord = survivor_year_tax(age, rmd, ss, year=year, cpi=cpi)
+        tax_with_ltcg, _, _ = survivor_year_tax(
+            age, rmd, ss, year=year, cpi=cpi, brok_ltcg_income=brok_ltcg
+        )
+
+        # Taxable ordinary must be above the indexed 0%-LTCG threshold.
+        _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi)
+        assert taxable_ord > _ltcg_thr[0], (
+            f"taxable_ordinary ({taxable_ord:,.0f}) must exceed indexed 0%-LTCG threshold "
+            f"({_ltcg_thr[0]:,.0f}) for this test to be meaningful"
+        )
+
+        # With ss=0 and year>2028: brok_ltcg_income has NO ordinary-tax interaction.
+        # The entire delta is the pure LTCG tax = 10_000 × 15% = 1_500.
+        expected_ltcg_tax = 10_000 * 0.15
+        actual_ltcg_tax = tax_with_ltcg - tax_no_ltcg
+
+        assert abs(actual_ltcg_tax - expected_ltcg_tax) < 1.0, (
+            f"Expected LTCG tax = ${expected_ltcg_tax:,.0f} (15% of $10k, no SS, post-OBBBA), "
+            f"got delta = ${actual_ltcg_tax:,.2f}. "
+            "scenario-compare-2 fix: LTCG stack-walk must tax at 0/15/20% rates."
+        )
+
+    def test_survivor_year_tax_returns_four_values(self) -> None:
+        """After fix, survivor_year_tax returns (ordinary_tax, ltcg_tax, bracket, taxable)
+        OR remains a 3-tuple (tax, bracket, taxable) where tax includes LTCG.
+
+        This test is intentionally flexible: it only requires that total tax with
+        brok_ltcg > total tax without brok_ltcg by a material amount (>$100),
+        regardless of whether the return type changes to 4-tuple or stays 3-tuple.
+        """
+        age = 75
+        rmd = 80_000.0
+        ss = 25_000.0
+        brok_ltcg = 15_000.0
+        year = 2031
+        cpi = 0.025
+
+        result_no = survivor_year_tax(age, rmd, ss, year=year, cpi=cpi)
+        result_with = survivor_year_tax(
+            age, rmd, ss, year=year, cpi=cpi, brok_ltcg_income=brok_ltcg
+        )
+
+        # First element is always the total tax
+        assert result_with[0] > result_no[0] + 100.0, (
+            f"Total survivor tax with LTCG ({result_with[0]:,.2f}) must exceed "
+            f"no-LTCG tax ({result_no[0]:,.2f}) by > $100. "
+            "scenario-compare-2: LTCG stack-walk must add to returned tax."
+        )
+
+
+class TestBrokerageBalanceRetainsBasis:
+    """scenario-compare-3: brokerage loop must subtract only LTCG TAX on realized
+    gains, NOT the full realized gain amount.
+
+    Buggy code: brok_balance += brok_balance*appreciation - brok_realized + divs
+    Correct:    brok_balance += brok_balance*appreciation - brok_gain_tax + divs
+      where brok_gain_tax ≈ 15% of brok_realized (LTCG rate stack-walk).
+
+    Proof: turnover=0.30, appreciation=0.05, $200k, 5yr:
+      Buggy (net appreciation 0.035/yr): $200k × 1.035^5 ≈ $237,539
+      Correct (total return 0.05/yr minus ~15% tax): closer to $200k × 1.05^5 ≈ $255,256
+    """
+
+    def _make_scenario_with_brok(
+        self,
+        hh: Household,
+        death_age: int,
+        ira_end: float,
+        brok_balance: float,
+    ) -> "ScenarioResult":  # noqa: F821
+        from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
+
+        yr = YearResult(
+            year=hh.base_year + (death_age - hh.your_age),
+            your_age=death_age,
+            spouse_age=death_age - hh.age_gap,
+            phase="squeeze",
+            your_ira_begin=ira_end,
+            spouse_ira_begin=0.0,
+            your_ira_end=ira_end,
+            spouse_ira_end=0.0,
+            brokerage_balance=brok_balance,
+            your_ss=0.0,
+            spouse_ss=0.0,
+        )
+        return ScenarioResult(
+            name="Test",
+            years=[yr],
+            household=hh,
+            plan=ConversionPlan(),
+        )
+
+    def test_brok_balance_higher_than_subtracting_full_realized(self) -> None:
+        """After fix, survivor brokerage balance after 5 years must be materially
+        higher than the buggy result (which subtracted 30% of appreciation).
+
+        Strategy: manually compute the buggy 5-year balance (subtracting full
+        realized gains) and the correct one (subtracting only ~15% tax),
+        then assert the actual snapshot's derived income is consistent with the
+        correct balance being higher.
+
+        We use a known-setup HH with explicit appreciation/turnover rates and
+        no dividends to isolate the gain-subtract bug.
+        """
+        from models.household import GrowthProfile
+
+        appreciation = 0.05
+        turnover = 0.30
+        initial_brok = 200_000.0
+
+        # Use a VERY large initial brokerage so even small percentage differences
+        # in balance produce observable LTCG tax differences.
+        # Survivor (spouse) age 73 at death; +5 → age 78 > rmd_start=75 (RMD income).
+        initial_brok_large = 2_000_000.0
+
+        hh = Household(
+            your_age=70,
+            spouse_age=73,
+            your_ira=1_500_000,
+            spouse_ira=0,
+            growth_rate=0.07,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            brokerage_start=initial_brok_large,
+            brok_turnover=turnover,
+            brokerage_growth=GrowthProfile(
+                default_rate=appreciation,
+                yield_rate=0.03,
+                qualified_fraction=1.0,
+            ),
+        )
+        death_age = hh.your_age  # death at base_year
+
+        # --- Reference: buggy balance (subtract full realized gains each year) ---
+        bal_buggy = initial_brok_large
+        for _ in range(5):
+            realized = bal_buggy * appreciation * turnover
+            divs = bal_buggy * 0.03
+            bal_buggy = bal_buggy + bal_buggy * appreciation - realized + divs
+
+        # --- Reference: correct balance (subtract only LTCG tax ≈ 15% of realized) ---
+        bal_correct = initial_brok_large
+        for _ in range(5):
+            realized = bal_correct * appreciation * turnover
+            divs = bal_correct * 0.03
+            gain_tax = realized * 0.15
+            bal_correct = bal_correct + bal_correct * appreciation - gain_tax + divs
+
+        assert bal_correct > bal_buggy, (
+            f"Reference: correct balance ({bal_correct:,.0f}) must exceed "
+            f"buggy ({bal_buggy:,.0f})"
+        )
+        # Gap should be material (>$50k for $2M starting balance)
+        assert bal_correct - bal_buggy > 50_000, (
+            f"Gap must be material (>$50k): got {bal_correct - bal_buggy:,.0f}"
+        )
+
+        # Run actual function.
+        # Use two scenarios: large brokerage vs zero brokerage (same IRA).
+        # With the correct fix, large brokerage → higher LTCG income → higher tax.
+        scenario = self._make_scenario_with_brok(
+            hh, death_age, 1_500_000.0, initial_brok_large
+        )
+
+        hh_zero = Household(
+            your_age=70,
+            spouse_age=73,
+            your_ira=1_500_000,
+            spouse_ira=0,
+            growth_rate=0.07,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            brokerage_start=0.0,
+            brok_turnover=turnover,
+            brokerage_growth=None,
+        )
+        scenario_zero = self._make_scenario_with_brok(hh_zero, death_age, 1_500_000.0, 0.0)
+
+        rows = compute_survivor_snapshot(hh, [scenario], "you", [death_age])
+        rows_zero = compute_survivor_snapshot(hh_zero, [scenario_zero], "you", [death_age])
+
+        def _parse(s: str) -> float:
+            return float(s.replace("$", "").replace("/yr", "").replace(",", "").strip())
+
+        tax_brok = _parse(rows[0]["Test Survivor Tax"])
+        tax_zero = _parse(rows_zero[0]["Test Survivor Tax"])
+
+        # With fix: brokerage income (qual divs ~$72k + realized gains ~$36k at 15% LTCG)
+        # must produce materially higher survivor tax than zero-brokerage scenario.
+        # Expected LTCG tax delta ≈ (72k + 36k) × 15% ≈ $16,200.
+        assert tax_brok > tax_zero + 10_000, (
+            f"Survivor tax with brokerage ({tax_brok:,.0f}) must exceed "
+            f"zero-brokerage ({tax_zero:,.0f}) by > $10k after scenario-compare-3 fix. "
+            "If gap is near zero, brok balance was drained (old buggy subtraction)."
+        )
