@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
+from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario_types import ConversionPlan
 from engine.tax import (
@@ -72,6 +72,10 @@ def _auto_fill_core(
     _cpi = hh.cpi_assumption
     prev_your_ira = 0.0
     prev_spouse_ira = 0.0
+    # Mutable copies of inherited IRA balances (SECURE Act 10-year drains), mirroring
+    # engine/scenario.py:76. Their annual distributions are ordinary income and must
+    # consume bracket room, else auto-fill over-converts for households with inherited IRAs.
+    inherited_balances: list[float] = [iira.balance for iira in hh.inherited_iras]
 
     for yr_idx in range(
         hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
@@ -123,11 +127,30 @@ def _auto_fill_core(
             prior_year_balance=prev_spouse_ira,
         )  # no spouse QCD in auto-fill
 
-        # Shared ordinary-income core (opt + your gated RMD + spouse RMD), reused
-        # below by other_fixed, base_magi, and fixed_gross so the three can never
+        # Inherited IRA drains (SECURE Act 10-year rule) are ordinary income and
+        # therefore consume bracket room — mirror engine/scenario.py:204-224 so the
+        # auto-fill plan does not over-convert for households with inherited IRAs.
+        inherited_distribution = 0.0
+        for idx, iira in enumerate(hh.inherited_iras):
+            if year < iira.inherited_year:
+                continue  # not yet inherited
+            years_remaining = 10 - (year - iira.inherited_year)
+            if years_remaining <= 0:
+                continue  # fully drained
+            drain = inherited_ira_drain(inherited_balances[idx], years_remaining)
+            inherited_distribution += drain
+            inherited_balances[idx] = max(inherited_balances[idx] - drain, 0.0) * (
+                1 + iira.growth_rate
+            )
+
+        # Shared ordinary-income core (opt + your gated RMD + spouse RMD + inherited),
+        # reused below by other_fixed, base_magi, and fixed_gross so the three can never
         # drift apart.
         ordinary_core = (
-            opt + (taxable_rmd if ya >= hh.your_rmd_start_age else 0) + spouse_taxable_rmd
+            opt
+            + (taxable_rmd if ya >= hh.your_rmd_start_age else 0)
+            + spouse_taxable_rmd
+            + inherited_distribution
         )
 
         # Taxable SS — computed first so base_magi uses only the includable
@@ -324,15 +347,18 @@ def add_bracket_fill_withdrawals(
     result = run_scenario(hh, base_plan, "temp", end_age=95, early_exercise=early_exercise)
     _cpi_fill = hh.cpi_assumption
 
-    # Find the base (2026) bracket ceiling for the target rate (single brackets
-    # for a single-from-the-start household).
-    base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
-    base_bracket_ceiling = 0.0
-    for ceil, rate in base_brackets:
-        if rate <= target_bracket:
-            base_bracket_ceiling = ceil
-        else:
-            break
+    # Base (unindexed) bracket ceiling for the target rate, resolved PER YEAR from that
+    # year's filing status: a survivor year (yr.filing_status == "Single") uses the Single
+    # ceiling (~half the MFJ ceiling), not the household's original MFJ status (U2).
+    def _base_ceiling(filing_status: str) -> float:
+        brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+        ceiling = 0.0
+        for ceil, rate in brackets:
+            if rate <= target_bracket:
+                ceiling = ceil
+            else:
+                break
+        return ceiling
 
     plan = ConversionPlan(
         your_conversions=dict(base_plan.your_conversions),
@@ -345,7 +371,7 @@ def add_bracket_fill_withdrawals(
         if yr.your_age < hh.your_rmd_start_age:
             continue  # only post-RMD
 
-        bracket_ceiling = _iv(base_bracket_ceiling, yr.year, _cpi_fill)
+        bracket_ceiling = _iv(_base_ceiling(yr.filing_status), yr.year, _cpi_fill)
         # Room to fill the target bracket
         room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
         if room <= 0:

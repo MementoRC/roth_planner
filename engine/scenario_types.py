@@ -19,6 +19,7 @@ class YearResult:
     your_age: int
     spouse_age: int
     phase: str  # "options", "clean", "ss_conv", "squeeze"
+    filing_status: str = ""  # per-year filing status ("MFJ"/"Single"); "Single" after a survivor transition (U2)
 
     # IRA balances (beginning of year)
     your_ira_begin: float = 0.0
