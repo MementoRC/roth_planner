@@ -820,7 +820,6 @@ class TestBrokerageBalanceRetainsBasis:
 
         appreciation = 0.05
         turnover = 0.30
-        initial_brok = 200_000.0
 
         # Use a VERY large initial brokerage so even small percentage differences
         # in balance produce observable LTCG tax differences.
