@@ -98,6 +98,7 @@ def run_scenario(
             _rollover_done = True
 
         yr = YearResult(year=year, your_age=ya, spouse_age=sa, phase="")
+        yr.filing_status = current_filing_status
 
         # === Phase classification ===
         yr.phase = compute_phase(ya, sa, year, hh, early_exercise)
