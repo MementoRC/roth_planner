@@ -478,8 +478,13 @@ def render(hh: Household):
     st.markdown("---")
     st.markdown("### The RMD Squeeze Explained")
     _irmaa_tiers = IRMAA_TIERS_MFJ if _is_mfj else IRMAA_TIERS_SINGLE
-    # Compute Tier-1 surcharge at the IRMAA payment year (base_year + 2).
-    _tier1_magi = _irmaa_tiers[0][0] + 1  # just above Tier-1 threshold
+    # Compute Tier-1 surcharge at the IRMAA payment year (base_year + 2). The
+    # threshold must be indexed to that same year: probing the UN-indexed base
+    # threshold (+1) against the indexed schedule left magi below the indexed
+    # Tier-1, so the surcharge rendered as $0 (audit C8 / ui-org-3). Index once,
+    # then probe and display the indexed value.
+    _tier1_thresh = _index_value(_irmaa_tiers[0][0], hh.base_year + 2, hh.cpi_assumption)
+    _tier1_magi = _tier1_thresh + 1  # just above the indexed Tier-1 threshold
     _irmaa_tier1_2p = irmaa_surcharge(
         _tier1_magi,
         2,
@@ -504,7 +509,7 @@ def render(hh: Household):
 - **Divisor shrinks**: At 75 you withdraw ~4.1%, by 85 it's ~6.3%, by 95 it's ~11.2%
 - **Growth amplifies**: If your IRA grew from $1.7M to $4.4M untouched, RMDs are huge
 - **Bracket escalation**: Large RMDs + SS push you from 12% into 22-24% brackets
-- **IRMAA trigger**: MAGI over ${_irmaa_tiers[0][0] / 1000:.0f}K means Medicare surcharges ({_irmaa_surcharge_note} at Tier 1)
+- **IRMAA trigger**: MAGI over ${_tier1_thresh / 1000:.0f}K means Medicare surcharges ({_irmaa_surcharge_note} at Tier 1)
 - **Brokerage overflow**: RMDs exceeding living expenses create taxable investment accounts
 - **The fix**: Converting during low-income years (ages 61-74) shrinks the IRA *before* RMDs start
 - **QCD option**: At 70½+, donating up to ${hh.qcd_limit / 1000:.0f}K/yr directly from IRA to charity bypasses taxation
