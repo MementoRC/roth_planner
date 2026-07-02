@@ -159,6 +159,40 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.realized_option_income_ytd == approx(50_000)
         assert result.planned_option_income == approx(192_000 - 50_000)
 
+    def test_with_planned_room_nets_realized_nqo(self):
+        """C2/headroom-1: the WITH-PLANNED headroom path must add only the
+        still-to-realize option income (planned_option_income), NOT the full opt
+        on top of magi_ytd / niit_magi_ytd / total_ordinary_income — all of which
+        already contain nqo_exercise_ytd. The pre-fix code added the full opt,
+        understating every *_with_planned room by the already-realized amount.
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            grants=[StockGrant(year=2019, strike=104, shares=2000, expiry_year=2026)],
+            txn_price_now=200.0,
+        )
+        # opt = (200 - 104) * 2000 = 192_000; $50k of it already exercised this year.
+        ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=50_000)
+        result = compute_headroom(hh, ytd)
+
+        # Remaining lever = full opt minus already-realized.
+        assert result.planned_option_income == approx(142_000)
+
+        # MAGI (headroom.py:194): planned MAGI = locked MAGI + only the remaining
+        # option income (age 61 → no SS → planned_tss == locked_tss == 0).
+        assert result.projected_magi_base == approx(
+            result.locked_magi + result.planned_option_income
+        )
+
+        # NIIT room (headroom.py:195): with-planned room drops by only the remaining
+        # option income, not the full opt (which would double-count the realized $50k).
+        assert result.room_to_niit_with_planned == approx(
+            max(result.room_to_niit - result.planned_option_income, 0.0)
+        )
+
     def test_planned_equal_realized_zero_remaining(self):
         from engine.headroom import compute_headroom
         from models.ytd_income import YTDSnapshot

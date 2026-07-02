@@ -449,6 +449,51 @@ class TestScenarioWithYTD:
         expected_magi = projected_components + ytd.magi_ytd
         assert yr2026.magi == approx(expected_magi)
 
+    def test_base_year_rmd_not_double_counted_with_ytd_distribution(self):
+        """C2/scenario-1: the base-year forecast RMD must not double-count against
+        ytd_year.ira_distributions_ytd ('non-conversion IRA withdrawals', which already
+        includes any RMD already taken this year).
+
+        Invariant: recording part of the (unchanged) required RMD as already-taken must
+        NOT change the year's taxable income, MAGI, taxable SS, or the excess-RMD cash
+        flow. Total IRA-distribution ordinary income = max(required RMD, actual taken).
+        Pre-fix, the YTD distribution stacked on top of the full forecast taxable_rmd in
+        combined_gross, MAGI (via magi_ytd), and SS provisional income.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        # Age 75 (default rmd_start_age) with a large IRA -> forecast RMD ~$81k, far above
+        # the $1,000 we mark as already withdrawn. Spouse (age 69) has no RMD.
+        hh = Household(
+            your_age=75,
+            spouse_age=69,
+            base_year=2026,
+            your_ira=2_000_000,
+            spouse_ira=1_000_000,
+        )
+        plan = ConversionPlan()
+
+        base = run_scenario(
+            hh, plan, "base", end_age=76, ytd=YTDSnapshot(tax_year=2026, ira_distributions_ytd=0.0)
+        ).years[0]
+        # Sanity: a real forecast RMD exists and is far above the $1,000 YTD amount.
+        assert base.taxable_rmd > 50_000
+
+        partial = run_scenario(
+            hh,
+            plan,
+            "partial",
+            end_age=76,
+            ytd=YTDSnapshot(tax_year=2026, ira_distributions_ytd=1_000.0),
+        ).years[0]
+
+        # Marking $1,000 of the required RMD as already-taken must not inflate any aggregate.
+        assert partial.combined_gross == approx(base.combined_gross)
+        assert partial.magi == approx(base.magi)
+        assert partial.taxable_ss_amt == approx(base.taxable_ss_amt)
+        # Full RMD cash is still available for the excess-RMD/brokerage path -> unchanged.
+        assert partial.excess_rmd == approx(base.excess_rmd)
+
     def test_ytd_save_load_roundtrip(self, tmp_path, monkeypatch):
         from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot

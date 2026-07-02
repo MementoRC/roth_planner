@@ -183,6 +183,28 @@ def run_scenario(
             spouse_prior_year_balance=prev_spouse_ira_begin,
         )
 
+        # === C2/scenario-1: base-year RMD net-of-YTD reconciliation ===
+        # ytd_year.ira_distributions_ytd ("non-conversion IRA withdrawals") already
+        # includes any RMD taken so far this year, and is re-added downstream to
+        # combined_gross, MAGI (via magi_ytd), and SS provisional income. The forecast
+        # taxable_rmd from compute_rmds() has no YTD awareness, so without this clamp the
+        # already-taken portion of the RMD is double-counted in the base year. Mirror the
+        # conversion net-of-YTD clamp: reduce the forecast taxable RMD (yours first, then
+        # spouse) by the pooled YTD distributions so each income aggregate nets to
+        # max(required RMD, actual distributions taken). The reduction is restored below
+        # for the brokerage/excess-RMD cash-flow calc (full RMD cash is available
+        # regardless of when in the year it was taken), and the gross RMD (your_rmd/
+        # spouse_rmd) is never touched, so IRA balances are unaffected.
+        _rmd_ytd_reduction = 0.0
+        _spouse_rmd_ytd_reduction = 0.0
+        if ytd_year is not None and ytd_year.ira_distributions_ytd > 0:
+            _dist_remaining = ytd_year.ira_distributions_ytd
+            _rmd_ytd_reduction = min(yr.taxable_rmd, _dist_remaining)
+            yr.taxable_rmd -= _rmd_ytd_reduction
+            _dist_remaining -= _rmd_ytd_reduction
+            _spouse_rmd_ytd_reduction = min(yr.spouse_taxable_rmd, _dist_remaining)
+            yr.spouse_taxable_rmd -= _spouse_rmd_ytd_reduction
+
         # === Extra voluntary withdrawals (bracket fill post-RMD) ===
         yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
         yr.spouse_extra_withdrawal = plan.spouse_extra_withdrawals.get(year, 0.0)
@@ -546,7 +568,13 @@ def run_scenario(
         years_from_base = yr_idx
         yr.living_expenses = hh.living_expenses * (1 + hh.expense_inflation) ** years_from_base
 
-        after_tax_rmd = yr.taxable_rmd + yr.spouse_taxable_rmd  # taxable RMDs (net of QCDs)
+        # Restore the base-year YTD reduction: the full required RMD cash is available for
+        # living expenses / excess-RMD reinvestment regardless of when in the year it was
+        # taken (see C2/scenario-1 reconciliation above). _*_reduction are 0.0 outside the
+        # base year, so forecast years are unchanged.
+        after_tax_rmd = (yr.taxable_rmd + _rmd_ytd_reduction) + (
+            yr.spouse_taxable_rmd + _spouse_rmd_ytd_reduction
+        )  # taxable RMDs (net of QCDs), full pre-YTD-clamp amount
         available_income = (
             after_tax_rmd
             + yr.extra_withdrawal
