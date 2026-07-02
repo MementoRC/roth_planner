@@ -85,6 +85,9 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     # survivor is a joint field (not spouse-specific); pass through as-is when not as_spouse
     if "survivor" in data and not as_spouse:
         updates["survivor"] = data["survivor"]
+        # Reflect an uploaded survivor scenario in the Enable checkbox so the setup
+        # render keeps it instead of re-nulling it (audit C9 / ui-streamlit-5).
+        updates["_survivor_enabled"] = bool(data["survivor"])
     # inherited_iras is a joint field; each entry carries its own owner field
     if "inherited_iras" in data and not as_spouse:
         updates["inherited_iras"] = data["inherited_iras"]

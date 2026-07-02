@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TypeVar
 
 import streamlit as st
@@ -68,6 +69,27 @@ def spouse_single_overrides() -> dict[str, object]:
     }
 
 
+def apply_single_filer(hh: Household) -> Household:
+    """Return a copy of ``hh`` with spouse inputs zeroed when filing Single.
+
+    Single models a single-from-the-start household. The zeroing is applied to the
+    DERIVED Household (never to session_state) so toggling back to MFJ restores the
+    user's real spouse balances (audit C9 / ui-streamlit-4). Mirrors the fields in
+    ``spouse_single_overrides`` (session-state key ``spouse_aca`` maps to the Household
+    field ``spouse_aca_enrolled``).
+    """
+    if hh.filing_status != "Single":
+        return hh
+    return replace(
+        hh,
+        spouse_ira=0,
+        spouse_roth=0,
+        spouse_age=0,
+        spouse_ss_fra=0.0,
+        spouse_aca_enrolled=False,
+    )
+
+
 def _render_survivor_scenario(base_year: int) -> None:
     """Render the Survivor scenario expander in the Joint sub-tab."""
     current: dict = st.session_state.get("survivor") or {}
@@ -80,9 +102,14 @@ def _render_survivor_scenario(base_year: int) -> None:
             "deceased's SS ends. "
             "NOT YET MODELED: SS survivor benefit step-up; inherited-IRA stretch rules."
         )
+        # Seed the Enable flag once from any persisted/uploaded survivor scenario. Do NOT
+        # pass value= alongside the persistent key: Streamlit ignores value= once the key
+        # exists, so after an uncheck a mid-session upload that sets "survivor" would be
+        # re-nulled by the else-branch below. The upload path sets "_survivor_enabled" too
+        # (audit C9 / ui-streamlit-5).
+        st.session_state.setdefault("_survivor_enabled", bool(current))
         enabled = st.checkbox(
             "Enable survivor scenario",
-            value=bool(current),
             key="_survivor_enabled",
         )
         if enabled:
@@ -366,9 +393,11 @@ def render_parameters_tab(hh: Household) -> None:
     )
     _is_single = filing_status_from_label(_filing_choice) == "Single"
     st.session_state["filing_status"] = "Single" if _is_single else "MFJ"
-    if _is_single:
-        for _key, _val in spouse_single_overrides().items():
-            st.session_state[_key] = _val
+    # NOTE: spouse inputs are intentionally NOT zeroed in session_state here — doing so
+    # permanently destroyed the user's real spouse balances on a Single→MFJ round-trip
+    # (audit C9 / ui-streamlit-4). The spouse widgets are disabled while Single, and the
+    # single-filer zeroing is applied to the DERIVED Household in app.get_household()
+    # via apply_single_filer().
 
     me_sub, spouse_sub, joint_sub = st.tabs(["Me", "Spouse", "Joint"])
 

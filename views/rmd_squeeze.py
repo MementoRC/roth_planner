@@ -143,10 +143,14 @@ def render(hh: Household):
     with c3:
         total_rmd_nc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_nc)
         total_rmd_wc = sum(yr.your_rmd + yr.spouse_rmd for yr in rmd_wc)
+        # Guard a fully-drained no-conversion IRA: calc_rmd returns 0 on a zero balance,
+        # so the RMD-year list can be non-empty with total_rmd_nc == 0 → the percentage
+        # would ZeroDivisionError (audit C9 / rmd-4).
+        _rmd_delta_pct = (total_rmd_wc - total_rmd_nc) / total_rmd_nc if total_rmd_nc else 0.0
         st.metric(
             f"Total RMDs ({hh.your_rmd_start_age}-95)",
             fmt_dollars_short(total_rmd_nc),
-            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct((total_rmd_wc - total_rmd_nc) / total_rmd_nc, 0, sign=True)})",
+            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct(_rmd_delta_pct, 0, sign=True)})",
         )
     with c4:
         total_tax_nc = sum(yr.federal_tax_amt for yr in rmd_nc)
