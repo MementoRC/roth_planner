@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import streamlit as st
 
 from engine.data_bridge_browser import (
@@ -19,6 +21,21 @@ from views._format import fmt_dollars
 
 _HH_FILING_LABEL_MFJ = "Married filing jointly"
 _HH_FILING_LABEL_SINGLE = "Single"
+
+_Num = TypeVar("_Num", int, float)
+
+
+def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
+    """Clamp ``value`` into ``[lo, hi]``.
+
+    Cached/uploaded JSON (.user_defaults.json, .tax_pdf_cache.json) can seed a
+    widget ``value`` outside its ``[min_value, max_value]`` bounds, and Streamlit
+    raises ``StreamlitAPIException`` at render time — crashing the Joint sub-tab on
+    load with no user interaction (audit C4). The widget bounds are widened to
+    generous limits so no legitimate value is ever out of range; this clamp is a
+    final backstop so genuinely corrupt data still cannot crash the render.
+    """
+    return min(max(value, lo), hi)
 
 
 def filing_status_from_label(label: str) -> str:
@@ -82,8 +99,10 @@ def _render_survivor_scenario(base_year: int) -> None:
             death_year = st.number_input(
                 "Year of death",
                 min_value=base_year,
-                max_value=base_year + 30,
-                value=int(current.get("death_year", base_year + 5)),
+                max_value=base_year + 50,
+                value=_clamp(
+                    int(current.get("death_year", base_year + 5)), base_year, base_year + 50
+                ),
                 step=1,
                 format="%d",
                 help=(
@@ -116,8 +135,8 @@ def _render_inherited_iras(base_year: int) -> None:
             new_bal = col_bal.number_input(
                 "Balance ($)",
                 min_value=0,
-                max_value=10_000_000,
-                value=int(entry.get("balance", 0)),
+                max_value=100_000_000,
+                value=_clamp(int(entry.get("balance", 0)), 0, 100_000_000),
                 step=10_000,
                 format="%d",
                 key=f"iira_balance_{idx}",
@@ -125,9 +144,11 @@ def _render_inherited_iras(base_year: int) -> None:
             )
             new_yr = col_yr.number_input(
                 "Year inherited",
-                min_value=base_year,
+                min_value=base_year - 15,
                 max_value=base_year + 30,
-                value=int(entry.get("inherited_year", base_year + 5)),
+                value=_clamp(
+                    int(entry.get("inherited_year", base_year + 5)), base_year - 15, base_year + 30
+                ),
                 step=1,
                 format="%d",
                 key=f"iira_year_{idx}",
@@ -289,8 +310,8 @@ def _render_prior_year_magi_anchor() -> None:
         v1 = st.number_input(
             f"{base_year - 2} filed MAGI",
             min_value=0,
-            max_value=2_000_000,
-            value=int(prior_magi.get(base_year - 2, 0)),
+            max_value=100_000_000,
+            value=_clamp(int(prior_magi.get(base_year - 2, 0)), 0, 100_000_000),
             step=1_000,
             format="%d",
             help=(
@@ -301,8 +322,8 @@ def _render_prior_year_magi_anchor() -> None:
         v2 = st.number_input(
             f"{base_year - 1} filed MAGI",
             min_value=0,
-            max_value=2_000_000,
-            value=int(prior_magi.get(base_year - 1, 0)),
+            max_value=100_000_000,
+            value=_clamp(int(prior_magi.get(base_year - 1, 0)), 0, 100_000_000),
             step=1_000,
             format="%d",
             help=(
@@ -556,8 +577,12 @@ def render_parameters_tab(hh: Household) -> None:
         st.session_state["medicare_part_b_base_monthly"] = st.number_input(
             "Medicare Part B Base Premium ($/mo)",
             min_value=0.0,
-            max_value=1000.0,
-            value=float(st.session_state.get("medicare_part_b_base_monthly", BASE_PART_B / 12)),
+            max_value=5000.0,
+            value=_clamp(
+                float(st.session_state.get("medicare_part_b_base_monthly", BASE_PART_B / 12)),
+                0.0,
+                5000.0,
+            ),
             step=1.0,
             format="%.2f",
             help=(
