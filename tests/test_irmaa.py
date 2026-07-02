@@ -415,3 +415,42 @@ class TestSurchargeDollarIndexing:
         s1 = irmaa_surcharge(1_000_000, num_people=1, year=2030)
         s2 = irmaa_surcharge(1_000_000, num_people=2, year=2030)
         assert s2 == pytest.approx(s1 * 2, abs=0.01)
+
+
+class TestIrmaaFrozenTierMonotonicity:
+    """C5 regression: indexed tiers must never overtake the frozen final tier,
+    keeping irmaa_tier / irmaa_surcharge / irmaa_next_threshold in agreement."""
+
+    def test_thresholds_monotonic_across_years(self) -> None:
+        from engine.irmaa import (
+            IRMAA_TIERS_MFJ,
+            IRMAA_TIERS_SINGLE,
+            _index_irmaa_tiers,
+        )
+
+        for base in (IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE):
+            for year in range(2026, 2081):
+                for cpi in (0.025, 0.04):
+                    tiers = _index_irmaa_tiers(base, year, cpi)
+                    thresholds = [t for t, _, _ in tiers]
+                    assert thresholds == sorted(thresholds), (
+                        f"non-monotonic at year={year} cpi={cpi}: {thresholds}"
+                    )
+
+    def test_tier_and_surcharge_agree_in_inversion_year(self) -> None:
+        # year=2042, cpi=0.04: unclamped indexed tier-4 (~767_922) would overtake
+        # the frozen $750K tier-5. magi=760_000 sits above the frozen floor.
+        from engine.irmaa import irmaa_surcharge, irmaa_tier
+
+        assert irmaa_tier(760_000, "MFJ", year=2042, cpi=0.04) == 5
+        # Same tier-5 surcharge as a MAGI unambiguously in tier 5.
+        assert irmaa_surcharge(760_000, year=2042, cpi=0.04) == irmaa_surcharge(
+            2_000_000, year=2042, cpi=0.04
+        )
+
+    def test_next_threshold_zero_above_frozen_floor(self) -> None:
+        from engine.irmaa import irmaa_next_threshold
+
+        # Above the frozen $750K MFJ floor in the inversion year → no room reported.
+        assert irmaa_next_threshold(755_000, "MFJ", year=2042, cpi=0.04) == 0.0
+        assert irmaa_next_threshold(760_000, "MFJ", year=2042, cpi=0.04) == 0.0

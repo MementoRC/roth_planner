@@ -60,13 +60,21 @@ def _index_irmaa_tiers(
 
     Tiers 1-4 are inflation-adjusted annually per CMS rulemaking.
     Tier 5 ($750K MFJ / $500K Single) has been frozen by statute since 2020
-    and must never be indexed forward.
+    and must never be indexed forward. Indexed tiers are additionally clamped to
+    the frozen final tier so the returned thresholds are always monotonically
+    non-decreasing (audit C5).
     """
     if not base_tiers:
         return []
-    indexed = [(index_value(t, year, cpi), pb, pd) for t, pb, pd in base_tiers[:-1]]
-    # Last tier: preserve base threshold exactly (frozen)
     last_t, last_pb, last_pd = base_tiers[-1]
+    # Index tiers 1-4; clamp each to the frozen final tier so the threshold list
+    # stays monotonically non-decreasing. In out-years an indexed tier-4 can
+    # overtake the frozen tier-5 ceiling (e.g. year=2042, cpi=0.04: indexed
+    # tier-4 ~= 767_922 > 750_000), which would desync the forward scans
+    # (irmaa_tier / irmaa_next_threshold) from the reverse scan (irmaa_surcharge)
+    # and report positive room to an already-crossed tier.
+    indexed = [(min(index_value(t, year, cpi), last_t), pb, pd) for t, pb, pd in base_tiers[:-1]]
+    # Last tier: preserve base threshold exactly (frozen)
     indexed.append((last_t, last_pb, last_pd))
     return indexed
 
