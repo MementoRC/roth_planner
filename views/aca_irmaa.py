@@ -128,11 +128,17 @@ def render(hh: Household):
             if not hh.aca_enhanced_subsidies_active:
                 cliff_fpl = FPL_1 if hh.filing_status == "Single" else FPL_2
                 cliff_magi = 4.0 * _index_value(cliff_fpl, _view_year, _view_cpi)
+                # The x-axis is raw (IRMAA) MAGI, but ACA MAGI adds back non-taxable SS
+                # (IRC §36B), so the subsidy cliff falls at raw MAGI = 4*FPL −
+                # nontaxable_ss on this axis. Place the marker there so it lines up with
+                # the ACA curve's actual drop (audit C7 / aca-4). nontaxable_ss is 0
+                # unless SS is drawn during the ACA years → no-op for the default HH.
+                cliff_x = cliff_magi - curves.nontaxable_ss
                 fig_aca.add_vline(
-                    x=cliff_magi,
+                    x=cliff_x,
                     line_dash="dash",
                     line_color="#ef4444",
-                    annotation_text=f"400% FPL cliff: {fmt_dollars(cliff_magi)}",
+                    annotation_text=f"400% FPL cliff: {fmt_dollars(cliff_x)}",
                 )
 
             fig_aca.update_layout(

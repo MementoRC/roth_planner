@@ -226,3 +226,57 @@ class TestNontaxableSsAddback:
             f"claimant={cc_claim.aca_subsidy_vals[0]:.2f}, "
             f"baseline={cc_base.aca_subsidy_vals[0]:.2f}"
         )
+
+
+class TestCostCurvesNontaxableSsField:
+    """CostCurves.nontaxable_ss is correctly populated for cliff-vline alignment (audit C7 / aca-4)."""
+
+    def test_nontaxable_ss_zero_for_default_household(self) -> None:
+        """Default HH claims SS at 70 — outside the ACA window — so nontaxable_ss is 0.0."""
+        hh = Household(
+            your_age=62,
+            spouse_age=55,
+            your_ss_start_age=70,
+            your_aca_enrolled=True,
+        )
+        cc = compute_cost_curves(
+            [50_000, 100_000, 150_000],
+            base_magi=80_000.0,
+            net_inv_income=0.0,
+            hh=hh,
+            year=2026,
+            cpi=0.025,
+        )
+        assert cc.nontaxable_ss == 0.0, (
+            f"expected 0.0 when SS not drawn during ACA years, got {cc.nontaxable_ss}"
+        )
+
+    def test_nontaxable_ss_positive_when_drawing_ss_during_aca_years(self) -> None:
+        """HH drawing SS at 62 while on ACA must yield nontaxable_ss > 0.
+
+        At modest other income ($30k) the SS inclusion rate is below 85%, so
+        non-taxable SS = combined_ss − taxable_ss > 0.
+        """
+        hh = Household(
+            your_age=62,
+            spouse_age=62,
+            filing_status="Single",
+            your_ss_start_age=62,
+            your_ss_fra=2_000.0,  # $2,000/month at FRA → ~$24k/year raw
+            your_fra_age=67,
+            ss_cola=0.025,
+            your_aca_enrolled=True,
+            aca_benchmark_premium_annual=12_000.0,
+        )
+        cc = compute_cost_curves(
+            [50_000, 100_000, 150_000],
+            base_magi=30_000.0,
+            net_inv_income=0.0,
+            hh=hh,
+            year=2026,
+            cpi=0.025,
+        )
+        assert cc.nontaxable_ss > 0.0, (
+            f"expected nontaxable_ss > 0 for age-62 SS claimant at $30k base MAGI, "
+            f"got {cc.nontaxable_ss}"
+        )

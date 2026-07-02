@@ -98,6 +98,9 @@ class CostCurves:
     # Base-state scalars (computed once, hoisted from inside the original loop)
     base_irmaa: float
     base_niit: float
+    # ACA MAGI add-back (IRC §36B); 0 unless SS drawn in ACA years. Used to align
+    # the cliff marker (audit C7 / aca-4).
+    nontaxable_ss: float = 0.0
 
 
 def compute_cost_curves(
@@ -290,6 +293,7 @@ def compute_cost_curves(
         niit_increase_vals=niit_increase,
         base_irmaa=base_irmaa,
         base_niit=base_niit,
+        nontaxable_ss=nontaxable_ss,
     )
 
 
