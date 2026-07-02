@@ -2,8 +2,8 @@
 
 import pytest
 
-from engine.scenario_autofill import auto_fill_12, auto_fill_irmaa_safe
-from models.household import Household
+from engine.scenario_autofill import auto_fill_12, auto_fill_22, auto_fill_irmaa_safe
+from models.household import Household, SurvivorScenario
 
 
 def approx(expected, tol=1.0):
@@ -203,4 +203,150 @@ class TestAutoFillCoreBaseMagiTaxableSS:
         assert reduction == approx(expected_tss, tol=100), (
             f"IRMAA room reduction should equal tss={expected_tss:.0f}, "
             f"got {reduction:.0f} (gross-SS bug would give ~{combined_ss:.0f})"
+        )
+
+
+class TestSurvivorAutofill:
+    """C3 / autofill-1 regression: _auto_fill_core must honor the survivor filing-status
+    transition.
+
+    Before the fix, _auto_fill_core stayed MFJ forever, summed both spouses' SS,
+    and kept offering the deceased's IRA for conversion after death.  Three tests
+    prove all three aspects are now correct.
+
+    Setup common to (a) and (b):
+      - base_year = 2026
+      - your_age=62, your_rmd_start_age=75 → 13-year pre-RMD window
+      - spouse_age=62, spouse_rmd_start_age=75 → equal window
+      - death_year = base_year + 2 (= 2028), so survivor_active begins 2029
+      - Both IRAs funded; no SS, no options, no grants → clean isolation
+    """
+
+    # ── Shared fixture factory ──────────────────────────────────────────────
+
+    @staticmethod
+    def _base_hh(**overrides: object) -> Household:
+        """Minimal MFJ household with a long conversion window and no noise sources."""
+        from dataclasses import replace
+
+        hh = replace(
+            Household(),
+            your_age=62,
+            spouse_age=62,
+            your_ira=2_000_000.0,
+            spouse_ira=2_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            # Zero out SS and option income so room calculations are bracket-only.
+            your_ss_fra=0,
+            spouse_ss_fra=0,
+            grants=[],
+            # No brokerage noise.
+            brokerage_start=0.0,
+        )
+        return replace(hh, **overrides)  # type: ignore[arg-type]
+
+    # ── (a) Deceased-IRA conversions stop ──────────────────────────────────
+
+    def test_spouse_ira_conversions_stop_after_death(self) -> None:
+        """After who_dies='spouse' the plan must have no positive spouse conversions.
+
+        Before the fix: spouse_ira kept being offered every year regardless of
+        survivor_active, because _auto_fill_core did not implement the IRA rollover
+        (spouse_ira → your_ira at death_year+1) and kept allocating room to it.
+
+        After the fix: the rollover zeroes spouse_ira at death_year+1; the
+        allocation guard (sa < spouse_rmd_start_age) still passes numerically but
+        spouse_ira == 0 so min(room, 0) == 0 → no spouse conversion.
+        """
+        death_year = Household().base_year + 2  # 2028
+        hh = self._base_hh(
+            survivor=SurvivorScenario(who_dies="spouse", death_year=death_year)
+        )
+        plan = auto_fill_22(hh)
+
+        post_death_years = [
+            y for y in plan.spouse_conversions if y >= death_year + 1
+        ]
+        for year in post_death_years:
+            assert plan.spouse_conversions[year] == 0.0, (
+                f"spouse_conversions[{year}]={plan.spouse_conversions[year]:.0f} "
+                f"must be 0 after death_year={death_year}"
+            )
+
+        # Also verify the plan has pre-death spouse conversions (sanity: not just empty).
+        pre_death_spouse_total = sum(
+            v for y, v in plan.spouse_conversions.items() if y <= death_year
+        )
+        assert pre_death_spouse_total > 0.0, (
+            "Sanity: expect positive spouse conversions before death year"
+        )
+
+    def test_your_ira_conversions_stop_after_death(self) -> None:
+        """Symmetric: who_dies='you' → no positive your_conversions from death_year+1."""
+        death_year = Household().base_year + 2  # 2028
+        hh = self._base_hh(
+            survivor=SurvivorScenario(who_dies="you", death_year=death_year)
+        )
+        plan = auto_fill_22(hh)
+
+        post_death_years = [
+            y for y in plan.your_conversions if y >= death_year + 1
+        ]
+        for year in post_death_years:
+            assert plan.your_conversions[year] == 0.0, (
+                f"your_conversions[{year}]={plan.your_conversions[year]:.0f} "
+                f"must be 0 after death_year={death_year} (you died)"
+            )
+
+        # Sanity: pre-death your_conversions exist.
+        pre_death_your_total = sum(
+            v for y, v in plan.your_conversions.items() if y <= death_year
+        )
+        assert pre_death_your_total > 0.0, (
+            "Sanity: expect positive your_conversions before death year"
+        )
+
+    # ── (b) Single brackets shrink conversion room ──────────────────────────
+
+    def test_survivor_single_bracket_reduces_post_death_conversions(self) -> None:
+        """Survivor (Single) cumulative post-death conversions < MFJ cumulative.
+
+        The MFJ 22% ceiling is ~$211,400 (2026); the Single 22% ceiling is
+        ~$105,700. After the spousal rollover the survivor holds both IRAs
+        but only has half the bracket room, so cumulative conversions across
+        all post-death years must be strictly less than the MFJ-forever baseline.
+
+        Before the fix: both households used MFJ brackets forever → identical
+        totals → assertion would fail (equal, not less).
+        """
+        base_year = Household().base_year  # 2026
+        death_year = base_year + 2  # 2028; survivor_active from 2029
+
+        hh_mfj = self._base_hh()  # no survivor → MFJ forever
+        hh_surv = self._base_hh(
+            survivor=SurvivorScenario(who_dies="spouse", death_year=death_year)
+        )
+
+        plan_mfj = auto_fill_22(hh_mfj)
+        plan_surv = auto_fill_22(hh_surv)
+
+        # Cumulative conversions in years strictly after death_year.
+        def _post_death_total(plan: object) -> float:
+            from engine.scenario_types import ConversionPlan
+            assert isinstance(plan, ConversionPlan)
+            return sum(
+                plan.your_conversions.get(y, 0.0) + plan.spouse_conversions.get(y, 0.0)
+                for y in range(death_year + 1, base_year + 20)
+            )
+
+        total_mfj = _post_death_total(plan_mfj)
+        total_surv = _post_death_total(plan_surv)
+
+        assert total_mfj > 0.0, (
+            f"Sanity: MFJ post-death conversions must be positive, got {total_mfj:.0f}"
+        )
+        assert total_surv < total_mfj, (
+            f"Survivor post-death total ({total_surv:.0f}) must be < MFJ total "
+            f"({total_mfj:.0f}): Single 22% ceiling is ~half MFJ ceiling"
         )

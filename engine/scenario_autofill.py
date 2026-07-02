@@ -54,13 +54,17 @@ def _auto_fill_core(
     hh: Household,
     early_exercise: bool,
     ytd: YTDSnapshot | None,
-    room_fn: Callable[[float, float, float, int, float], float],
+    room_fn: Callable[[float, float, float, int, float, str], float],
 ) -> ConversionPlan:
     """Shared body of auto_fill_12 / auto_fill_22 / auto_fill_irmaa_safe.
 
     The only difference between those three is how ``room`` is computed each
     year. This core does everything else identically; the room calculation is
-    delegated to ``room_fn(fixed_gross, ded, base_magi, year, cpi) -> float``.
+    delegated to
+    ``room_fn(fixed_gross, ded, base_magi, year, cpi, filing_status) -> float``.
+    The ``filing_status`` argument is the PER-YEAR status (it flips to "Single"
+    in survivor years), so each room fn must resolve its brackets/tiers from it
+    rather than from the household's static ``hh.filing_status``.
 
     ``base_magi`` is always computed and passed (cheap; identical expression in
     all three originals). The 12% and 22% variants ignore it; the IRMAA-safe
@@ -77,12 +81,33 @@ def _auto_fill_core(
     # consume bracket room, else auto-fill over-converts for households with inherited IRAs.
     inherited_balances: list[float] = [iira.balance for iira in hh.inherited_iras]
 
+    # Survivor scenario: filing-status transition + one-time IRA rollover at
+    # death_year + 1, mirroring engine/scenario.py:71-98. Without this, auto-fill
+    # stays MFJ forever, sums both spouses' SS, and keeps offering the deceased's
+    # IRA for conversion (audit C3 / autofill-1).
+    surv = hh.survivor
+    _rollover_done = False
+
     for yr_idx in range(
         hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
     ):  # +6 for spouse squeeze years
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+
+        # === Survivor: filing status + one-time IRA rollover (mirror scenario.py:86-98) ===
+        survivor_active = surv is not None and year >= surv.death_year + 1
+        current_filing_status = "Single" if survivor_active else hh.filing_status
+        if survivor_active and not _rollover_done:
+            assert surv is not None  # narrowing: survivor_active implies surv is not None
+            if surv.who_dies == "you":
+                spouse_ira += your_ira
+                your_ira = 0.0
+            else:
+                your_ira += spouse_ira
+                spouse_ira = 0.0
+            _rollover_done = True
+
         cur_your_begin = your_ira
         cur_spouse_begin = spouse_ira
         ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
@@ -108,6 +133,15 @@ def _auto_fill_core(
             if sa >= hh.spouse_ss_start_age
             else 0.0
         )
+        # Survivor SS step-up (mirror compute_social_security in scenario_compute.py):
+        # from death_year + 1 the survivor keeps the LARGER of the two COLA-grown
+        # benefits; the smaller stops. Pre-survivor years keep the sum.
+        if survivor_active and surv is not None:
+            survivor_combined = max(your_ss, spouse_ss)
+            if surv.who_dies == "you":
+                your_ss, spouse_ss = 0.0, survivor_combined
+            else:
+                your_ss, spouse_ss = survivor_combined, 0.0
         combined_ss = your_ss + spouse_ss
 
         # RMD
@@ -164,7 +198,7 @@ def _auto_fill_core(
         other_fixed = ordinary_core
         if ytd_year is not None:
             other_fixed += ytd_year.magi_ytd
-        tss = taxable_ss(combined_ss, other_fixed, filing_status=hh.filing_status)
+        tss = taxable_ss(combined_ss, other_fixed, filing_status=current_filing_status)
 
         # MAGI without conversion (full MAGI — includes LTCG for IRMAA).
         # Uses taxable SS (tss) not gross combined_ss per IRC §86 + §1395r(i)(4).
@@ -188,20 +222,38 @@ def _auto_fill_core(
                 + ytd_year.ira_distributions_ytd
             )
 
-        # Deductions — single-from-the-start households use single std/senior values
+        # Deductions — resolve std/senior from the PER-YEAR filing status so survivor
+        # years (and single-from-the-start households) use single values.
         _af_std: float
         _af_senior: float
-        if hh.filing_status == "Single":
+        if current_filing_status == "Single":
             _af_std, _af_senior = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
         else:
             _af_std, _af_senior = hh.std_deduction, hh.senior_extra
-        ded = deductions(ya, sa, _af_std, _af_senior, year=year, cpi=_cpi)
+        # Survivor: zero the deceased's age so only the survivor counts toward the
+        # senior extra and OBBBA senior bonus (mirror scenario.py:371-372).
+        if survivor_active and surv is not None:
+            ya_eff = 0 if surv.who_dies == "you" else ya
+            sa_eff = 0 if surv.who_dies == "spouse" else sa
+        else:
+            ya_eff, sa_eff = ya, sa
+        ded = deductions(ya_eff, sa_eff, _af_std, _af_senior, year=year, cpi=_cpi)
+        # OBBBA senior-bonus phase-out is measured on AGI (muni-excluded), matching
+        # scenario.py:366/377 and estimate_ytd_federal_tax. base_magi carries muni
+        # interest via ytd magi_ytd, so strip it here (audit C3 / autofill-2).
+        _phaseout_muni = ytd_year.tax_exempt_interest_ytd if ytd_year is not None else 0.0
         ded += senior_bonus_deduction(
-            ya, sa, base_magi, year=year, cpi=_cpi, filing_status=hh.filing_status
+            ya_eff,
+            sa_eff,
+            base_magi - _phaseout_muni,
+            year=year,
+            cpi=_cpi,
+            filing_status=current_filing_status,
         )
 
-        # Room — delegated to caller's room_fn
-        room = room_fn(fixed_gross, ded, base_magi, year, _cpi)
+        # Room — delegated to caller's room_fn (per-year filing status flips to Single
+        # in survivor years so the ceiling/tier is resolved correctly each year).
+        room = room_fn(fixed_gross, ded, base_magi, year, _cpi, current_filing_status)
 
         # Allocate room
         # Symmetric allocation: older pre-RMD person first (drains the IRA closest to RMD).
@@ -269,8 +321,8 @@ def auto_fill_12(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi: _room_to_12_fs(
-            fg, ded, year=yr, cpi=cpi, filing_status=hh.filing_status
+        room_fn=lambda fg, ded, _bm, yr, cpi, fs: _room_to_12_fs(
+            fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
 
@@ -288,8 +340,8 @@ def auto_fill_22(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi: _room_to_22_fs(
-            fg, ded, year=yr, cpi=cpi, filing_status=hh.filing_status
+        room_fn=lambda fg, ded, _bm, yr, cpi, fs: _room_to_22_fs(
+            fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
 
@@ -303,20 +355,22 @@ def auto_fill_irmaa_safe(
     Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
     """
-    # tier-1 MAGI ceiling (2026 base) — single tiers for a single-from-the-start household
-    _irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
-    irmaa_base_threshold = _irmaa_tiers[0][0]
-
-    def _irmaa_room(fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float) -> float:
+    def _irmaa_room(
+        fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float, filing_status: str
+    ) -> float:
+        # tier-1 MAGI ceiling — resolve tiers from the PER-YEAR filing status so a
+        # survivor year uses the (lower) single tier-1 threshold, not the MFJ one.
+        _irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+        irmaa_base_threshold = _irmaa_tiers[0][0]
         # Room to IRMAA threshold (indexed), capped at 22% bracket room
-        # C3: IRMAA 2-year lookback — index the tier-1 ceiling to the payment year
+        # IRMAA 2-year lookback — index the tier-1 ceiling to the payment year
         # (yr + 2), matching sweet_spot_compute._index_irmaa_tiers(yr + 2) and
         # all_in_at_conversion. Income year `yr` under-indexed the ceiling by 2 CPI-years.
         irmaa_threshold = _iv(irmaa_base_threshold, yr + 2, cpi)
         irmaa_room = max(irmaa_threshold - base_magi, 0.0)
         return min(
             irmaa_room,
-            _room_to_22_fs(fixed_gross, ded, year=yr, cpi=cpi, filing_status=hh.filing_status),
+            _room_to_22_fs(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
         )
 
     return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
