@@ -20,7 +20,7 @@ from engine.tax import (
     federal_tax_single,
     room_to_bracket,
 )
-from engine.tax_indexing import index_value
+from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 from models.household import Household
 
 
@@ -122,3 +122,29 @@ class TestAutoFillSingleNonSurvivor:
             mfj_plan.spouse_conversions.values()
         )
         assert tot_single < tot_mfj
+
+
+class TestConversionTaxSSTorpedo:
+    """C6 / scenario-2: conversion_tax must include the SS tax torpedo.
+
+    Proof case: MFJ, combined_ss=40000, non-SS ordinary=20000, conversion=20000,
+    deductions=30000. taxable_ss with conv=19600, without=4000 -> delta=15600.
+    combined_gross(ordinary)=20000+20000+19600=59600; taxable_income=29600.
+    Correct conversion_tax = federal_tax(29600) - federal_tax(0) = 3056; the
+    legacy (delta-omitted) value was federal_tax(29600) - federal_tax(9600) = 2096.
+    """
+
+    def test_conversion_tax_includes_ss_torpedo(self) -> None:
+        _, _, conversion_tax, base_taxable = compute_federal_tax(
+            29600.0, 59600.0, 20000.0, 0.0, 30000.0, "MFJ", BASE_YEAR, DEFAULT_CPI,
+            conversion_ss_delta=15600.0,
+        )
+        assert conversion_tax == pytest.approx(3056.0, abs=1.0)
+        assert base_taxable == 0.0
+
+    def test_conversion_tax_default_delta_is_legacy(self) -> None:
+        # Default conversion_ss_delta=0.0 reproduces the pre-fix (undercounting) value.
+        _, _, conversion_tax, _ = compute_federal_tax(
+            29600.0, 59600.0, 20000.0, 0.0, 30000.0, "MFJ", BASE_YEAR, DEFAULT_CPI,
+        )
+        assert conversion_tax == pytest.approx(2096.0, abs=1.0)

@@ -418,6 +418,32 @@ def run_scenario(
         yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
 
         # === Federal tax + conversion tax (incremental) ===
+        # SS "tax torpedo" (audit C6 / scenario-2): recompute taxable SS with the
+        # planned conversions removed so conversion_tax below captures the extra SS
+        # the conversion pushed into taxability — not just the ordinary bracket
+        # delta on the conversion dollars. Only the conversion args change to 0.0.
+        _, _, _, _taxable_ss_no_conv = compute_social_security(
+            hh,
+            ya,
+            sa,
+            survivor_active,
+            surv.who_dies if surv is not None else None,
+            current_filing_status,
+            0.0,
+            0.0,
+            yr.taxable_rmd,
+            yr.spouse_taxable_rmd,
+            yr.extra_withdrawal,
+            yr.spouse_extra_withdrawal,
+            yr.option_income,
+            yr.your_inherited_distribution,
+            yr.spouse_inherited_distribution,
+            ord_div_this_year,
+            ytd_year,
+            qual_div_this_year,
+            realized_gains,
+        )
+        conversion_ss_delta = yr.taxable_ss_amt - _taxable_ss_no_conv
         yr.federal_tax_amt, yr.marginal_bracket, yr.conversion_tax, base_taxable = compute_federal_tax(
             yr.taxable_income,
             yr.combined_gross,
@@ -427,6 +453,7 @@ def run_scenario(
             current_filing_status,
             year,
             cpi,
+            conversion_ss_delta,
         )
 
         # === IRMAA (2-year lookback) ===
