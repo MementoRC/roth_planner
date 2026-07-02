@@ -593,3 +593,88 @@ class TestHeadroomSSMAGIFixes:
         assert hr.irmaa_tier_current != tier_income_year, (
             "irmaa_tier_current must NOT equal income-year tier (that is the old broken behavior)"
         )
+
+
+class TestHeadroomACACliffMAGI:
+    """Regression tests for audit C7 / headroom-2: ACA MAGI uses FULL SS benefit.
+
+    IRC §36B(d)(2)(B)(iii) requires adding back the FULL Social Security benefit
+    (taxable + non-taxable) to compute ACA MAGI. Prior code used locked_magi which
+    carries only the taxable portion, under-counting ACA MAGI and overstating cliff room.
+    """
+
+    def test_c7_aca_cliff_room_uses_full_ss(self):
+        """C7 / headroom-2: room_to_aca_cliff reflects FULL combined_ss, not just taxable SS.
+
+        Setup:
+          - ACA-enrolled person aged 62 (ACA-age, not yet Medicare)
+          - combined_ss chosen so taxable SS < combined_ss (partial taxability)
+            → non-taxable SS > 0, which is the condition the bug suppressed
+          - magi_ytd low enough that household is below 400% FPL without SS
+
+        Expected post-fix: room uses (magi_ytd + combined_ss) as ACA MAGI, yielding
+        LESS cliff room than the pre-fix formula (magi_ytd + taxable_ss).
+        """
+        from engine.aca import FPL_2, aca_applies
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+        from engine.tax_indexing import index_value
+        from models.ytd_income import YTDSnapshot
+
+        # ACA-enrolled at 62, spouse 55 (no ACA). Both below SS start age by default
+        # (your_ss_start_age defaults to 70), so we set a low start age and FRA benefit
+        # to get meaningful SS that is only partially taxable.
+        # monthly=$500/person → annual ≈ $500 * 0.8667 * 12 ≈ $5,200/yr each
+        # → combined_ss ≈ $10,400/yr (low enough for partial taxability)
+        monthly = 500.0
+        hh = Household(
+            your_age=62,
+            spouse_age=55,
+            base_year=2026,
+            your_aca_enrolled=True,
+            your_ss_fra=monthly,
+            your_ss_start_age=62,
+            your_fra_age=67,
+            # spouse not claiming SS
+            spouse_ss_fra=0.0,
+            spouse_ss_start_age=70,
+            spouse_fra_age=67,
+        )
+
+        # Confirm ACA applies for this household (guards the ACA cliff block)
+        ya = hh.your_age
+        assert aca_applies(ya, hh.your_aca_enrolled), "Test setup: ACA should apply at age 62"
+
+        # Low YTD income so household is well below 400% FPL
+        magi_ytd = 30_000.0
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=magi_ytd)
+
+        hr = compute_headroom(hh, ytd)
+
+        # Independently compute the same values the engine uses
+        _year = hh.base_year
+        _cpi = hh.cpi_assumption
+        fpl = index_value(FPL_2, _year, _cpi)  # MFJ base (2-person family)
+        aca_cliff = 4.0 * fpl
+
+        annual_ss = ss_benefit_at_age(monthly, claim_age=62, fra_age=67)
+        combined_ss = annual_ss  # spouse has no SS
+
+        # Confirm partial taxability: taxable SS must be strictly less than combined_ss
+        tss = taxable_ss(combined_ss, magi_ytd, filing_status="MFJ")
+        assert tss < combined_ss, (
+            f"Test setup: expected partial taxability (tss={tss:.0f} < combined_ss={combined_ss:.0f})"
+        )
+
+        # Post-fix formula: ACA MAGI = magi_ytd + FULL combined_ss
+        expected_room = max(aca_cliff - (magi_ytd + combined_ss), 0.0)
+        assert hr.room_to_aca_cliff == approx(expected_room, tol=1.0)
+
+        # Strict inequality: post-fix room must be LESS than pre-fix room
+        # (because combined_ss > taxable_ss, so ACA MAGI is higher → less cliff room)
+        pre_fix_room = max(aca_cliff - (magi_ytd + tss), 0.0)
+        assert hr.room_to_aca_cliff < pre_fix_room, (
+            f"Post-fix room ({hr.room_to_aca_cliff:.0f}) must be strictly less than "
+            f"pre-fix room ({pre_fix_room:.0f}) when non-taxable SS exists"
+        )

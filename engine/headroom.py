@@ -252,6 +252,12 @@ def compute_headroom(
         base_fpl = FPL_1 if filing_status == "Single" else FPL_2
         fpl = index_value(base_fpl, _year, _cpi)
         aca_cliff = 4.0 * fpl  # 400% FPL
-        result.room_to_aca_cliff = max(aca_cliff - locked_magi, 0.0)
+        # ACA MAGI (IRC §36B(d)(2)(B)(iii)) adds back the FULL Social Security
+        # benefit — taxable AND non-taxable — whereas locked_magi (IRMAA MAGI)
+        # carries only the taxable portion already in AGI. Using locked_magi here
+        # dropped the non-taxable SS, under-counting ACA MAGI and overstating cliff
+        # room for SS-claiming ACA-age households (audit C7 / headroom-2).
+        aca_magi = ytd.magi_ytd + combined_ss
+        result.room_to_aca_cliff = max(aca_cliff - aca_magi, 0.0)
 
     return result
