@@ -187,15 +187,16 @@ def compute_headroom(
 
     # === WITH PLANNED (locked + option exercise) ===
 
-    # planned_other adds opt to the full provisional-income base (same magi_ytd base).
-    planned_other = ytd.magi_ytd + opt
+    # planned_other adds only the still-to-realize option income (planned_option_income);
+    # magi_ytd already contains nqo_exercise_ytd, so adding the full opt would double-count.
+    planned_other = ytd.magi_ytd + result.planned_option_income
     planned_tss = taxable_ss(combined_ss, planned_other, filing_status=filing_status)
 
-    planned_magi = ytd.magi_ytd + planned_tss + opt
-    planned_niit_magi = ytd.niit_magi_ytd + planned_tss + opt
+    planned_magi = ytd.magi_ytd + planned_tss + result.planned_option_income
+    planned_niit_magi = ytd.niit_magi_ytd + planned_tss + result.planned_option_income
     result.projected_magi_base = planned_magi
 
-    planned_gross = ytd.total_ordinary_income + opt + planned_tss
+    planned_gross = ytd.total_ordinary_income + result.planned_option_income + planned_tss
 
     # Recalculate deductions with full planned MAGI.
     # FIX #5 (planned path): same muni-excluded MAGI for senior_bonus_deduction phaseout.
