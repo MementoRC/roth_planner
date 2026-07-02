@@ -332,6 +332,7 @@ def compute_federal_tax(
     current_filing_status: str,
     year: int,
     cpi: float,
+    conversion_ss_delta: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Return (federal_tax_amt, marginal_bracket, conversion_tax, base_taxable).
 
@@ -341,9 +342,11 @@ def compute_federal_tax(
     Single household use the single brackets while MFJ/survivor math is unchanged.
 
     ``base_taxable`` is the ordinary taxable income WITHOUT the conversion
-    (i.e. max(combined_gross - conversions - base_total_deductions, 0)).  The
-    caller needs it to compute the conversion-induced LTCG bracket-stacking
-    cost (C2) without recomputing it independently.
+    (i.e. max(combined_gross - conversions - conversion_ss_delta -
+    base_total_deductions, 0)).  ``conversion_ss_delta`` is the taxable-SS
+    increase the conversion caused (IRC §86); removing it from the baseline lets
+    ``conversion_tax`` capture the SS "tax torpedo" and keeps ``base_taxable`` a
+    true no-conversion figure for the LTCG bracket-stacking cost (C2).
     """
     if current_filing_status == "Single":
         federal_tax_amt = federal_tax_single(taxable_income, year=year, cpi=cpi)
@@ -352,7 +355,7 @@ def compute_federal_tax(
         federal_tax_amt = federal_tax(taxable_income, year=year, cpi=cpi)
         marginal_bracket = marginal_rate(taxable_income, year=year, cpi=cpi)
 
-    base_gross = combined_gross - your_conversion - spouse_conversion
+    base_gross = combined_gross - your_conversion - spouse_conversion - conversion_ss_delta
     base_taxable = max(base_gross - base_total_deductions, 0)
     if current_filing_status == "Single":
         conversion_tax = federal_tax_single(
