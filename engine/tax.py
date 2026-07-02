@@ -100,7 +100,10 @@ def marginal_rate(
         return 0.0
     brackets = index_bracket_list(BRACKETS_MFJ, year, cpi)
     for ceil, rate in brackets:
-        if taxable_income <= ceil:
+        # Strict '<': income exactly on a bracket ceiling has its next dollar taxed
+        # at the NEXT bracket, so the marginal rate is the higher one (audit C6 /
+        # tax-core-3).
+        if taxable_income < ceil:
             return rate
     return 0.37
 
@@ -127,7 +130,11 @@ def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MF
     if provisional <= tier1:
         return 0.0
     if provisional <= tier2:
-        taxable = 0.5 * (provisional - tier1)
+        # IRC §86(a)(1): the tier-1 band taxable amount is the LESSER of half the
+        # excess over the base amount and half of benefits. The 0.5*combined_ss
+        # cap (prong A) was missing, so low-SS / high-other-income households in
+        # the tier-1 band overstated taxable SS (audit C6 / tax-core-1).
+        taxable = min(0.5 * (provisional - tier1), 0.5 * combined_ss)
     else:
         # Tier-1 band contributes at most half of benefits (IRC 86(a)(2))
         tier1_contribution = min(0.5 * combined_ss, 0.5 * (tier2 - tier1))
@@ -290,7 +297,10 @@ def marginal_rate_single(
         return 0.0
     brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi)
     for ceil, rate in brackets:
-        if taxable_income <= ceil:
+        # Strict '<': income exactly on a bracket ceiling has its next dollar taxed
+        # at the NEXT bracket, so the marginal rate is the higher one (audit C6 /
+        # tax-core-3).
+        if taxable_income < ceil:
             return rate
     return 0.37
 
@@ -425,7 +435,9 @@ def estimate_ytd_federal_tax(
     )
     room_next = 0.0
     for ceil, _rate in _indexed_brackets:
-        if taxable_ordinary <= ceil:
+        # Strict '<': income exactly on a ceiling has full headroom in the NEXT
+        # bracket, not zero room in the current one (audit C6 / tax-core-3).
+        if taxable_ordinary < ceil:
             room_next = ceil - taxable_ordinary
             break
 

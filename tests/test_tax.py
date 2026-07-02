@@ -680,3 +680,36 @@ class TestEstimateYTDEffectiveRateDenominator:
             "effective_rate must be strictly less than total/niit_magi "
             "(muni-inclusive denom is larger → lower rate)"
         )
+
+
+class TestSSCapAndBracketEdges:
+    """C6 regression: §86(a)(1) tier-1 SS cap (tax-core-1) and strict-'<' bracket
+    edge behavior for marginal_rate (tax-core-3)."""
+
+    def test_tier1_band_applies_half_benefits_cap(self) -> None:
+        # MFJ, combined_ss=4000, other=36000 -> provisional=38000 (tier-1 band).
+        # §86(a)(1) = min(0.5*(38000-32000), 0.5*4000) = min(3000, 2000) = 2000.
+        from engine.tax import taxable_ss
+
+        assert taxable_ss(4000, 36000, "MFJ") == 2000.0
+
+    def test_tier1_band_uncapped_case_unchanged(self) -> None:
+        # When half-the-excess is below half-benefits, the cap is inert.
+        # combined_ss=40000, other=13000 -> provisional=33000 (tier-1), half-excess
+        # =0.5*(33000-32000)=500, cap=0.5*40000=20000 -> min=500 (unchanged by edit).
+        from engine.tax import taxable_ss
+
+        assert taxable_ss(40000, 13000, "MFJ") == 500.0
+
+    def test_marginal_rate_strict_at_ceiling_mfj(self) -> None:
+        from engine.tax import BRACKETS_MFJ, index_bracket_list, marginal_rate
+        from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI
+
+        # At BASE_YEAR the index factor is 1.0, so bracket ceilings are the raw values.
+        brackets = index_bracket_list(BRACKETS_MFJ, BASE_YEAR, DEFAULT_CPI)
+        c0, r0 = brackets[0]
+        _, r1 = brackets[1]
+        # Exactly on the first ceiling -> next bracket's rate.
+        assert marginal_rate(c0, year=BASE_YEAR, cpi=DEFAULT_CPI) == r1
+        # Just below -> current bracket's rate.
+        assert marginal_rate(c0 - 1, year=BASE_YEAR, cpi=DEFAULT_CPI) == r0
