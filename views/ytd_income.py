@@ -361,7 +361,7 @@ def render(hh: Household):
     b1.metric(
         "Current bracket",
         fmt_pct(estimate.marginal_bracket_pct, 0),
-        help="Marginal MFJ tax bracket your next dollar of ordinary income falls into.",
+        help=f"Marginal {hh.filing_status} tax bracket your next dollar of ordinary income falls into.",
     )
     b2.metric(
         "Room to next bracket",

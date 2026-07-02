@@ -337,7 +337,7 @@ def render(hh: Household):
         _mfj_12 = fmt_dollars(BRACKETS_MFJ[1][0])
         st.markdown(f"""
 **Why this matters**: When one spouse dies, the survivor:
-- Files **Single** — 12% bracket tops at {_single_12} taxable (vs {_mfj_12} for MFJ)
+- Files **Single** — 12% bracket tops at {_single_12} taxable (vs {_mfj_12} for MFJ) — 2026 base; both are CPI-indexed in the projection
 - Inherits the deceased's IRA — combined with their own, RMDs are massive
 - Gets only the **higher** of two SS benefits (not both)
 - Result: unconverted IRAs create an even worse squeeze for the survivor

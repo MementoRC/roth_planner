@@ -454,3 +454,27 @@ class TestIrmaaFrozenTierMonotonicity:
         # Above the frozen $750K MFJ floor in the inversion year → no room reported.
         assert irmaa_next_threshold(755_000, "MFJ", year=2042, cpi=0.04) == 0.0
         assert irmaa_next_threshold(760_000, "MFJ", year=2042, cpi=0.04) == 0.0
+
+
+class TestSurchargeIndexedThresholdProbe:
+    """C8 / ui-org-3: probing just above the INDEXED tier-1 threshold must return a
+    positive surcharge; probing the un-indexed base threshold against an indexed-year
+    schedule returns 0 (the old RMD-squeeze $0 bug)."""
+
+    def test_positive_just_above_indexed_tier1(self) -> None:
+        from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
+        from engine.tax_indexing import index_value
+
+        y, cpi = 2028, 0.025
+        thresh = index_value(IRMAA_TIERS_MFJ[0][0], y, cpi)
+        assert irmaa_surcharge(thresh + 1, 2, year=y, cpi=cpi) > 0.0
+
+    def test_unindexed_probe_underflows_to_zero(self) -> None:
+        from engine.irmaa import IRMAA_TIERS_MFJ, irmaa_surcharge
+        from engine.tax_indexing import index_value
+
+        y, cpi = 2028, 0.025
+        # The old ui-org-3 code probed the un-indexed base+1 against the indexed
+        # schedule; at cpi>0 that is below the indexed tier-1, so surcharge == 0.
+        assert index_value(IRMAA_TIERS_MFJ[0][0], y, cpi) > IRMAA_TIERS_MFJ[0][0] + 1
+        assert irmaa_surcharge(IRMAA_TIERS_MFJ[0][0] + 1, 2, year=y, cpi=cpi) == 0.0

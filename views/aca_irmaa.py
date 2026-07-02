@@ -332,6 +332,11 @@ def render(hh: Household):
                 }
             )
         st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)
+        st.caption(
+            "2026 statutory base. The chart above projects these forward — thresholds "
+            "CPI-indexed and surcharge dollars rising with medical inflation — to the "
+            "IRMAA payment year (income year + 2), so its numbers run higher."
+        )
 
     with col_ref2:
         st.markdown(
