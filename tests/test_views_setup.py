@@ -422,3 +422,51 @@ class TestNoDataMsg:
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         assert "widgets" in mod._no_data_msg("widgets")
+
+
+class TestClampWidgetBounds:
+    """C4 regression: _clamp keeps out-of-bounds cached/uploaded JSON from crashing
+    st.number_input at render, without corrupting legitimate large/past values."""
+
+    def test_in_range_unchanged(self) -> None:
+        from views.setup.parameters import _clamp
+
+        assert _clamp(500, 0, 1000) == 500
+
+    def test_above_hi_clamped(self) -> None:
+        from views.setup.parameters import _clamp
+
+        assert _clamp(1500, 0, 1000) == 1000
+
+    def test_below_lo_clamped(self) -> None:
+        from views.setup.parameters import _clamp
+
+        assert _clamp(-5, 0, 1000) == 0
+
+    def test_preserves_int_type(self) -> None:
+        from views.setup.parameters import _clamp
+
+        r = _clamp(5, 0, 10)
+        assert isinstance(r, int)
+        assert r == 5
+
+    def test_preserves_float_type(self) -> None:
+        from views.setup.parameters import _clamp
+
+        r = _clamp(2434.80, 0.0, 5000.0)
+        assert isinstance(r, float)
+        assert r == 2434.80
+
+    def test_legitimate_large_magi_not_corrupted(self) -> None:
+        # $2.5M filed MAGI is legitimate for a large-IRA household; the widened bound
+        # keeps it intact (a pure clamp-to-$2M would corrupt the IRMAA anchor).
+        from views.setup.parameters import _clamp
+
+        assert _clamp(2_500_000, 0, 100_000_000) == 2_500_000
+
+    def test_past_inherited_year_not_corrupted(self) -> None:
+        # Inheriting 4 years before base_year is a valid mid-drain SECURE 10-year case.
+        from views.setup.parameters import _clamp
+
+        base_year = 2026
+        assert _clamp(2022, base_year - 15, base_year + 30) == 2022
