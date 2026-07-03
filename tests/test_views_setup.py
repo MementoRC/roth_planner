@@ -470,3 +470,36 @@ class TestClampWidgetBounds:
 
         base_year = 2026
         assert _clamp(2022, base_year - 15, base_year + 30) == 2022
+
+
+class TestApplySingleFiler:
+    """C9 / ui-streamlit-4: Single-filer zeroing happens on the derived Household,
+    not in session_state, so MFJ round-trips keep real spouse balances."""
+
+    def test_single_zeroes_spouse_fields(self) -> None:
+        from models.household import Household
+        from views.setup.parameters import apply_single_filer
+
+        hh = Household(
+            filing_status="Single",
+            spouse_ira=1_700_000,
+            spouse_roth=200_000,
+            spouse_age=55,
+            spouse_ss_fra=2_000.0,
+            spouse_aca_enrolled=True,
+            your_ira=1_700_000,
+        )
+        out = apply_single_filer(hh)
+        assert out.spouse_ira == 0
+        assert out.spouse_roth == 0
+        assert out.spouse_age == 0
+        assert out.spouse_ss_fra == 0.0
+        assert out.spouse_aca_enrolled is False
+        assert out.your_ira == 1_700_000  # your_* untouched
+
+    def test_mfj_untouched(self) -> None:
+        from models.household import Household
+        from views.setup.parameters import apply_single_filer
+
+        hh = Household(filing_status="MFJ", spouse_ira=1_700_000)
+        assert apply_single_filer(hh).spouse_ira == 1_700_000

@@ -135,6 +135,7 @@ page = st.sidebar.radio(
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
 from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
 from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario  # noqa: E402
+from views.setup.parameters import apply_single_filer  # noqa: E402
 
 
 def _build_survivor_scenario() -> SurvivorScenario | None:
@@ -301,7 +302,7 @@ def get_household() -> Household:
         if merged_grants:
             hh.grants = merged_grants
 
-    return hh
+    return apply_single_filer(hh)
 
 
 # Route to page
