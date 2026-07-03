@@ -16,6 +16,7 @@ from engine.data_bridge_keys import (
     load_privkey,
     load_pubkey,
 )
+from engine.secure_io import read_pii_bytes
 from models.household import Household
 
 from ._state import (
@@ -347,13 +348,18 @@ def _handle_personal_exports() -> None:
             else:
                 st.caption("(Enter your numbers first to enable export.)")
             if cache_path.exists():
-                st.download_button(
-                    label="⬇️ .portfolio_cache.json.enc",
-                    data=seal(cache_path.read_bytes(), pubkey),
-                    file_name=".portfolio_cache.json.enc",
-                    mime="application/octet-stream",
-                    key="export_portfolio_cache_enc",
-                )
+                try:
+                    _cache_bytes = read_pii_bytes(cache_path)
+                except OSError:
+                    st.caption("(Portfolio cache could not be read safely — possible symlink; skipping.)")
+                else:
+                    st.download_button(
+                        label="⬇️ .portfolio_cache.json.enc",
+                        data=seal(_cache_bytes, pubkey),
+                        file_name=".portfolio_cache.json.enc",
+                        mime="application/octet-stream",
+                        key="export_portfolio_cache_enc",
+                    )
             else:
                 st.caption("(Run Portfolio Sync first to enable cache export.)")
             return
@@ -386,13 +392,18 @@ def _handle_personal_exports() -> None:
         else:
             st.caption("(Enter your numbers first to enable export.)")
         if cache_path.exists():
-            st.download_button(
-                label="⬇️ .portfolio_cache.json",
-                data=cache_path.read_bytes(),
-                file_name=".portfolio_cache.json",
-                mime="application/json",
-                key="export_portfolio_cache",
-            )
+            try:
+                _cache_bytes = read_pii_bytes(cache_path)
+            except OSError:
+                st.caption("(Portfolio cache could not be read safely — possible symlink; skipping.)")
+            else:
+                st.download_button(
+                    label="⬇️ .portfolio_cache.json",
+                    data=_cache_bytes,
+                    file_name=".portfolio_cache.json",
+                    mime="application/json",
+                    key="export_portfolio_cache",
+                )
         else:
             st.caption("(Run Portfolio Sync first to enable cache export.)")
 

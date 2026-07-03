@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,65 @@ class TestJsonOverrideLoader:
         (tmp_path / ".user_defaults.json").write_text("not valid json{{")
         result = load_defaults()
         assert result["your_age"] == DEFAULTS["your_age"]
+
+
+class TestPyOverrideIsTrusted:
+    """SEC-04: _py_override_is_trusted must reject group/world-writable .py overrides."""
+
+    def test_group_writable_py_override_not_exec(self, tmp_path, monkeypatch):
+        """A group-writable .py override must not be exec'd (returns {})."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        override = tmp_path / ".user_defaults.py"
+        override.write_text("OVERRIDES = {'your_age': 99}\n")
+        os.chmod(override, 0o664)  # group-writable
+
+        from config.loader import _load_overrides_from_py
+
+        result = _load_overrides_from_py(override)
+        assert result == {}
+
+    def test_world_writable_py_override_not_exec(self, tmp_path, monkeypatch):
+        """A world-writable .py override must not be exec'd (returns {})."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        override = tmp_path / ".user_defaults.py"
+        override.write_text("OVERRIDES = {'your_age': 88}\n")
+        os.chmod(override, 0o646)  # world-writable
+
+        from config.loader import _load_overrides_from_py
+
+        result = _load_overrides_from_py(override)
+        assert result == {}
+
+    def test_secure_600_py_override_still_applied(self, tmp_path, monkeypatch):
+        """A 0o600 owner-owned .py override must still be exec'd normally."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        override = tmp_path / ".user_defaults.py"
+        override.write_text("OVERRIDES = {'your_age': 77}\n")
+        os.chmod(override, 0o600)
+
+        from config.loader import _load_overrides_from_py
+
+        result = _load_overrides_from_py(override)
+        assert result == {"your_age": 77}
+
+    @pytest.mark.skipif(not hasattr(os, "getuid"), reason="uid check not available on Windows")
+    def test_warns_on_group_writable(self, tmp_path, caplog):
+        """_py_override_is_trusted logs a warning for group/world-writable files."""
+        import logging
+
+        from config.loader import _py_override_is_trusted
+
+        p = tmp_path / "override.py"
+        p.write_text("OVERRIDES = {}\n")
+        os.chmod(p, 0o664)
+
+        with caplog.at_level(logging.WARNING, logger="config.loader"):
+            result = _py_override_is_trusted(p)
+        assert result is False
+        assert any("chmod" in r.message for r in caplog.records)
 
 
 class TestSyntheticGrantStrikes:
