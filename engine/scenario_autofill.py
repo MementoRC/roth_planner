@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+from engine.scenario_compute import compute_brokerage_dividends
 from engine.scenario_types import ConversionPlan
 from engine.tax import (
     BRACKETS_MFJ,
@@ -73,6 +74,7 @@ def _auto_fill_core(
     plan = ConversionPlan()
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
+    brokerage = hh.brokerage_start
     _cpi = hh.cpi_assumption
     prev_your_ira = 0.0
     prev_spouse_ira = 0.0
@@ -206,15 +208,39 @@ def _auto_fill_core(
             + inherited_distribution
         )
 
+        # === Forecast brokerage income (forecast years only) — audit 0702/autofill-brokerage ===
+        # In the base year, brokerage dividends and realized gains are already carried
+        # by ytd_year.magi_ytd (into other_fixed / base_magi) and the itemized YTD add-
+        # back in fixed_gross, so no forecast estimate is added then (mirrors the
+        # ytd-is-None suppression at engine/scenario.py:265-268). For forecast years,
+        # mirror run_scenario routing: ordinary dividends are ordinary income (enter
+        # fixed_gross, MAGI, and SS provisional); qualified dividends and realized LTCG
+        # are MAGI/provisional ONLY (preferential rate, excluded from the ordinary
+        # bracket base) — see engine/scenario.py:360-361 and :629.
+        brok_ordinary = 0.0
+        brok_magi_extra = 0.0
+        if ytd_year is None:
+            brok_rate = hh.brokerage_rate(year)
+            brok_appreciation_rate = (
+                hh.brokerage_growth.appreciation_for(year)
+                if hh.brokerage_growth is not None
+                else brok_rate
+            )
+            _qual_div, _ord_div = compute_brokerage_dividends(
+                year, hh.base_year, brokerage, hh.brokerage_growth, None
+            )
+            _realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
+            brok_ordinary = _ord_div
+            brok_magi_extra = _ord_div + _qual_div + _realized_gains
+
         # Taxable SS — computed first so base_magi uses only the includable
         # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
         # Per IRC §86(b)(2), provisional income is MAGI (AGI + tax-exempt interest),
         # not just ordinary income. For the base year, ytd_year.magi_ytd captures
         # all §86-modified-AGI components (LTCG, qualified dividends, muni interest,
         # wages, etc.) and correctly excludes SS, making it the right provisional-
-        # income proxy. Forecast years have no YTD snapshot; brokerage income is not
-        # separately modeled in autofill so other_fixed remains ordinary-only there.
-        other_fixed = ordinary_core
+        # income proxy. Forecast years include brokerage income via brok_magi_extra.
+        other_fixed = ordinary_core + brok_magi_extra
         if ytd_year is not None:
             other_fixed += ytd_year.magi_ytd
         tss = taxable_ss(combined_ss, other_fixed, filing_status=current_filing_status)
@@ -228,7 +254,7 @@ def _auto_fill_core(
         # Fixed gross (ordinary income — no LTCG). Same ordinary core + taxable SS,
         # but the base-year YTD add-back is the itemized ordinary components (not the
         # full MAGI used for base_magi).
-        fixed_gross = ordinary_core + tss
+        fixed_gross = ordinary_core + brok_ordinary + tss
         if ytd_year is not None:
             fixed_gross += (
                 ytd_year.wages_ytd
@@ -323,6 +349,12 @@ def _auto_fill_core(
 
         prev_your_ira = cur_your_begin
         prev_spouse_ira = cur_spouse_begin
+
+        # Roll the taxable brokerage forward by total return (appreciation + reinvested
+        # yield). Simplified vs engine/scenario.py:660-666, which also nets LTCG tax out
+        # and flows excess RMD in — those are plan-dependent second-order effects, so
+        # autofill uses the total-return proxy to size conversion room.
+        brokerage = brokerage * (1 + hh.brokerage_rate(year))
 
     return plan
 
