@@ -54,7 +54,36 @@ def _warn_if_insecure_permissions(path: Path) -> None:
         )
 
 
+def _py_override_is_trusted(path: Path) -> bool:
+    """False (with a warning) if *path* is unsafe to exec as a Python override.
+
+    Executing a .py override is arbitrary code execution, so refuse it unless the
+    file is owned by the current user and is not group/world-writable — this blocks
+    a planted or tampered override from running while preserving the owner's use.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    _getuid = getattr(os, "getuid", None)
+    if _getuid is not None and info.st_uid != _getuid():
+        _log.warning("Refusing to exec %s: not owned by the current user.", path)
+        return False
+    if info.st_mode & 0o022:
+        _log.warning(
+            "Refusing to exec %s: group/world-writable (mode %#o). Restrict it "
+            "with: chmod 600 %s",
+            path,
+            info.st_mode & 0o777,
+            path,
+        )
+        return False
+    return True
+
+
 def _load_overrides_from_py(path: Path) -> dict:
+    if not _py_override_is_trusted(path):
+        return {}
     spec = util.spec_from_file_location("_user_defaults", path)
     if spec is None or spec.loader is None:
         return {}

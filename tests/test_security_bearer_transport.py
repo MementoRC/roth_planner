@@ -93,6 +93,66 @@ class TestRedirectHardening:
         assert result is fake_resp
 
 
+class TestLoadTokenHardening:
+    """SEC-03: _load_token must refuse symlinked token files and warn on loose modes."""
+
+    def test_returns_empty_for_symlinked_token(self, tmp_path, monkeypatch):
+        """_load_token returns "" when auth-token is a symlink (O_NOFOLLOW)."""
+        finextract_dir = tmp_path / ".finextract"
+        finextract_dir.mkdir()
+        real_token = tmp_path / "real-token"
+        real_token.write_text("secret-bearer\n")
+        link = finextract_dir / "auth-token"
+        os.symlink(real_token, link)
+
+        monkeypatch.delenv("FINEXTRACT_TOKEN", raising=False)
+        monkeypatch.delenv("FINEXT_TOKEN", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        from engine.portfolio_sync.client import _load_token
+
+        assert _load_token() == ""
+
+    def test_returns_token_for_normal_600_file(self, tmp_path, monkeypatch):
+        """_load_token returns stripped token for a regular 0o600 file."""
+        finextract_dir = tmp_path / ".finextract"
+        finextract_dir.mkdir()
+        token_file = finextract_dir / "auth-token"
+        token_file.write_text("my-bearer-token\n")
+        os.chmod(token_file, 0o600)
+
+        monkeypatch.delenv("FINEXTRACT_TOKEN", raising=False)
+        monkeypatch.delenv("FINEXT_TOKEN", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        from engine.portfolio_sync.client import _load_token
+
+        assert _load_token() == "my-bearer-token"
+
+    def test_warns_on_group_readable_token(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """_load_token logs a warning when the token file is group/world-accessible."""
+        finextract_dir = tmp_path / ".finextract"
+        finextract_dir.mkdir()
+        token_file = finextract_dir / "auth-token"
+        token_file.write_text("tok\n")
+        os.chmod(token_file, 0o644)
+
+        monkeypatch.delenv("FINEXTRACT_TOKEN", raising=False)
+        monkeypatch.delenv("FINEXT_TOKEN", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        import logging
+
+        from engine.portfolio_sync.client import _load_token
+
+        with caplog.at_level(logging.WARNING, logger="engine.portfolio_sync.client"):
+            result = _load_token()
+        assert result == "tok"
+        assert any("chmod" in r.message for r in caplog.records)
+
+
 class TestUserDefaultsPermissionWarning:
     def test_warns_on_world_readable(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

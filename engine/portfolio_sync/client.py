@@ -47,7 +47,21 @@ def _load_token() -> str:
     p = Path.home() / ".finextract" / "auth-token"
     if p.is_file():
         try:
-            return p.read_text(encoding="utf-8").strip()
+            _mode = p.stat().st_mode
+            if _mode & 0o077:
+                _log.warning(
+                    "%s is group/world-accessible (mode %#o); it holds a bearer "
+                    "token. Restrict it with: chmod 600 %s",
+                    p,
+                    _mode & 0o777,
+                    p,
+                )
+            fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                raw = os.read(fd, 65536)
+            finally:
+                os.close(fd)
+            return raw.decode("utf-8").strip()
         except OSError as exc:
             _log.warning("Could not read FinExtract auth token from %s: %s", p, exc)
             return ""
