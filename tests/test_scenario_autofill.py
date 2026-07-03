@@ -22,7 +22,7 @@ class TestAutoFillRmdDeferral:
 
         Setup:
           - your_age=62, your_rmd_start_age=75: wide conversion window (13 yrs)
-          - spouse_age=74, spouse_rmd_start_age=75: spouse hits RMD at yr_idx=1 (sa=75)
+          - spouse_age=66 (born 1960), spouse_rmd_start_age=75: hits RMD at yr_idx=9 (sa=75)
           - spouse_ira=1_000_000: large enough to produce a meaningful RMD
 
         With spouse_defer_first_rmd=False: yr_idx=1 has positive spouse_taxable_rmd
@@ -33,23 +33,26 @@ class TestAutoFillRmdDeferral:
         """
         from dataclasses import replace
 
+        # spouse_age=66 → born 1960 → default_rmd_age=75 (1960+ cohort, SECURE 2.0 §107).
+        # dataclasses.replace() re-runs __post_init__, so cohort must be born 1960+ for
+        # spouse_rmd_start_age=75 to survive derivation (1951-1959 → 73 otherwise).
+        # Spouse hits RMD at base_year+9 (age 75). Your conversion window is 13 yrs (age 62→75).
         hh_base = replace(
             Household(),
             your_age=62,
             your_ira=2_000_000.0,
-            spouse_age=74,
+            spouse_age=66,
             spouse_ira=1_000_000.0,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
         )
+        assert hh_base.spouse_rmd_start_age == 75, "setup: born-1960 spouse must get rmd_start=75"
         hh_no_defer = replace(hh_base, spouse_defer_first_rmd=False)
         hh_defer = replace(hh_base, spouse_defer_first_rmd=True)
 
         plan_no = auto_fill_12(hh_no_defer)
         plan_yes = auto_fill_12(hh_defer)
 
-        # yr_idx=1 corresponds to base_year + 1, spouse age 75 (first RMD year)
-        first_spouse_rmd_year = hh_base.base_year + 1
+        # yr_idx=9 corresponds to base_year + 9, spouse age 75 (first RMD year)
+        first_spouse_rmd_year = hh_base.base_year + 9
         conv_no = plan_no.your_conversions.get(first_spouse_rmd_year, 0.0)
         conv_yes = plan_yes.your_conversions.get(first_spouse_rmd_year, 0.0)
 

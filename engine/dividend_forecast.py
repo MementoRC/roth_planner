@@ -23,10 +23,19 @@ from pathlib import Path
 # .dividend_rates.json. REITs/MLPs/bond funds are non-qualified (Section 199A
 # REIT divs are non-qualified at federal level); etf_equity=1.0 is an
 # optimistic approximation (broad ETFs ~92-95% qualified due to REIT holdings).
+#
+# International ETFs are split by sub-class (audit C10 / asset-dividend-1):
+#   etf_intl_developed: developed-markets funds (VEA etc.) — Vanguard YE QDI
+#       reports show ~81-82% qualified (IRC §1(h)(11)(C)).
+#   etf_intl_emerging:  emerging-markets funds (VWO etc.) — lower treaty
+#       coverage; documented estimate, refine from 1099-DIV box 1b/1a.
+#   etf_intl:           total-international / VXUS and unknown-intl fallback.
 QUALIFIED_DEFAULTS: dict[str, float] = {
     "equity": 1.0,  # individual stocks (TXN, AAPL, etc.)
     "etf_equity": 1.0,  # broad-market equity ETFs
-    "etf_intl": 0.7,  # international (FTC complications, mixed qualified)
+    "etf_intl": 0.70,  # total-international / VXUS (FTC complications, mixed)
+    "etf_intl_developed": 0.82,  # VEA & developed-mkts funds; Vanguard YE QDI ~81-82% (IRC §1(h)(11)(C))
+    "etf_intl_emerging": 0.68,  # VWO & emerging-mkts funds; lower QDI (documented estimate, refine from 1099-DIV box 1b/1a)
     "reit": 0.0,
     "mlp": 0.0,
     "bond_fund": 0.0,
@@ -35,6 +44,8 @@ QUALIFIED_DEFAULTS: dict[str, float] = {
 }
 
 # Tickers we explicitly classify. Extend via .dividend_rates.json overrides.
+# audit C10 / asset-dividend-1: VEA → etf_intl_developed, VWO → etf_intl_emerging;
+# VXUS and unrecognised international tickers fall back to generic "etf_intl".
 TICKER_CLASS: dict[str, str] = {
     "TXN": "equity",
     "VTI": "etf_equity",
@@ -43,9 +54,9 @@ TICKER_CLASS: dict[str, str] = {
     "IVV": "etf_equity",
     "QQQ": "etf_equity",
     "VTSAX": "etf_equity",
-    "VXUS": "etf_intl",
-    "VEA": "etf_intl",
-    "VWO": "etf_intl",
+    "VXUS": "etf_intl",          # total-international: ~70% qualified
+    "VEA": "etf_intl_developed",  # developed-markets: ~82% qualified
+    "VWO": "etf_intl_emerging",   # emerging-markets: ~68% qualified
     "BND": "bond_fund",
     "AGG": "bond_fund",
     "VBTLX": "bond_fund",
@@ -81,6 +92,17 @@ class Position:
 
 @dataclass(frozen=True)
 class DividendForecast:
+    """Aggregate forward dividend estimate for a brokerage portfolio.
+
+    TTM-strategy caveat (audit C10 / asset-dividend-3): when strategy 1 (TTM)
+    is used, ``annual_income`` equals ``shares × (ttm_dividends / shares) =
+    ttm_dividends`` — the trailing-12-month dollar total is carried forward
+    unchanged and does NOT scale with share-count growth.  A position that grew
+    from 100 → 120 shares will be understated by ~17%.  To obtain a
+    forward-scaled figure, supply an ``annual_rate`` (per-share) override in
+    ``.dividend_rates.json`` (strategy 3).
+    """
+
     yield_rate: float
     qualified_fraction: float
     per_position: dict[str, dict[str, float]]  # ticker -> {annual_div, qualified}
@@ -91,8 +113,8 @@ def _load_overrides(path: Path) -> Mapping[str, Mapping[str, float]]:
     if not path.exists():
         return {}
     try:
-        data: Mapping[str, Mapping[str, float]] = json.loads(path.read_text())
-        return data
+        raw: dict[str, Mapping[str, float]] = json.loads(path.read_text())
+        return {str(k).upper(): v for k, v in raw.items()}
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -152,6 +174,11 @@ def forecast_portfolio(
             annual_per_share = float(ov["annual_rate"])
             src_counts["override"] += 1
         elif pos.ttm_per_share > 0:
+            # TTM dollar-carryforward: annual_income = shares × ttm_per_share =
+            # ttm_dividends (unchanged).  Does NOT scale with share-count growth;
+            # positions with significant share changes may be understated — supply
+            # an annual_rate override in .dividend_rates.json for forward scaling.
+            # (audit C10 / asset-dividend-3)
             annual_per_share = pos.ttm_per_share
             src_counts["ttm"] += 1
         elif use_yfinance:

@@ -440,3 +440,37 @@ class TestRealisticTurboTaxLineLayout:
         # MAGI = AGI + tax_exempt_interest + feie
         rec = parse_form_1040_text(_pages_realistic())
         assert rec.magi == pytest.approx(287_654.0 + 4_200.0 + 6_500.0)
+
+
+# ---------------------------------------------------------------------------
+# TestParseCurrency — security-2: negative / parenthesized AGI support
+# ---------------------------------------------------------------------------
+
+
+class TestParseCurrency:
+    """Unit tests for _parse_currency sign/paren handling."""
+
+    def test_positive(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("5,000") == pytest.approx(5000.0)
+
+    def test_negative_dash(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("-5,000") == pytest.approx(-5000.0)
+
+    def test_negative_parens(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("(5,000)") == pytest.approx(-5000.0)
+
+    def test_dollar_sign_stripped(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("$1,234") == pytest.approx(1234.0)
+
+    def test_trailing_dot_stripped(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("1000.") == pytest.approx(1000.0)

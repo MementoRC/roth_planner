@@ -179,14 +179,45 @@ def render(hh: Household):
 
     fig_w = go.Figure()
 
-    # No-conversion scenario stacks
+    # No-conversion scenario stacks — audit C10 / rmd-5: represent the same ordinary income
+    # the engine brackets (combined_gross) so the stacked total matches what drives tax.
+    # Components: your taxable RMD, spouse taxable RMD, conversions, option income,
+    # extra withdrawals, inherited distributions, taxable SS, ordinary dividends.
+    # Minor items (extra withdrawals + inherited distributions) combined into "Other ordinary".
     fig_w.add_trace(
         go.Bar(
             x=ages,
             y=[yr.taxable_rmd for yr in rmd_nc],
-            name="Taxable RMD",
+            name="Your Taxable RMD",
             marker_color="#ef4444",
-            hovertemplate="RMD: $%{y:,.0f}<extra></extra>",
+            hovertemplate="Your RMD: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.spouse_taxable_rmd for yr in rmd_nc],
+            name="Spouse Taxable RMD",
+            marker_color="#f87171",
+            hovertemplate="Spouse RMD: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.your_conversion + yr.spouse_conversion for yr in rmd_nc],
+            name="Conversions",
+            marker_color="#a78bfa",
+            hovertemplate="Conversions: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.option_income for yr in rmd_nc],
+            name="Option Income",
+            marker_color="#fb923c",
+            hovertemplate="Option Income: $%{y:,.0f}<extra></extra>",
         )
     )
     fig_w.add_trace(
@@ -196,6 +227,30 @@ def render(hh: Household):
             name="Taxable SS",
             marker_color="#60a5fa",
             hovertemplate="Taxable SS: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[yr.brokerage_ord_div for yr in rmd_nc],
+            name="Ordinary Dividends",
+            marker_color="#34d399",
+            hovertemplate="Ord Dividends: $%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig_w.add_trace(
+        go.Bar(
+            x=ages,
+            y=[
+                yr.extra_withdrawal
+                + yr.spouse_extra_withdrawal
+                + yr.your_inherited_distribution
+                + yr.spouse_inherited_distribution
+                for yr in rmd_nc
+            ],
+            name="Other ordinary",
+            marker_color="#94a3b8",
+            hovertemplate="Other ordinary: $%{y:,.0f}<extra></extra>",
         )
     )
 

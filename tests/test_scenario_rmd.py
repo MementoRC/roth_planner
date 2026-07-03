@@ -212,17 +212,21 @@ class TestAuditF7ComputePhaseRmdStartAge:
         )
 
     def test_f7_rmd_phase_at_75_with_default_rmd_start_age(self):
-        """F7: default rmd_start_age=75 — phase must be 'rmd'/'squeeze' only at age 75+."""
+        """F7: default rmd_start_age=75 — phase must be 'rmd'/'squeeze' only at age 75+.
+
+        Use ages born 1960 (age 66 in 2026) so __post_init__ derives rmd_start_age=75.
+        Born 1951-1959 → 73; born 1960+ → 75 (SECURE 2.0 §107).
+        """
         from engine.scenario_compute import compute_phase
 
+        # age 66 in base_year 2026 → born 1960 → default_rmd_age = 75
         hh = Household(
-            your_age=74,
-            spouse_age=74,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_age=66,
+            spouse_age=66,
         )
-        phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year, hh=hh, early_exercise=False)
-        phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 1, hh=hh, early_exercise=False)
+        assert hh.your_rmd_start_age == 75, "setup: born-1960 cohort must get rmd_start=75"
+        phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year + 8, hh=hh, early_exercise=False)
+        phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 9, hh=hh, early_exercise=False)
         assert phase_74 == "ss_conv", (
             f"Age 74 with rmd_start=75 should be ss_conv, got '{phase_74}'"
         )
@@ -257,19 +261,19 @@ class TestCumRmdTaxSpouseOlderGate:
     """
 
     def _hh_spouse_older_rmd(self) -> "Household":
-        """Spouse is 75 (in RMD), primary is 70 (NOT yet in RMD at rmd_start_age=75).
+        """Spouse is 75 (in RMD), primary is 65 (NOT yet in RMD at rmd_start_age=75).
 
-        This means year-1 the primary is 70 and spouse is 75 — spouse is in RMD,
-        primary is not. After the fix, cum_rmd_tax must include year-1 federal tax.
+        Primary age 65 → born 1961 → default_rmd_age=75 (born 1960+).
+        Spouse age 75 → born 1951 → default_rmd_age=73; already past RMD start.
+        dataclasses.replace() re-runs __post_init__, so ages must be born 1960+
+        for rmd_start_age=75 to stick; spouse's derived 73 is fine since sa≥73.
         """
         from dataclasses import replace
 
         return replace(
             Household(grants=[]),
-            your_age=70,
+            your_age=65,
             spouse_age=75,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
             your_ira=500_000.0,
             spouse_ira=1_500_000.0,  # large so spouse RMD is material
             living_expenses=40_000.0,
@@ -280,10 +284,10 @@ class TestCumRmdTaxSpouseOlderGate:
     def test_total_rmd_tax_nonzero_when_only_spouse_in_rmd(self):
         """total_rmd_tax must be > 0 in years where only the spouse is in RMD.
 
-        With spouse IRA $1.5M and spouse_rmd_start_age=75, year-1 (primary age 70)
+        With spouse IRA $1.5M and spouse in RMD from base year, year-1 (primary age 65)
         the spouse has a material RMD that drives federal tax.  The buggy gate
         (ya >= your_rmd_start_age only) would exclude these years → total_rmd_tax=0
-        for the first 5 years.  The fix (or sa >= spouse_rmd_start_age) must
+        for the first 10 years.  The fix (or sa >= spouse_rmd_start_age) must
         accumulate them.
         """
         from engine.scenario import ConversionPlan, run_scenario
@@ -309,19 +313,19 @@ class TestCumRmdTaxSpouseOlderGate:
         must be >= the buggy result (only primary's RMD years counted).
 
         We compare two households: one with spouse in RMD before primary
-        (spouse 5 years older) vs. same household with spouse IRA=0 so spouse
+        (spouse 10 years older) vs. same household with spouse IRA=0 so spouse
         RMD doesn't matter.  The fixed version should accumulate more total_rmd_tax.
         """
         from dataclasses import replace
 
         from engine.scenario import ConversionPlan, run_scenario
 
+        # your_age=65 → born 1961 → rmd_start_age=75 (born 1960+, so __post_init__ keeps 75)
+        # spouse_age=75 → born 1951 → rmd_start_age=73 (already past RMD, in RMD from year 0)
         base = replace(
             Household(grants=[]),
-            your_age=70,
+            your_age=65,
             spouse_age=75,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
             your_ira=800_000.0,
             living_expenses=40_000.0,
         )
@@ -440,12 +444,12 @@ class TestApril1DeferralScenario:
     def _hh(self, defer: bool) -> Household:
         from dataclasses import replace
 
+        # your_age=66 → born 1960 → default_rmd_age=75 (1960+ cohort).
+        # dataclasses.replace() re-runs __post_init__; born-1960+ ensures rmd_start stays 75.
         return replace(
             Household(grants=[]),
-            your_age=72,
-            spouse_age=65,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_age=66,
+            spouse_age=59,
             your_ira=2_000_000.0,
             spouse_ira=0.0,
             your_defer_first_rmd=defer,
