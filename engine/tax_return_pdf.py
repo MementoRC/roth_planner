@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.secure_io import write_pii_json
+from engine.secure_io import read_pii_json, write_pii_json
 
 
 class Form1040ParseError(Exception):
@@ -44,7 +44,7 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
             # Without the (?:11\s+)? skip, [\s.]* bridges to the first digit
             # and captures "11" (the repeated line token) instead of the value.
             # The skip is optional so synthetic fixtures without the repeat still pass.
-            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\d[\d,]*)",
+            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
             "optional": False,
         },
         "tax_exempt_interest": {
@@ -93,7 +93,7 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
             "form": "f1040",
             "line": "11",
             # See 2023 agi comment — optional (?:11\s+)? skip for realistic layout.
-            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\d[\d,]*)",
+            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
             "optional": False,
         },
         "tax_exempt_interest": {
@@ -226,8 +226,14 @@ def compute_magi(
 
 
 def _parse_currency(raw: str) -> float:
-    """Strip commas and trailing dots, return float."""
-    return float(raw.replace(",", "").rstrip("."))
+    """Strip commas, dollar signs, and trailing dots; handle negative/parenthesized values.
+
+    Supports: ``5,000`` → 5000.0, ``-5,000`` → -5000.0, ``(5,000)`` → -5000.0.
+    """
+    s = raw.strip().replace("$", "").replace(",", "").rstrip(".")
+    if s.startswith("(") and s.endswith(")"):
+        return -float(s[1:-1])
+    return float(s)
 
 
 def _extract_field(
@@ -413,7 +419,7 @@ def load_pdf_tax_records() -> dict[int, Form1040Record]:
     if not _PDF_TAX_CACHE_PATH.exists():
         return {}
     try:
-        raw: dict[str, Any] = json.loads(_PDF_TAX_CACHE_PATH.read_text())
+        raw: dict[str, Any] = read_pii_json(_PDF_TAX_CACHE_PATH)
     except (json.JSONDecodeError, OSError):
         return {}
     result: dict[int, Form1040Record] = {}

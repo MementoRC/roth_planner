@@ -11,6 +11,13 @@ from models.grants import StockGrant
 _D = load_defaults()
 
 
+def default_rmd_age(birth_year: int) -> int:
+    """Statutory RMD start age by birth year (SECURE 2.0 §107 / IRC §401(a)(9)(C)(v)):
+    born 1951-1959 → 73; born 1960+ → 75. Cohorts born ≤1950 are already past RMD and
+    outside this forward planner's scope, so they also resolve to 75."""
+    return 73 if 1951 <= birth_year <= 1959 else 75
+
+
 @dataclass
 class InheritedIRA:
     """A non-spousal inherited IRA subject to the SECURE Act 10-year rule.
@@ -271,6 +278,14 @@ class Household:
         if self.brokerage_growth is not None:
             return self.brokerage_growth.rate_for(year)
         return self.growth_rate
+
+    def __post_init__(self) -> None:
+        # Derive statutory RMD start age from birth year when still at the class default (75).
+        # SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
+        if self.your_rmd_start_age == 75:
+            self.your_rmd_start_age = default_rmd_age(self.base_year - self.your_age)
+        if self.spouse_rmd_start_age == 75:
+            self.spouse_rmd_start_age = default_rmd_age(self.base_year - self.spouse_age)
 
     def option_income(self, year: int, early: bool = True) -> float:
         """Ordinary income from exercising the grant expiring ~this year."""

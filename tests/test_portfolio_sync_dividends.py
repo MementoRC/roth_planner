@@ -333,3 +333,105 @@ class TestDividendForecastTTMPerShare:
 
         pos = Position(ticker="VTI", shares=0, balance=0, ttm_dividends=100.0)
         assert pos.ttm_per_share == 0.0
+
+
+class TestPerFundInternationalQDI:
+    """audit C10 / asset-dividend-1: per-fund international QDI classes resolve correctly."""
+
+    def test_vea_resolves_to_etf_intl_developed(self):
+        """VEA (developed-markets) must yield qualified_fraction 0.82."""
+        from engine.dividend_forecast import QUALIFIED_DEFAULTS, TICKER_CLASS
+
+        cls = TICKER_CLASS["VEA"]
+        assert cls == "etf_intl_developed"
+        assert QUALIFIED_DEFAULTS[cls] == pytest.approx(0.82)
+
+    def test_vwo_resolves_to_etf_intl_emerging(self):
+        """VWO (emerging-markets) must yield qualified_fraction 0.68."""
+        from engine.dividend_forecast import QUALIFIED_DEFAULTS, TICKER_CLASS
+
+        cls = TICKER_CLASS["VWO"]
+        assert cls == "etf_intl_emerging"
+        assert QUALIFIED_DEFAULTS[cls] == pytest.approx(0.68)
+
+    def test_vxus_resolves_to_etf_intl(self):
+        """VXUS (total-international) must yield qualified_fraction 0.70."""
+        from engine.dividend_forecast import QUALIFIED_DEFAULTS, TICKER_CLASS
+
+        cls = TICKER_CLASS["VXUS"]
+        assert cls == "etf_intl"
+        assert QUALIFIED_DEFAULTS[cls] == pytest.approx(0.70)
+
+    def test_qualified_for_vea_returns_082(self):
+        """_qualified_for end-to-end: VEA → 0.82 with no overrides."""
+        from engine.dividend_forecast import _qualified_for
+
+        assert _qualified_for("VEA", {}) == pytest.approx(0.82)
+
+    def test_qualified_for_vwo_returns_068(self):
+        """_qualified_for end-to-end: VWO → 0.68 with no overrides."""
+        from engine.dividend_forecast import _qualified_for
+
+        assert _qualified_for("VWO", {}) == pytest.approx(0.68)
+
+    def test_qualified_for_vxus_returns_070(self):
+        """_qualified_for end-to-end: VXUS → 0.70 with no overrides."""
+        from engine.dividend_forecast import _qualified_for
+
+        assert _qualified_for("VXUS", {}) == pytest.approx(0.70)
+
+    def test_forecast_portfolio_uses_per_fund_qdi(self):
+        """forecast_portfolio applies the correct per-fund QDI in mixed-intl portfolio."""
+        from engine.dividend_forecast import Position, forecast_portfolio
+
+        positions = [
+            Position(ticker="VEA", shares=100, balance=7_000, ttm_dividends=200.0),
+            Position(ticker="VWO", shares=100, balance=4_000, ttm_dividends=100.0),
+            Position(ticker="VXUS", shares=100, balance=5_000, ttm_dividends=140.0),
+        ]
+        fcst = forecast_portfolio(positions, total_balance=16_000)
+        # VEA: 200 * 0.82 = 164 qual, 36 ord
+        # VWO: 100 * 0.68 = 68 qual, 32 ord
+        # VXUS: 140 * 0.70 = 98 qual, 42 ord
+        total_qual = 164.0 + 68.0 + 98.0
+        total_ord = 36.0 + 32.0 + 42.0
+        total_inc = total_qual + total_ord
+        assert fcst.qualified_fraction == pytest.approx(total_qual / total_inc)
+        assert fcst.per_position["VEA"]["qualified"] == pytest.approx(0.82)
+        assert fcst.per_position["VWO"]["qualified"] == pytest.approx(0.68)
+        assert fcst.per_position["VXUS"]["qualified"] == pytest.approx(0.70)
+
+
+class TestLoadOverridesKeyNormalization:
+    """asset-dividend-2: _load_overrides must uppercase all keys."""
+
+    def test_lowercase_key_normalized_to_uppercase(self, tmp_path: pytest.TempPathFactory) -> None:
+        import json
+
+        from engine.dividend_forecast import _load_overrides
+
+        override_file = tmp_path / "dividend_rates.json"
+        override_file.write_text(
+            json.dumps({"vti": {"annual_rate": 0.015, "qualified_fraction": 1.0}})
+        )
+        result = _load_overrides(override_file)
+        assert "VTI" in result
+        assert "vti" not in result
+
+    def test_mixed_case_key_normalized(self, tmp_path: pytest.TempPathFactory) -> None:
+        import json
+
+        from engine.dividend_forecast import _load_overrides
+
+        override_file = tmp_path / "dividend_rates.json"
+        override_file.write_text(
+            json.dumps({"Vti": {"annual_rate": 0.015, "qualified_fraction": 1.0}})
+        )
+        result = _load_overrides(override_file)
+        assert "VTI" in result
+
+    def test_missing_file_returns_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+        from engine.dividend_forecast import _load_overrides
+
+        result = _load_overrides(tmp_path / "nonexistent.json")
+        assert result == {}

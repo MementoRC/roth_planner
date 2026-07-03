@@ -461,6 +461,7 @@ class TestSurvivorScenario:
         """
         surv = SurvivorScenario(who_dies="spouse", death_year=2030)
         # Use ages where both are past SS start age by 2031 so we can observe SS
+        # age 70 → birth year 1956 (1951-1959) → SECURE 2.0 statutory RMD start age 73
         hh = Household(
             your_age=70,
             spouse_age=70,
@@ -470,8 +471,8 @@ class TestSurvivorScenario:
             spouse_ss_fra=2_500,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
             growth_rate=0.07,
             living_expenses=80_000,
             survivor=surv,
@@ -506,6 +507,7 @@ class TestSurvivorScenario:
         - yr.combined_ss > spouse-own-only (old broken behaviour)
         """
         surv = SurvivorScenario(who_dies="you", death_year=2030)
+        # age 70 → birth year 1956 (1951-1959) → SECURE 2.0 statutory RMD start age 73
         hh = Household(
             your_age=70,
             spouse_age=70,
@@ -515,8 +517,8 @@ class TestSurvivorScenario:
             spouse_ss_fra=2_000,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
             growth_rate=0.07,
             living_expenses=80_000,
             survivor=surv,
@@ -602,6 +604,7 @@ class TestSurvivorScenario:
         from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 
         surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        # age 70 → birth year 1956 (1951-1959) → SECURE 2.0 statutory RMD start age 73
         hh = Household(
             your_age=70,
             spouse_age=70,
@@ -611,8 +614,8 @@ class TestSurvivorScenario:
             spouse_ss_fra=2_000,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
             growth_rate=0.0,  # no growth so we can reason about MAGI precisely
             living_expenses=60_000,
             survivor=surv,
@@ -648,6 +651,7 @@ class TestSurvivorScenario:
         # Spouse dies in 2026; first survivor year is 2027.
         # Anchor lookback MAGI at $230K so IRMAA computation is deterministic.
         surv = SurvivorScenario(who_dies="spouse", death_year=2026)
+        # age 73 → birth year 1953 (1951-1959) → SECURE 2.0 statutory RMD start age 73
         hh = Household(
             your_age=73,
             spouse_age=73,
@@ -658,8 +662,8 @@ class TestSurvivorScenario:
             spouse_ss_fra=0,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
-            your_rmd_start_age=75,
-            spouse_rmd_start_age=75,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
             growth_rate=0.0,
             living_expenses=60_000,
             prior_year_magi={2025: 230_000, 2024: 230_000},
@@ -732,3 +736,52 @@ class TestSurvivorScenario:
         # When some SS is non-taxable, aca_magi should exceed magi
         if yr.combined_ss > yr.taxable_ss_amt:
             assert yr.aca_magi > yr.magi
+
+
+class TestRMDStartAge:
+    """rmd-1: default_rmd_age helper and Household.__post_init__ derivation.
+
+    SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
+    """
+
+    def test_default_rmd_age_boundary_1950(self):
+        from models.household import default_rmd_age
+
+        assert default_rmd_age(1950) == 75
+
+    def test_default_rmd_age_boundary_1951(self):
+        from models.household import default_rmd_age
+
+        assert default_rmd_age(1951) == 73
+
+    def test_default_rmd_age_boundary_1959(self):
+        from models.household import default_rmd_age
+
+        assert default_rmd_age(1959) == 73
+
+    def test_default_rmd_age_boundary_1960(self):
+        from models.household import default_rmd_age
+
+        assert default_rmd_age(1960) == 75
+
+    def test_default_rmd_age_later(self):
+        from models.household import default_rmd_age
+
+        assert default_rmd_age(1965) == 75
+
+    def test_post_init_derives_73_for_1955_cohort(self):
+        """Both spouses born 1955 (age 71 in 2026) → statutory age 73."""
+        hh = Household(base_year=2026, your_age=71, spouse_age=71)
+        assert hh.your_rmd_start_age == 73
+        assert hh.spouse_rmd_start_age == 73
+
+    def test_post_init_stays_75_for_1960_plus_cohort(self):
+        """Born 1965/1971 (ages 61/55 in 2026) → statutory age 75."""
+        hh = Household(base_year=2026, your_age=61, spouse_age=55)
+        assert hh.your_rmd_start_age == 75
+        assert hh.spouse_rmd_start_age == 75
+
+    def test_post_init_explicit_non75_preserved(self):
+        """Explicit rmd_start_age != 75 must not be overridden by __post_init__."""
+        hh = Household(base_year=2026, your_age=71, your_rmd_start_age=74)
+        assert hh.your_rmd_start_age == 74
