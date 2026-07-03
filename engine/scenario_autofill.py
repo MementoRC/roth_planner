@@ -177,6 +177,25 @@ def _auto_fill_core(
                 1 + iira.growth_rate
             )
 
+        # === Base-year RMD net-of-YTD reconciliation (mirror scenario.py:186-206) ===
+        # ytd_year.ira_distributions_ytd ("non-conversion IRA withdrawals") already
+        # includes any RMD taken so far this year, and is re-added downstream via
+        # magi_ytd (into other_fixed / base_magi) and explicitly into fixed_gross. The
+        # forecast taxable RMD from calc_rmd() has no YTD awareness, so without this clamp
+        # the already-taken portion of the RMD is double-counted in the base year. Reduce
+        # the taxable RMD (yours first, then spouse) by the pooled YTD distributions so
+        # each income aggregate nets to max(required RMD, actual distributions taken). The
+        # gross RMD used for IRA-balance roll-forward (rmd / spouse_rmd) is never touched,
+        # so balances are unaffected; calc_rmd() returns 0 before the start age, so this is
+        # a no-op in pre-RMD years (audit 0702 / autofill-rmd-clamp).
+        if ytd_year is not None and ytd_year.ira_distributions_ytd > 0:
+            _dist_remaining = ytd_year.ira_distributions_ytd
+            _r = min(taxable_rmd, _dist_remaining)
+            taxable_rmd -= _r
+            _dist_remaining -= _r
+            _sr = min(spouse_taxable_rmd, _dist_remaining)
+            spouse_taxable_rmd -= _sr
+
         # Shared ordinary-income core (opt + your gated RMD + spouse RMD + inherited),
         # reused below by other_fixed, base_magi, and fixed_gross so the three can never
         # drift apart.

@@ -353,3 +353,70 @@ class TestSurvivorAutofill:
             f"Survivor post-death total ({total_surv:.0f}) must be < MFJ total "
             f"({total_mfj:.0f}): Single 22% ceiling is ~half MFJ ceiling"
         )
+
+
+class TestAutoFillRmdYtdClamp:
+    """Audit 0702 / autofill-rmd-clamp: base-year RMD must not be double-counted.
+
+    ira_distributions_ytd already includes any RMD taken so far this year and is
+    re-added downstream via magi_ytd (other_fixed / base_magi) and explicitly in
+    fixed_gross.  Without the clamp, the already-taken RMD portion appears twice,
+    artificially inflating income and reducing conversion room in the base year.
+
+    Economic-equivalence invariant: two YTD snapshots representing identical
+    economics (RMD not yet taken vs. full RMD already taken) must yield the same
+    base-year conversion amount after the fix.
+    """
+
+    @staticmethod
+    def _rmd_hh() -> Household:
+        """MFJ household at exact RMD start age, large IRA, minimal other income."""
+        from dataclasses import replace
+
+        return replace(
+            Household(),
+            your_age=75,
+            your_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_age=65,
+            spouse_ira=0.0,
+            spouse_ss_fra=0,
+            your_ss_fra=0,
+            grants=[],
+            brokerage_start=0.0,
+        )
+
+    def test_rmd_ytd_clamp_economic_equivalence(self) -> None:
+        """Snapshot A (RMD not yet taken) and Snapshot B (full RMD already taken)
+        must produce identical base-year your_conversions after the clamp fix.
+
+        Before the fix: Snapshot B overstates income by ~R (the RMD amount) so
+        the planner converts less.  After the fix the two plans are equal.
+        """
+        from engine.ira import calc_rmd
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._rmd_hh()
+        base_year = hh.base_year
+
+        # R = required distribution in the base year.
+        r = calc_rmd(hh.your_ira, hh.your_age, hh.your_rmd_start_age)
+        assert r > 0.0, f"Precondition: RMD must be positive at age {hh.your_age}, got {r}"
+
+        # Snapshot A: RMD not yet taken — zero YTD distributions.
+        ytd_a = YTDSnapshot(tax_year=base_year, ira_distributions_ytd=0.0)
+
+        # Snapshot B: full RMD already taken — distributions_ytd = R, magi_ytd includes R.
+        ytd_b = YTDSnapshot(tax_year=base_year, ira_distributions_ytd=r)
+
+        plan_a = auto_fill_12(hh, ytd=ytd_a)
+        plan_b = auto_fill_12(hh, ytd=ytd_b)
+
+        conv_a = plan_a.your_conversions.get(base_year, 0.0)
+        conv_b = plan_b.your_conversions.get(base_year, 0.0)
+
+        assert conv_a == pytest.approx(conv_b, abs=1.0), (
+            f"Economic-equivalence failed: RMD not-yet-taken conv={conv_a:.0f}, "
+            f"RMD already-taken conv={conv_b:.0f}, delta={conv_a - conv_b:.0f} "
+            f"(expected ~0, pre-fix delta would be ~{r:.0f})"
+        )
