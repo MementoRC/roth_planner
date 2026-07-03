@@ -143,6 +143,11 @@ def inherited_ira_drain(balance: float, years_remaining: int) -> float:
     years_remaining = 10 - (current_year - inherited_year)
     Returns 0 if years_remaining <= 0 (already fully drained).
     Final year (years_remaining=1) drains the entire balance ("balloon").
+
+    Caveat: this even-drain does not enforce the years-1-9 single-life-expectancy
+    RMD floor that applies to a NEDB when the decedent died on/after RBD (2024
+    final regs, T.D. 10001). See the InheritedIRA docstring (audit C10 / rmd-2)
+    for scope.
     """
     if years_remaining <= 0:
         return 0.0

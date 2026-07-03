@@ -39,6 +39,20 @@ class InheritedIRA:
       when the original owner was already past RMD age (2024 IRS guidance).
       Even drain is the planning heuristic; user can mimic balloon-strategies
       manually by setting a 10-year inheritance and converting in low-MAGI years.
+    - Years-1-9 single-life RMD floor (audit C10 / rmd-2): For a
+      non-eligible designated beneficiary (NEDB) whose decedent died ON OR AFTER
+      their Required Beginning Date (RBD), the 2024 final regulations (T.D. 10001,
+      effective for distribution years >= 2025) require annual minimum
+      distributions in years 1-9 of the 10-year window, based on the
+      beneficiary's single life expectancy (IRS Single Life Table / Table I,
+      Treas. Reg. §1.401(a)(9)-9) reduced by 1 each year. This model instead
+      uses an even-drain (balance / years_remaining) that fully distributes by
+      year 10 but does NOT enforce that years-1-9 floor. Effect: for an OLDER
+      beneficiary (short life expectancy) the even-drain can under-distribute
+      in the early years relative to the required RMD; younger beneficiaries
+      are typically unaffected because the even-drain already exceeds the
+      single-life RMD. If the decedent died BEFORE their RBD, no annual RMD is
+      required in years 1-9 and the even-drain model is already correct.
     """
 
     balance: float
