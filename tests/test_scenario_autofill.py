@@ -420,3 +420,133 @@ class TestAutoFillRmdYtdClamp:
             f"RMD already-taken conv={conv_b:.0f}, delta={conv_a - conv_b:.0f} "
             f"(expected ~0, pre-fix delta would be ~{r:.0f})"
         )
+
+
+class TestAutoFillBrokerageIncome:
+    """Audit 0702/autofill-brokerage: _auto_fill_core must include forecast brokerage income.
+
+    Prior to the fix, all forecast brokerage income (ordinary dividends, qualified
+    dividends, realized LTCG) was omitted from income aggregates, understating SS
+    provisional income and MAGI in forecast years and therefore over-recommending
+    conversions.
+
+    Three tests prove the three routing rules:
+      1. Ordinary dividends reduce bracket room (enter fixed_gross).
+      2. Qualified dividends + realized LTCG do NOT reduce bracket room (excluded
+         from fixed_gross) but DO reduce IRMAA room (enter base_magi).
+      3. All brokerage components reduce IRMAA-safe conversion room (enter base_magi).
+    """
+
+    @staticmethod
+    def _zero_ss_hh(**overrides: object) -> "Household":
+        """Pre-RMD MFJ household with zero SS so taxable_ss=0 in all years."""
+        from dataclasses import replace
+
+        from models.household import Household
+
+        hh = replace(
+            Household(),
+            your_age=62,
+            your_ira=2_000_000.0,
+            your_rmd_start_age=75,
+            spouse_age=60,
+            spouse_ira=2_000_000.0,
+            spouse_rmd_start_age=75,
+            your_ss_fra=0,
+            spouse_ss_fra=0,
+            grants=[],
+        )
+        return replace(hh, **overrides)  # type: ignore[arg-type]
+
+    def test_ordinary_dividends_reduce_bracket_room(self) -> None:
+        """Ordinary brokerage dividends must enter fixed_gross and reduce bracket room."""
+        from dataclasses import replace
+
+        from models.household import GrowthProfile
+
+        hh_no_brok = self._zero_ss_hh(brokerage_start=0.0)
+        hh_brok = self._zero_ss_hh(
+            brokerage_start=1_000_000.0,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07,
+                yield_rate=0.03,
+                qualified_fraction=0.0,
+            ),
+        )
+        hh_brok = replace(hh_brok, brok_turnover=0.0)
+
+        plan_no = auto_fill_12(hh_no_brok)
+        plan_brok = auto_fill_12(hh_brok)
+
+        total_no = sum(plan_no.your_conversions.values()) + sum(plan_no.spouse_conversions.values())
+        total_brok = sum(plan_brok.your_conversions.values()) + sum(
+            plan_brok.spouse_conversions.values()
+        )
+
+        assert total_brok < total_no, (
+            f"Ordinary dividends must reduce bracket-fill conversions: "
+            f"no-brok={total_no:,.0f}, with-brok={total_brok:,.0f} "
+            f"(pre-fix: both equal; post-fix: with-brok < no-brok)"
+        )
+
+    def test_qualified_divs_and_ltcg_excluded_from_bracket_base(self) -> None:
+        """Pure qualified dividends + realized LTCG must NOT reduce bracket room."""
+        from dataclasses import replace
+
+        from models.household import GrowthProfile
+
+        hh_no_brok = self._zero_ss_hh(brokerage_start=0.0)
+        hh_brok = self._zero_ss_hh(
+            brokerage_start=1_000_000.0,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07,
+                yield_rate=0.03,
+                qualified_fraction=1.0,
+            ),
+        )
+        hh_brok = replace(hh_brok, brok_turnover=0.30)
+
+        plan_no = auto_fill_12(hh_no_brok)
+        plan_brok = auto_fill_12(hh_brok)
+
+        total_no = sum(plan_no.your_conversions.values()) + sum(plan_no.spouse_conversions.values())
+        total_brok = sum(plan_brok.your_conversions.values()) + sum(
+            plan_brok.spouse_conversions.values()
+        )
+
+        assert total_brok == pytest.approx(total_no, abs=1.0), (
+            f"Qualified dividends + LTCG must NOT reduce bracket room: "
+            f"no-brok={total_no:,.0f}, with-brok={total_brok:,.0f} "
+            f"(delta={total_no - total_brok:,.0f} should be ~0)"
+        )
+
+    def test_brokerage_magi_reduces_irmaa_safe_conversions(self) -> None:
+        """All brokerage components (ordinary + qualified + LTCG) must enter base_magi."""
+        from dataclasses import replace
+
+        from models.household import GrowthProfile
+
+        hh_no_brok = self._zero_ss_hh(brokerage_start=0.0)
+        hh_brok = self._zero_ss_hh(
+            brokerage_start=1_500_000.0,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07,
+                yield_rate=0.02,
+                qualified_fraction=1.0,
+            ),
+        )
+        hh_brok = replace(hh_brok, brok_turnover=0.30)
+
+        plan_no = auto_fill_irmaa_safe(hh_no_brok)
+        plan_brok = auto_fill_irmaa_safe(hh_brok)
+
+        total_no = sum(plan_no.your_conversions.values()) + sum(plan_no.spouse_conversions.values())
+        total_brok = sum(plan_brok.your_conversions.values()) + sum(
+            plan_brok.spouse_conversions.values()
+        )
+
+        assert total_brok < total_no, (
+            f"Brokerage MAGI must reduce IRMAA-safe conversions: "
+            f"no-brok={total_no:,.0f}, with-brok={total_brok:,.0f} "
+            f"(delta={total_no - total_brok:,.0f}; pre-fix: both equal)"
+        )
