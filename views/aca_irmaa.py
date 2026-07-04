@@ -92,7 +92,7 @@ def render(hh: Household):
     col_aca, col_irmaa = st.columns(2)
 
     with col_aca:
-        st.markdown("### ACA Marketplace (Ages 61-64)")
+        st.markdown("### ACA Marketplace (pre-Medicare, under 65)")
         if anyone_on_aca:
             fig_aca = go.Figure()
             fig_aca.add_trace(
@@ -168,7 +168,7 @@ def render(hh: Household):
             go.Scatter(
                 x=magi_points,
                 y=curves.irmaa_vals,
-                name="IRMAA Surcharge (2 people)",
+                name=f"IRMAA Surcharge ({'1 person' if hh.filing_status == 'Single' else '2 people'})",
                 line={"color": "#f59e0b", "width": 2},
                 fill="tozeroy",
                 fillcolor="rgba(245,158,11,0.15)",
@@ -190,7 +190,7 @@ def render(hh: Household):
                 )
 
         fig_irmaa.update_layout(
-            title="Annual IRMAA Surcharge (Both Spouses)",
+            title=f"Annual IRMAA Surcharge ({'Individual' if hh.filing_status == 'Single' else 'Both Spouses'})",
             xaxis_title="MAGI ($)",
             xaxis_tickformat="$,.0s",
             yaxis_title="Surcharge ($/yr)",
@@ -318,6 +318,7 @@ def render(hh: Household):
     with col_ref1:
         _fs_label = "Single" if hh.filing_status == "Single" else "MFJ"
         _ref_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+        _medicare_count = 1 if hh.filing_status == "Single" else 2
         st.markdown(f"### IRMAA 2026 Thresholds ({_fs_label})")
         irmaa_data = []
         for i, (threshold, part_b, part_d) in enumerate(_ref_irmaa_tiers):
@@ -328,7 +329,7 @@ def render(hh: Household):
                     "MAGI >": fmt_dollars(threshold),
                     "Part B/mo": fmt_dollars(part_b / 12, decimals=2),
                     "Part D/mo": fmt_dollars(part_d / 12, decimals=2),
-                    "Surcharge/yr (×2)": fmt_dollars(surcharge_pp * 2),
+                    f"Surcharge/yr (×{_medicare_count})": fmt_dollars(surcharge_pp * _medicare_count),
                 }
             )
         st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)

@@ -18,17 +18,25 @@ from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt
 
 def render(hh: Household):
     st.title("📊 Dashboard — Is Converting Worth It?")
-    st.caption(
-        f"You {hh.your_age} / Spouse {hh.spouse_age} · "
-        f"IRAs {fmt_dollars_short(hh.your_ira)} + {fmt_dollars_short(hh.spouse_ira)} · "
-        f"{fmt_pct(hh.growth_rate, 0)} growth · "
-        f"RMD at {hh.your_rmd_start_age}"
-        + (
-            f"/{hh.spouse_rmd_start_age}"
-            if hh.spouse_rmd_start_age != hh.your_rmd_start_age
-            else ""
+    if hh.filing_status == "Single":
+        st.caption(
+            f"You {hh.your_age} · "
+            f"IRA {fmt_dollars_short(hh.your_ira)} · "
+            f"{fmt_pct(hh.growth_rate, 0)} growth · "
+            f"RMD at {hh.your_rmd_start_age}"
         )
-    )
+    else:
+        st.caption(
+            f"You {hh.your_age} / Spouse {hh.spouse_age} · "
+            f"IRAs {fmt_dollars_short(hh.your_ira)} + {fmt_dollars_short(hh.spouse_ira)} · "
+            f"{fmt_pct(hh.growth_rate, 0)} growth · "
+            f"RMD at {hh.your_rmd_start_age}"
+            + (
+                f"/{hh.spouse_rmd_start_age}"
+                if hh.spouse_rmd_start_age != hh.your_rmd_start_age
+                else ""
+            )
+        )
 
     st.caption(FORM_8606_CAPTION)
 
