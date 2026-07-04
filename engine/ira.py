@@ -68,7 +68,7 @@ def rmd_divisor(age: int) -> float:
 def calc_rmd(
     ira_balance: float,
     age: int,
-    rmd_start_age: int = 75,
+    rmd_start_age: int = 73,
     first_year_deferred: bool = False,
     prior_year_balance: float = 0.0,
 ) -> float:

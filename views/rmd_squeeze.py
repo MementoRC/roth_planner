@@ -1,6 +1,6 @@
 """RMD Squeeze Analyzer — visualize the forced distribution pressure.
 
-Ages 75+ force Required Minimum Distributions that compound:
+Required Minimum Distributions (onset age 73 or 75 by birth-year cohort) compound:
   RMD → higher bracket → IRMAA surcharges → excess flows to brokerage →
   cap gains tax → NIIT exposure
 
@@ -529,7 +529,7 @@ def render(hh: Household):
         div_rows = [
             {"Age": age, "Divisor": div, "RMD % of IRA": fmt_pct(1 / div)}
             for age, div in sorted(RMD_DIVISORS.items())
-            if age >= 75
+            if age >= hh.your_rmd_start_age
         ]
         st.dataframe(pd.DataFrame(div_rows), hide_index=True)
 
@@ -563,13 +563,15 @@ def render(hh: Household):
         if _is_mfj
         else f"{fmt_dollars(_irmaa_tier1_1p)}/yr individually"
     )
+    _rmd_age = hh.your_rmd_start_age
+    _onset_pct = fmt_pct(1 / RMD_DIVISORS[_rmd_age])
     st.markdown(f"""
-- **The problem**: At 75, you *must* take distributions from your IRA — the IRS sets the amount
-- **Divisor shrinks**: At 75 you withdraw ~4.1%, by 85 it's ~6.3%, by 95 it's ~11.2%
+- **The problem**: At {_rmd_age}, you *must* take distributions from your IRA — the IRS sets the amount
+- **Divisor shrinks**: At {_rmd_age} you withdraw ~{_onset_pct}, by 85 it's ~6.3%, by 95 it's ~11.2%
 - **Growth amplifies**: If your IRA grew from $1.7M to $4.4M untouched, RMDs are huge
 - **Bracket escalation**: Large RMDs + SS push you from 12% into 22-24% brackets
 - **IRMAA trigger**: MAGI over ${_tier1_thresh / 1000:.0f}K means Medicare surcharges ({_irmaa_surcharge_note} at Tier 1)
 - **Brokerage overflow**: RMDs exceeding living expenses create taxable investment accounts
-- **The fix**: Converting during low-income years (ages 61-74) shrinks the IRA *before* RMDs start
+- **The fix**: Converting during low-income years (ages {hh.your_age}-{_rmd_age - 1}) shrinks the IRA *before* RMDs start
 - **QCD option**: At 70½+, donating up to ${hh.qcd_limit / 1000:.0f}K/yr directly from IRA to charity bypasses taxation
 """)
