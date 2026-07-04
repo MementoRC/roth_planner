@@ -118,7 +118,8 @@ def _handle_keypair_generation() -> None:
         st.code(priv_b64, language=None)
         st.warning(
             "⚠️ Not saved to disk or localStorage. Copy the private key "
-            "somewhere safe now — after you click Clear or reload the page it is gone."
+            "somewhere safe now — it is gone as soon as you click Clear, "
+            "navigate to another page, or reload."
         )
         st.download_button(
             label="⬇️ data-bridge.priv",
