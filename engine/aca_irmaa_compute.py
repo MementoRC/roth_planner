@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.aca import aca_applies, aca_net_cost, aca_subsidy, aca_subsidy_loss
+from engine.aca import (
+    aca_applies,
+    aca_net_cost,
+    aca_subsidy,
+    aca_subsidy_loss,
+    effective_benchmark_premium,
+)
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
@@ -117,14 +123,18 @@ def compute_cost_curves(
     Computes base-state ACA/IRMAA/NIIT once (was previously recomputed inside the
     loop in views/aca_irmaa.py) and reuses for the hidden-cost decomposition.
     """
-    anyone_on_aca = aca_applies(hh.your_age, hh.your_aca_enrolled) or aca_applies(
-        hh.spouse_age, hh.spouse_aca_enrolled
-    )
+    _your_on_aca = aca_applies(hh.your_age, hh.your_aca_enrolled)
+    _spouse_on_aca = aca_applies(hh.spouse_age, hh.spouse_aca_enrolled)
+    anyone_on_aca = _your_on_aca or _spouse_on_aca
 
-    num_on_aca = (1 if aca_applies(hh.your_age, hh.your_aca_enrolled) else 0) + (
-        1 if aca_applies(hh.spouse_age, hh.spouse_aca_enrolled) else 0
+    effective_benchmark = effective_benchmark_premium(
+        hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        your_on_aca=_your_on_aca,
+        spouse_age=hh.spouse_age,
+        spouse_on_aca=_spouse_on_aca,
+        filing_status=hh.filing_status,
     )
-    effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
 
     if hh.filing_status == "Single":
         ded = deductions(

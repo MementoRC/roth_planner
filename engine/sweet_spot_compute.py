@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.aca import aca_applies, aca_subsidy_loss
+from engine.aca import aca_applies, aca_subsidy_loss, effective_benchmark_premium
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
@@ -268,10 +268,17 @@ def all_in_at_conversion(
     # Social Security. The `magi` above is IRMAA-compatible (§1839(i)(4)) and does
     # NOT include non-taxable SS, so add it back only for the ACA computation.
     # Mirrors engine/scenario_compute.compute_aca (aca_magi = magi + combined_ss - taxable_ss).
-    num_on_aca = (1 if aca_applies(ya, hh.your_aca_enrolled) else 0) + (
-        1 if aca_applies(sa, hh.spouse_aca_enrolled) else 0
+    _your_on_aca = aca_applies(ya, hh.your_aca_enrolled)
+    _spouse_on_aca = aca_applies(sa, hh.spouse_aca_enrolled)
+    num_on_aca = (1 if _your_on_aca else 0) + (1 if _spouse_on_aca else 0)
+    effective_benchmark = effective_benchmark_premium(
+        hh.aca_benchmark_premium_annual,
+        your_age=ya,
+        your_on_aca=_your_on_aca,
+        spouse_age=sa,
+        spouse_on_aca=_spouse_on_aca,
+        filing_status=hh.filing_status,
     )
-    effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
     aca_base_magi = base.base_magi + (base.combined_ss - base_tss)
     aca_magi = magi + (base.combined_ss - tss)
     aca_loss = (

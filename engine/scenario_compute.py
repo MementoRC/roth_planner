@@ -6,7 +6,12 @@ state. All stateful / ordering-sensitive blocks stay in run_scenario().
 
 from __future__ import annotations
 
-from engine.aca import aca_applies, aca_excess_aptc_repayment, aca_subsidy_loss
+from engine.aca import (
+    aca_applies,
+    aca_excess_aptc_repayment,
+    aca_subsidy_loss,
+    effective_benchmark_premium,
+)
 from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
 from engine.tax import (
     BRACKETS_SINGLE,
@@ -397,16 +402,22 @@ def compute_aca(
         yr.federal_tax_amt += aca_clawback
     That mutation stays in run_scenario().
     """
-    num_on_aca = (1 if aca_applies(ya, your_aca_enrolled) else 0) + (
-        1 if aca_applies(sa, spouse_aca_enrolled) else 0
-    )
+    _your_on_aca = aca_applies(ya, your_aca_enrolled)
+    _spouse_on_aca = aca_applies(sa, spouse_aca_enrolled)
+    num_on_aca = (1 if _your_on_aca else 0) + (1 if _spouse_on_aca else 0)
     # ACA MAGI per IRC §36B(d)(2)(B)(iii): AGI + tax-exempt interest + non-taxable SS.
     # yr.magi already includes taxable_ss_amt; add the non-taxable remainder.
     # Distinct from yr.magi (IRMAA §1839(i)(4)) which does NOT add non-taxable SS.
     aca_magi = magi + (combined_ss - taxable_ss_amt)
-    # Scale the couple benchmark by the number of enrollees (used by BOTH the
-    # subsidy-loss and the excess-APTC clawback below, for consistency).
-    effective_benchmark = aca_benchmark_premium_annual * (num_on_aca / 2)
+    # Scale the couple benchmark by age-rated share for the enrolled member(s).
+    effective_benchmark = effective_benchmark_premium(
+        aca_benchmark_premium_annual,
+        your_age=ya,
+        your_on_aca=_your_on_aca,
+        spouse_age=sa,
+        spouse_on_aca=_spouse_on_aca,
+        filing_status=current_filing_status,
+    )
     if num_on_aca > 0:
         base_aca_magi = aca_magi - your_conversion - spouse_conversion
         aca_loss = aca_subsidy_loss(
