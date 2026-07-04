@@ -168,15 +168,21 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     else:
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
 
-    # Base taxable SS (without conversion)
-    tss = taxable_ss(combined_ss, opt, filing_status=hh.filing_status)
+    # YTD ordinary income (wages, NEC, STCG, ordinary dividends, interest,
+    # IRA distributions, etc.) — hoisted so it can feed both the SS provisional
+    # income computation (F9) and the MAGI base below.
+    ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
+    ytd_niit_magi = ytd.niit_magi_ytd if ytd is not None else 0.0  # IRC §1411(d)(3)
+
+    # Base taxable SS (without conversion).
+    # F9: other_inc must include ytd_magi so that realized YTD ordinary income
+    # raises provisional income per IRC §86(b)(2), matching scenario_compute.py.
+    tss = taxable_ss(combined_ss, opt + ytd_magi, filing_status=hh.filing_status)
 
     # Base gross (without conversion)
     base_gross = opt + tss
 
     # MAGI base (without conversion)
-    ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
-    ytd_niit_magi = ytd.niit_magi_ytd if ytd is not None else 0.0  # IRC §1411(d)(3)
     base_magi = opt + tss + ytd_magi
 
     # Senior bonus deduction
@@ -224,8 +230,10 @@ def all_in_at_conversion(
 
     single = hh.filing_status == "Single"
 
-    # Recalculate taxable SS with conversion income
-    other_inc = base.opt + conv
+    # Recalculate taxable SS with conversion income.
+    # F9: other_inc must include ytd_magi (all non-SS ordinary income per IRC §86(b)(2))
+    # so that realized YTD income raises provisional income just as in scenario_compute.py.
+    other_inc = base.opt + conv + base.ytd_magi
     tss = taxable_ss(base.combined_ss, other_inc, filing_status=hh.filing_status)
 
     gross = base.opt + conv + tss
@@ -240,8 +248,9 @@ def all_in_at_conversion(
     taxable_inc = max(gross - total_ded, 0)
     tax = (federal_tax_single if single else federal_tax)(taxable_inc, year=year, cpi=cpi)
 
-    # Base tax (no conversion)
-    base_tss = taxable_ss(base.combined_ss, base.opt, filing_status=hh.filing_status)
+    # Base tax (no conversion).
+    # F9: include ytd_magi in provisional income base, consistent with the with-conversion path.
+    base_tss = taxable_ss(base.combined_ss, base.opt + base.ytd_magi, filing_status=hh.filing_status)
     base_gross = base.opt + base_tss
     base_senior = senior_bonus_deduction(
         ya, sa, base.base_magi, year=year, cpi=cpi, filing_status=hh.filing_status

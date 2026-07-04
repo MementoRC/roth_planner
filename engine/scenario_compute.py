@@ -183,6 +183,21 @@ def compute_rmds(
 # ---------------------------------------------------------------------------
 
 
+def survivor_reduction(claim_age: int, fra: int) -> float:
+    """SSA survivor benefit reduction factor for early claim.
+
+    Returns the fraction of the deceased's benefit payable to the survivor:
+    - 0.0  before age 60 (not eligible)
+    - 71.5% at age 60, ramping linearly to 100% at survivor FRA
+    - 100% at or after FRA
+    """
+    if claim_age < 60:
+        return 0.0
+    if fra <= 60 or claim_age >= fra:
+        return 1.0
+    return 0.715 + (claim_age - 60) / (fra - 60) * 0.285
+
+
 def compute_social_security(
     hh: Household,
     ya: int,
@@ -203,6 +218,7 @@ def compute_social_security(
     ytd_year: YTDSnapshot | None,
     qual_div_this_year: float = 0.0,
     realized_gains: float = 0.0,
+    death_year: int | None = None,
 ) -> tuple[float, float, float, float]:
     """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt)."""
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
@@ -217,17 +233,48 @@ def compute_social_security(
         if sa >= hh.spouse_ss_start_age
         else 0.0
     )
-    # Survivor: apply SSA step-up rule from death_year + 1 onward.
-    # The survivor keeps the LARGER of the two COLA-grown benefits; the smaller stops.
+    # Survivor: apply full-actuarial SSA survivor benefit rules from death_year + 1 onward.
+    # - Survivor must be >= 60 to collect any benefit (age-60 eligibility floor).
+    # - Reduction is locked at claim-onset age (first survivor-active year), not current age.
+    # - Survivor receives max(own retirement benefit, reduced deceased benefit).
     # Pre-survivor years (including year-of-death MFJ year) are unchanged.
     if survivor_active and who_dies is not None:
-        survivor_combined = max(your_ss, spouse_ss)
-        if who_dies == "you":
-            your_ss = 0.0
-            spouse_ss = survivor_combined
+        if death_year is None:
+            # Fallback: no death-year info; use old max() behaviour (no reduction applied).
+            survivor_combined = max(your_ss, spouse_ss)
+            if who_dies == "you":
+                your_ss = 0.0
+                spouse_ss = survivor_combined
+            else:
+                your_ss = survivor_combined
+                spouse_ss = 0.0
         else:
-            your_ss = survivor_combined
-            spouse_ss = 0.0
+            # Survivor is the LIVING spouse.
+            survivor_current_age = sa if who_dies == "you" else ya
+            # Onset age: survivor's age in the FIRST survivor-active year (death_year + 1).
+            # Locked — does not change in subsequent years so reduction stays constant.
+            onset_age = (
+                (hh.spouse_age if who_dies == "you" else hh.your_age)
+                + (death_year + 1 - hh.base_year)
+            )
+            claim_age = max(60, onset_age)
+            survivor_fra = hh.spouse_fra_age if who_dies == "you" else hh.your_fra_age
+            deceased_benefit = your_ss if who_dies == "you" else spouse_ss
+            survivor_own = spouse_ss if who_dies == "you" else your_ss
+
+            if survivor_current_age < 60:
+                survivor_benefit = 0.0
+            else:
+                survivor_benefit = deceased_benefit * survivor_reduction(claim_age, survivor_fra)
+
+            survivor_total = max(survivor_own, survivor_benefit)
+
+            if who_dies == "you":
+                your_ss = 0.0
+                spouse_ss = survivor_total
+            else:
+                your_ss = survivor_total
+                spouse_ss = 0.0
     combined_ss = your_ss + spouse_ss
 
     # other_inc excludes SS itself (provisional income formula adds 50% SS separately
