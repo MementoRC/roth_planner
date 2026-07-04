@@ -65,9 +65,11 @@ def render(hh: Household) -> None:
             "Used to estimate NIIT impact.",
         )
 
-    # Index IRMAA tiers and brackets for the selected year
+    # Index IRMAA tiers and brackets for the selected year.
+    # IRMAA: this year's MAGI is measured against payment-year (selected_year + 2) thresholds.
+    # Ordinary brackets: no lookback — index to the income year itself.
     _cpi = hh.cpi_assumption
-    irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year, _cpi)
+    irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year + 2, _cpi)  # +2: payment-year indexing
     _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     indexed_brackets = _index_brackets(_base_brackets, selected_year, _cpi)
 
