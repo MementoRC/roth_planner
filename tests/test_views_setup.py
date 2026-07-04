@@ -397,6 +397,147 @@ class TestClearPersonalSessionState:
             "_clear_personal_session_state does not clear ytd_manual_entry"
         )
 
+    def test_suppress_snapshot_autoload_set_after_clear(self):
+        """F7: _clear_personal_session_state must set _suppress_snapshot_autoload=True.
+
+        Static assertion: confirms the sentinel assignment is present so the
+        app.py auto-load guard cannot silently re-hydrate from disk cache.
+        """
+        source = self._state_source()
+        assert "_suppress_snapshot_autoload" in source, (
+            "_clear_personal_session_state does not set _suppress_snapshot_autoload — "
+            "disk cache auto-load silently undoes the Reset-to-demo"
+        )
+
+    def test_survivor_enabled_key_cleared(self):
+        """F10: _survivor_enabled toggle must be cleared on Reset-to-demo.
+
+        Without this, the survivor scenario UI remains active after reset even
+        though the underlying 'survivor' data has been cleared.
+        """
+        source = self._state_source()
+        assert "_survivor_enabled" in source, (
+            "_clear_personal_session_state does not clear _survivor_enabled — "
+            "survivor scenario toggle stays active after Reset to demo"
+        )
+
+
+class TestSuppressSnapshotAutoloadSentinel:
+    """F7: app.py auto-load guard must honour _suppress_snapshot_autoload sentinel."""
+
+    def _app_source(self) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parent.parent / "app.py").read_text()
+
+    def test_autoload_guard_checks_sentinel(self):
+        """app.py must gate portfolio_snapshot auto-load on the sentinel flag."""
+        text = self._app_source()
+        assert "_suppress_snapshot_autoload" in text, (
+            "app.py does not check _suppress_snapshot_autoload — "
+            "disk cache auto-load cannot be suppressed after Reset-to-demo"
+        )
+
+    def test_autoload_guard_uses_not_get(self):
+        """The sentinel check must use `not st.session_state.get(...)` pattern."""
+        text = self._app_source()
+        assert "not st.session_state.get(\"_suppress_snapshot_autoload\")" in text, (
+            "app.py sentinel check does not use the expected pattern"
+        )
+
+
+class TestAcaCaptionSingleFiler:
+    """F13: ACA caption must omit Spouse age for Single filer."""
+
+    def _aca_source(self) -> str:
+        import inspect
+
+        import views.aca_irmaa as mod
+
+        return inspect.getsource(mod.render)
+
+    def test_caption_gates_spouse_age_on_filing_status(self):
+        """Caption rendering must branch on filing_status == 'Single'."""
+        source = self._aca_source()
+        assert "filing_status" in source, (
+            "aca_irmaa render does not reference filing_status in caption logic"
+        )
+        assert "Single" in source, (
+            "aca_irmaa render does not gate caption on 'Single' filing status"
+        )
+
+    def test_caption_single_branch_omits_spouse(self):
+        """The Single branch of the caption must not include 'Spouse'."""
+        source = self._aca_source()
+        # Locate the _age_part conditional block
+        age_part_pos = source.find("_age_part")
+        assert age_part_pos != -1, "_age_part variable not found in aca_irmaa.render source"
+        single_branch_start = source.find('"Single"', age_part_pos)
+        assert single_branch_start != -1, "No 'Single' check found near _age_part"
+        # The line immediately after the Single check should NOT contain 'Spouse'
+        single_branch_end = source.find("else", single_branch_start)
+        single_expr = source[single_branch_start:single_branch_end]
+        assert "Spouse" not in single_expr, (
+            "The Single branch of the ACA caption still includes 'Spouse'"
+        )
+
+
+class TestRothEligibilitySpouseGating:
+    """F14: Roth eligibility spouse widgets must be hidden for Single filer."""
+
+    def _roth_source(self) -> str:
+        import inspect
+
+        import views.roth_eligibility as mod
+
+        return inspect.getsource(mod.render)
+
+    def test_spouse_age_input_gated_on_not_single(self):
+        """Spouse Age number_input must be inside a `filing != 'Single'` guard."""
+        source = self._roth_source()
+        # Find the guard and the spouse_age widget; guard must precede widget
+        guard_pos = source.find('filing != "Single"')
+        assert guard_pos != -1, 'No `filing != "Single"` guard found in roth_eligibility.render'
+        spouse_age_pos = source.find('"Spouse Age (end of tax year)"')
+        assert spouse_age_pos != -1, "Spouse Age widget not found in roth_eligibility.render"
+        assert guard_pos < spouse_age_pos, (
+            "Spouse Age widget appears before the `filing != 'Single'` guard"
+        )
+
+    def test_spouse_workplace_checkbox_gated_on_not_single(self):
+        """Spouse workplace checkbox must be inside a `filing != 'Single'` guard."""
+        source = self._roth_source()
+        guard_pos = source.find('filing != "Single"')
+        spouse_wp_pos = source.find('"Spouse has workplace plan"')
+        assert spouse_wp_pos != -1, "Spouse workplace checkbox not found"
+        assert guard_pos < spouse_wp_pos, (
+            "Spouse workplace checkbox appears before the `filing != 'Single'` guard"
+        )
+
+    def test_spouse_trad_contrib_gated_on_not_single(self):
+        """Spouse Trad IRA contribution input must be inside a `filing != 'Single'` guard."""
+        source = self._roth_source()
+        guard_pos = source.find('filing != "Single"')
+        spouse_contrib_pos = source.find('"Spouse Trad IRA contribution (this year)"')
+        assert spouse_contrib_pos != -1, "Spouse Trad IRA contribution input not found"
+        assert guard_pos < spouse_contrib_pos, (
+            "Spouse Trad IRA contribution input appears before the `filing != 'Single'` guard"
+        )
+
+    def test_spouse_excluded_from_persons_list_for_single(self):
+        """Spouse must not be appended to the persons iteration list for Single filer."""
+        source = self._roth_source()
+        # The persons list construction must gate Spouse append on filing != Single
+        persons_pos = source.find("persons = [")
+        assert persons_pos != -1, "persons list not found in roth_eligibility.render"
+        append_pos = source.find('persons.append', persons_pos)
+        assert append_pos != -1, "persons.append not found after persons list"
+        guard_pos = source.find('filing != "Single"', persons_pos)
+        assert guard_pos != -1, "no `filing != 'Single'` guard found before Spouse append"
+        assert guard_pos < append_pos, (
+            "Spouse is appended to persons list without a `filing != 'Single'` guard"
+        )
+
 
 class TestNoDataMsg:
     """Unit tests for views.setup.portfolio._no_data_msg (U4/U5/U13)."""

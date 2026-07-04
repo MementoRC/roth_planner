@@ -281,10 +281,18 @@ def render(hh: Household):
 
     with col1:
         your_age = st.number_input("Your Age (end of tax year)", value=hh.your_age, step=1)
-        spouse_age = st.number_input("Spouse Age (end of tax year)", value=hh.spouse_age, step=1)
+        if filing != "Single":
+            spouse_age = st.number_input(
+                "Spouse Age (end of tax year)", value=hh.spouse_age, step=1
+            )
+        else:
+            spouse_age = 0
     with col2:
         has_workplace_plan = st.checkbox("You have workplace plan (403b/401k)", value=True)
-        spouse_workplace = st.checkbox("Spouse has workplace plan", value=False)
+        if filing != "Single":
+            spouse_workplace = st.checkbox("Spouse has workplace plan", value=False)
+        else:
+            spouse_workplace = False
     with col3:
         trad_contrib_you = st.number_input(
             "Your Trad IRA contribution (this year)"
@@ -297,12 +305,15 @@ def render(hh: Household):
             if tax_snap and tax_snap.server_available
             else None,
         )
-        trad_contrib_spouse = st.number_input(
-            "Spouse Trad IRA contribution (this year)",
-            value=default_spouse,
-            step=500,
-            format="%d",
-        )
+        if filing != "Single":
+            trad_contrib_spouse = st.number_input(
+                "Spouse Trad IRA contribution (this year)",
+                value=default_spouse,
+                step=500,
+                format="%d",
+            )
+        else:
+            trad_contrib_spouse = 0
 
     if tax_snap and tax_snap.server_available and default_ira_contrib > 0:
         st.caption(
@@ -324,12 +335,15 @@ def render(hh: Household):
             help="All Traditional IRA accounts combined (Dec 31 of tax year)",
         )
     with col2:
-        spouse_trad_balance = st.number_input(
-            "Spouse Total Trad IRA Balance",
-            value=int(hh.spouse_ira),
-            step=50_000,
-            format="%d",
-        )
+        if filing != "Single":
+            spouse_trad_balance = st.number_input(
+                "Spouse Total Trad IRA Balance",
+                value=int(hh.spouse_ira),
+                step=50_000,
+                format="%d",
+            )
+        else:
+            spouse_trad_balance = 0
 
     # --- Calculations ---
     st.markdown("---")
@@ -339,10 +353,12 @@ def render(hh: Household):
     _catchup_50 = CATCHUP_50_BY_YEAR.get(tax_year, CATCHUP_50_BY_YEAR[2026])
     _roth_phaseout = ROTH_PHASEOUT_BY_YEAR.get(tax_year, ROTH_PHASEOUT_BY_YEAR[2026])
 
-    for person, age, trad_contrib, trad_balance, workplace in [
-        ("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan),
-        ("Spouse", spouse_age, trad_contrib_spouse, spouse_trad_balance, spouse_workplace),
-    ]:
+    persons = [("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan)]
+    if filing != "Single":
+        persons.append(
+            ("Spouse", spouse_age, trad_contrib_spouse, spouse_trad_balance, spouse_workplace)
+        )
+    for person, age, trad_contrib, trad_balance, workplace in persons:
         st.markdown(f"### {person}")
 
         # Contribution limit

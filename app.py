@@ -66,7 +66,7 @@ def _seed_session_state() -> None:
 _seed_session_state()
 
 # Load cached snapshots on first run (silently — Setup page shows status)
-if "portfolio_snapshot" not in st.session_state:
+if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_suppress_snapshot_autoload"):
     from engine.portfolio_sync import load_snapshot
 
     _cached = load_snapshot()

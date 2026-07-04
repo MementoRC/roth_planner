@@ -39,8 +39,13 @@ def render(hh: Household):
         hh.spouse_age, hh.spouse_aca_enrolled
     )
     aca_status = "Enrolled" if anyone_on_aca else "Not enrolled"
+    _age_part = (
+        f"You {hh.your_age}"
+        if hh.filing_status == "Single"
+        else f"You {hh.your_age} / Spouse {hh.spouse_age}"
+    )
     st.caption(
-        f"You {hh.your_age} / Spouse {hh.spouse_age} · "
+        f"{_age_part} · "
         f"ACA: {aca_status} · IRMAA lookback: 2 years · "
         f"Enhanced subsidies: {'Active' if hh.aca_enhanced_subsidies_active else 'Expired (pre-ARP rules)'}"
     )
