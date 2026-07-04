@@ -91,6 +91,13 @@ class TestIRA:
         expected = balance / rmd_divisor(75)
         assert calc_rmd(balance, 75, 75, first_year_deferred=False) == approx(expected)
 
+    def test_calc_rmd_default_start_age_covers_age_73_cohort(self):
+        """L1 (audit 0702): default rmd_start_age must be 73, not 75, so the
+        1951-1959 cohort gets an RMD at 73 when the arg is omitted."""
+        rmd = calc_rmd(1_000_000, 73)
+        assert rmd > 0
+        assert rmd == pytest.approx(1_000_000 / 26.5, rel=1e-6)
+
 
 class TestSSBenefit:
     def test_ss_at_70(self):
