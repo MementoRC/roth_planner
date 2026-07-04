@@ -502,8 +502,8 @@ def run_scenario(
         )
         yr.irmaa_cost = irmaa_cost
         yr.irmaa_room = irmaa_next_threshold(
-            yr.magi, filing_status=current_filing_status, year=year, cpi=cpi
-        )
+            yr.magi, filing_status=current_filing_status, year=year + 2, cpi=cpi
+        )  # +2: this year's MAGI is judged against payment-year (income_year + 2) thresholds
 
         # === ACA subsidy loss + clawback ===
         # ACA applies if anyone in household is enrolled and pre-Medicare.

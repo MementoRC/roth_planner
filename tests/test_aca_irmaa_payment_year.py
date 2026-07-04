@@ -13,6 +13,7 @@ from engine.aca_irmaa_compute import (
     compute_year_by_year_timeline,
 )
 from engine.irmaa import irmaa_next_threshold, irmaa_tier
+from engine.scenario import ConversionPlan, run_scenario
 from models.household import Household
 
 
@@ -279,4 +280,48 @@ class TestCostCurvesNontaxableSsField:
         assert cc.nontaxable_ss > 0.0, (
             f"expected nontaxable_ss > 0 for age-62 SS claimant at $30k base MAGI, "
             f"got {cc.nontaxable_ss}"
+        )
+
+
+class TestScenarioIrmaaRoomPaymentYear:
+    """F5 regression: yr.irmaa_room must index thresholds to the payment year (income+2).
+
+    With nonzero CPI the payment-year threshold is strictly larger than the
+    income-year threshold, so irmaa_room (headroom to the next tier) is larger
+    when correctly indexed to year+2.
+    """
+
+    def test_irmaa_room_uses_payment_year_indexed_threshold(self) -> None:
+        """yr.irmaa_room for a given income year must equal irmaa_next_threshold(..., year=income_year+2).
+
+        Construction:
+          - Both spouses age 70 (on Medicare); base_year 2026 → income year 2028 (idx 2).
+          - MAGI below the base tier-1 threshold ($218k MFJ) so there is positive room.
+          - cpi=0.03 makes the 2-year indexing difference clearly detectable.
+          - income-year-indexed room  = irmaa_next_threshold(magi, year=2028, cpi=0.03)
+          - payment-year-indexed room = irmaa_next_threshold(magi, year=2030, cpi=0.03)
+          - These two values must differ, and yr.irmaa_room must match the payment-year value.
+        """
+        cpi = 0.03
+        hh = Household(your_age=70, spouse_age=70, cpi_assumption=cpi)
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan)
+
+        # Pick income year 2028 (index 2 in the result)
+        income_year = hh.base_year + 2
+        yr = next(y for y in result.years if y.year == income_year)
+
+        magi = yr.magi
+        room_income_year = irmaa_next_threshold(magi, filing_status="MFJ", year=income_year, cpi=cpi)
+        room_payment_year = irmaa_next_threshold(magi, filing_status="MFJ", year=income_year + 2, cpi=cpi)
+
+        # Discriminator: with cpi=0.03 the two years produce different thresholds.
+        assert room_income_year != pytest.approx(room_payment_year, rel=1e-6), (
+            "discriminator failed: income-year and payment-year rooms must differ at cpi=0.03"
+        )
+        # The engine must use the payment-year (year+2) indexed threshold.
+        assert yr.irmaa_room == pytest.approx(room_payment_year, rel=1e-9), (
+            f"yr.irmaa_room must be indexed to payment year {income_year + 2}, "
+            f"got {yr.irmaa_room:.2f}, expected {room_payment_year:.2f} "
+            f"(income-year value was {room_income_year:.2f})"
         )
