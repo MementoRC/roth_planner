@@ -140,7 +140,7 @@ def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
 
 
 def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
-    # Timeline consumer: benchmark scales by how many spouses are on ACA THAT year.
+    # Timeline consumer: benchmark scales by age-rated enrollee share THAT year.
     hh = Household()
     hh.your_aca_enrolled = True
     hh.spouse_aca_enrolled = True
@@ -173,10 +173,23 @@ def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
             cpi=0.0,
         )
     )
+    # For exactly-one-enrollee year, use age-rated benchmark (not flat 50/50).
+    ya_one = r_one.you_age
+    sa_one = r_one.spouse_age
+    you_on = ya_one is not None and ya_one < 65
+    sp_on = sa_one is not None and sa_one < 65
+    age_rated_bench_one = effective_benchmark_premium(
+        hh.aca_benchmark_premium_annual,
+        your_age=ya_one or 0,
+        your_on_aca=you_on,
+        spouse_age=sa_one or 0,
+        spouse_on_aca=sp_on,
+        filing_status="MFJ",
+    )
     assert r_one.aca_subsidy == pytest.approx(
         aca_subsidy(
             base_magi,
-            hh.aca_benchmark_premium_annual * 0.5,
+            age_rated_bench_one,
             enhanced_subsidies_active=True,
             filing_status="MFJ",
             year=r_one.year,
@@ -317,3 +330,67 @@ def test_timeline_survivor_who_dies_you_medicare_follows_spouse() -> None:
         # ...and filing must switch to Single (lower thresholds) post-death.
         expected_single = _irmaa_tier(base_magi, filing_status="Single", year=r.year, cpi=0.0)
         assert r.irmaa_tier == expected_single
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 regression: Single filer gets full age-rated benchmark, not half
+# ---------------------------------------------------------------------------
+
+
+def test_timeline_single_filer_gets_full_benchmark_not_half() -> None:
+    """Fix 1: Single filer enrolled on ACA must receive the full age-rated benchmark.
+
+    A Single filer has one household adult, so effective_benchmark_premium returns
+    couple_benchmark unmodified (there is no second adult to split with).
+    The old flat-/2 code gave Single filers benchmark/2, which was wrong.
+    """
+    hh = Household()
+    hh.filing_status = "Single"
+    hh.your_age = 62
+    hh.your_aca_enrolled = True
+    hh.spouse_aca_enrolled = False
+    hh.aca_enhanced_subsidies_active = True
+    base_magi = 50_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=3, cpi=0.0)
+
+    aca_rows = [r for r in rows if r.aca_subsidy is not None]
+    assert len(aca_rows) > 0, "Expected at least one ACA-active row for Single filer age 62"
+
+    for r in aca_rows:
+        ya = r.you_age or hh.your_age
+        expected_bench = effective_benchmark_premium(
+            hh.aca_benchmark_premium_annual,
+            your_age=ya,
+            your_on_aca=True,
+            spouse_age=0,
+            spouse_on_aca=False,
+            filing_status="Single",
+        )
+        # Full benchmark for Single = couple_benchmark (no split)
+        assert expected_bench == hh.aca_benchmark_premium_annual, (
+            "effective_benchmark_premium must return full benchmark for an enrolled Single filer"
+        )
+        expected_sub = aca_subsidy(
+            base_magi,
+            expected_bench,
+            enhanced_subsidies_active=True,
+            filing_status="Single",
+            year=r.year,
+            cpi=0.0,
+        )
+        assert r.aca_subsidy == pytest.approx(expected_sub), (
+            f"Timeline subsidy {r.aca_subsidy} != expected {expected_sub} in year {r.year}"
+        )
+        # Guard: old flat-/2 would produce subsidy from benchmark/2, not benchmark
+        half_bench_sub = aca_subsidy(
+            base_magi,
+            hh.aca_benchmark_premium_annual / 2,
+            enhanced_subsidies_active=True,
+            filing_status="Single",
+            year=r.year,
+            cpi=0.0,
+        )
+        assert r.aca_subsidy != pytest.approx(half_bench_sub), (
+            "Single filer must NOT use benchmark/2 (old flat-split bug)"
+        )
+

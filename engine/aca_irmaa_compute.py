@@ -402,8 +402,14 @@ def compute_year_by_year_timeline(
             else None
         )
 
-        num_on_aca_yr = (1 if you_on_aca else 0) + (1 if sp_on_aca else 0)
-        eff_bench_yr = hh.aca_benchmark_premium_annual * (num_on_aca_yr / 2)
+        eff_bench_yr = effective_benchmark_premium(
+            hh.aca_benchmark_premium_annual,
+            your_age=ya,
+            your_on_aca=you_on_aca,
+            spouse_age=sa if sa is not None else 0,
+            spouse_on_aca=sp_on_aca,
+            filing_status=current_filing_status,
+        )
         aca_sub: float | None = None
         aca_pay: float | None = None
         if you_on_aca or sp_on_aca:
