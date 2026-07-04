@@ -131,6 +131,14 @@ page = st.sidebar.radio(
     label_visibility="collapsed",
 )
 
+# L6 (audit 0702): the generated V2 keypair is displayed only on the Setup page
+# and must not linger in session_state after the user navigates away. data_bridge.py
+# cannot self-clear at render-end — Streamlit reruns top-to-bottom and needs the key
+# to survive until the user acts on it — so teardown happens here at the router.
+if page != "⚙️ Setup":
+    st.session_state.pop("_generated_pub_b64", None)
+    st.session_state.pop("_generated_priv_b64", None)
+
 # Build household from session state
 from engine.dividend_forecast import forecast_portfolio  # noqa: E402
 from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
