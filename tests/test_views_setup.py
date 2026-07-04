@@ -103,7 +103,7 @@ class TestPdf1040ImportHelper:
         assert "_render_pdf_1040_import()" in source, (
             "_render_pdf_1040_import() not called in render_parameters_tab — widget not wired up"
         )
-        magi_pos = source.find("_render_prior_year_magi_anchor()")
+        magi_pos = source.find("_render_prior_year_magi_anchor(")
         pdf_pos = source.find("_render_pdf_1040_import()")
         assert magi_pos != -1
         assert pdf_pos != -1

@@ -1,6 +1,6 @@
 """Conversion Planner — interactive 20-year conversion grid.
 
-Shows all 20 years of the spouse's conversion window with:
+Shows the conversion window (WINDOW_YEARS years from the starting age) with:
 - Editable conversion amounts per year per spouse
 - Live bracket/tax/room feedback
 - IRA balance tracking
@@ -35,6 +35,8 @@ PHASE_LABELS = {
     "squeeze": "🔴 RMD Squeeze",
     "rmd": "⚪ RMD Only",
 }
+
+WINDOW_YEARS = 20  # conversion grid horizon (years from the starting age)
 
 
 def render(hh: Household):
@@ -85,8 +87,8 @@ def render(hh: Household):
     )
     result = run_scenario(hh, plan, "Custom", end_age=95)
 
-    # Filter to spouse's conversion window (20 years)
-    conv_window = [yr for yr in result.years if yr.your_age <= 80]
+    # Filter to the conversion window (WINDOW_YEARS years from the starting age)
+    conv_window = [yr for yr in result.years if yr.your_age <= hh.your_age + WINDOW_YEARS - 1]
 
     # --- Phase legend ---
     phases_present = {yr.phase for yr in conv_window}

@@ -264,7 +264,7 @@ def render(hh: Household) -> None:
         for sp in sweet_spots:
             st.warning(
                 f"**{sp.label}** — marginal cost jumps from "
-                f"${sp.marginal_before:.0f} to ${sp.marginal_after:.0f} per $1K "
+                f"{sp.marginal_before:.0f}% to {sp.marginal_after:.0f}% of each $1K converted "
                 f"({sp.reason})"
             )
 

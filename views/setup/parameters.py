@@ -321,9 +321,8 @@ def _render_pdf_1040_import() -> None:
             st.rerun()
 
 
-def _render_prior_year_magi_anchor() -> None:
+def _render_prior_year_magi_anchor(base_year: int) -> None:
     """Render the Prior-year filed MAGI anchor expander in the Joint sub-tab."""
-    base_year: int = 2026
     with st.expander("Prior-year filed MAGI anchor (IRMAA lookback)", expanded=False):
         st.caption(
             "Optional. Enter actual filed MAGI from your tax return. "
@@ -631,7 +630,7 @@ def render_parameters_tab(hh: Household) -> None:
                 "FPL, etc. are projected forward from 2026 base values using this rate."
             ),
         )
-        _render_prior_year_magi_anchor()
+        _render_prior_year_magi_anchor(hh.base_year)
         _render_pdf_1040_import()
         _render_survivor_scenario(hh.base_year)
         _render_inherited_iras(hh.base_year)
