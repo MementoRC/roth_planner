@@ -113,10 +113,15 @@ def _apply_portfolio_snapshot(incoming: object, *, as_spouse: bool) -> None:
 
     Thin wrapper around :func:`engine.portfolio_sync.merge_snapshots` that
     reads / writes ``st.session_state['portfolio_snapshot']``.
+
+    Also clears ``_suppress_snapshot_autoload`` so that after an explicit
+    sync or upload the auto-load guard resumes normal behaviour on future
+    sessions.
     """
     existing = st.session_state.get("portfolio_snapshot")
     merged = merge_snapshots(existing, incoming, as_spouse=as_spouse)  # type: ignore[arg-type]
     st.session_state["portfolio_snapshot"] = merged
+    st.session_state.pop("_suppress_snapshot_autoload", None)
 
 
 def _clear_personal_session_state() -> None:
@@ -147,6 +152,7 @@ def _clear_personal_session_state() -> None:
         "cpi_assumption",
         "prior_year_magi",
         "survivor",
+        "_survivor_enabled",
         "inherited_iras",
         "filing_status",
         "account_type_overrides",
@@ -160,3 +166,7 @@ def _clear_personal_session_state() -> None:
     for k in keys_to_clear:
         st.session_state.pop(k, None)
     st.session_state.pop("_seeded", None)  # force re-seed from synthetic
+    # Suppress on-disk cache auto-load for the remainder of this session so
+    # the reset is not silently undone by the app.py startup guard.  An
+    # explicit sync/upload clears this via _apply_portfolio_snapshot().
+    st.session_state["_suppress_snapshot_autoload"] = True
