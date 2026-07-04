@@ -357,3 +357,88 @@ class TestConversionLtcgStacking:
         assert result_with.all_in - result_default.all_in == pytest.approx(
             result_with.ltcg_delta
         ), "all_in excess over default must equal ltcg_delta"
+
+
+class TestSweetSpotProvisionalIncomeYtd:
+    """F9 regression: sweet-spot provisional income must include YTD ordinary income.
+
+    When a household has SS + meaningful wages (ytd), the taxable-SS amount returned
+    by all_in_at_conversion must be HIGHER than if ytd_magi were ignored.  Before the
+    fix, other_inc = opt + conv (ytd omitted), understating provisional income and
+    therefore understating taxable SS.
+    """
+
+    def _make_household(self) -> Household:
+        # Ages 67/65, both collecting SS.  No option income (grants=[]), no ACA.
+        # SS sized so that provisional income WITHOUT wages stays below MFJ tier 2
+        # ($44K): combined_ss = $600+$400/mo → ~$12K/yr.
+        # Without wages: provisional = 0 + 0.5 * 12_000 = $6,000 → 0% taxable.
+        # With wages=$30K: provisional = 30_000 + 0.5 * 12_000 = $36,000 → 50% tier.
+        return Household(
+            your_age=67,
+            spouse_age=65,
+            base_year=2026,
+            your_ss_start_age=67,
+            spouse_ss_start_age=65,
+            your_ss_fra=600.0,   # $/month — small SS so provisional stays below tier 2
+            spouse_ss_fra=400.0,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            your_aca_enrolled=False,
+            spouse_aca_enrolled=False,
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            grants=[],   # no option income — prevents SS from hitting 85% cap without wages
+        )
+
+    def test_ytd_wages_raise_taxable_ss_in_sweet_spot(self) -> None:
+        """Taxable SS must be higher when ytd wages push provisional income up.
+
+        Setup: SS is small ($12K/yr combined).  Without wages provisional income =
+        0.5 * 12_000 = $6,000 → below $32K MFJ tier 1 → 0% taxable.
+        With wages=$30K: provisional = $36K → in the 50% tier → taxable SS > 0.
+        Before the F9 fix other_inc omitted ytd_magi, so taxable SS was always 0.
+        """
+        from engine.tax import taxable_ss as _taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._make_household()
+        year = 2026
+
+        # YTD wages that push provisional income into the 50%-taxable tier.
+        wages = 30_000.0
+        ytd = YTDSnapshot(tax_year=year, wages_ytd=wages)
+        assert ytd.magi_ytd == pytest.approx(wages), "precondition: magi_ytd == wages_ytd"
+
+        b_no_ytd = base_income_for_year(hh, year, ytd=None)
+        b_with_ytd = base_income_for_year(hh, year, ytd=ytd)
+
+        combined_ss = b_with_ytd.combined_ss
+        assert combined_ss > 0, "precondition: SS must be active"
+
+        # Without wages: provisional = 0 + 0.5*combined_ss → taxable SS should be 0.
+        tss_no_wages = _taxable_ss(combined_ss, 0.0, filing_status="MFJ")
+        assert tss_no_wages == pytest.approx(0.0), (
+            f"precondition: no-wages taxable SS must be 0, got {tss_no_wages:.0f}"
+        )
+
+        # With wages: provisional = wages + 0.5*combined_ss → taxable SS > 0.
+        tss_with_wages = _taxable_ss(combined_ss, wages, filing_status="MFJ")
+        assert tss_with_wages > 0.0, (
+            f"precondition: wages-included taxable SS must be > 0, got {tss_with_wages:.0f}"
+        )
+
+        # base_gross (opt + tss) must be higher with ytd wages (tss increased).
+        assert b_with_ytd.base_gross > b_no_ytd.base_gross, (
+            "base_gross (which includes taxable SS) must be higher with ytd wages"
+        )
+
+        # At zero conversion, magi with ytd must exceed magi without ytd.
+        conv = 0.0
+        res_no_ytd = all_in_at_conversion(hh, b_no_ytd, conv, 0.0)
+        res_with_ytd = all_in_at_conversion(hh, b_with_ytd, conv, 0.0)
+
+        assert res_with_ytd.magi > res_no_ytd.magi, (
+            f"magi with ytd ({res_with_ytd.magi:.0f}) must exceed magi without ytd ({res_no_ytd.magi:.0f})"
+        )

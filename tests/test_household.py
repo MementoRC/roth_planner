@@ -738,6 +738,289 @@ class TestSurvivorScenario:
             assert yr.aca_magi > yr.magi
 
 
+    # --- F4: full-actuarial survivor SS reduction tests ---
+
+    def test_survivor_under_60_receives_no_benefit(self):
+        """F4: survivor under age 60 in first survivor-active year gets 0 survivor benefit.
+
+        Setup: who_dies='you', death_year=2026 (base year).
+        Spouse age=54 in 2026 -> age 55 in first survivor year (2027) -> under 60 -> 0.
+        Spouse has no own SS benefit (ss_start_age=67, age 55 in 2027 < 67).
+        """
+        from engine.scenario_compute import compute_social_security
+
+        surv = SurvivorScenario(who_dies="you", death_year=2026)
+        hh = Household(
+            your_age=61,
+            spouse_age=54,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=2_000,
+            your_ss_start_age=62,  # you collecting
+            spouse_ss_start_age=67,  # spouse not collecting yet
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv,
+        )
+        # ya=62, sa=55 is first survivor-active year (2027)
+        your_ss, spouse_ss, combined_ss, _ = compute_social_security(
+            hh=hh,
+            ya=62,
+            sa=55,
+            survivor_active=True,
+            who_dies="you",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2026,
+        )
+        assert your_ss == approx(0.0)
+        assert spouse_ss == approx(0.0)
+        assert combined_ss == approx(0.0)
+
+    def test_survivor_at_60_receives_71_5_pct(self):
+        """F4: survivor claiming at onset age 60 receives exactly 71.5% of deceased benefit.
+
+        Onset age locked at 60 (claim_age=60). ss_cola=0 so no compounding.
+        Survivor's own benefit is 0 (not yet at ss_start_age).
+        """
+        from engine.scenario_compute import compute_social_security
+
+        surv = SurvivorScenario(who_dies="you", death_year=2031)
+        # spouse_age=55 in 2026 -> age 60 in 2031 -> onset_age=60 in first survivor year 2032
+        Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=2_000,
+            your_ss_start_age=62,
+            spouse_ss_start_age=67,  # survivor not yet collecting own
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv,
+        )
+        # ya=67, sa=61: first survivor-active year is 2032 (death_year+1).
+        # onset_age = spouse_age(55) + (2031+1 - 2026) = 55+6 = 61, claim_age=max(60,61)=61.
+        # But let's use onset=60 directly: death_year=2030, spouse_age=55 -> onset=55+(2031-2026)=60.
+        surv2 = SurvivorScenario(who_dies="you", death_year=2030)
+        hh2 = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=2_000,
+            your_ss_start_age=62,
+            spouse_ss_start_age=67,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv2,
+        )
+        # sa=60 in first survivor year (2031), onset_age=55+(2031-2026)=60, claim_age=60
+        # deceased benefit: your_ss at ya=66, ss_start_age=62, cola=0 -> ss_benefit_at_age * 1.0
+        your_ss_full, spouse_ss_out, combined_ss, _ = compute_social_security(
+            hh=hh2,
+            ya=66,
+            sa=60,
+            survivor_active=True,
+            who_dies="you",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2030,
+        )
+        # deceased (you) zeroed
+        assert your_ss_full == approx(0.0)
+        # survivor benefit = 71.5% of deceased full benefit; own SS = 0 (age 60 < ss_start 67)
+        from engine.ira import ss_benefit_at_age
+
+        expected_deceased = ss_benefit_at_age(3_000, 62, 67)  # claimed at 62, fra=67
+        assert spouse_ss_out == approx(expected_deceased * 0.715)
+        assert combined_ss == approx(spouse_ss_out)
+
+        # Verify: two years later (sa=62) reduction is STILL 71.5% — onset locked, not growing.
+        _, spouse_ss_later, _, _ = compute_social_security(
+            hh=hh2,
+            ya=68,
+            sa=62,
+            survivor_active=True,
+            who_dies="you",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2030,
+        )
+        # claim_age is still 60 (onset locked) -> same 71.5% factor -> same nominal amount (cola=0)
+        assert spouse_ss_later == approx(spouse_ss_out)
+
+    def test_survivor_at_fra_receives_full_benefit(self):
+        """F4: survivor with onset age >= FRA (67) receives 100% of deceased's benefit.
+
+        Both spouses past SS start age; who_dies='spouse', death_year=2026.
+        Survivor (you) age 61 in base year -> onset_age = 62 in 2027 < 67 ... use older ages.
+        your_age=70: onset = 70+(2030+1-2026)=75 >= fra=67 -> factor=1.0.
+        """
+        from engine.ira import ss_benefit_at_age
+        from engine.scenario_compute import compute_social_security
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        hh = Household(
+            your_age=70,
+            spouse_age=68,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=3_000,
+            spouse_ss_fra=4_000,  # deceased (spouse) is higher earner
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=73,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv,
+        )
+        # First survivor year: 2031. ya=75, sa=73, onset=70+(2031-2026)=75 >= fra=67.
+        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+            hh=hh,
+            ya=75,
+            sa=73,
+            survivor_active=True,
+            who_dies="spouse",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2030,
+        )
+        # deceased (spouse) zeroed; survivor (you) gets 100% of deceased benefit
+        assert spouse_ss_out == approx(0.0)
+        deceased_benefit = ss_benefit_at_age(4_000, 70, 67)  # claimed at 70, fra=67
+        own_benefit = ss_benefit_at_age(3_000, 70, 67)
+        # max(own, 100% deceased); deceased > own -> survivor_total = deceased_benefit
+        expected = max(own_benefit, deceased_benefit)
+        assert your_ss_out == approx(expected)
+        assert combined_ss == approx(your_ss_out)
+
+    def test_survivor_own_benefit_wins_over_reduced_survivor(self):
+        """F4: when survivor's own retirement benefit > reduced survivor benefit, own wins.
+
+        Survivor claims own SS at FRA; deceased had small benefit; survivor's own > 71.5%.
+        """
+        from engine.ira import ss_benefit_at_age
+        from engine.scenario_compute import compute_social_security
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2030)
+        hh = Household(
+            your_age=55,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=5_000,   # survivor (you) has large own benefit
+            spouse_ss_fra=1_000,  # deceased had small benefit
+            your_ss_start_age=60,  # survivor collecting since 60
+            spouse_ss_start_age=62,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv,
+        )
+        # First survivor year: 2031. ya=60, sa=60. onset=55+(2031-2026)=60, claim_age=60.
+        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+            hh=hh,
+            ya=60,
+            sa=60,
+            survivor_active=True,
+            who_dies="spouse",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2030,
+        )
+        own_benefit = ss_benefit_at_age(5_000, 60, 67)
+        deceased_benefit = ss_benefit_at_age(1_000, 62, 67)
+        survivor_benefit = deceased_benefit * 0.715  # onset=60, fra=67
+        expected = max(own_benefit, survivor_benefit)
+        # own_benefit >> survivor_benefit (large own vs small deceased reduced by 28.5%)
+        assert own_benefit > survivor_benefit
+        assert your_ss_out == approx(expected)
+        assert spouse_ss_out == approx(0.0)
+        assert combined_ss == approx(your_ss_out)
+
+
 class TestRMDStartAge:
     """rmd-1: default_rmd_age helper and Household.__post_init__ derivation.
 

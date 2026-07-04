@@ -647,3 +647,120 @@ class TestSurvivorIncomeGate:
                 assert yr.extra_withdrawal == 0.0, (
                     f"year {yr.year}: deceased extra_withdrawal={yr.extra_withdrawal} != 0"
                 )
+
+
+class TestConversionTaxIncludesSsTorpedo:
+    """F12 regression: conversion_tax must include the SS torpedo delta.
+
+    The OBBBA senior-deduction baseline (no-conversion MAGI) was computed as
+    yr.magi - conversions, which still contained conversion-elevated taxable SS.
+    The fix subtracts conversion_ss_delta from base_magi so the OBBBA phaseout
+    and conversion_tax both reflect the true no-conversion baseline.
+    """
+
+    def _make_hh_with_ss(self) -> Household:
+        # Ages 68/66 — both collecting SS, no RMD yet (onset 73), no option income.
+        # Small IRA balances so RMDs don't fire in 2026.
+        # SS is large enough that a conversion pushes meaningful extra SS into taxability.
+        return Household(
+            your_age=68,
+            spouse_age=66,
+            base_year=2026,
+            your_ira=200_000.0,
+            spouse_ira=200_000.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            growth_rate=0.05,
+            grants=[],
+            your_ss_fra=2_500.0,   # $/month at FRA
+            spouse_ss_fra=1_800.0,
+            your_ss_start_age=68,
+            spouse_ss_start_age=66,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            ss_cola=0.0,
+            cpi_assumption=0.0,
+            filing_status="MFJ",
+        )
+
+    def test_conversion_tax_includes_ss_torpedo_delta(self) -> None:
+        """conversion_tax with a large conversion must exceed the no-SS-torpedo baseline.
+
+        We run two scenarios against the same household:
+          1. hh_with_ss: both collecting SS → conversion pushes more SS into taxation.
+          2. hh_no_ss:   SS zeroed out       → no torpedo effect.
+
+        For the same conversion amount, the extra conversion_tax in scenario 1 vs 2
+        must be positive, proving the SS torpedo delta is captured in conversion_tax.
+        """
+
+        hh = self._make_hh_with_ss()
+        conv = 50_000.0
+        plan = ConversionPlan(your_conversions={2026: conv})
+
+        result_ss = run_scenario(hh, plan, end_age=70)
+        yr_ss = next(yr for yr in result_ss.years if yr.year == 2026)
+
+        # Verify SS torpedo is active: combined SS > 0 and conversion elevated taxable SS.
+        assert yr_ss.combined_ss > 0, "precondition: SS must be active"
+        assert yr_ss.your_conversion == pytest.approx(conv, abs=1.0), (
+            "precondition: conversion must land as planned"
+        )
+
+        # Run without any conversion to get no-conversion baseline.
+        result_base = run_scenario(hh, ConversionPlan(), end_age=70)
+        yr_base = next(yr for yr in result_base.years if yr.year == 2026)
+
+        # The no-conversion taxable SS (used in base_magi for OBBBA).
+        # SS torpedo: conversion pushed extra SS into taxation.
+        # Verify the delta is positive (conversion inflated taxable SS vs no-conversion).
+        assert yr_ss.taxable_ss_amt > yr_base.taxable_ss_amt, (
+            f"taxable SS with conversion ({yr_ss.taxable_ss_amt:.0f}) must exceed "
+            f"no-conversion ({yr_base.taxable_ss_amt:.0f}) — SS torpedo must fire"
+        )
+        torpedo_delta = yr_ss.taxable_ss_amt - yr_base.taxable_ss_amt
+
+        # The conversion_tax must be higher than (conv * marginal_rate) alone because
+        # it also covers the torpedo delta taxed at the marginal rate.
+        # Minimum expected: torpedo_delta * 0.10 (lowest bracket rate).
+        min_extra = torpedo_delta * 0.10
+        assert yr_ss.conversion_tax > min_extra, (
+            f"conversion_tax ({yr_ss.conversion_tax:.0f}) must exceed "
+            f"torpedo minimum ({min_extra:.0f}); torpedo_delta={torpedo_delta:.0f}"
+        )
+
+        # F12 specific: run the same household with SS zeroed out to get a pure
+        # no-torpedo baseline.  The SS household's conversion_tax must exceed the
+        # no-SS household's conversion_tax by at least the torpedo contribution.
+        hh_no_ss = Household(
+            your_age=68,
+            spouse_age=66,
+            base_year=2026,
+            your_ira=200_000.0,
+            spouse_ira=200_000.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            growth_rate=0.05,
+            grants=[],
+            your_ss_fra=0.0,   # SS zeroed → no torpedo
+            spouse_ss_fra=0.0,
+            your_ss_start_age=68,
+            spouse_ss_start_age=66,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            ss_cola=0.0,
+            cpi_assumption=0.0,
+            filing_status="MFJ",
+        )
+        result_no_ss = run_scenario(hh_no_ss, ConversionPlan(your_conversions={2026: conv}), end_age=70)
+        yr_no_ss = next(yr for yr in result_no_ss.years if yr.year == 2026)
+
+        assert yr_no_ss.taxable_ss_amt == pytest.approx(0.0), (
+            "precondition: no-SS household must have zero taxable SS"
+        )
+        # With SS torpedo, conversion_tax must be higher than without SS.
+        assert yr_ss.conversion_tax > yr_no_ss.conversion_tax, (
+            f"conversion_tax with SS torpedo ({yr_ss.conversion_tax:.0f}) must exceed "
+            f"no-SS baseline ({yr_no_ss.conversion_tax:.0f}); "
+            f"torpedo_delta={torpedo_delta:.0f} must be captured in conversion_tax"
+        )
