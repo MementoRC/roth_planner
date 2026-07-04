@@ -15,6 +15,7 @@ from engine.aca import (
     FPL_2,
     _aca_cap_schedule,
     aca_applies,
+    effective_benchmark_premium,
 )
 from engine.aca_irmaa_compute import (
     compute_cost_curves,
@@ -113,10 +114,14 @@ def render(hh: Household):
                     hovertemplate="MAGI: $%{x:,.0f}<br>You Pay: $%{y:,.0f}<extra></extra>",
                 )
             )
-            num_on_aca = (1 if aca_applies(hh.your_age, hh.your_aca_enrolled) else 0) + (
-                1 if aca_applies(hh.spouse_age, hh.spouse_aca_enrolled) else 0
+            effective_benchmark = effective_benchmark_premium(
+                hh.aca_benchmark_premium_annual,
+                your_age=hh.your_age,
+                your_on_aca=aca_applies(hh.your_age, hh.your_aca_enrolled),
+                spouse_age=hh.spouse_age,
+                spouse_on_aca=aca_applies(hh.spouse_age, hh.spouse_aca_enrolled),
+                filing_status=hh.filing_status,
             )
-            effective_benchmark = hh.aca_benchmark_premium_annual * (num_on_aca / 2)
             fig_aca.add_hline(
                 y=effective_benchmark,
                 line_dash="dot",

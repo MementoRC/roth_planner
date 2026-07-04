@@ -62,7 +62,7 @@ class TestQcdAgeGateF32:
 
 
 class TestAcaPremiumAnnotationF22:
-    """F22: add_hline y= uses effective_benchmark scaled by num_on_aca."""
+    """F22: add_hline y= uses age-rated effective_benchmark_premium() helper."""
 
     def test_hline_does_not_hardcode_benchmark_annual(self):
         import views.aca_irmaa as aca_mod
@@ -82,11 +82,26 @@ class TestAcaPremiumAnnotationF22:
         assert "effective_benchmark" in src, "effective_benchmark not computed in aca_irmaa view"
         assert "y=effective_benchmark" in src, "add_hline y= does not use effective_benchmark"
 
-    def test_num_on_aca_computed_in_view(self):
+    def test_annotation_uses_age_rated_effective_benchmark_premium(self):
+        """Superseded by audit-0704 finding 8 — the flat num_on_aca enrollee split was
+        replaced by the age-rated effective_benchmark_premium() helper, which does
+        per-enrollee age-rating internally.
+        """
         import views.aca_irmaa as aca_mod
 
         src = inspect.getsource(aca_mod)
-        assert "num_on_aca" in src, "num_on_aca not computed in aca_irmaa view"
+        assert "effective_benchmark_premium(" in src, (
+            "age-rated effective_benchmark_premium() helper not called in aca_irmaa view"
+        )
+        assert "your_on_aca=" in src, (
+            "your_on_aca= kwarg not passed to effective_benchmark_premium()"
+        )
+        assert "spouse_on_aca=" in src, (
+            "spouse_on_aca= kwarg not passed to effective_benchmark_premium()"
+        )
+        assert "aca_applies(" in src, (
+            "aca_applies() not used to compute per-enrollee flags in aca_irmaa view"
+        )
 
 
 # ---------------------------------------------------------------------------
