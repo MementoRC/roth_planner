@@ -46,6 +46,85 @@ ACA_PRE_ARP_SCHEDULE = [
 # (varies by state/county — $1,600-$2,000/mo range; using $1,800/mo)
 BENCHMARK_PREMIUM_ANNUAL = 1_800 * 12
 
+# HHS Default Standard Age Curve (45 CFR 147.102), effective plan years 2018+.
+# Multiplicative premium age-rating factors anchored at age 21 = 1.000 and capped
+# 3:1 at age 64 and older. Source: CMS "Final Guidance Regarding Age Curves and
+# State Reporting" (2016-12-16), Appendix I. Only pre-Medicare adult ages are
+# tabulated (this planner never enrolls minors on ACA); ages <= 40 clamp to the
+# age-40 factor and ages >= 64 use 3.000.
+_HHS_AGE_CURVE: dict[int, float] = {
+    40: 1.278,
+    41: 1.302,
+    42: 1.325,
+    43: 1.357,
+    44: 1.397,
+    45: 1.444,
+    46: 1.500,
+    47: 1.563,
+    48: 1.635,
+    49: 1.706,
+    50: 1.786,
+    51: 1.865,
+    52: 1.952,
+    53: 2.040,
+    54: 2.135,
+    55: 2.230,
+    56: 2.333,
+    57: 2.437,
+    58: 2.548,
+    59: 2.603,
+    60: 2.714,
+    61: 2.810,
+    62: 2.873,
+    63: 2.952,
+    64: 3.000,
+}
+
+
+def aca_age_factor(age: int) -> float:
+    """HHS default age-rating factor for a given age (see _HHS_AGE_CURVE)."""
+    if age >= 64:
+        return 3.000
+    if age <= 40:
+        return _HHS_AGE_CURVE[40]
+    return _HHS_AGE_CURVE[age]
+
+
+def effective_benchmark_premium(
+    couple_benchmark: float,
+    *,
+    your_age: int,
+    your_on_aca: bool,
+    spouse_age: int,
+    spouse_on_aca: bool,
+    filing_status: str,
+) -> float:
+    """Age-rated benchmark premium for the actually-enrolled household member(s).
+
+    ``couple_benchmark`` is a two-adult rate. Returns 0.0 when nobody is enrolled;
+    the full couple rate when every household adult is enrolled; and for partial
+    enrollment (an MFJ household with exactly one spouse on ACA) the enrolled
+    member's age-rated SHARE of the couple rate rather than a flat 50/50 split
+    (ACA premiums are age-rated, so a 61-year-old's share of a 61+55 couple
+    benchmark is ~2.810/(2.810+2.230) instead of 50%). A Single filer has one
+    household adult, so an enrolled Single filer gets the full individual benchmark
+    rather than a halved couple rate.
+    """
+    if filing_status == "Single":
+        adults = [(your_age, your_on_aca)]
+    else:
+        adults = [(your_age, your_on_aca), (spouse_age, spouse_on_aca)]
+    enrolled_ages = [age for age, on in adults if on]
+    if not enrolled_ages:
+        return 0.0
+    if len(enrolled_ages) == len(adults):
+        return couple_benchmark
+    total_factor = sum(aca_age_factor(age) for age, _ in adults)
+    if total_factor <= 0:
+        return couple_benchmark / len(adults)
+    enrolled_factor = sum(aca_age_factor(age) for age in enrolled_ages)
+    return couple_benchmark * (enrolled_factor / total_factor)
+
 
 def _aca_cap_schedule(enhanced: bool) -> list[tuple[float, float]]:
     """Return the premium cap schedule for the given subsidy law state."""

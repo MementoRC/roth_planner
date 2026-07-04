@@ -2,7 +2,14 @@
 
 import pytest
 
-from engine.aca import aca_applies, aca_excess_aptc_repayment, aca_subsidy, aca_subsidy_loss
+from engine.aca import (
+    aca_age_factor,
+    aca_applies,
+    aca_excess_aptc_repayment,
+    aca_subsidy,
+    aca_subsidy_loss,
+    effective_benchmark_premium,
+)
 from engine.scenario import (
     ConversionPlan,
     run_scenario,
@@ -434,3 +441,48 @@ class TestACA2026:
 
         rate = aca_premium_cap_rate(200_000, enhanced_subsidies_active=False, filing_status="MFJ")
         assert rate == 0.0
+
+
+class TestAcaAgeFactor:
+    def test_anchor_values(self):
+        assert aca_age_factor(55) == approx(2.230)
+        assert aca_age_factor(61) == approx(2.810)
+        assert aca_age_factor(64) == approx(3.000)
+
+    def test_caps_and_clamps(self):
+        assert aca_age_factor(70) == approx(3.000)  # 64+ cap
+        assert aca_age_factor(40) == approx(1.278)
+        assert aca_age_factor(30) == approx(1.278)  # <=40 clamp
+
+
+class TestEffectiveBenchmarkPremium:
+    COUPLE = 21_600.0
+
+    def test_none_enrolled_is_zero(self):
+        assert effective_benchmark_premium(
+            self.COUPLE, your_age=61, your_on_aca=False,
+            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
+        ) == 0.0
+
+    def test_both_enrolled_is_full_couple_rate(self):
+        assert effective_benchmark_premium(
+            self.COUPLE, your_age=61, your_on_aca=True,
+            spouse_age=55, spouse_on_aca=True, filing_status="MFJ",
+        ) == approx(self.COUPLE)
+
+    def test_one_enrolled_mfj_uses_age_rated_share(self):
+        # 61yo enrolled, 55yo not: share = 2.810 / (2.810 + 2.230)
+        expected = self.COUPLE * (2.810 / (2.810 + 2.230))
+        got = effective_benchmark_premium(
+            self.COUPLE, your_age=61, your_on_aca=True,
+            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
+        )
+        assert got == approx(expected)
+        assert got > self.COUPLE * 0.5  # strictly more than the old 50/50 split
+
+    def test_single_enrolled_gets_full_individual_benchmark(self):
+        # Single filer: one household adult -> no halving of their benchmark
+        assert effective_benchmark_premium(
+            self.COUPLE, your_age=61, your_on_aca=True,
+            spouse_age=0, spouse_on_aca=False, filing_status="Single",
+        ) == approx(self.COUPLE)

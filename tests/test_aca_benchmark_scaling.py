@@ -2,7 +2,7 @@
 
 import pytest
 
-from engine.aca import aca_subsidy, aca_subsidy_loss
+from engine.aca import aca_subsidy, aca_subsidy_loss, effective_benchmark_premium
 from engine.aca_irmaa_compute import compute_cost_curves, compute_year_by_year_timeline
 from engine.scenario_compute import compute_aca
 from engine.sweet_spot_compute import BaseIncome, all_in_at_conversion
@@ -12,7 +12,8 @@ from models.household import Household, SurvivorScenario
 def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:
     # R2-#1: the excess-APTC clawback must use the same enrollee-scaled benchmark
     # as the subsidy-loss path. One enrollee (you 60 enrolled, spouse 66 -> off ACA)
-    # => effective benchmark is half the couple figure.
+    # => effective benchmark is the age-rated share (not a flat 50/50 split).
+    # factor_60=2.714, factor_66=3.000 (capped); share = 2.714/(2.714+3.000).
     benchmark = 21_600.0
     magi = 60_000.0
     advance = 10_000.0
@@ -33,9 +34,18 @@ def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:
         year=2026,
         cpi=0.0,
     )
-    half_ptc = aca_subsidy(
+    # Age-rated effective benchmark: ya=60 enrolled, sa=66 (aca_applies=False)
+    age_rated_benchmark = effective_benchmark_premium(
+        benchmark,
+        your_age=60,
+        your_on_aca=True,
+        spouse_age=66,
+        spouse_on_aca=False,
+        filing_status="MFJ",
+    )
+    age_rated_ptc = aca_subsidy(
         magi,
-        benchmark * 0.5,
+        age_rated_benchmark,
         enhanced_subsidies_active=True,
         filing_status="MFJ",
         year=2026,
@@ -44,21 +54,34 @@ def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:
     full_ptc = aca_subsidy(
         magi, benchmark, enhanced_subsidies_active=True, filing_status="MFJ", year=2026, cpi=0.0
     )
-    assert clawback == pytest.approx(advance - half_ptc)
+    assert clawback == pytest.approx(advance - age_rated_ptc)
     assert clawback != pytest.approx(advance - full_ptc)
+    # Age-rated share (2.714/5.714 ≈ 47.5%) is less than 50/50 for a 60+66 household
+    assert age_rated_benchmark < benchmark * 0.5
 
 
 def test_compute_cost_curves_scales_benchmark_single_enrollee() -> None:
-    # R1 #2: ACA Explorer curves must scale the benchmark by enrollee count.
+    # R1 #2: ACA Explorer curves must scale the benchmark by age-rated enrollee share.
+    # Default hh ages: your_age=55, spouse_age=53.
+    # One enrollee (you); age-rated share = factor_55/(factor_55+factor_53)
+    #   = 2.230/(2.230+2.040) ≠ 0.5.
     hh = Household()
     hh.your_aca_enrolled = True
     hh.spouse_aca_enrolled = False  # one enrollee (both under 65 by default)
     hh.aca_enhanced_subsidies_active = True
     magi = 80_000.0
     cc = compute_cost_curves([magi], base_magi=magi, net_inv_income=0.0, hh=hh, year=2026, cpi=0.0)
+    age_rated_bench = effective_benchmark_premium(
+        hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        your_on_aca=True,
+        spouse_age=hh.spouse_age,
+        spouse_on_aca=False,
+        filing_status=hh.filing_status,
+    )
     expected = aca_subsidy(
         magi,
-        hh.aca_benchmark_premium_annual * 0.5,
+        age_rated_bench,
         enhanced_subsidies_active=True,
         filing_status=hh.filing_status,
         year=2026,
@@ -66,10 +89,15 @@ def test_compute_cost_curves_scales_benchmark_single_enrollee() -> None:
     )
     assert cc.aca_subsidy_vals[0] == pytest.approx(expected)
     assert expected > 0
+    # Age-rated share (55yo) is slightly above 50/50 for a 55+53 pair
+    assert age_rated_bench > hh.aca_benchmark_premium_annual * 0.5
 
 
 def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
-    # R1 #3: Sweet Spot all-in ACA loss must scale the benchmark by enrollee count.
+    # R1 #3: Sweet Spot all-in ACA loss must scale the benchmark by age-rated share.
+    # Default hh ages: your_age=55, spouse_age=53.
+    # One enrollee (you); age-rated share = factor_55/(factor_55+factor_53)
+    #   = 2.230/(2.230+2.040) ≈ 52.2% — strictly above the old 50/50 split.
     hh = Household()
     hh.your_aca_enrolled = True
     hh.spouse_aca_enrolled = False  # one enrollee
@@ -88,10 +116,18 @@ def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
         ytd_magi=0.0,
     )
     res = all_in_at_conversion(hh, base, conv=20_000.0, net_inv_income=0.0)
+    age_rated_bench = effective_benchmark_premium(
+        hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        your_on_aca=True,
+        spouse_age=hh.spouse_age,
+        spouse_on_aca=False,
+        filing_status=hh.filing_status,
+    )
     expected = aca_subsidy_loss(
         40_000.0,
         60_000.0,
-        benchmark=hh.aca_benchmark_premium_annual * 0.5,
+        benchmark=age_rated_bench,
         enhanced_subsidies_active=True,
         filing_status=hh.filing_status,
         year=2026,
@@ -99,6 +135,8 @@ def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
     )
     assert res.aca_loss == pytest.approx(expected)
     assert expected > 0
+    # Age-rated share (55yo in a 55+53 pair) is slightly above 50/50
+    assert age_rated_bench > hh.aca_benchmark_premium_annual * 0.5
 
 
 def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
