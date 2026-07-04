@@ -6,6 +6,7 @@ No Streamlit dependency — safe to import in tests and engine modules.
 from __future__ import annotations
 
 from engine.portfolio_sync import PortfolioSnapshot
+from engine.portfolio_sync.classify import _resolve_override
 
 ALLOWED_ACCOUNT_TYPES = frozenset({"trad_ira", "roth_ira", "brokerage", "hsa", "403b"})
 
@@ -64,6 +65,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         "advance_aptc_annual",
         "medicare_part_b_base_monthly",
         "cpi_assumption",
+        "filing_status",
     ]
     for k in scalar_keys:
         if k in data:
@@ -72,11 +74,12 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     if "grant_strikes" in data:
         updates["_user_grant_strikes"] = data["grant_strikes"]
     if "account_type_overrides" in data and isinstance(data["account_type_overrides"], dict):
-        updates["account_type_overrides"] = {
-            acct: t
-            for acct, t in data["account_type_overrides"].items()
-            if t in ALLOWED_ACCOUNT_TYPES
-        }
+        valid: dict = {}
+        for acct, entry in data["account_type_overrides"].items():
+            acct_type, _owner = _resolve_override(entry)
+            if acct_type in ALLOWED_ACCOUNT_TYPES:
+                valid[acct] = entry
+        updates["account_type_overrides"] = valid
     if "prior_year_magi" in data:
         # Keys arrive as strings from JSON; cast to int at load time
         updates["prior_year_magi"] = {

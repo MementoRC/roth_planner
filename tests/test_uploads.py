@@ -747,3 +747,104 @@ class TestMalformedUploadRaisesAttributeError:
         # This test documents the engine-layer behaviour: returns empty dict.
         result = build_user_defaults_session_updates([], as_spouse=False)  # type: ignore[arg-type]
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# F2 regression — filing_status round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestFilingStatusRoundTrip:
+    """filing_status must survive the scalar export/import path (audit F2)."""
+
+    def test_filing_status_passes_through_me_mode(self):
+        data = {
+            "filing_status": "Single",
+            "your_age": 61,
+            "living_expenses": 80_000,
+        }
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert upd["filing_status"] == "Single"
+        assert upd["your_age"] == 61
+        assert upd["living_expenses"] == 80_000
+
+    def test_filing_status_mfj_passes_through(self):
+        data = {"filing_status": "MFJ"}
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert upd["filing_status"] == "MFJ"
+
+    def test_filing_status_absent_is_not_emitted(self):
+        data = {"your_age": 61}
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert "filing_status" not in upd
+
+    def test_filing_status_ignored_in_spouse_mode(self):
+        # spouse cross-map only emits your_*/spouse_* slot remapping; joint
+        # scalars like filing_status are deliberately excluded
+        data = {"filing_status": "Single", "your_age": 55}
+        upd = build_user_defaults_session_updates(data, as_spouse=True)
+        assert "filing_status" not in upd
+        assert upd == {"spouse_age": 55}
+
+
+# ---------------------------------------------------------------------------
+# F3 regression — account_type_overrides nested-dict no-crash
+# ---------------------------------------------------------------------------
+
+
+class TestAccountTypeOverridesNestedDict:
+    """Nested-dict override form must not crash import; other fields survive (audit F3)."""
+
+    def test_nested_form_no_crash_and_preserved(self):
+        data = {
+            "your_age": 61,
+            "account_type_overrides": {
+                "U1234567": {"type": "trad_ira", "owner": "you"},
+            },
+        }
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        # No TypeError raised; other field present
+        assert upd["your_age"] == 61
+        # Override preserved in its original nested form
+        assert upd["account_type_overrides"] == {
+            "U1234567": {"type": "trad_ira", "owner": "you"},
+        }
+
+    def test_nested_form_invalid_type_excluded(self):
+        data = {
+            "account_type_overrides": {
+                "U1234567": {"type": "invalid_type", "owner": "you"},
+                "U9999999": {"type": "roth_ira", "owner": "spouse"},
+            },
+        }
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert "U1234567" not in upd["account_type_overrides"]
+        assert upd["account_type_overrides"] == {
+            "U9999999": {"type": "roth_ira", "owner": "spouse"},
+        }
+
+    def test_flat_form_still_works(self):
+        data = {
+            "account_type_overrides": {
+                "SomeIRAAccount": "trad_ira",
+                "BadType": "invalid",
+            },
+        }
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert upd["account_type_overrides"] == {"SomeIRAAccount": "trad_ira"}
+
+    def test_mixed_flat_and_nested_forms(self):
+        data = {
+            "account_type_overrides": {
+                "U1234567": {"type": "trad_ira", "owner": "you"},
+                "SomeBrokerage": "brokerage",
+                "BadEntry": {"type": "unknown", "owner": "you"},
+            },
+        }
+        upd = build_user_defaults_session_updates(data, as_spouse=False)
+        assert set(upd["account_type_overrides"].keys()) == {"U1234567", "SomeBrokerage"}
+        assert upd["account_type_overrides"]["U1234567"] == {
+            "type": "trad_ira",
+            "owner": "you",
+        }
+        assert upd["account_type_overrides"]["SomeBrokerage"] == "brokerage"
