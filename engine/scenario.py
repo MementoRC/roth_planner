@@ -716,7 +716,13 @@ def run_scenario(
         cum_aca += yr.aca_loss
         cum_niit += yr.niit_cost
         if ya >= hh.your_rmd_start_age or sa >= hh.spouse_rmd_start_age:
-            cum_rmd_tax += yr.federal_tax_amt
+            # Exclude conversion_tax from the RMD-phase accumulator so total_rmd_tax
+            # reflects only the pure RMD burden.  In overlap years (RMD fires while
+            # a spouse is still converting), federal_tax_amt already absorbs
+            # conversion_tax; cum_conv_tax also accumulates it — subtracting here
+            # ensures each year's conversion tax is counted exactly once across
+            # total_rmd_tax + total_conv_tax (audit 0705 #views-financial-5).
+            cum_rmd_tax += yr.federal_tax_amt - yr.conversion_tax
         cum_brok_tax += yr.brokerage_gain_tax
 
         results.append(yr)

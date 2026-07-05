@@ -12,6 +12,7 @@ import streamlit as st
 
 from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
+from engine.scenario_compare import compute_cumulative_net_benefit, compute_summary_rows
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
 
@@ -98,8 +99,11 @@ def render(hh: Household):
         )
 
     with col4:
-        brok_saved = no_conv.total_brok_tax - with_conv.total_brok_tax
-        net = tax_saved + brok_saved - with_conv.total_conv_tax
+        # Canonical all-in net benefit: matches the Scenario Comparator (audit 0705
+        # #views-financial-10).  Folds in federal tax + IRMAA + brokerage gain tax
+        # + ACA subsidy loss + NIIT across all years (not just RMD years).
+        _summary = compute_summary_rows([no_conv, with_conv], no_conv)
+        net = _summary[1].savings_vs_baseline  # positive = saves money vs no-conversion
         st.metric(
             "Net Lifetime Benefit", fmt_dollars(net), f"{'Positive ✓' if net > 0 else 'Negative ✗'}"
         )
@@ -211,19 +215,11 @@ def render(hh: Household):
         st.plotly_chart(fig_cum, width="stretch")
 
     # --- Chart 4: Net Benefit Over Time ---
-    net_benefit = []
-    cum_conv_tax = 0
-    cum_rmd_savings = 0
-    cum_brok_savings = 0
-    for yr_nc, yr_wc in zip(no_conv.years, with_conv.years, strict=False):
-        cum_conv_tax = with_conv.total_conv_tax  # sunk cost paid during conv years
-        cum_rmd_savings += (
-            yr_nc.federal_tax_amt - yr_wc.federal_tax_amt
-            if yr_nc.your_age >= hh.your_rmd_start_age
-            else 0
-        )
-        cum_brok_savings += yr_nc.brokerage_gain_tax - yr_wc.brokerage_gain_tax
-        net_benefit.append(cum_rmd_savings + cum_brok_savings - cum_conv_tax)
+    # Uses compute_cumulative_net_benefit (all-in: federal + IRMAA + brok + ACA + NIIT)
+    # so the chart and the col4 headline metric are consistent (audit 0705 #views-financial-10).
+    net_benefit = compute_cumulative_net_benefit(
+        with_conv, no_conv, rmd_start_age=hh.your_rmd_start_age
+    )
 
     fig_net = go.Figure()
     fig_net.add_trace(
@@ -261,7 +257,7 @@ def render(hh: Household):
         )
 
     fig_net.update_layout(
-        title="Net Benefit: Conversion Tax Paid vs RMD + Brokerage Tax Saved",
+        title="Net Benefit: All-In Cost Savings (Tax + IRMAA + ACA + NIIT + Brokerage)",
         xaxis_title="Your Age",
         yaxis_title="Net Benefit ($)",
         yaxis_tickformat="$,.0s",
