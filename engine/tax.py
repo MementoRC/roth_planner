@@ -70,10 +70,12 @@ LTCG_THRESHOLDS_MFJ = (98_900, 613_700)
 # 0% up to $49,450; 15% up to $545,500; 20% above
 LTCG_THRESHOLDS_SINGLE = (49_450, 545_500)
 
-# IRS safe-harbor threshold: prior-year AGI > $150K MFJ ($75K Single) requires 110% safe harbor;
-# below threshold qualifies for 100% safe harbor. Source: IRC §6654(d)(1)(C).
-SAFE_HARBOR_AGI_THRESHOLD_MFJ = 150_000.0
-SAFE_HARBOR_AGI_THRESHOLD_SINGLE = 75_000.0
+# IRS safe-harbor threshold (IRC §6654(d)(1)(C)): prior-year AGI ABOVE the threshold requires the
+# 110% safe harbor; at or below qualifies for 100%. The threshold is $150K for every filing status
+# EXCEPT married-filing-separately, which is $75K per §6654(d)(1)(C)(ii). (The app supports MFJ and
+# Single, both $150K; MFS is included for correctness.)
+SAFE_HARBOR_AGI_THRESHOLD = 150_000.0
+SAFE_HARBOR_AGI_THRESHOLD_MFS = 75_000.0
 
 
 def federal_tax(taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI) -> float:
@@ -518,25 +520,38 @@ def safe_harbor_payment(
     current_year_estimate: float,
     already_paid_ytd: float,
     payment_date: str,
-    prior_year_agi: float = 200_000.0,
+    prior_year_agi: float | None = None,
+    filing_status: str = "MFJ",
 ) -> SafeHarborGuidance:
     """Compute remaining safe-harbor payment to avoid underpayment penalty.
 
     IRS Form 2210 safe harbor: pay LESSER of:
-    - 100% of prior year tax  (when prior-year AGI ≤ $150K MFJ / $75K Single)
-    - 110% of prior year tax  (when prior-year AGI > $150K MFJ / $75K Single)
+    - 100% of prior year tax  (when prior-year AGI ≤ threshold)
+    - 110% of prior year tax  (when prior-year AGI > threshold)
     - current year tax estimate (90% rule approximated as 100% here)
 
-    The AGI threshold used here is $150,000 MFJ (IRS Rev. Proc., Form 2210).
-    ``prior_year_agi`` defaults to 200,000 so callers that don't supply it
-    continue to receive the 110% rule (preserves pre-fix behaviour).
+    Per IRC §6654(d)(1)(C) the AGI threshold is $150,000 for all filing statuses
+    except married-filing-separately ($75,000). When ``prior_year_agi`` is None
+    (unknown), the 110% rule is conservatively assumed and the ``rule_used`` label
+    is annotated so the UI can disclose the assumption rather than silently applying
+    110% to every household.
 
     If prior_year_tax is 0 (no data), uses current-year estimate only.
     """
     next_due = _next_quarterly_due(payment_date)
 
-    # IRS threshold: $150K MFJ (or $75K Single) → 110%; at or below → 100%
-    prior_multiplier = 1.10 if prior_year_agi > SAFE_HARBOR_AGI_THRESHOLD_MFJ else 1.00
+    # §6654(d)(1)(C): $150K threshold for all statuses except MFS ($75K). Above → 110%; at or below
+    # → 100%. When prior-year AGI is unknown, conservatively assume 110% and annotate the label.
+    agi_unknown = prior_year_agi is None
+    if prior_year_agi is None:
+        prior_multiplier = 1.10
+    else:
+        agi_threshold = (
+            SAFE_HARBOR_AGI_THRESHOLD_MFS
+            if filing_status == "MFS"
+            else SAFE_HARBOR_AGI_THRESHOLD
+        )
+        prior_multiplier = 1.10 if prior_year_agi > agi_threshold else 1.00
 
     if prior_year_tax <= 0:
         safe_harbor_target = current_year_estimate
@@ -544,9 +559,10 @@ def safe_harbor_payment(
     else:
         prior_safe = prior_multiplier * prior_year_tax
         pct_label = "110%" if prior_multiplier > 1.0 else "100%"
+        agi_note = " (assumed — prior AGI unknown)" if agi_unknown else ""
         if prior_safe <= current_year_estimate:
             safe_harbor_target = prior_safe
-            rule_used = f"{pct_label} prior year"
+            rule_used = f"{pct_label} prior year{agi_note}"
         else:
             safe_harbor_target = current_year_estimate
             rule_used = "100% current estimate"

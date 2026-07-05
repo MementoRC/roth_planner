@@ -397,11 +397,17 @@ def render(hh: Household):
     # federal_withholding_ytd not yet on YTDSnapshot — treat as 0 until added
     # TODO: add federal_withholding_ytd field to YTDSnapshot
     already_paid = float(getattr(ytd, "federal_withholding_ytd", 0.0))
+    # Prior-year AGI governs the 100% vs 110% safe-harbor rule (§6654). Use the household's cached
+    # prior-year MAGI as the AGI proxy; None when unknown → the engine assumes 110% and labels it.
+    prior_year = _date.today().year - 1
+    prior_year_agi = hh.prior_year_magi.get(prior_year)
     guidance: SafeHarborGuidance = safe_harbor_payment(
         prior_year_tax=prior_year_tax,
         current_year_estimate=estimate.total,
         already_paid_ytd=already_paid,
         payment_date=_date.today().isoformat(),
+        prior_year_agi=prior_year_agi,
+        filing_status=hh.filing_status,
     )
     if prior_year_tax == 0:
         st.warning(

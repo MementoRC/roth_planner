@@ -164,6 +164,52 @@ class TestSafeHarborPayment:
         assert g.safe_harbor_target == pytest.approx(88_000.0)
         assert "110% prior year" in g.rule_used
 
+    def test_safe_harbor_single_uses_150k_threshold_not_75k(self):
+        """Single filer, AGI between $75K and $150K → 100% rule (Single threshold is $150K, not $75K)."""
+        from engine.tax import safe_harbor_payment
+
+        g = safe_harbor_payment(
+            prior_year_tax=80_000.0,
+            current_year_estimate=120_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=100_000.0,
+            filing_status="Single",
+        )
+        assert g.safe_harbor_target == pytest.approx(80_000.0)
+        assert "100% prior year" in g.rule_used
+
+    def test_safe_harbor_mfs_uses_75k_threshold(self):
+        """MFS filer, AGI above $75K but below $150K → 110% rule (MFS threshold is $75K)."""
+        from engine.tax import safe_harbor_payment
+
+        g = safe_harbor_payment(
+            prior_year_tax=80_000.0,
+            current_year_estimate=120_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=100_000.0,
+            filing_status="MFS",
+        )
+        assert g.safe_harbor_target == pytest.approx(88_000.0)
+        assert "110% prior year" in g.rule_used
+
+    def test_safe_harbor_unknown_agi_assumes_110pct_and_labels_it(self):
+        """prior_year_agi=None → conservatively assume 110%, and the rule label says it's assumed."""
+        from engine.tax import safe_harbor_payment
+
+        g = safe_harbor_payment(
+            prior_year_tax=80_000.0,
+            current_year_estimate=120_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=None,
+            filing_status="Single",
+        )
+        assert g.safe_harbor_target == pytest.approx(88_000.0)
+        assert "110%" in g.rule_used
+        assert "assumed" in g.rule_used.lower()
+
     def test_next_quarterly_due_rolls_saturday_to_monday(self):
         """Quarterly due dates that fall on Saturday must advance to Monday."""
         from engine.tax import _next_quarterly_due
