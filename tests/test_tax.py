@@ -759,3 +759,85 @@ class TestSSCapAndBracketEdges:
         assert marginal_rate(c0, year=BASE_YEAR, cpi=DEFAULT_CPI) == r1
         # Just below -> current bracket's rate.
         assert marginal_rate(c0 - 1, year=BASE_YEAR, cpi=DEFAULT_CPI) == r0
+
+
+class TestEstimateYtdSsOmissionCluster:
+    """Audit 0705 #4 — taxable SS must enter NIIT MAGI, the senior-bonus phase-out base,
+    and the effective-rate denominator in estimate_ytd_federal_tax (mirrors headroom engine)."""
+
+    def test_effective_rate_denominator_includes_taxable_ss(self):
+        """H3: effective_rate denominator must include taxable SS (numerator already taxes it)."""
+        from engine.tax import estimate_ytd_federal_tax, taxable_ss
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        hh = Household(
+            your_age=60, spouse_age=60, base_year=2026, cpi_assumption=0.0,
+            your_ira=500_000.0, spouse_ira=500_000.0,
+            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[],
+        )
+        combined_ss = 40_000.0
+        est = estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
+        tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="MFJ")
+
+        assert tss > 0
+        assert est.effective_rate == pytest.approx(est.total / (ytd.magi_ytd + tss))
+        # SS sits in the denominator → reported rate is strictly below the SS-free denominator
+        assert est.effective_rate < est.total / ytd.magi_ytd
+
+    def test_niit_magi_includes_taxable_ss(self):
+        """H2: NIIT MAGI must include taxable SS (AGI includes it per §86); can only under-apply otherwise."""
+        from engine.niit import niit
+        from engine.tax import estimate_ytd_federal_tax, taxable_ss
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        # niit_magi_ytd = 235k wages + 15k LTCG = 250k, exactly at the MFJ threshold.
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=235_000.0, ltcg_ytd=15_000.0)
+        hh = Household(
+            your_age=60, spouse_age=60, base_year=2026, cpi_assumption=0.0,
+            your_ira=500_000.0, spouse_ira=500_000.0,
+            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[],
+        )
+        combined_ss = 40_000.0
+        est = estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
+        tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="MFJ")
+        nii = ytd.ltcg_ytd  # stcg/dividends/interest all 0 → NII == LTCG
+
+        expected = niit(ytd.niit_magi_ytd + tss, nii, filing_status="MFJ")
+        buggy = niit(ytd.niit_magi_ytd, nii, filing_status="MFJ")
+        assert tss > 0
+        assert expected > buggy  # the SS pushes MAGI over the threshold
+        assert est.niit == pytest.approx(expected)
+
+    def test_senior_bonus_phaseout_base_includes_taxable_ss(self):
+        """Panel #4: OBBBA senior-bonus phase-out MAGI must include taxable SS (§151(d)(5) sits on AGI)."""
+        from unittest.mock import patch
+
+        import engine.tax as tax_mod
+        from engine.tax import taxable_ss
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=120_000.0)
+        hh = Household(
+            your_age=66, spouse_age=0, base_year=2026, cpi_assumption=0.0,
+            your_ira=500_000.0, spouse_ira=0.0,
+            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[], filing_status="Single",
+        )
+        combined_ss = 40_000.0
+        tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="Single")
+
+        captured: dict = {}
+        real = tax_mod.senior_bonus_deduction
+
+        def _spy(*args, **kwargs):
+            captured["magi"] = args[2]  # 3rd positional arg is the phase-out MAGI
+            return real(*args, **kwargs)
+
+        with patch.object(tax_mod, "senior_bonus_deduction", side_effect=_spy):
+            tax_mod.estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
+
+        assert tss > 0
+        assert captured["magi"] == pytest.approx(ytd.niit_magi_ytd + tss)
