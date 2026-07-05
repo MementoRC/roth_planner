@@ -685,16 +685,12 @@ class TestSurvivorScenario:
             filing_status="Single",
             year=2027,
         )
-        # Buggy code: deceased spouse age kept at 73 → both counted, surcharge × 2.
-        two_person_cost, _ = irmaa_for_year(
-            230_000,
-            73,  # your income-year age
-            73,  # deceased spouse still counted (the bug)
-            filing_status="Single",
-            year=2027,
-        )
+        # A wrongly double-counted survivor would pay two per-person surcharges. Since audit
+        # 0705 #3, irmaa_for_year itself gates the beneficiary count on filing_status, so a
+        # Single-filer call can no longer reproduce the 2× cost — the reference is arithmetic.
+        two_person_cost = 2 * one_person_cost
         assert one_person_cost > 0, "sanity: $230K MAGI must trigger Single IRMAA"
-        assert two_person_cost > one_person_cost, "sanity: 2-person Single > 1-person Single"
+        assert two_person_cost > one_person_cost, "sanity: a double-counted survivor would pay 2×"
         assert yr_survivor.irmaa_cost == approx(one_person_cost, tol=1.0), (
             f"Survivor IRMAA {yr_survivor.irmaa_cost:.0f} should equal 1-person cost "
             f"{one_person_cost:.0f}, not 2-person cost {two_person_cost:.0f}"

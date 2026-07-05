@@ -167,7 +167,14 @@ def irmaa_for_year(
     """
     medicare_your_age = your_age_income_year + 2
     medicare_spouse_age = spouse_age_income_year + 2
-    on_medicare = sum(1 for a in [medicare_your_age, medicare_spouse_age] if a >= 65)
+    # Only MFJ has a second Medicare beneficiary. For any non-MFJ status the spouse age is not a
+    # real second enrollee — IRMAA surcharges are per-beneficiary (42 U.S.C. §1395r(i) / IRC
+    # §1839(i)) — so cap the count at the primary. Mirrors the _is_mfj_curves guard in
+    # engine/aca_irmaa_compute.py.
+    if filing_status == "MFJ":
+        on_medicare = sum(1 for a in [medicare_your_age, medicare_spouse_age] if a >= 65)
+    else:
+        on_medicare = 1 if medicare_your_age >= 65 else 0
 
     if on_medicare == 0:
         return 0.0, 0

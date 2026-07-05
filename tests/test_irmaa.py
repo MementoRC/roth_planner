@@ -478,3 +478,51 @@ class TestSurchargeIndexedThresholdProbe:
         # schedule; at cpi>0 that is below the indexed tier-1, so surcharge == 0.
         assert index_value(IRMAA_TIERS_MFJ[0][0], y, cpi) > IRMAA_TIERS_MFJ[0][0] + 1
         assert irmaa_surcharge(IRMAA_TIERS_MFJ[0][0] + 1, 2, year=y, cpi=cpi) == 0.0
+
+
+class TestIrmaaBeneficiaryGate:
+    """Audit 0705 #3 — a Single filer must never get a second IRMAA beneficiary from a phantom
+    spouse age (§1839(i) surcharges are per-beneficiary). Mirrors the aca_irmaa_compute guard."""
+
+    def test_single_filer_ignores_phantom_spouse_beneficiary(self):
+        """Single filer: a spouse age that reaches Medicare must NOT double the surcharge."""
+        import pytest
+
+        from engine.irmaa import irmaa_for_year
+
+        magi = 250_000.0  # above the Single tier-1 threshold → a real surcharge
+        # Both ages reach Medicare in the payment year (income year + 2).
+        phantom, _ = irmaa_for_year(
+            magi,
+            your_age_income_year=64,
+            spouse_age_income_year=64,
+            filing_status="Single",
+            year=2026,
+            cpi=0.0,
+        )
+        # Baseline: spouse far from 65. For a Single filer this MUST give the same surcharge.
+        baseline, _ = irmaa_for_year(
+            magi,
+            your_age_income_year=64,
+            spouse_age_income_year=40,
+            filing_status="Single",
+            year=2026,
+            cpi=0.0,
+        )
+        assert phantom > 0  # actually in a surcharge tier
+        assert phantom == pytest.approx(baseline)  # spouse age must not affect a Single filer
+
+    def test_mfj_still_counts_both_beneficiaries(self):
+        """Regression: MFJ must still count both spouses (fix must not break the MFJ path)."""
+        import pytest
+
+        from engine.irmaa import irmaa_for_year
+
+        magi = 250_000.0
+        both, _ = irmaa_for_year(
+            magi, 64, 64, filing_status="MFJ", year=2026, cpi=0.0
+        )
+        one, _ = irmaa_for_year(
+            magi, 64, 40, filing_status="MFJ", year=2026, cpi=0.0
+        )
+        assert both == pytest.approx(2 * one)  # two beneficiaries = twice one
