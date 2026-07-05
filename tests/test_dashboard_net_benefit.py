@@ -20,7 +20,6 @@ from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compare import compute_cumulative_net_benefit, compute_summary_rows
 from models.household import Household
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
@@ -192,7 +191,7 @@ class TestOverlapYearNoDoubleCount:
         """
         # Spouse converts during years 1-5 (your_age 75-79 → overlap)
         plan = ConversionPlan(
-            spouse_conversions={yr: 50_000 for yr in range(2026, 2031)}
+            spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000)
         )
         result = run_scenario(overlap_hh, plan, "Overlap Conversion", end_age=85)
 
@@ -235,7 +234,7 @@ class TestOverlapYearNoDoubleCount:
         cost comparison must be consistent with manually summed per-year deltas.
         """
         plan = ConversionPlan(
-            spouse_conversions={yr: 50_000 for yr in range(2026, 2031)}
+            spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000)
         )
         no_conv = run_no_conversion(overlap_hh, end_age=85)
         with_conv = run_scenario(overlap_hh, plan, "Overlap Conversion", end_age=85)
