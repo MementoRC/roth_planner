@@ -1064,3 +1064,49 @@ class TestRMDStartAge:
         """Explicit rmd_start_age != 75 must not be overridden by __post_init__."""
         hh = Household(base_year=2026, your_age=71, your_rmd_start_age=74)
         assert hh.your_rmd_start_age == 74
+
+
+class TestRMDCohortBirthYear:
+    """ira-rmd-3: explicit birth-year overrides the age-derived cohort.
+
+    SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
+
+    The age-only path (base_year - your_age) has a one-year off-by-one for people
+    born late in a year: someone born Nov 1959 who is 66 at the start of 2026
+    yields birth_year = 2026 - 66 = 1960 → 75, suppressing two RMD years.
+    Providing your_birth_year=1959 forces the correct cohort (73).
+    """
+
+    def test_explicit_birth_year_1959_yields_73(self):
+        """Person born late 1959 is age 66 at start of 2026.
+
+        Age-only path: 2026 - 66 = 1960 → 75 (wrong cohort, suppresses RMDs at 73-74).
+        Explicit your_birth_year=1959 must resolve to 73.
+        """
+        hh = Household(base_year=2026, your_age=66, your_birth_year=1959)
+        assert hh.your_rmd_start_age == 73
+
+    def test_explicit_birth_year_1960_yields_75(self):
+        """Person born 1960 (age 65 in 2026) → cohort 75 (correct either way)."""
+        hh = Household(base_year=2026, your_age=65, your_birth_year=1960)
+        assert hh.your_rmd_start_age == 75
+
+    def test_explicit_birth_year_1951_yields_73(self):
+        """Lower boundary of SECURE 2.0 73-cohort: born 1951 → 73."""
+        hh = Household(base_year=2026, your_age=75, your_birth_year=1951)
+        assert hh.your_rmd_start_age == 73
+
+    def test_spouse_explicit_birth_year_1959_yields_73(self):
+        """Spouse born 1959 (age 66 in 2026) → cohort 73 via spouse_birth_year."""
+        hh = Household(base_year=2026, your_age=68, spouse_age=66, spouse_birth_year=1959)
+        assert hh.spouse_rmd_start_age == 73
+
+    def test_no_birth_year_preserves_age_only_derivation(self):
+        """Omitting birth year uses the existing base_year - age convention (backward compat)."""
+        hh = Household(base_year=2026, your_age=71)  # 2026 - 71 = 1955 → 73
+        assert hh.your_rmd_start_age == 73
+
+    def test_explicit_rmd_start_age_not_overridden_by_birth_year(self):
+        """Explicit rmd_start_age != 75 is preserved even when birth_year is also supplied."""
+        hh = Household(base_year=2026, your_age=66, your_birth_year=1959, your_rmd_start_age=72)
+        assert hh.your_rmd_start_age == 72

@@ -174,6 +174,18 @@ class Household:
     spouse_rmd_start_age: int = (
         75  # SECURE 2.0 default; 1951-1959 cohort uses 73 per IRC §401(a)(9)(C)(v)(I)
     )
+
+    # Explicit birth years for RMD cohort determination (audit 0705 ira-rmd-3).
+    # When provided, __post_init__ uses these instead of (base_year - your_age) to
+    # determine the SECURE 2.0 cohort.  The age-only fallback has a one-year boundary
+    # ambiguity: someone born late in year Y who is age A at Jan 1 of base_year yields
+    # inferred birth year = base_year - A = Y+1, placing them in the wrong cohort.
+    # Convention: your_age / spouse_age in this model is age AT THE START of base_year
+    # (matches scenario.py: your_age_in(year) = your_age + (year - base_year)).
+    # Callers who know the actual birth year should supply it to avoid the cliff.
+    your_birth_year: int | None = None
+    spouse_birth_year: int | None = None
+
     your_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer first RMD to April 1 of following year (two RMDs land in year 2)
     spouse_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer spouse's first RMD likewise
 
@@ -296,10 +308,16 @@ class Household:
     def __post_init__(self) -> None:
         # Derive statutory RMD start age from birth year when still at the class default (75).
         # SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
+        # When an explicit birth year is provided it takes precedence over the age-derived
+        # birth year (audit 0705 ira-rmd-3): the age-only path has a one-year cliff for
+        # people born late in the year (e.g. Nov 1959, age 66 at Jan 1 2026 → inferred
+        # birth year 1960 → wrong cohort 75, suppressing RMDs at ages 73 and 74).
         if self.your_rmd_start_age == 75:
-            self.your_rmd_start_age = default_rmd_age(self.base_year - self.your_age)
+            your_by = self.your_birth_year if self.your_birth_year is not None else (self.base_year - self.your_age)
+            self.your_rmd_start_age = default_rmd_age(your_by)
         if self.spouse_rmd_start_age == 75:
-            self.spouse_rmd_start_age = default_rmd_age(self.base_year - self.spouse_age)
+            spouse_by = self.spouse_birth_year if self.spouse_birth_year is not None else (self.base_year - self.spouse_age)
+            self.spouse_rmd_start_age = default_rmd_age(spouse_by)
 
     def option_income(self, year: int, early: bool = True) -> float:
         """Ordinary income from exercising the grant expiring ~this year."""
