@@ -85,3 +85,52 @@ class TestPyodideGatingRothEligibility:
             "'Sync TurboTax Data' button appears before is_pyodide() guard — "
             "button is visible on Pyodide web build"
         )
+
+
+class TestRothTablesIndexing:
+    """Audit 0705 #5 — Roth per-year contribution/catch-up limits and phase-out ranges must
+    CPI-index past 2026 (IRS indexes them: §219/§408A/§414(v)), not silently freeze at 2026."""
+
+    def test_contrib_limit_exact_for_published_years(self):
+        import pytest
+
+        from views.roth_eligibility import contrib_limit_for_year
+
+        assert contrib_limit_for_year(2025) == pytest.approx(7_000)
+        assert contrib_limit_for_year(2026) == pytest.approx(7_500)
+
+    def test_contrib_limit_indexes_past_2026(self):
+        import pytest
+
+        from views.roth_eligibility import contrib_limit_for_year
+
+        v = contrib_limit_for_year(2031, cpi=0.025)
+        assert v == pytest.approx(7_500 * 1.025**5)
+        assert v > 7_500  # not frozen at the 2026 value
+
+    def test_catchup_indexes_past_2026(self):
+        import pytest
+
+        from views.roth_eligibility import catchup_50_for_year
+
+        v = catchup_50_for_year(2031, cpi=0.025)
+        assert v == pytest.approx(1_100 * 1.025**5)
+        assert v > 1_100
+
+    def test_phaseout_exact_for_published_year(self):
+        import pytest
+
+        from views.roth_eligibility import roth_phaseout_for_year
+
+        assert roth_phaseout_for_year(2026, "Single") == pytest.approx((153_000, 168_000))
+        assert roth_phaseout_for_year(2026, "MFJ") == pytest.approx((242_000, 252_000))
+
+    def test_phaseout_indexes_past_2026(self):
+        import pytest
+
+        from views.roth_eligibility import roth_phaseout_for_year
+
+        low, high = roth_phaseout_for_year(2031, "MFJ", cpi=0.025)
+        assert low == pytest.approx(242_000 * 1.025**5)
+        assert high == pytest.approx(252_000 * 1.025**5)
+        assert low > 242_000  # not frozen at the 2026 band

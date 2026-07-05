@@ -11,6 +11,7 @@ figures and IRA contribution amounts.
 import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
+from engine.tax_indexing import DEFAULT_CPI, index_tuple, index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 
@@ -37,6 +38,41 @@ ROTH_PHASEOUT_BY_YEAR: dict[int, dict[str, tuple[int, int]]] = {
         "Single": (153_000, 168_000),
     },
 }
+
+
+def contrib_limit_for_year(tax_year: int, cpi: float = DEFAULT_CPI) -> float:
+    """Roth/IRA elective contribution limit (IRC §219(b)(5)). Exact for published years;
+    CPI-indexed past 2026 (the IRS inflation-adjusts this limit) rather than frozen."""
+    if tax_year in CONTRIB_LIMIT_BY_YEAR:
+        return CONTRIB_LIMIT_BY_YEAR[tax_year]
+    if tax_year > 2026:
+        return index_value(CONTRIB_LIMIT_BY_YEAR[2026], tax_year, cpi)
+    return CONTRIB_LIMIT_BY_YEAR[min(CONTRIB_LIMIT_BY_YEAR)]
+
+
+def catchup_50_for_year(tax_year: int, cpi: float = DEFAULT_CPI) -> float:
+    """Age-50 catch-up contribution (IRC §414(v)). Exact for published years; CPI-indexed past 2026."""
+    if tax_year in CATCHUP_50_BY_YEAR:
+        return CATCHUP_50_BY_YEAR[tax_year]
+    if tax_year > 2026:
+        return index_value(CATCHUP_50_BY_YEAR[2026], tax_year, cpi)
+    return CATCHUP_50_BY_YEAR[min(CATCHUP_50_BY_YEAR)]
+
+
+def roth_phaseout_for_year(
+    tax_year: int, filing_status: str, cpi: float = DEFAULT_CPI
+) -> tuple[float, float]:
+    """Roth contribution MAGI phase-out range (IRC §408A(c)(3)). Exact for published years;
+    CPI-indexed past 2026 rather than frozen."""
+    if tax_year in ROTH_PHASEOUT_BY_YEAR:
+        low, high = ROTH_PHASEOUT_BY_YEAR[tax_year][filing_status]
+        return (float(low), float(high))
+    if tax_year > 2026:
+        low, high = index_tuple(ROTH_PHASEOUT_BY_YEAR[2026][filing_status], tax_year, cpi)
+        return (float(low), float(high))
+    low, high = ROTH_PHASEOUT_BY_YEAR[min(ROTH_PHASEOUT_BY_YEAR)][filing_status]
+    return (float(low), float(high))
+
 
 # Convenience aliases for the current default year (2026) — kept so that
 # any external references and the test suite that pins 2026 values still work.
@@ -349,9 +385,8 @@ def render(hh: Household):
     st.markdown("---")
 
     # Resolve per-year constants for the selected tax_year.
-    _contrib_limit = CONTRIB_LIMIT_BY_YEAR.get(tax_year, CONTRIB_LIMIT_BY_YEAR[2026])
-    _catchup_50 = CATCHUP_50_BY_YEAR.get(tax_year, CATCHUP_50_BY_YEAR[2026])
-    _roth_phaseout = ROTH_PHASEOUT_BY_YEAR.get(tax_year, ROTH_PHASEOUT_BY_YEAR[2026])
+    _contrib_limit = contrib_limit_for_year(tax_year, cpi=hh.cpi_assumption)
+    _catchup_50 = catchup_50_for_year(tax_year, cpi=hh.cpi_assumption)
 
     persons = [("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan)]
     if filing != "Single":
@@ -375,7 +410,7 @@ def render(hh: Household):
 
         if remaining == 0:
             # Check if they COULD have done Roth instead
-            lower, upper = _roth_phaseout.get(filing, _roth_phaseout["MFJ"])
+            lower, upper = roth_phaseout_for_year(tax_year, filing, cpi=hh.cpi_assumption)
             roth_allowed = _phase_out(magi, lower, upper, float(limit))
             if roth_allowed > 0:
                 st.error(
@@ -399,7 +434,7 @@ def render(hh: Household):
             continue
 
         # Direct Roth eligibility
-        lower, upper = _roth_phaseout.get(filing, _roth_phaseout["MFJ"])
+        lower, upper = roth_phaseout_for_year(tax_year, filing, cpi=hh.cpi_assumption)
         allowed = _phase_out(magi, lower, upper, float(remaining))
 
         if allowed >= remaining:
