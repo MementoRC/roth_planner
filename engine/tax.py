@@ -149,17 +149,24 @@ def deductions(
     spouse_age: int,
     std_ded: float = STD_DEDUCTION_MFJ,
     senior_extra: float = SENIOR_EXTRA_MFJ,
+    filing_status: str = "MFJ",
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
 ) -> float:
-    """Total standard deduction including senior extras."""
+    """Total standard deduction including senior extras.
+
+    Only MFJ has a second filer, so the spouse senior extra (IRC §63(f)) is
+    counted only for MFJ. For any other filing status the spouse_age argument is
+    ignored — mirrors the beneficiary gate in irmaa_for_year and prevents a
+    phantom-spouse double senior deduction for Single filers.
+    """
     ded = index_value(std_ded, year, cpi)
     se = index_value(senior_extra, year, cpi)
     senior: float = 0.0
     if your_age >= 65:
         senior += se
-    if spouse_age >= 65:
+    if filing_status == "MFJ" and spouse_age >= 65:
         senior += se
     return ded + senior
 

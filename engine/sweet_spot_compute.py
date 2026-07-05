@@ -164,7 +164,7 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     combined_ss = your_ss + spouse_ss
 
     if hh.filing_status == "Single":
-        ded = deductions(ya, sa, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi)
+        ded = deductions(ya, sa, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi)
     else:
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
 
