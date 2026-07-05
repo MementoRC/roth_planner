@@ -327,8 +327,10 @@ class ScenarioSummary:
     lifetime_tax: float  # sum of federal_tax_amt across years
     lifetime_irmaa: float  # sum of irmaa_cost
     lifetime_brok_tax: float  # sum of brokerage_gain_tax
-    all_in_cost: float  # lifetime_tax + lifetime_irmaa + lifetime_brok_tax
-    vs_baseline: float  # this.all_in_cost - baseline.all_in_cost (positive = worse)
+    lifetime_aca_loss: float  # sum of aca_loss (ACA subsidy lost)
+    lifetime_niit: float  # sum of niit_cost
+    all_in_cost: float  # tax + irmaa + brok + aca_loss + niit (matches Sweet Spot / ACA+IRMAA "all-in")
+    savings_vs_baseline: float  # baseline.all_in_cost - this.all_in_cost (positive = SAVES money vs baseline)
     ira_at_75: float  # IRA + Roth combined at your_age == 75 (grid-01 fix: includes roth begins)
     ira_at_85: float
     ira_at_95: float
@@ -341,8 +343,8 @@ def compute_summary_rows(
     """Aggregate per-scenario summary metrics.
 
     Baseline is the first scenario (no-conversion run).
-    vs_baseline = this.all_in_cost - baseline.all_in_cost
-    (positive = costs more than baseline; negative = saves money vs baseline).
+    savings_vs_baseline = baseline.all_in_cost - this.all_in_cost
+    (positive = saves money vs baseline; negative = costs more).
     """
 
     def _total_conv(s: ScenarioResult) -> float:
@@ -357,6 +359,12 @@ def compute_summary_rows(
     def _lifetime_brok_tax(s: ScenarioResult) -> float:
         return sum(yr.brokerage_gain_tax for yr in s.years)
 
+    def _lifetime_aca(s: ScenarioResult) -> float:
+        return sum(yr.aca_loss for yr in s.years)
+
+    def _lifetime_niit(s: ScenarioResult) -> float:
+        return sum(yr.niit_cost for yr in s.years)
+
     def _ira_at_age(s: ScenarioResult, age: int) -> float:
         # Value includes Roth balances so converted principal is not invisible (grid-01).
         yr = next((y for y in s.years if y.your_age == age), None)
@@ -367,7 +375,11 @@ def compute_summary_rows(
         )
 
     baseline_all_in = (
-        _lifetime_tax(baseline) + _lifetime_irmaa(baseline) + _lifetime_brok_tax(baseline)
+        _lifetime_tax(baseline)
+        + _lifetime_irmaa(baseline)
+        + _lifetime_brok_tax(baseline)
+        + _lifetime_aca(baseline)
+        + _lifetime_niit(baseline)
     )
 
     summaries: list[ScenarioSummary] = []
@@ -376,7 +388,9 @@ def compute_summary_rows(
         lifetime_tax = _lifetime_tax(s)
         lifetime_irmaa = _lifetime_irmaa(s)
         lifetime_brok = _lifetime_brok_tax(s)
-        all_in_cost = lifetime_tax + lifetime_irmaa + lifetime_brok
+        lifetime_aca = _lifetime_aca(s)
+        lifetime_niit = _lifetime_niit(s)
+        all_in_cost = lifetime_tax + lifetime_irmaa + lifetime_brok + lifetime_aca + lifetime_niit
 
         summaries.append(
             ScenarioSummary(
@@ -387,8 +401,10 @@ def compute_summary_rows(
                 lifetime_tax=lifetime_tax,
                 lifetime_irmaa=lifetime_irmaa,
                 lifetime_brok_tax=lifetime_brok,
+                lifetime_aca_loss=lifetime_aca,
+                lifetime_niit=lifetime_niit,
                 all_in_cost=all_in_cost,
-                vs_baseline=all_in_cost - baseline_all_in,
+                savings_vs_baseline=baseline_all_in - all_in_cost,
                 ira_at_75=_ira_at_age(s, 75),
                 ira_at_85=_ira_at_age(s, 85),
                 ira_at_95=_ira_at_age(s, 95),

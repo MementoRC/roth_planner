@@ -82,7 +82,7 @@ def render(hh: Household):
             "Lifetime IRMAA": fmt_dollars(s.lifetime_irmaa),
             "Lifetime Brok Tax": fmt_dollars(s.lifetime_brok_tax),
             "Total All-In Cost": fmt_dollars(s.all_in_cost),
-            "vs Baseline": fmt_dollars(s.vs_baseline, sign=True),
+            "Lifetime Savings vs No Conversion": fmt_dollars(s.savings_vs_baseline, sign=True),
             "IRA+Roth at 75": fmt_dollars_short(s.ira_at_75, decimals=2),
             "IRA+Roth at 85": fmt_dollars_short(s.ira_at_85, decimals=2),
             "IRA+Roth at 95": fmt_dollars_short(s.ira_at_95, decimals=2),
@@ -359,6 +359,6 @@ valuable if you plan to leave assets to non-family.
 - **IRMAA-Safe Max**: Balanced — converts as much as possible without triggering Medicare surcharges
 - **Custom**: Your plan from the Conversion Planner page
 
-**Key insight**: Compare the "vs Baseline" column in the summary. A negative number means that
+**Key insight**: Compare the "Lifetime Savings vs No Conversion" column in the summary. A positive number means that
 strategy costs *less* over your lifetime than doing nothing — even after paying conversion tax now.
 """)
