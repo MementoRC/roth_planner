@@ -70,9 +70,21 @@ class TestC1AutofillConversionCap:
 
 
 class TestC3CumulativeNetBenefit:
-    """C3 — compute_cumulative_net_benefit must use the supplied rmd_start_age."""
+    """C3 — compute_cumulative_net_benefit behaviour after audit-0705 fix.
 
-    def test_earlier_rmd_age_accumulates_savings_sooner(self) -> None:
+    Post-fix: the function accumulates all-in cost savings (federal + IRMAA +
+    brokerage + ACA + NIIT) for every year without gating on rmd_start_age.
+    The rmd_start_age parameter is retained for API compatibility but no longer
+    changes which years contribute (audit 0705 #views-financial-10).
+    """
+
+    def test_rmd_start_age_param_accepted_but_does_not_gate_years(self) -> None:
+        """rmd_start_age is accepted as keyword-only but no longer gates years.
+
+        Both calls must return identical arrays because the all-in per-year delta
+        does not depend on rmd_start_age (conversion-year higher taxes already
+        appear as negative deltas; RMD-year savings appear as positive deltas).
+        """
         hh = _hh_rmd73()
         plan = auto_fill_12(hh)
         baseline = run_no_conversion(hh, end_age=95)
@@ -80,20 +92,28 @@ class TestC3CumulativeNetBenefit:
 
         benefit_73 = compute_cumulative_net_benefit(scenario, baseline, rmd_start_age=73)
         benefit_75 = compute_cumulative_net_benefit(scenario, baseline, rmd_start_age=75)
-        # With rmd_start_age=73 savings accumulate 2 years earlier — benefit_73
-        # should diverge from benefit_75 at the ages between 73 and 74 inclusive.
-        ages = [yr.your_age for yr in baseline.years]
-        idx_73 = next(i for i, a in enumerate(ages) if a == 73)
-        idx_74 = next(i for i, a in enumerate(ages) if a == 74)
-        # At age 73 the 73-threshold has started counting savings; 75-threshold has not
-        assert benefit_73[idx_73] != pytest.approx(benefit_75[idx_73], abs=1.0), (
-            "rmd_start_age=73 and rmd_start_age=75 should diverge at age 73"
+        # Parameter no longer gates — both calls produce the same result
+        assert benefit_73 == pytest.approx(benefit_75, abs=1.0), (
+            "rmd_start_age no longer gates years; both calls must return identical arrays"
         )
-        # At age 74 the same: rmd_start_age=73 has 2 years of RMD savings accumulated
-        assert benefit_73[idx_74] != pytest.approx(benefit_75[idx_74], abs=1.0)
+
+    def test_final_value_equals_comparator_savings_vs_baseline(self) -> None:
+        """The final element must equal compute_summary_rows savings_vs_baseline."""
+        from engine.scenario_compare import compute_summary_rows  # noqa: PLC0415
+
+        hh = _hh_rmd73()
+        plan = auto_fill_12(hh)
+        baseline = run_no_conversion(hh, end_age=95)
+        scenario = run_scenario(hh, plan, "Fill 12%", end_age=95)
+
+        cum_benefit = compute_cumulative_net_benefit(scenario, baseline, rmd_start_age=73)
+        rows = compute_summary_rows([baseline, scenario], baseline)
+        assert cum_benefit[-1] == pytest.approx(rows[1].savings_vs_baseline, abs=1.0), (
+            "Final cumulative net benefit must equal Comparator savings_vs_baseline"
+        )
 
     def test_rmd_start_age_is_required_kwarg(self) -> None:
-        """rmd_start_age is now a required keyword arg (no default=75)."""
+        """rmd_start_age is a required keyword arg (no default)."""
         hh = _hh_rmd73()
         plan = auto_fill_12(hh)
         baseline = run_no_conversion(hh, end_age=95)

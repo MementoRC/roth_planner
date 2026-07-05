@@ -496,24 +496,48 @@ def compute_cumulative_net_benefit(
     *,
     rmd_start_age: int,
 ) -> list[float]:
-    """For each year in scenario.years, compute cumulative net benefit.
+    """For each year in scenario.years, compute cumulative all-in net benefit.
 
-    cum_benefit[i] = (sum of RMD tax savings from rmd_start_age onward)
-                   + (sum of brokerage tax savings)
-                   - scenario.total_conv_tax (sunk cost, constant)
+    cum_benefit[i] = cumulative (baseline_all_in_cost − scenario_all_in_cost) up to year i
 
-    RMD savings = baseline.federal_tax_amt - scenario.federal_tax_amt (only when your_age >= rmd_start_age).
-    Brokerage savings = baseline.brokerage_gain_tax - scenario.brokerage_gain_tax (every year).
+    All-in cost per year = federal_tax_amt + irmaa_cost + brokerage_gain_tax
+                         + aca_loss + niit_cost  (matching Scenario Comparator)
+
+    Convention: positive = saves money vs baseline (same sign as
+    ``compute_summary_rows(...).savings_vs_baseline``).
+
+    During conversion years scenario pays MORE federal tax, so the running sum
+    starts negative and climbs into positive territory as RMD-phase savings
+    accumulate — the crossover is the break-even age shown on the chart.
+    The final element of the returned list equals
+    ``compute_summary_rows([baseline, scenario], baseline)[1].savings_vs_baseline``
+    within floating-point precision (audit 0705 #views-financial-10).
+
+    ``rmd_start_age`` is retained in the signature for API compatibility; it no
+    longer restricts which years contribute because conversion-year extra taxes
+    are already captured in the per-year federal_tax_amt delta (the running sum
+    naturally goes negative during conversion years and crosses zero at
+    break-even without any explicit sunk-cost deduction).
     """
     cum_benefit: list[float] = []
-    cum_conv_tax = scenario.total_conv_tax  # sunk cost
-    cum_rmd_saved = 0.0
-    cum_brok_saved = 0.0
+    cum_all_in_saved = 0.0
 
     for yr_b, yr_s in zip(baseline.years, scenario.years, strict=False):
-        if yr_b.your_age >= rmd_start_age:
-            cum_rmd_saved += yr_b.federal_tax_amt - yr_s.federal_tax_amt
-        cum_brok_saved += yr_b.brokerage_gain_tax - yr_s.brokerage_gain_tax
-        cum_benefit.append(cum_rmd_saved + cum_brok_saved - cum_conv_tax)
+        baseline_year_cost = (
+            yr_b.federal_tax_amt
+            + yr_b.irmaa_cost
+            + yr_b.brokerage_gain_tax
+            + yr_b.aca_loss
+            + yr_b.niit_cost
+        )
+        scenario_year_cost = (
+            yr_s.federal_tax_amt
+            + yr_s.irmaa_cost
+            + yr_s.brokerage_gain_tax
+            + yr_s.aca_loss
+            + yr_s.niit_cost
+        )
+        cum_all_in_saved += baseline_year_cost - scenario_year_cost
+        cum_benefit.append(cum_all_in_saved)
 
     return cum_benefit
