@@ -67,7 +67,7 @@ def survivor_year_tax(
     tss = taxable_ss(survivor_ss, rmd + brok_ord_income + brok_ltcg_income, filing_status="Single")
     # (b) Ordinary gross adds ONLY ordinary brokerage income (NOT LTCG/qualified divs)
     gross = rmd + tss + brok_ord_income
-    ded = deductions(survivor_age, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi)
+    ded = deductions(survivor_age, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi)
     # (c) senior_bonus_deduction uses full MAGI: ordinary gross + LTCG-rate income
     _survivor_magi = (
         gross + brok_ltcg_income

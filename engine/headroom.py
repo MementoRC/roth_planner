@@ -162,7 +162,7 @@ def compute_headroom(
         _senior_extra = hh.senior_extra
     # FIX #5: senior_bonus_deduction phaseout must use muni-EXCLUDED MAGI (niit_magi),
     # consistent with engine/tax.py which passes ytd.niit_magi_ytd.
-    ded = deductions(ya, sa, _std_ded, _senior_extra, year=_year, cpi=_cpi)
+    ded = deductions(ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi)
     ded += senior_bonus_deduction(
         ya, sa, locked_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
@@ -201,7 +201,7 @@ def compute_headroom(
     # Recalculate deductions with full planned MAGI.
     # FIX #5 (planned path): same muni-excluded MAGI for senior_bonus_deduction phaseout.
     # M2 (planned path): same Single std deduction as locked path.
-    ded_planned = deductions(ya, sa, _std_ded, _senior_extra, year=_year, cpi=_cpi)
+    ded_planned = deductions(ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi)
     ded_planned += senior_bonus_deduction(
         ya, sa, planned_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )

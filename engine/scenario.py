@@ -372,7 +372,7 @@ def run_scenario(
             ya_eff = 0 if surv.who_dies == "you" else ya
             sa_eff = 0 if surv.who_dies == "spouse" else sa
             yr.total_deductions = deductions(
-                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
+                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
             )
             yr.total_deductions += senior_bonus_deduction(
                 ya_eff, sa_eff, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
@@ -387,7 +387,7 @@ def run_scenario(
                 _std_ded, _senior_extra = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
             else:
                 _std_ded, _senior_extra = hh.std_deduction, hh.senior_extra
-            yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, year=year, cpi=cpi)
+            yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, filing_status=current_filing_status, year=year, cpi=cpi)
             yr.total_deductions += senior_bonus_deduction(
                 ya, sa, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
             )
@@ -433,7 +433,7 @@ def run_scenario(
         base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
         if survivor_active:
             base_total_deductions = deductions(
-                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, year=year, cpi=cpi
+                ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
             ) + senior_bonus_deduction(
                 ya_eff, sa_eff, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
             )
@@ -445,7 +445,7 @@ def run_scenario(
             else:
                 _b_std_ded, _b_senior_extra = hh.std_deduction, hh.senior_extra
             base_total_deductions = deductions(
-                ya, sa, _b_std_ded, _b_senior_extra, year=year, cpi=cpi
+                ya, sa, _b_std_ded, _b_senior_extra, filing_status=current_filing_status, year=year, cpi=cpi
             ) + senior_bonus_deduction(
                 ya, sa, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
             )

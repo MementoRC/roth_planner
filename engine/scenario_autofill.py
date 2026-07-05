@@ -282,7 +282,7 @@ def _auto_fill_core(
             sa_eff = 0 if surv.who_dies == "spouse" else sa
         else:
             ya_eff, sa_eff = ya, sa
-        ded = deductions(ya_eff, sa_eff, _af_std, _af_senior, year=year, cpi=_cpi)
+        ded = deductions(ya_eff, sa_eff, _af_std, _af_senior, filing_status=current_filing_status, year=year, cpi=_cpi)
         # OBBBA senior-bonus phase-out is measured on AGI (muni-excluded), matching
         # scenario.py:366/377 and estimate_ytd_federal_tax. base_magi carries muni
         # interest via ytd magi_ytd, so strip it here (audit C3 / autofill-2).

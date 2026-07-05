@@ -142,6 +142,7 @@ def compute_cost_curves(
             hh.spouse_age,
             STD_DEDUCTION_SINGLE,
             SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
             year=year,
             cpi=cpi,
         )

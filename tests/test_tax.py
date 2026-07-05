@@ -841,3 +841,35 @@ class TestEstimateYtdSsOmissionCluster:
 
         assert tss > 0
         assert captured["magi"] == pytest.approx(ytd.niit_magi_ytd + tss)
+
+
+class TestDeductionsFilingGate:
+    """Audit 0705 follow-up (SS-IRMAA-DBL twin): a Single filer's phantom spouse must not add a
+    second senior standard-deduction extra. deductions() must gate the spouse extra on MFJ."""
+
+    def test_single_filer_ignores_phantom_spouse_senior_extra(self):
+        import pytest
+
+        from engine.tax import SENIOR_EXTRA_SINGLE, STD_DEDUCTION_SINGLE, deductions
+
+        # Both ages >= 65 but Single → only the primary's senior extra counts (not two).
+        d = deductions(75, 69, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single")
+        assert d == pytest.approx(STD_DEDUCTION_SINGLE + SENIOR_EXTRA_SINGLE)
+
+    def test_single_primary_under_65_gets_no_extra(self):
+        import pytest
+
+        from engine.tax import SENIOR_EXTRA_SINGLE, STD_DEDUCTION_SINGLE, deductions
+
+        # Single, primary < 65, spouse >= 65 (phantom) → no senior extra at all.
+        d = deductions(60, 70, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single")
+        assert d == pytest.approx(STD_DEDUCTION_SINGLE)
+
+    def test_mfj_default_still_counts_both_senior_extras(self):
+        import pytest
+
+        from engine.tax import SENIOR_EXTRA_MFJ, STD_DEDUCTION_MFJ, deductions
+
+        # MFJ (the default) is unchanged: both spouses' senior extras count.
+        d = deductions(75, 69)
+        assert d == pytest.approx(STD_DEDUCTION_MFJ + 2 * SENIOR_EXTRA_MFJ)
