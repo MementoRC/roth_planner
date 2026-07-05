@@ -368,6 +368,10 @@ def estimate_ytd_federal_tax(
     # excludes SS, so it is the correct "other_income" arg here.
     tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status=hh.filing_status)
     ordinary_income_with_ss = ordinary_income + tss
+    # AGI includes the taxable portion of SS (§86), so the OBBBA senior-bonus phase-out
+    # (§151(d)(5)) and the NIIT MAGI test (§1411) must both sit on niit_magi_ytd PLUS tss —
+    # mirroring the headroom engine (locked_niit_magi = niit_magi_ytd + locked_tss).
+    niit_magi_with_ss = ytd.niit_magi_ytd + tss
 
     # Step 3: standard deduction (indexed) + senior extras + OBBBA bonus.
     # LTCG thresholds in LTCG_THRESHOLDS_MFJ are taxable-income thresholds
@@ -387,7 +391,7 @@ def estimate_ytd_federal_tax(
     std_ded += senior_bonus_deduction(
         hh.your_age,
         hh.spouse_age,
-        ytd.niit_magi_ytd,
+        niit_magi_with_ss,
         year=_year,
         cpi=_cpi,
         filing_status=hh.filing_status,
@@ -419,11 +423,14 @@ def estimate_ytd_federal_tax(
     # Step 6: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
     net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
-    magi = ytd.niit_magi_ytd
+    magi = niit_magi_with_ss
     niit_amount = niit(magi, net_investment_income, filing_status=hh.filing_status)
 
     total = ordinary_tax + ltcg_tax + niit_amount
-    effective_rate = total / ytd.magi_ytd if ytd.magi_ytd > 0 else 0.0
+    # Denominator must include taxable SS — it is taxed in the numerator (folded into ordinary
+    # income above). Use the broad magi_ytd (incl. tax-exempt interest) plus tss.
+    _rate_base = ytd.magi_ytd + tss
+    effective_rate = total / _rate_base if _rate_base > 0 else 0.0
 
     # Step 7: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).
     marginal = (marginal_rate_single if is_single else marginal_rate)(
