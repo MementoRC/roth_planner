@@ -90,9 +90,17 @@ def _auto_fill_core(
     surv = hh.survivor
     _rollover_done = False
 
+    # Spouse squeeze window: the spouse may still convert for several years after
+    # your RMD starts (while sa < spouse_rmd_start_age). Hardcoding +6 truncates
+    # the loop for age-gap households where the real tail is larger. Derive the
+    # actual tail from the RMD-age gap, with 6 as a minimum for same-age pairs
+    # (audit 0705 / headroom-scenario-4).
+    _your_window = hh.your_rmd_start_age - hh.your_age  # years until your RMD
+    _spouse_window = hh.spouse_rmd_start_age - hh.spouse_age  # years until spouse RMD
+    _squeeze_tail = max(_spouse_window - _your_window, 6)
     for yr_idx in range(
-        hh.your_rmd_start_age - 1 - hh.your_age + 1 + 6
-    ):  # +6 for spouse squeeze years
+        hh.your_rmd_start_age - 1 - hh.your_age + 1 + _squeeze_tail
+    ):  # _squeeze_tail covers actual spouse tail (>= 6 for same-age backward compat)
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
