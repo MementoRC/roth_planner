@@ -457,6 +457,34 @@ class TestTaxBracketAndSafeHarborSections:
             f"Expected 'Prior year tax unknown' warning; got: {warning_msgs}"
         )
 
+    def test_safe_harbor_call_threads_filing_status_and_prior_agi(self):
+        """Caller passes hh.filing_status and prior-year AGI (from hh.prior_year_magi) into safe_harbor_payment."""
+        from datetime import date
+
+        from engine.tax import SafeHarborGuidance
+
+        prior_year = date.today().year - 1
+        hh = _stub_hh(filing_status="Single", prior_year_magi={prior_year: 120_000.0})
+        ytd = YTDSnapshot(wages_ytd=180_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch("views.ytd_income.load_prior_year_federal_tax", return_value=50_000.0),
+            patch("views.ytd_income.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("filing_status") == "Single"
+        assert captured.get("prior_year_agi") == 120_000.0
+
     def test_renders_capital_gains_section_with_events(self):
         """Realized Capital Gains section renders breakdown when gain_events present."""
         from models.ytd_income import RealizedGainEvent
