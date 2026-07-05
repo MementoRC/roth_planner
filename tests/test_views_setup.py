@@ -613,6 +613,73 @@ class TestClampWidgetBounds:
         assert _clamp(2022, base_year - 15, base_year + 30) == 2022
 
 
+class TestResetToDemoClearsAllKeys:
+    """audit-0705 ui-5: _clear_personal_session_state must clear ACA, defer-RMD,
+    and growth_rate keys so demo defaults re-seed correctly after a reset."""
+
+    _PERSONAL_VALUES: dict = {
+        "your_aca": True,
+        "spouse_aca": True,
+        "your_defer_first_rmd": True,
+        "spouse_defer_first_rmd": True,
+        "growth_rate": 12.0,
+    }
+
+    def _run_reset(self, monkeypatch: pytest.MonkeyPatch) -> dict:
+        """Seed session_state with personal values, call reset, return state dict."""
+        import views.setup._state as state_mod
+
+        fake_state: dict = dict(self._PERSONAL_VALUES)
+        # _clear_personal_session_state also sets _suppress_snapshot_autoload
+        monkeypatch.setattr(state_mod.st, "session_state", fake_state)
+        state_mod._clear_personal_session_state()
+        return fake_state
+
+    def test_your_aca_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """your_aca=True (personal) must not survive a reset-to-demo."""
+        state = self._run_reset(monkeypatch)
+        assert "your_aca" not in state, (
+            "your_aca persists after _clear_personal_session_state — "
+            "personal ACA enrolment leaks into the demo household"
+        )
+
+    def test_spouse_aca_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """spouse_aca=True (personal) must not survive a reset-to-demo."""
+        state = self._run_reset(monkeypatch)
+        assert "spouse_aca" not in state, (
+            "spouse_aca persists after _clear_personal_session_state — "
+            "personal ACA enrolment leaks into the demo household"
+        )
+
+    def test_your_defer_first_rmd_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """your_defer_first_rmd=True (personal) must not survive a reset-to-demo."""
+        state = self._run_reset(monkeypatch)
+        assert "your_defer_first_rmd" not in state, (
+            "your_defer_first_rmd persists after _clear_personal_session_state"
+        )
+
+    def test_spouse_defer_first_rmd_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """spouse_defer_first_rmd=True (personal) must not survive a reset-to-demo."""
+        state = self._run_reset(monkeypatch)
+        assert "spouse_defer_first_rmd" not in state, (
+            "spouse_defer_first_rmd persists after _clear_personal_session_state"
+        )
+
+    def test_growth_rate_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """growth_rate=12.0 (personal) must not survive a reset-to-demo."""
+        state = self._run_reset(monkeypatch)
+        assert "growth_rate" not in state, (
+            "growth_rate persists after _clear_personal_session_state — "
+            "personal growth rate (e.g. 12%) leaks into the demo projection"
+        )
+
+    def test_all_five_keys_cleared_together(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """All five leaked keys must be absent in a single reset call."""
+        state = self._run_reset(monkeypatch)
+        leaked = [k for k in self._PERSONAL_VALUES if k in state]
+        assert not leaked, f"Keys still present after reset: {leaked}"
+
+
 class TestApplySingleFiler:
     """C9 / ui-streamlit-4: Single-filer zeroing happens on the derived Household,
     not in session_state, so MFJ round-trips keep real spouse balances."""
