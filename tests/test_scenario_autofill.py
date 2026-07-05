@@ -577,7 +577,7 @@ class TestAutoFillSpouseSqueezeWindow:
         # your_rmd_start_age=73 (born 1952, SECURE 1.0 cohort)
         # spouse_rmd_start_age=75 (born 1971, SECURE 2.0 cohort)
         # Suppress SS/options/brokerage noise so only conversion room matters.
-        hh = replace(
+        return replace(
             Household(),
             your_age=61,
             your_ira=1_700_000.0,
@@ -590,14 +590,13 @@ class TestAutoFillSpouseSqueezeWindow:
             grants=[],
             brokerage_start=0.0,
         )
-        return hh
 
     @staticmethod
     def _same_age_hh() -> "Household":
         """Same-age household (you 65/spouse 65, rmd-start 73/73) for regression."""
         from dataclasses import replace
 
-        hh = replace(
+        return replace(
             Household(),
             your_age=65,
             your_ira=1_000_000.0,
@@ -610,7 +609,6 @@ class TestAutoFillSpouseSqueezeWindow:
             grants=[],
             brokerage_start=0.0,
         )
-        return hh
 
     def test_age_gap_spouse_tail_years_included(self) -> None:
         """auto_fill_12 must include spouse conversions in yr_idx 18-19 (sa 73-74).
