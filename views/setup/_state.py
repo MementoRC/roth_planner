@@ -162,6 +162,15 @@ def _clear_personal_session_state() -> None:
         "ytd_snapshot",
         "apply_ytd_to_projection",
         "ytd_manual_entry",
+        # audit-0705 ui-5: these keys are seeded via setdefault in app.py but were
+        # missing from this list, causing personal values to leak into the demo.
+        "your_aca",
+        "spouse_aca",
+        "your_defer_first_rmd",
+        "spouse_defer_first_rmd",
+        "growth_rate",
+        # TODO(audit ui-7/ui-8): dynamic PDF-cache-prefix and generated-keypair
+        # keys are separate low-severity findings; not cleared here.
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
