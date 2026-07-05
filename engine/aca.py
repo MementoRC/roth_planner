@@ -34,7 +34,7 @@ ACA_ENHANCED_SCHEDULE = [
 # The IRS table defines linear ramps within each bracket; these entries capture
 # the rate at the START of each bracket (i.e. the lower-bound applicable %).
 ACA_PRE_ARP_SCHEDULE = [
-    (1.33, 0.0210),  # 100-133% FPL: 2.10% flat
+    (1.33, 0.0210),  # 100% to <133% FPL: 2.10% flat
     (1.50, 0.0314),  # 133-150%: ramp 3.14% → 4.19%
     (2.00, 0.0419),  # 150-200%: ramp 4.19% → 6.60%
     (2.50, 0.0660),  # 200-250%: ramp 6.60% → 8.44%
@@ -172,9 +172,15 @@ def aca_premium_cap_rate(
             f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}"
         )
     # Pre-ARP schedule: linear interpolation within ramp bands per IRC §36B Table A.
+    # Each band is "at least X but less than Y" (26 CFR §1.36B-3(g); Rev. Proc. 2025-25
+    # §3.01), so upper bounds are EXCLUSIVE except for the final band (≤ 400% FPL).
+    # Form 8962 Line 5 truncates the FPL ratio, so exactly 133% FPL → integer 133,
+    # which must fall in the ramp band (3.14%), not the flat band (2.10%).
     band_start_fpl = 1.0  # 100% FPL — implicit lower edge of the bottom band
+    last_i = len(schedule) - 1
     for i, (upper_fpl, start_rate) in enumerate(schedule):
-        if fpl_ratio <= upper_fpl:
+        in_band = fpl_ratio <= upper_fpl if i == last_i else fpl_ratio < upper_fpl
+        if in_band:
             # First and last bands are flat per IRS table (see schedule comments).
             if i == 0 or i == len(schedule) - 1:
                 return start_rate

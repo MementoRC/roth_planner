@@ -339,13 +339,26 @@ class TestACAExcessAPTCRepayment:
 class TestACA2026:
     """Regression tests locking in 2026 IRS values from Rev. Proc. 2025-25 (IRB 2025-32)."""
 
-    def test_aca_2026_133pct_fpl_flat_rate(self):
-        """At exactly 133% FPL, applicable_pct == 2.10% (flat bottom bracket)."""
+    def test_aca_2026_133pct_fpl_enters_ramp_band(self):
+        """At exactly 133% FPL, applicable_pct == 3.14% (start of ramp band), NOT 2.10%.
+
+        IRS Rev. Proc. 2025-25 §3.01 table: "At least 133% but less than 150% → 3.14%".
+        The bottom band is "Less than 133%" (exclusive upper bound). Form 8962 Line 5
+        truncates the FPL ratio (e.g. 1.33×FPL → integer 133), so exactly 133% FPL
+        sits in the ramp band at 3.14%, not the flat 2.10% band.
+        """
         from engine.aca import FPL_2, aca_premium_cap_rate
 
-        magi = 1.33 * FPL_2  # exactly at the 133% upper bound
+        magi = 1.33 * FPL_2  # exactly at the 133% boundary — enters the ramp band
         rate = aca_premium_cap_rate(magi, enhanced_subsidies_active=False, filing_status="MFJ")
-        assert rate == pytest.approx(0.0210)
+        assert rate == pytest.approx(0.0314)
+
+        # Just below 133% must still yield the flat 2.10% band.
+        magi_below = 1.3299 * FPL_2
+        rate_below = aca_premium_cap_rate(
+            magi_below, enhanced_subsidies_active=False, filing_status="MFJ"
+        )
+        assert rate_below == pytest.approx(0.0210)
 
     def test_aca_2026_150pct_fpl_boundary_continuous(self):
         """At the 150% FPL band boundary, applicable_pct is continuous at 4.19%.
