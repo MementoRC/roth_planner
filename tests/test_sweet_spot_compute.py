@@ -165,7 +165,7 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
         row2026 = rows[0]
         assert row2026.year == 2026
 
-        # Manually compute the expected irmaa_safe for 2026 under each indexing scheme.
+        # Manually compute the thresholds under each indexing scheme.
         income_year_tiers = _index_irmaa_tiers(IRMAA_TIERS_MFJ, 2026, cpi)
         payment_year_tiers = _index_irmaa_tiers(IRMAA_TIERS_MFJ, 2028, cpi)
 
@@ -177,24 +177,32 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
             "precondition: payment-year threshold must exceed income-year threshold at cpi=6%"
         )
 
-        # irmaa_safe must use the payment-year threshold (larger value → larger room).
         base_magi = row2026.base_magi
-        expected_irmaa_safe = (
-            max(payment_year_t1 - base_magi, 0.0) if (payment_year_t1 - base_magi) > 0 else None
-        )
-        buggy_irmaa_safe = (
-            max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
-        )
+        buggy_irmaa_safe = max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
 
-        # The two values differ (payment-year threshold is ~$27K higher).
-        assert expected_irmaa_safe != buggy_irmaa_safe, (
-            "test scenario does not distinguish income-year vs payment-year indexing"
+        # irmaa_safe must use the payment-year threshold → strictly larger than
+        # the income-year (buggy) value.  Binary search returns STEP-aligned result
+        # so we do not check exact equality with the naive formula; instead we
+        # verify correctness semantically:
+        #   1. Result is strictly greater than the income-year (buggy) naive value.
+        #   2. Result is at most the payment-year naive upper bound.
+        #   3. The MAGI at the returned conversion is at or below the payment-year threshold.
+        assert row2026.irmaa_safe is not None, "irmaa_safe must be non-None when base_magi < tier1"
+        assert row2026.irmaa_safe > buggy_irmaa_safe, (
+            f"irmaa_safe={row2026.irmaa_safe} must exceed income-year buggy value "
+            f"({buggy_irmaa_safe}); payment-year threshold is {payment_year_t1:.0f}"
         )
-
-        assert row2026.irmaa_safe == pytest.approx(expected_irmaa_safe, abs=1.0), (
-            f"irmaa_safe={row2026.irmaa_safe} does not match payment-year threshold "
-            f"({payment_year_t1:.0f} - {base_magi:.0f} = {expected_irmaa_safe}); "
-            f"income-year buggy value would be {buggy_irmaa_safe}"
+        naive_payment_year = payment_year_t1 - base_magi
+        assert row2026.irmaa_safe <= naive_payment_year + 0.01, (
+            f"irmaa_safe={row2026.irmaa_safe} exceeds payment-year naive upper bound "
+            f"({naive_payment_year:.0f})"
+        )
+        # Confirm the oracle: magi at the returned conversion is within threshold.
+        b = base_income_for_year(hh, 2026)
+        result = all_in_at_conversion(hh, b, row2026.irmaa_safe, 0.0)
+        assert result.magi <= payment_year_t1 + 0.01, (
+            f"magi={result.magi:.0f} at irmaa_safe={row2026.irmaa_safe:.0f} "
+            f"exceeds payment-year threshold={payment_year_t1:.0f}"
         )
 
 

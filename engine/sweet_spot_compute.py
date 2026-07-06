@@ -347,6 +347,52 @@ def all_in_at_conversion(
     )
 
 
+def irmaa_safe_max(
+    hh: Household,
+    base: BaseIncome,
+    irmaa_tier1_threshold: float,
+    net_inv_income: float = 0.0,
+    ltcg_eligible: float = 0.0,
+) -> float:
+    """Binary-search for the largest STEP-aligned conversion where magi <= irmaa_tier1_threshold.
+
+    The naive subtraction `threshold - base_magi` overstates the safe conversion amount
+    when SS provisional income is in the partial-taxability zone ($32K-$44K MFJ /
+    $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85 due to the
+    50% or 85% additional SS taxability multiplier.
+
+    Uses all_in_at_conversion as the oracle for the binary search so that the same
+    SS-taxability logic used in the sweep is also used to determine IRMAA safety.
+
+    Returns 0.0 if base_magi already meets or exceeds the threshold.
+    """
+    if base.base_magi >= irmaa_tier1_threshold:
+        return 0.0
+
+    # The naive subtraction is an upper bound: magi(conv) >= base_magi + conv
+    # so any conversion above (threshold - base_magi) will exceed the threshold.
+    # The true safe max is <= this bound (it can be strictly less in the partial zone).
+    upper = irmaa_tier1_threshold - base.base_magi
+
+    lo: float = 0.0
+    hi: float = upper
+    best: float = 0.0
+
+    while lo <= hi:
+        # Snap to nearest STEP boundary (binary search in STEP-aligned space)
+        mid = round((lo + hi) / 2 / STEP) * STEP
+        if mid < lo or mid > hi:
+            break
+        r = all_in_at_conversion(hh, base, mid, net_inv_income, ltcg_eligible=ltcg_eligible)
+        if r.magi <= irmaa_tier1_threshold:
+            best = mid
+            lo = mid + STEP
+        else:
+            hi = mid - STEP
+
+    return best
+
+
 def find_sweet_spots(results: list[ConversionResult]) -> list[SweetSpotJump]:
     """Identify zones where marginal cost jumps significantly."""
     spots: list[SweetSpotJump] = []
@@ -444,8 +490,12 @@ def compute_multi_year_summary(
         r22 = b_result.room_22
 
         tier1_threshold = irmaa_tiers[0][0]
-        irmaa_max = tier1_threshold - b.base_magi
-        irmaa_safe: float | None = max(irmaa_max, 0) if irmaa_max > 0 else None
+        # Binary search for the largest STEP-aligned conversion where magi <= tier1_threshold.
+        # The naive subtraction (tier1_threshold - b.base_magi) overstates the safe amount
+        # when SS provisional income is in the partial-taxability zone ($32K-$44K MFJ /
+        # $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
+        safe_conv = irmaa_safe_max(hh, b, tier1_threshold, net_inv_income, _le)
+        irmaa_safe: float | None = safe_conv if safe_conv > 0 else None
 
         r12_res = (
             all_in_at_conversion(hh, b, r12, net_inv_income, ltcg_eligible=_le) if r12 > 0 else None
