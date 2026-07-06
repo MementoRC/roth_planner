@@ -262,7 +262,12 @@ def run_scenario(
         yr.living_expenses = hh.living_expenses * (1 + hh.expense_inflation) ** years_from_base
 
         after_tax_rmd = yr.your_rmd - yr.qcd  # taxable RMD (net of QCD)
-        available_income = after_tax_rmd + yr.combined_ss - yr.federal_tax_amt
+        available_income = (
+            after_tax_rmd
+            + yr.option_income
+            + yr.combined_ss
+            - yr.federal_tax_amt
+        )
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
