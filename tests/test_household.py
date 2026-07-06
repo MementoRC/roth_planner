@@ -1066,10 +1066,15 @@ class TestRMDStartAge:
         assert hh.your_rmd_start_age == 75
         assert hh.spouse_rmd_start_age == 75
 
-    def test_post_init_explicit_non75_preserved(self):
-        """Explicit rmd_start_age != 75 must not be overridden by __post_init__."""
+    def test_post_init_explicit_non75_corrected(self):
+        """Invalid rmd_start_age (not in {73, 75}) must be corrected by __post_init__.
+
+        74 was reachable via step=1 number_input (audit ui-setup-router-12).
+        The guard now corrects any value outside {73, 75} using birth-year derivation.
+        your_age=71 in 2026 → born 1955 → SECURE 2.0 statutory age = 73.
+        """
         hh = Household(base_year=2026, your_age=71, your_rmd_start_age=74)
-        assert hh.your_rmd_start_age == 74
+        assert hh.your_rmd_start_age == 73
 
 
 class TestRMDCohortBirthYear:
@@ -1112,7 +1117,11 @@ class TestRMDCohortBirthYear:
         hh = Household(base_year=2026, your_age=71)  # 2026 - 71 = 1955 → 73
         assert hh.your_rmd_start_age == 73
 
-    def test_explicit_rmd_start_age_not_overridden_by_birth_year(self):
-        """Explicit rmd_start_age != 75 is preserved even when birth_year is also supplied."""
+    def test_explicit_invalid_rmd_start_age_corrected_by_birth_year(self):
+        """Invalid rmd_start_age outside {73, 75} is corrected using birth_year derivation.
+
+        72 is not a valid SECURE 2.0 age. With birth_year=1959 (→ cohort 73), the guard
+        (audit ui-setup-router-12) corrects 72 to 73 using the explicit birth year.
+        """
         hh = Household(base_year=2026, your_age=66, your_birth_year=1959, your_rmd_start_age=72)
-        assert hh.your_rmd_start_age == 72
+        assert hh.your_rmd_start_age == 73

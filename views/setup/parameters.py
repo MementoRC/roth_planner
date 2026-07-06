@@ -158,7 +158,7 @@ def _render_inherited_iras(base_year: int) -> None:
         to_remove: int | None = None
 
         for idx, entry in enumerate(iiras):
-            col_bal, col_yr, col_owner, col_remove = st.columns([3, 2, 2, 1])
+            col_bal, col_yr, col_rate, col_owner, col_remove = st.columns([3, 2, 2, 2, 1])
             new_bal = col_bal.number_input(
                 "Balance ($)",
                 min_value=0,
@@ -181,6 +181,16 @@ def _render_inherited_iras(base_year: int) -> None:
                 key=f"iira_year_{idx}",
                 label_visibility="collapsed" if idx > 0 else "visible",
             )
+            new_rate = col_rate.number_input(
+                "Growth Rate (%)",
+                min_value=0.0,
+                max_value=15.0,
+                value=float(entry.get("growth_rate", 0.07)) * 100,
+                step=0.5,
+                format="%.1f",
+                key=f"iira_rate_{idx}",
+                label_visibility="collapsed" if idx > 0 else "visible",
+            )
             owner_options = ["Me", "Spouse"]
             owner_val = entry.get("owner", "you")
             owner_idx_sel = 0 if owner_val == "you" else 1
@@ -198,7 +208,7 @@ def _render_inherited_iras(base_year: int) -> None:
                 "balance": float(new_bal),
                 "inherited_year": int(new_yr),
                 "owner": "you" if owner_choice == "Me" else "spouse",
-                "growth_rate": float(entry.get("growth_rate", 0.07)),
+                "growth_rate": new_rate / 100.0,
             }
 
         if to_remove is not None:
@@ -403,6 +413,7 @@ def render_parameters_tab(hh: Household) -> None:
     with me_sub:
         st.session_state.your_ira = st.number_input(
             "Your Trad IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
             value=st.session_state.your_ira,
             step=50_000,
             format="%d",
@@ -411,6 +422,7 @@ def render_parameters_tab(hh: Household) -> None:
         )
         st.session_state.your_roth = st.number_input(
             "Your Roth IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
             value=st.session_state.get("your_roth", 0),
             step=50_000,
             format="%d",
@@ -423,8 +435,9 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
         )
+        your_fra_age = st.session_state.get("your_fra_age", 67)
         st.session_state.your_ss_fra = st.number_input(
-            "Your SS at FRA 67 ($/mo)",
+            f"Your SS at FRA {your_fra_age} ($/mo)",
             value=st.session_state.your_ss_fra,
             step=100,
             format="%d",
@@ -437,14 +450,11 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
         )
-        st.session_state.your_rmd_start_age = st.number_input(
+        st.session_state.your_rmd_start_age = st.selectbox(
             "Your RMD start age",
-            min_value=73,
-            max_value=75,
-            value=st.session_state.get("your_rmd_start_age", 75),
-            step=1,
-            format="%d",
-            help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
+            options=[73, 75],
+            index=0 if st.session_state.get("your_rmd_start_age", 75) == 73 else 1,
+            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
         )
         st.session_state.your_defer_first_rmd = st.checkbox(
             "Defer first RMD to April 1 (two RMDs in year 2)",
@@ -477,6 +487,7 @@ def render_parameters_tab(hh: Household) -> None:
             )
         st.session_state.spouse_ira = st.number_input(
             "Spouse Trad IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
             value=st.session_state.spouse_ira,
             step=50_000,
             format="%d",
@@ -485,6 +496,7 @@ def render_parameters_tab(hh: Household) -> None:
         )
         st.session_state.spouse_roth = st.number_input(
             "Spouse Roth IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
             value=st.session_state.get("spouse_roth", 0),
             step=50_000,
             format="%d",
@@ -498,8 +510,9 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             disabled=_is_single,
         )
+        spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
         st.session_state.spouse_ss_fra = st.number_input(
-            "Spouse SS at FRA 67 ($/mo)",
+            f"Spouse SS at FRA {spouse_fra_age} ($/mo)",
             value=st.session_state.spouse_ss_fra,
             step=100,
             format="%d",
@@ -514,14 +527,11 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             disabled=_is_single,
         )
-        st.session_state.spouse_rmd_start_age = st.number_input(
+        st.session_state.spouse_rmd_start_age = st.selectbox(
             "Spouse RMD start age",
-            min_value=73,
-            max_value=75,
-            value=st.session_state.get("spouse_rmd_start_age", 75),
-            step=1,
-            format="%d",
-            help="73 if born 1951-1959 (SECURE 1.0); 75 if born 1960+ (SECURE 2.0)",
+            options=[73, 75],
+            index=0 if st.session_state.get("spouse_rmd_start_age", 75) == 73 else 1,
+            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
             disabled=_is_single,
         )
         st.session_state.spouse_defer_first_rmd = st.checkbox(
@@ -552,16 +562,18 @@ def render_parameters_tab(hh: Household) -> None:
 
     with joint_sub:
         st.session_state.growth_rate = st.slider(
-            "Growth Rate %", 3.0, 12.0, st.session_state.growth_rate, 0.5
+            "Growth Rate %", 3.0, 12.0, st.session_state.growth_rate, 0.5, format="%.1f%%"
         )
         st.session_state.living_expenses = st.number_input(
             "Annual Living Expenses",
+            min_value=0,
             value=st.session_state.living_expenses,
             step=5_000,
             format="%d",
         )
         st.session_state.txn_price = st.number_input(
             f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
+            min_value=0,
             value=st.session_state.txn_price,
             step=5,
             format="%d",
@@ -619,7 +631,7 @@ def render_parameters_tab(hh: Household) -> None:
             ),
         )
         st.session_state["cpi_assumption"] = st.number_input(
-            "Annual CPI Projection Rate",
+            "Annual CPI Projection Rate (0.025 = 2.5%)",
             min_value=0.0,
             max_value=0.06,
             value=float(st.session_state.get("cpi_assumption", 0.025)),

@@ -306,16 +306,20 @@ class Household:
         return self.growth_rate
 
     def __post_init__(self) -> None:
-        # Derive statutory RMD start age from birth year when still at the class default (75).
+        # Derive statutory RMD start age from birth year unless already set to the valid
+        # 1951-1959 cohort value (73). The default (75) acts as a sentinel that triggers
+        # derivation, and any invalid in-between value (e.g. 74, reachable via old JSON seeds)
+        # is also corrected. After derivation the result is always 73 or 75.
         # SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
         # When an explicit birth year is provided it takes precedence over the age-derived
         # birth year (audit 0705 ira-rmd-3): the age-only path has a one-year cliff for
         # people born late in the year (e.g. Nov 1959, age 66 at Jan 1 2026 → inferred
         # birth year 1960 → wrong cohort 75, suppressing RMDs at ages 73 and 74).
-        if self.your_rmd_start_age == 75:
+        if self.your_rmd_start_age != 73:
+            # 73 is the only stable explicit choice (1951-1959 cohort); derive for all else.
             your_by = self.your_birth_year if self.your_birth_year is not None else (self.base_year - self.your_age)
             self.your_rmd_start_age = default_rmd_age(your_by)
-        if self.spouse_rmd_start_age == 75:
+        if self.spouse_rmd_start_age != 73:
             spouse_by = self.spouse_birth_year if self.spouse_birth_year is not None else (self.base_year - self.spouse_age)
             self.spouse_rmd_start_age = default_rmd_age(spouse_by)
 
@@ -327,8 +331,10 @@ class Household:
             if 0 <= idx < len(self.grants):
                 return self.grants[idx].spread(self.txn_price_now)
         else:
-            # Late exercise: at expiry
+            # Late exercise: at expiry — accumulate ALL grants sharing this expiry_year
+            total = 0.0
             for g in self.grants:
                 if g.expiry_year == year:
-                    return g.spread(self.txn_price_late)
+                    total += g.spread(self.txn_price_late)
+            return total
         return 0.0
