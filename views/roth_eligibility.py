@@ -99,6 +99,22 @@ def _phase_out(magi: float, lower: float, upper: float, limit: float) -> float:
     return max(0.0, round(reduced / 10) * 10)
 
 
+def _roth_allowed(
+    magi: float,
+    lower: float,
+    upper: float,
+    limit: float,
+    remaining: float,
+) -> float:
+    """Allowable direct Roth contribution after phase-out and prior Trad IRA contributions.
+
+    Per IRC §408A(c)(3) the phase-out fraction is applied to the FULL IRA
+    contribution limit, then capped at the room still available after any
+    Traditional IRA contribution made for the same year.
+    """
+    return min(_phase_out(magi, lower, upper, limit), remaining)
+
+
 def _render_recharacterization(
     person: str,
     tax_year: int,
@@ -435,7 +451,7 @@ def render(hh: Household):
 
         # Direct Roth eligibility
         lower, upper = roth_phaseout_for_year(tax_year, filing, cpi=hh.cpi_assumption)
-        allowed = _phase_out(magi, lower, upper, float(remaining))
+        allowed = _roth_allowed(magi, lower, upper, float(limit), float(remaining))
 
         if allowed >= remaining:
             st.success(f"**Eligible for full direct Roth contribution**: {fmt_dollars(remaining)}")
