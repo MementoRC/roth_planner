@@ -154,6 +154,7 @@ def irmaa_for_year(
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
+    medical_cpi: float = MEDICAL_INFLATION,
 ) -> tuple[float, int]:
     """
     Calculate IRMAA that will be charged 2 years AFTER the income year.
@@ -180,7 +181,13 @@ def irmaa_for_year(
         return 0.0, 0
 
     surcharge = irmaa_surcharge(
-        income_year_magi, on_medicare, base_part_b, filing_status, year=year, cpi=cpi
+        income_year_magi,
+        on_medicare,
+        base_part_b,
+        filing_status,
+        year=year,
+        cpi=cpi,
+        medical_cpi=medical_cpi,
     )
     return surcharge, your_age_income_year + 2
 
@@ -200,12 +207,14 @@ def irmaa_next_threshold(
         year/cpi: index MAGI thresholds forward from 2026 base.
 
     Returns:
-        Dollar distance to the next un-crossed tier threshold, or 0.0 if already
-        above the highest tier.
+        Dollar distance to the next un-crossed tier threshold, or float('inf') if
+        MAGI already exceeds all tiers (no next tier exists).  Callers can use
+        ``math.isinf(room)`` to detect the "Max tier — no headroom" case and
+        distinguish it from 0.0 (MAGI exactly at a tier boundary).
     """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     tiers = _index_irmaa_tiers(base_tiers, year, cpi)
     for threshold, _, _ in tiers:
         if magi <= threshold:
             return threshold - magi
-    return 0.0
+    return float("inf")

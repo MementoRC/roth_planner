@@ -374,11 +374,13 @@ class TestIRMAATier5Frozen:
             "Tier 5 surcharge in 2028 must be 2026 value grown by MEDICAL_INFLATION^2"
         )
 
-    def test_irmaa_next_threshold_above_top_tier_returns_zero_in_2028(self):
-        """irmaa_next_threshold returns 0.0 when already above the frozen top tier."""
-        # $800K is above $750K even without drift — should be 0.0 in any year
+    def test_irmaa_next_threshold_above_top_tier_returns_inf_in_2028(self):
+        """irmaa_next_threshold returns inf when already above the frozen top tier."""
+        # $800K is above $750K even without drift — should be inf in any year
+        import math
+
         result = irmaa_next_threshold(800_000, year=2028)
-        assert result == pytest.approx(0.0, abs=1)
+        assert math.isinf(result)
 
 
 class TestSurchargeDollarIndexing:
@@ -448,12 +450,14 @@ class TestIrmaaFrozenTierMonotonicity:
             2_000_000, year=2042, cpi=0.04
         )
 
-    def test_next_threshold_zero_above_frozen_floor(self) -> None:
+    def test_next_threshold_inf_above_frozen_floor(self) -> None:
+        import math
+
         from engine.irmaa import irmaa_next_threshold
 
-        # Above the frozen $750K MFJ floor in the inversion year → no room reported.
-        assert irmaa_next_threshold(755_000, "MFJ", year=2042, cpi=0.04) == 0.0
-        assert irmaa_next_threshold(760_000, "MFJ", year=2042, cpi=0.04) == 0.0
+        # Above the frozen $750K MFJ floor in the inversion year → inf (no next tier).
+        assert math.isinf(irmaa_next_threshold(755_000, "MFJ", year=2042, cpi=0.04))
+        assert math.isinf(irmaa_next_threshold(760_000, "MFJ", year=2042, cpi=0.04))
 
 
 class TestSurchargeIndexedThresholdProbe:
