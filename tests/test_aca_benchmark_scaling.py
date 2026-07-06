@@ -337,13 +337,19 @@ def test_timeline_survivor_who_dies_you_medicare_follows_spouse() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_timeline_single_filer_gets_full_benchmark_not_half() -> None:
-    """Fix 1: Single filer enrolled on ACA must receive the full age-rated benchmark.
+def test_timeline_single_filer_gets_age_ratio_benchmark_not_flat_half() -> None:
+    """Audit aca-2: Single survivor gets age-ratio share of couple benchmark.
 
-    A Single filer has one household adult, so effective_benchmark_premium returns
-    couple_benchmark unmodified (there is no second adult to split with).
-    The old flat-/2 code gave Single filers benchmark/2, which was wrong.
+    couple_benchmark is a two-person rate. A Single survivor's correct individual
+    rate is factor(your_age) / (factor(your_age) + factor(spouse_age)) of the
+    couple rate -- NOT a flat benchmark/2, and NOT the full couple rate.
+
+    compute_year_by_year_timeline passes spouse_age=0 for Single filers (sa=None
+    branch), so effective_benchmark_premium uses aca_age_factor(0) = _HHS_AGE_CURVE[40]
+    as the denominator's second term.
     """
+    from engine.aca import aca_age_factor
+
     hh = Household()
     hh.filing_status = "Single"
     hh.your_age = 62
@@ -358,6 +364,8 @@ def test_timeline_single_filer_gets_full_benchmark_not_half() -> None:
 
     for r in aca_rows:
         ya = r.you_age or hh.your_age
+        # Timeline passes spouse_age=0 for Single (sa=None -> 0).
+        # effective_benchmark_premium uses aca_age_factor(0) = _HHS_AGE_CURVE[40] = 1.278.
         expected_bench = effective_benchmark_premium(
             hh.aca_benchmark_premium_annual,
             your_age=ya,
@@ -366,9 +374,14 @@ def test_timeline_single_filer_gets_full_benchmark_not_half() -> None:
             spouse_on_aca=False,
             filing_status="Single",
         )
-        # Full benchmark for Single = couple_benchmark (no split)
-        assert expected_bench == hh.aca_benchmark_premium_annual, (
-            "effective_benchmark_premium must return full benchmark for an enrolled Single filer"
+        # Audit aca-2: age-ratio share must be strictly less than the full couple rate
+        assert expected_bench < hh.aca_benchmark_premium_annual, (
+            "Single survivor must get age-ratio share, not the full two-person couple rate"
+        )
+        f_you = aca_age_factor(ya)
+        f_sp = aca_age_factor(0)  # clamped to _HHS_AGE_CURVE[40] = 1.278
+        assert expected_bench == pytest.approx(
+            hh.aca_benchmark_premium_annual * f_you / (f_you + f_sp), rel=1e-6
         )
         expected_sub = aca_subsidy(
             base_magi,
@@ -381,7 +394,7 @@ def test_timeline_single_filer_gets_full_benchmark_not_half() -> None:
         assert r.aca_subsidy == pytest.approx(expected_sub), (
             f"Timeline subsidy {r.aca_subsidy} != expected {expected_sub} in year {r.year}"
         )
-        # Guard: old flat-/2 would produce subsidy from benchmark/2, not benchmark
+        # Guard: old flat-/2 must no longer match
         half_bench_sub = aca_subsidy(
             base_magi,
             hh.aca_benchmark_premium_annual / 2,
