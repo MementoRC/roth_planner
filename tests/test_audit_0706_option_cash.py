@@ -17,7 +17,7 @@ from models.household import Household, StockGrant
 
 def _minimal_hh_with_options() -> Household:
     """Household where year 0 (base_year) has a non-zero option grant spread."""
-    hh = Household(
+    return Household(
         your_age=61,
         spouse_age=55,
         base_year=2026,
@@ -38,7 +38,6 @@ def _minimal_hh_with_options() -> Household:
         rmd_start_age=75,
         qcd_limit=0.0,
     )
-    return hh
 
 
 def test_option_income_appears_in_brokerage_next_year() -> None:
