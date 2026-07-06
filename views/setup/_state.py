@@ -65,6 +65,10 @@ def _user_defaults_from_session() -> dict:
         "medicare_part_b_base_monthly",
         "cpi_assumption",
         "filing_status",
+        "your_aca",
+        "spouse_aca",
+        "your_defer_first_rmd",
+        "spouse_defer_first_rmd",
     ]
     payload: dict = {}
     for k in scalar_keys:
