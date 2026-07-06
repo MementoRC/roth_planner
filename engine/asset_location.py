@@ -80,8 +80,9 @@ def project_asset_location(
     total_ira_init = your_ira_bal + spouse_ira_bal
     ira_eq = total_ira_init * equity_pct
     ira_bd = total_ira_init * (1 - equity_pct)
-    roth_eq = 0.0
-    roth_bd = 0.0
+    _initial_roth = hh.your_roth + hh.spouse_roth
+    roth_eq = _initial_roth * equity_pct
+    roth_bd = _initial_roth * (1 - equity_pct)
 
     years = []
     total_conv = 0.0
@@ -187,23 +188,29 @@ def project_asset_location(
         ira_eq *= 1 + equity_return
         ira_bd *= 1 + bond_return
 
-        # Update per-owner balances by draining each owner's OWN withdrawals, then
-        # applying the pool's realized growth so the two owners still sum to the
-        # combined pool. RMDs are per-owner; conversions are household-level so are
-        # attributed proportionally to each owner's beginning balance. (The old code
-        # split the whole pool by ownership share, which wrongly drained the
-        # non-RMD-age spouse and corrupted future per-owner RMDs.)
+        # Update per-owner balances: drain each owner's own RMD + conv share,
+        # then apply the pool's realized growth factor.
+        #
+        # The old code used pool_post = your_post + spouse_post where each term
+        # was clamped via max(..., 0.0).  When a clamp fired, pool_post <
+        # pool_before_growth and realized_growth = combined_after / pool_post was
+        # inflated, overstating the unclamped owner's end balance.
+        #
+        # Fix: compute growth_factor from pool_before_growth (the unkept pool
+        # value before the sleeves were grown), which is always exactly
+        # (ira_total - rmd - conv) without any floor.  Each owner's post-
+        # withdrawal balance is then grown by this same factor.
         combined_after = ira_eq + ira_bd
+        pool_before_growth = (eq_after_rmd - conv_eq) + (bd_after_rmd - conv_bd)
+        growth_factor = combined_after / pool_before_growth if pool_before_growth > 0 else 0.0
         prior_total = cur_your_begin + cur_spouse_begin
         if prior_total > 0:
             your_conv = conv * (cur_your_begin / prior_total)
             spouse_conv = conv * (cur_spouse_begin / prior_total)
             your_post = max(cur_your_begin - your_rmd - your_conv, 0.0)
             spouse_post = max(cur_spouse_begin - spouse_rmd - spouse_conv, 0.0)
-            pool_post = your_post + spouse_post
-            realized_growth = combined_after / pool_post if pool_post > 0 else 0.0
-            your_ira_bal = your_post * realized_growth
-            spouse_ira_bal = spouse_post * realized_growth
+            your_ira_bal = your_post * growth_factor
+            spouse_ira_bal = spouse_post * growth_factor
         else:
             your_ira_bal = 0.0
             spouse_ira_bal = 0.0
@@ -229,15 +236,16 @@ def project_asset_location(
     y75 = _at_age(75)
     y85 = _at_age(85)
 
+    _nan = float("nan")
     return AssetLocationResult(
         name=strategy.replace("_", " ").title(),
         years=years,
         total_converted=total_conv,
-        ira_at_75=y75.ira_total_end if y75 else 0,
-        ira_at_85=y85.ira_total_end if y85 else 0,
-        rmd_at_75=y75.rmd if y75 else 0,
-        rmd_at_85=y85.rmd if y85 else 0,
-        ira_growth_at_75=y75.ira_growth_rate if y75 else 0,
+        ira_at_75=y75.ira_total_end if y75 else _nan,
+        ira_at_85=y85.ira_total_end if y85 else _nan,
+        rmd_at_75=y75.rmd if y75 else _nan,
+        rmd_at_85=y85.rmd if y85 else _nan,
+        ira_growth_at_75=y75.ira_growth_rate if y75 else _nan,
     )
 
 
