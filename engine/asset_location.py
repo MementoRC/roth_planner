@@ -88,10 +88,33 @@ def project_asset_location(
     prev_your_ira_bal = 0.0
     prev_spouse_ira_bal = 0.0
 
+    # Survivor scenario: mirror scenario.py canonical rollover logic.
+    surv = hh.survivor
+    _rollover_done: bool = False
+
     for yr_idx in range(end_age - hh.your_age + 1):
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
+
+        # === Survivor scenario: spousal IRA rollover (IRC §402(c)(9)) ===
+        # From death_year+1, the deceased's IRA balance transfers to the survivor.
+        # The deceased's final RMD for death_year itself fires normally (balance > 0).
+        # After rollover the deceased's balance is 0, so calc_rmd() naturally
+        # returns 0 for every subsequent year — no phantom RMDs or phantom growth.
+        # The combined pool (ira_eq + ira_bd) is unchanged by this rebalance;
+        # only the per-owner tracking variables are reassigned.
+        survivor_active = surv is not None and year >= surv.death_year + 1
+        if survivor_active and not _rollover_done:
+            assert surv is not None  # narrowing: survivor_active implies surv is not None
+            if surv.who_dies == "you":
+                spouse_ira_bal += your_ira_bal
+                your_ira_bal = 0.0
+            else:  # who_dies == "spouse"
+                your_ira_bal += spouse_ira_bal
+                spouse_ira_bal = 0.0
+            _rollover_done = True
+
         cur_your_begin = your_ira_bal
         cur_spouse_begin = spouse_ira_bal
         ira_total = ira_eq + ira_bd
