@@ -56,8 +56,12 @@ def run_scenario(
     spouse_ira = hh.spouse_ira
     your_roth = hh.your_roth
     spouse_roth = hh.spouse_roth
-    prev_your_ira_begin = 0.0
-    prev_spouse_ira_begin = 0.0
+    # ira-rmd-1: seed prior-year balance with hh.your_ira when defer_first_rmd is
+    # elected. Without this, prev_*_ira_begin stays 0.0 when base_year age ==
+    # rmd_start_age+1 (the doubled year), and calc_rmd's prior_year_balance > 0
+    # guard (ira.py:91) silently suppresses the deferred prior-year RMD term.
+    prev_your_ira_begin = hh.your_ira if hh.your_defer_first_rmd else 0.0
+    prev_spouse_ira_begin = hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0
     brokerage = hh.brokerage_start
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
@@ -223,6 +227,23 @@ def run_scenario(
             else:  # who_dies == "you"
                 yr.your_conversion = 0.0
                 yr.extra_withdrawal = 0.0
+
+        # === scenario-core-5: clamp conversions to available IRA balance ===
+        # A planned conversion can exceed the IRA balance when the IRA has been
+        # largely depleted by prior-year growth/withdrawals.  Without this clamp,
+        # yr.your_conversion records the full planned amount even though
+        # yr.your_ira_end is floored at 0 by max(., 0) — inflating combined_gross,
+        # taxable income, and the Roth carry-forward by the excess phantom dollars.
+        # Mandatory withdrawals (RMD/QCD/extra_withdrawal) have priority; the
+        # conversion receives only what remains.
+        _your_avail_for_conv = max(
+            your_ira - max(yr.your_rmd, yr.qcd) - yr.extra_withdrawal, 0.0
+        )
+        yr.your_conversion = min(yr.your_conversion, _your_avail_for_conv)
+        _spouse_avail_for_conv = max(
+            spouse_ira - max(yr.spouse_rmd, yr.spouse_qcd) - yr.spouse_extra_withdrawal, 0.0
+        )
+        yr.spouse_conversion = min(yr.spouse_conversion, _spouse_avail_for_conv)
 
         # === Inherited IRA drains (SECURE Act 10-year rule) ===
         your_inherited_distribution = 0.0
@@ -729,6 +750,10 @@ def run_scenario(
             # conversion_tax; cum_conv_tax also accumulates it — subtracting here
             # ensures each year's conversion tax is counted exactly once across
             # total_rmd_tax + total_conv_tax (audit 0705 #views-financial-5).
+            # scenario-core-4: federal_tax_amt includes extra_withdrawal_tax (elective
+            # bracket-fill withdrawals); this is intentional grouping — the total
+            # lifetime tax is unaffected.  extra_withdrawal_tax is NOT separately
+            # tracked, so it lands in cum_rmd_tax rather than cum_conv_tax.
             cum_rmd_tax += yr.federal_tax_amt - yr.conversion_tax
         cum_brok_tax += yr.brokerage_gain_tax
 
