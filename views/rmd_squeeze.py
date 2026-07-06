@@ -254,14 +254,28 @@ def render(hh: Household):
         )
     )
 
-    # Bracket ceiling lines — CPI-indexed per-year (mirrors planner.py)
-    _brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    # Bracket ceiling lines — CPI-indexed, per-year filing-status-aware.
+    # Uses yr.filing_status (not hh.filing_status) so post-death Single years
+    # in a SurvivorScenario get Single bracket tops instead of MFJ values,
+    # which would overstate the ceiling by ~$50K (12%) / ~$90K (22%) per year.
     _cpi = hh.cpi_assumption
     ceil_12_values = [
-        yr.total_deductions + _index_value(_brackets[1][0], yr.year, _cpi) for yr in rmd_nc
+        yr.total_deductions
+        + _index_value(
+            (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[1][0],
+            yr.year,
+            _cpi,
+        )
+        for yr in rmd_nc
     ]
     ceil_22_values = [
-        yr.total_deductions + _index_value(_brackets[2][0], yr.year, _cpi) for yr in rmd_nc
+        yr.total_deductions
+        + _index_value(
+            (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[2][0],
+            yr.year,
+            _cpi,
+        )
+        for yr in rmd_nc
     ]
     fig_w.add_trace(
         go.Scatter(
