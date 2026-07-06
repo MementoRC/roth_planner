@@ -80,12 +80,38 @@ CONTRIB_LIMIT = CONTRIB_LIMIT_BY_YEAR[2026]
 CATCHUP_50 = CATCHUP_50_BY_YEAR[2026]
 ROTH_PHASEOUT = ROTH_PHASEOUT_BY_YEAR[2026]
 
-# Traditional IRA deduction phase-out when covered by workplace plan (2026)
-TRAD_DEDUCTION_PHASEOUT = {
-    "MFJ_active": (129_000, 149_000),  # you have a workplace plan
-    "MFJ_spouse_only": (242_000, 252_000),  # only spouse has workplace plan
-    "Single": (81_000, 91_000),
+# Traditional IRA deduction phase-out when covered by workplace plan, keyed by tax year.
+# 2025 source: IRS Notice 2024-80.
+# 2026 source: IRS IR-2025-111 / Notice 2025-67 (Nov 13 2025).
+TRAD_DEDUCTION_PHASEOUT_BY_YEAR: dict[int, dict[str, tuple[int, int]]] = {
+    2025: {
+        "MFJ_active": (126_000, 146_000),  # you have a workplace plan
+        "MFJ_spouse_only": (236_000, 246_000),  # only spouse has workplace plan
+        "Single": (79_000, 89_000),
+    },
+    2026: {
+        "MFJ_active": (129_000, 149_000),  # you have a workplace plan
+        "MFJ_spouse_only": (242_000, 252_000),  # only spouse has workplace plan
+        "Single": (81_000, 91_000),
+    },
 }
+
+# Convenience alias for the current default year (2026) — keeps existing importers working.
+TRAD_DEDUCTION_PHASEOUT = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]
+
+
+def trad_deduction_phaseout_for_year(tax_year: int, key: str) -> tuple[float, float]:
+    """Traditional IRA deduction phase-out bounds for *key* in the given *tax_year*.
+
+    Returns the (lower, upper) MAGI thresholds for the supplied key
+    (``"MFJ_active"``, ``"MFJ_spouse_only"``, or ``"Single"``).
+    Falls back to the earliest published year for any year before the table.
+    """
+    year_data = TRAD_DEDUCTION_PHASEOUT_BY_YEAR.get(
+        tax_year, TRAD_DEDUCTION_PHASEOUT_BY_YEAR[min(TRAD_DEDUCTION_PHASEOUT_BY_YEAR)]
+    )
+    low, high = year_data.get(key, (0, 0))
+    return (float(low), float(high))
 
 
 def _phase_out(magi: float, lower: float, upper: float, limit: float) -> float:
@@ -160,8 +186,8 @@ conversion, so the pro-rata rule does NOT apply.
         if (
             has_workplace_plan
             and magi
-            > TRAD_DEDUCTION_PHASEOUT.get(
-                f"{filing}_active" if filing == "MFJ" else filing, (0, 0)
+            > trad_deduction_phaseout_for_year(
+                tax_year, f"{filing}_active" if filing == "MFJ" else filing
             )[1]
         ):
             st.markdown(
@@ -515,7 +541,7 @@ def render(hh: Household):
         st.markdown("#### Traditional IRA Deduction")
         if workplace:
             key = f"{filing}_active" if filing == "MFJ" else filing
-            ded_lower, ded_upper = TRAD_DEDUCTION_PHASEOUT.get(key, (0, 0))
+            ded_lower, ded_upper = trad_deduction_phaseout_for_year(tax_year, key)
             deductible = _phase_out(magi, ded_lower, ded_upper, float(limit))
             if deductible >= limit:
                 st.write(
@@ -530,7 +556,7 @@ def render(hh: Household):
                     f"**Not deductible** — MAGI {fmt_dollars(magi)} exceeds {filing} limit with workplace plan ({fmt_dollars(ded_upper)})"
                 )
         elif filing == "MFJ" and spouse_workplace:
-            ded_lower, ded_upper = TRAD_DEDUCTION_PHASEOUT["MFJ_spouse_only"]
+            ded_lower, ded_upper = trad_deduction_phaseout_for_year(tax_year, "MFJ_spouse_only")
             deductible = _phase_out(magi, ded_lower, ded_upper, float(limit))
             if deductible >= limit:
                 st.write(
