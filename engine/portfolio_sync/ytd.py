@@ -166,6 +166,19 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
                 UserWarning,
                 stacklevel=2,
             )
+        # psync-income-1/3: wire the interest bucket parsed above.
+        # investment_income endpoint is the preferred owner of interest_ytd; only
+        # fall back to the ytd_income row value when that endpoint was unavailable
+        # (field still zero after its try-block).
+        interest_fallback = parsed.get("interest", 0.0)
+        if interest_fallback and ytd.interest_ytd == 0.0:
+            ytd.interest_ytd = interest_fallback
+            warnings.warn(
+                "Falling back to ytd_income interest rows for interest_ytd; "
+                "investment_income endpoint preferred",
+                UserWarning,
+                stacklevel=2,
+            )
     except (requests.RequestException, ValueError):
         pass
 
@@ -183,8 +196,9 @@ def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
             continue
         if "wage" in label or "w-2" in label:
             result["wages"] = result.get("wages", 0) + amount
-        elif "qualified" in label and "dividend" in label:
-            # 1099-DIV box 1b — qualified dividends (subset of total ordinary)
+        elif "qualified" in label and "non-qualified" not in label and "dividend" in label:
+            # 1099-DIV box 1b — qualified dividends (subset of total ordinary).
+            # Guard "non-qualified" prefix to avoid substring trap.
             result["qualified_dividends"] = result.get("qualified_dividends", 0) + amount
         elif "dividend" in label or "1099-div" in label:
             # 1099-DIV box 1a — total ordinary dividends (includes qualified)
