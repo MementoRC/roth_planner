@@ -78,10 +78,10 @@ def _classify_account(
 
     name_lower = account_name.lower()
 
-    if "roth ira" in name_lower or "roth" in name_lower:
-        acct_type = "roth_ira"
-    elif "403b" in name_lower or "403(b)" in name_lower:
+    if "403b" in name_lower or "403(b)" in name_lower:
         acct_type = "403b"
+    elif "roth ira" in name_lower or "roth" in name_lower:
+        acct_type = "roth_ira"
     elif "health savings" in name_lower or "hsa" in name_lower:
         acct_type = "hsa"
     elif "ira" in name_lower:

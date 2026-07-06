@@ -34,17 +34,18 @@ def _parse_tax_rows(
             result["wages"] = result.get("wages", 0) + amount
         elif "1099-nec" in label_lower:
             result["nec_income"] = result.get("nec_income", 0) + amount
+        # HSA checks before investment/savings to avoid 'savings' substring collision
+        elif ("1099-sa" in label_lower or "hsa" in label_lower) and "contribution" not in label_lower:
+            result["hsa_distributions"] = result.get("hsa_distributions", 0) + amount
+        elif "hsa" in label_lower and "contribution" in label_lower:
+            result["hsa_contributions"] = result.get("hsa_contributions", 0) + amount
         elif "investment" in label_lower or "savings" in label_lower:
             result["investment_income"] = result.get("investment_income", 0) + amount
         elif "1099-r" in label_lower or "pension" in label_lower:
             result["ira_distributions"] = result.get("ira_distributions", 0) + amount
-        elif ("1099-sa" in label_lower or "hsa" in label_lower) and "contribution" not in label_lower:
-            result["hsa_distributions"] = result.get("hsa_distributions", 0) + amount
         elif "miscellaneous" in label_lower or "1099-a" in label_lower or "1099-c" in label_lower:
             result["misc_income"] = result.get("misc_income", 0) + amount
-        # Deduction rows
-        elif "hsa" in label_lower and "contribution" in label_lower:
-            result["hsa_contributions"] = result.get("hsa_contributions", 0) + amount
+        # Deduction rows (non-HSA)
         elif "ira contribution" in label_lower:
             result["ira_contributions"] = result.get("ira_contributions", 0) + amount
         elif "sales tax" in label_lower:

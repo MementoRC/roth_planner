@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
@@ -55,6 +56,8 @@ def apply_magi(snap: MagiSnapshot, magi: dict[str, Any] | None) -> MagiSnapshot:
     try:
         year = int(year_raw)
     except (TypeError, ValueError):
+        return snap
+    if not (2000 <= year <= date.today().year + 1):
         return snap
 
     magi_val = magi.get("magi")
