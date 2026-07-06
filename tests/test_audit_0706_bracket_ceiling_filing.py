@@ -22,7 +22,6 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household, SurvivorScenario
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
