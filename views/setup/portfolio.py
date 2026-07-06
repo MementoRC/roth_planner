@@ -53,7 +53,14 @@ def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) 
         }
         for a in accounts
     ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "market_value": st.column_config.NumberColumn("Market Value", format="$%,.0f"),
+        },
+    )
 
 
 def _render_holdings_table(accounts: list[AccountSummary]) -> None:
@@ -72,7 +79,15 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
     if not rows:
         st.info(_no_data_msg("holdings"))
         return
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "quantity": st.column_config.NumberColumn("Quantity", format="%,.0f"),
+            "market_value": st.column_config.NumberColumn("Market Value", format="$%,.0f"),
+        },
+    )
 
 
 def _render_grants_section(grants: list[EquityGrant]) -> None:
@@ -91,7 +106,14 @@ def _render_grants_section(grants: list[EquityGrant]) -> None:
         }
         for g in grants
     ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "current_value": st.column_config.NumberColumn("Current Value", format="$%,.0f"),
+        },
+    )
 
 
 def _render_portfolio_sub_tabs(

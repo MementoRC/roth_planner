@@ -308,33 +308,28 @@ def render(hh: Household):
     st.markdown("### Bracket Usage by Year")
     fig_br = go.Figure()
 
-    for yr in conv_window:
-        # Stacked bar: option_income, your_conv, sp_conv, SS, RMD, room_12, room_22
-        segs = []
-        if yr.option_income > 0:
-            segs.append(("Options", yr.option_income, "#a78bfa"))
-        if yr.taxable_rmd > 0:
-            segs.append(("Taxable RMD", yr.taxable_rmd, "#f87171"))
-        if yr.taxable_ss_amt > 0:
-            segs.append(("Taxable SS", yr.taxable_ss_amt, "#60a5fa"))
-        if yr.your_conversion > 0:
-            segs.append(("Your Conv", yr.your_conversion, "#34d399"))
-        if yr.spouse_conversion > 0:
-            segs.append(("Sp Conv", yr.spouse_conversion, "#f472b6"))
-        if yr.room_12 > 0:
-            segs.append(("Room (12%)", yr.room_12, "#1e293b"))
-
-        for name, val, color in segs:
-            fig_br.add_trace(
-                go.Bar(
-                    x=[yr.year],
-                    y=[val],
-                    name=name,
-                    marker_color=color,
-                    showlegend=(yr == conv_window[0]),
-                    hovertemplate=f"{name}: $%{{y:,.0f}}<extra>{yr.year}</extra>",
-                )
+    # Pre-aggregate one trace per income segment so the legend always shows
+    # exactly 6 entries (one per segment) regardless of which years have values.
+    _years = [yr.year for yr in conv_window]
+    _segments = [
+        ("Options",     [yr.option_income     for yr in conv_window], "#a78bfa"),
+        ("Taxable RMD", [yr.taxable_rmd       for yr in conv_window], "#f87171"),
+        ("Taxable SS",  [yr.taxable_ss_amt    for yr in conv_window], "#60a5fa"),
+        ("Your Conv",   [yr.your_conversion   for yr in conv_window], "#34d399"),
+        ("Sp Conv",     [yr.spouse_conversion for yr in conv_window], "#f472b6"),
+        ("Room (12%)",  [yr.room_12           for yr in conv_window], "#1e293b"),
+    ]
+    for name, vals, color in _segments:
+        fig_br.add_trace(
+            go.Bar(
+                x=_years,
+                y=vals,
+                name=name,
+                marker_color=color,
+                showlegend=True,
+                hovertemplate=f"{name}: $%{{y:,.0f}}<extra>%{{x}}</extra>",
             )
+        )
 
     # Add 12% ceiling line (CPI-indexed, per-year filing-status-aware).
     # Uses yr.filing_status (not hh.filing_status) so post-death Single years
