@@ -358,7 +358,7 @@ def find_sweet_spots(results: list[ConversionResult]) -> list[SweetSpotJump]:
         if curr.conv == 0:
             continue
         marginal = (curr.all_in - prev.all_in) / STEP * 100  # percent (%) of each $1K converted
-        if i > 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
+        if i >= 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
             spots.append(
                 SweetSpotJump(
                     conv=prev.conv,
