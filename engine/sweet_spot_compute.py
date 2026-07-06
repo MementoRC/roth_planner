@@ -185,9 +185,10 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     # MAGI base (without conversion)
     base_magi = opt + tss + ytd_magi
 
-    # Senior bonus deduction
+    # Senior bonus deduction — phaseout uses NIIT-MAGI (excludes tax-exempt muni
+    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5.
     senior_bonus = senior_bonus_deduction(
-        ya, sa, base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya, sa, opt + tss + ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )
     total_ded = ded + senior_bonus
 
@@ -239,9 +240,10 @@ def all_in_at_conversion(
     gross = base.opt + conv + tss
     magi = base.opt + conv + tss + base.ytd_magi
 
-    # Recalculate senior bonus deduction at new MAGI
+    # Recalculate senior bonus deduction at new NIIT-MAGI (excludes tax-exempt muni
+    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5.
     senior_bonus = senior_bonus_deduction(
-        ya, sa, magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya, sa, base.opt + conv + tss + base.ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )
     total_ded = base.ded_base + senior_bonus
 
@@ -253,7 +255,7 @@ def all_in_at_conversion(
     base_tss = taxable_ss(base.combined_ss, base.opt + base.ytd_magi, filing_status=hh.filing_status)
     base_gross = base.opt + base_tss
     base_senior = senior_bonus_deduction(
-        ya, sa, base.base_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya, sa, base.opt + base_tss + base.ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )
     base_total_ded = base.ded_base + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
@@ -355,9 +357,10 @@ def find_sweet_spots(results: list[ConversionResult]) -> list[SweetSpotJump]:
     for i in range(1, len(results)):
         curr = results[i]
         prev = results[i - 1]
-        if curr.conv == 0:
-            continue
         marginal = (curr.all_in - prev.all_in) / STEP * 100  # percent (%) of each $1K converted
+        if curr.conv == 0:
+            prev_marginal = marginal
+            continue
         if i >= 1 and marginal - prev_marginal > 2.0:  # >2% jump per $1K
             spots.append(
                 SweetSpotJump(
