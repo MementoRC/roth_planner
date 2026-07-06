@@ -216,6 +216,11 @@ def compute_magi(
     MAGI = AGI + tax-exempt interest + FEIE (+ excluded savings bond interest
     and other rare add-backs that are 0 for most filers).
     taxable_ss is already inside AGI — do NOT add it again.
+
+    Scope note — this MAGI matches Roth/ACA MAGI (IRC §408A / §36B).
+    IRMAA MAGI (42 U.S.C. §1395r) uses AGI + tax_exempt_interest only; FEIE
+    is NOT added back for IRMAA purposes.  The FEIE term is safe here because
+    this household has FEIE = 0; callers that need IRMAA MAGI must omit feie.
     """
     return agi + tax_exempt_interest + feie
 
@@ -439,11 +444,10 @@ def merge_pdf_magi(
 ) -> dict[int, float]:
     """Gap-fill ``existing`` MAGI dict with PDF-sourced values.
 
-    Only fills years that are absent or falsy in ``existing`` — manual
-    in-session edits and FinExtract values already in place are preserved.
-    PDF takes precedence over FinExtract because FinExtract only covers the
-    current + prior year from the TurboTax dashboard, while PDFs carry
-    Schedule 1 detail for any historical year.
+    Only fills years that are absent or falsy in ``existing`` — FinExtract
+    values already in place take precedence; PDF fills historical gaps.
+    PDFs carry Schedule 1 detail for any historical year, while FinExtract
+    only covers the current + prior year from the TurboTax dashboard.
 
     Returns a *new* dict; does not mutate ``existing``.
     """

@@ -100,7 +100,7 @@ if "ytd_snapshot" not in st.session_state:
     if _cached_ytd is not None:
         st.session_state.ytd_snapshot = _cached_ytd
 
-# Hydrate prior_year_magi from PDF cache (PDF wins over FinExtract gap-fill).
+# Hydrate prior_year_magi from PDF cache (FinExtract wins; PDF fills historical gaps).
 # merge_pdf_magi only fills absent/zero years so manual edits are preserved.
 
 _pdf_records = load_pdf_tax_records()

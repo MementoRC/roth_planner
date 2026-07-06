@@ -38,6 +38,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             "your_ss_start_age": "spouse_ss_start_age",
             "your_rmd_start_age": "spouse_rmd_start_age",
             "your_fra_age": "spouse_fra_age",
+            "your_defer_first_rmd": "spouse_defer_first_rmd",
         }
         for file_k, sess_k in spouse_field_map.items():
             if file_k in data:
