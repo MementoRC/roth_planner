@@ -493,9 +493,15 @@ class TestEffectiveBenchmarkPremium:
         assert got == approx(expected)
         assert got > self.COUPLE * 0.5  # strictly more than the old 50/50 split
 
-    def test_single_enrolled_gets_full_individual_benchmark(self):
-        # Single filer: one household adult -> no halving of their benchmark
+    def test_single_enrolled_gets_age_ratio_share(self):
+        # Single survivor: gets age-rated share of couple benchmark (audit aca-2).
+        # couple_benchmark is a two-person rate; Single gets factor(your_age) /
+        # (factor(your_age) + factor(spouse_age)) share.
+        your_age, spouse_age = 61, 0
+        f_you = aca_age_factor(your_age)  # 2.810
+        f_sp = aca_age_factor(spouse_age)  # clamped to _HHS_AGE_CURVE[40] = 1.278
+        expected = self.COUPLE * f_you / (f_you + f_sp)
         assert effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=True,
-            spouse_age=0, spouse_on_aca=False, filing_status="Single",
-        ) == approx(self.COUPLE)
+            self.COUPLE, your_age=your_age, your_on_aca=True,
+            spouse_age=spouse_age, spouse_on_aca=False, filing_status="Single",
+        ) == approx(expected)

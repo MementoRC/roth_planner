@@ -111,9 +111,16 @@ def effective_benchmark_premium(
     rather than a halved couple rate.
     """
     if filing_status == "Single":
-        adults = [(your_age, your_on_aca)]
-    else:
-        adults = [(your_age, your_on_aca), (spouse_age, spouse_on_aca)]
+        # A Single survivor was previously part of a couple; couple_benchmark is a
+        # two-adult rate. Return the enrolled individual's age-rated share rather than
+        # the full two-person rate (audit aca-2: overstated subsidy for Single survivor).
+        if not your_on_aca:
+            return 0.0
+        total_factor = aca_age_factor(your_age) + aca_age_factor(spouse_age)
+        if total_factor <= 0:
+            return couple_benchmark / 2
+        return couple_benchmark * aca_age_factor(your_age) / total_factor
+    adults = [(your_age, your_on_aca), (spouse_age, spouse_on_aca)]
     enrolled_ages = [age for age, on in adults if on]
     if not enrolled_ages:
         return 0.0
@@ -162,11 +169,18 @@ def aca_premium_cap_rate(
     # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
     if not enhanced_subsidies_active and fpl_ratio > 4.0:
         return 0.0
+    # Pre-ARP floor: below 100% FPL the household is PTC-ineligible (audit aca-3).
+    # IRC §36B(c)(1)(A) limits the credit to 100%-400% FPL. Mirrors the 400% cliff
+    # guard above. Enhanced schedule has no statutory lower bound, so only pre-ARP.
+    if not enhanced_subsidies_active and fpl_ratio < 1.0:
+        return 0.0
     schedule = _aca_cap_schedule(enhanced_subsidies_active)
     # Enhanced schedule: original step-function lookup preserved (ARPA caps, not ramps).
+    # Use strict < so exactly 150% FPL falls into the 2% band, not the 0% band
+    # (audit aca-1: <= caused the boundary to be greedily assigned to 0%).
     if enhanced_subsidies_active:
         for upper_fpl, cap_rate in schedule:
-            if fpl_ratio <= upper_fpl:
+            if fpl_ratio < upper_fpl:
                 return cap_rate
         raise AssertionError(
             f"aca_premium_cap_rate: no schedule entry matched fpl_ratio={fpl_ratio:.3f}"
@@ -317,5 +331,5 @@ def aca_excess_aptc_repayment(
 
 
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:
-    """ACA marketplace only relevant if under 65 AND enrolled."""
-    return your_age < 65 and enrolled
+    """ACA marketplace only relevant if under 65 AND enrolled AND age > 0 (audit aca-4)."""
+    return 0 < your_age < 65 and enrolled
