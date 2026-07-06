@@ -24,7 +24,7 @@ from engine.scenario_autofill import (
 )
 from engine.scenario_compute import compute_brokerage_dividends
 from engine.tax import (
-    LTCG_RATES_MFJ,
+    LTCG_RATES_SINGLE,
     LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
@@ -90,7 +90,7 @@ def survivor_year_tax(
             min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
         )
         ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
-        ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
+        ltcg_tax = ltcg_at_15 * LTCG_RATES_SINGLE[1] + ltcg_at_20 * LTCG_RATES_SINGLE[2]
 
     return (
         ordinary_tax + ltcg_tax,
@@ -191,11 +191,13 @@ def compute_survivor_snapshot(
             # overstates the inherited balance fed into the tax projection.
             ira_balance = float(inherited_ira)
             rmd = 0.0
+            _rmd_by_offset: list[float] = []
             for proj_offset in range(proj_years):
                 year_offset = proj_offset + 1
                 age_at_offset = _surv_age(death_age, year_offset)
                 year_at_offset = death_year_calc + year_offset
                 rmd_withdrawal = calc_rmd(ira_balance, age_at_offset, survivor_rmd_start)
+                _rmd_by_offset.append(rmd_withdrawal)
                 ira_balance = max(ira_balance - rmd_withdrawal, 0.0)
                 ira_balance *= 1 + _surv_rate(year_at_offset)
                 if proj_offset == proj_years - 1:
@@ -234,15 +236,30 @@ def compute_survivor_snapshot(
                 # brok_realized treats realized gains as a cash outflow (like a withdrawal)
                 # rather than a tax liability, understating the balance by ~turnover×gain
                 # per year (≈3.5% annually vs ≈0.5% under the correct tax-only drain).
-                # Use the same LTCG 0/15/20 stack-walk as survivor_year_tax; stack on
-                # taxable_ordinary=0 (conservative: survivor has no other taxable income
-                # in the projection loop — the tax calc below happens separately for the
-                # final year).  This matches engine/scenario.py's brokerage_gain_tax logic.
+                # scenario-autofill-2 fix: stack LTCG on top of RMD-derived ordinary income
+                # rather than zero — the survivor draws RMD each year, pushing realized gains
+                # into the 15%/20% band even when gains alone would fall in the 0% band.
+                # Derive taxable_ordinary from the RMD for this projection offset (mirrors
+                # survivor_year_tax ~lines 67-93) using simplified deduction (std only; no
+                # SS or OBBBA here since those are captured in the final-year tax call).
+                _rmd_this_year = _rmd_by_offset[proj_offset]
+                _ded_this_year = deductions(
+                    _surv_age(death_age, proj_offset + 1),
+                    0,
+                    filing_status="Single",
+                    year=year_at_offset,
+                    cpi=hh.cpi_assumption,
+                )
+                _taxable_ord_this_year = max(_rmd_this_year - _ded_this_year, 0.0)
                 _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption)
-                _ltcg_at_15 = max(0.0, min(brok_realized, _ltcg_thr[1]) - _ltcg_thr[0])
-                _ltcg_at_20 = max(0.0, brok_realized - _ltcg_thr[1])
+                _ltcg_start = _taxable_ord_this_year
+                _ltcg_end = _taxable_ord_this_year + brok_realized
+                _ltcg_at_15 = max(
+                    0.0, min(_ltcg_end, _ltcg_thr[1]) - max(_ltcg_start, _ltcg_thr[0])
+                )
+                _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, _ltcg_thr[1]))
                 brok_gain_tax = (
-                    _ltcg_at_15 * LTCG_RATES_MFJ[1] + _ltcg_at_20 * LTCG_RATES_MFJ[2]
+                    _ltcg_at_15 * LTCG_RATES_SINGLE[1] + _ltcg_at_20 * LTCG_RATES_SINGLE[2]
                 )
                 # Grow balance: subtract only the tax on realized gains (not the gains themselves)
                 brok_balance = (

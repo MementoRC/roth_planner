@@ -60,6 +60,9 @@ SS_TIER_2_SINGLE = 34_000
 
 # Federal long-term capital gains / qualified dividend rates (MFJ statutory tiers)
 LTCG_RATES_MFJ = (0.0, 0.15, 0.20)
+# LTCG rates for Single filers (identical to MFJ in 2026 — IRC §1(h); defined
+# separately for clarity and filing-status-aware branching)
+LTCG_RATES_SINGLE = (0.0, 0.15, 0.20)
 
 # LTCG bracket thresholds for MFJ (taxable income upper bounds, 2026 — IRS Rev. Proc. 2025-32 §3.03)
 # 0% up to $98,900; 15% up to $613,700; 20% above
@@ -147,14 +150,19 @@ def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MF
 def deductions(
     your_age: int,
     spouse_age: int,
-    std_ded: float = STD_DEDUCTION_MFJ,
-    senior_extra: float = SENIOR_EXTRA_MFJ,
+    std_ded: float | None = None,
+    senior_extra: float | None = None,
     filing_status: str = "MFJ",
     *,
     year: int = BASE_YEAR,
     cpi: float = DEFAULT_CPI,
 ) -> float:
     """Total standard deduction including senior extras.
+
+    When ``std_ded`` or ``senior_extra`` are omitted (None), the correct
+    amounts are inferred from ``filing_status`` — Single/HoH/MFS use
+    STD_DEDUCTION_SINGLE / SENIOR_EXTRA_SINGLE; MFJ uses STD_DEDUCTION_MFJ /
+    SENIOR_EXTRA_MFJ.  Callers that pass explicit values are unaffected.
 
     For MFJ each spouse's age is checked independently (up to two extras).
     For any other filing status (Single, HoH, MFS) exactly one filer is
@@ -163,6 +171,10 @@ def deductions(
     select whichever slot holds the live filer — mirroring the already-correct
     logic in senior_bonus_deduction() (IRC §63(f), audit 0706 #tax-deductions-1).
     """
+    if std_ded is None:
+        std_ded = STD_DEDUCTION_MFJ if filing_status == "MFJ" else STD_DEDUCTION_SINGLE
+    if senior_extra is None:
+        senior_extra = SENIOR_EXTRA_MFJ if filing_status == "MFJ" else SENIOR_EXTRA_SINGLE
     ded = index_value(std_ded, year, cpi)
     se = index_value(senior_extra, year, cpi)
     senior: float = 0.0
@@ -432,7 +444,8 @@ def estimate_ytd_federal_tax(
         min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
     )
     ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
-    ltcg_tax = ltcg_at_15 * LTCG_RATES_MFJ[1] + ltcg_at_20 * LTCG_RATES_MFJ[2]
+    _ltcg_rates = LTCG_RATES_SINGLE if is_single else LTCG_RATES_MFJ
+    ltcg_tax = ltcg_at_15 * _ltcg_rates[1] + ltcg_at_20 * _ltcg_rates[2]
 
     # Step 6: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
