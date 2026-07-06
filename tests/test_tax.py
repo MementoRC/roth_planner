@@ -845,14 +845,21 @@ class TestEstimateYtdSsOmissionCluster:
 
 class TestDeductionsFilingGate:
     """Audit 0705 follow-up (SS-IRMAA-DBL twin): a Single filer's phantom spouse must not add a
-    second senior standard-deduction extra. deductions() must gate the spouse extra on MFJ."""
+    second senior standard-deduction extra. deductions() must gate the spouse extra on MFJ.
+
+    Audit 0706 update: the survivor scenario places the live filer's age in the spouse_age slot
+    (ya_eff=0 for the deceased). deductions() uses max(your_age, spouse_age) for non-MFJ so the
+    survivor gets exactly one senior extra. The Setup gate guarantees that a non-survivor Single
+    filer always has spouse_age=0, so max() correctly resolves to the filer's own age in all
+    non-survivor paths (no phantom double-extra risk).
+    """
 
     def test_single_filer_ignores_phantom_spouse_senior_extra(self):
         import pytest
 
         from engine.tax import SENIOR_EXTRA_SINGLE, STD_DEDUCTION_SINGLE, deductions
 
-        # Both ages >= 65 but Single → only the primary's senior extra counts (not two).
+        # Both ages >= 65 but Single → max() picks the higher age; only one extra granted (not two).
         d = deductions(75, 69, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single")
         assert d == pytest.approx(STD_DEDUCTION_SINGLE + SENIOR_EXTRA_SINGLE)
 
@@ -861,8 +868,9 @@ class TestDeductionsFilingGate:
 
         from engine.tax import SENIOR_EXTRA_SINGLE, STD_DEDUCTION_SINGLE, deductions
 
-        # Single, primary < 65, spouse >= 65 (phantom) → no senior extra at all.
-        d = deductions(60, 70, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single")
+        # Non-survivor Single filer, age 60: Setup gate zeroes spouse_age (not a survivor).
+        # max(60, 0) = 60 < 65 → no senior extra. This is the realistic application shape.
+        d = deductions(60, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single")
         assert d == pytest.approx(STD_DEDUCTION_SINGLE)
 
     def test_mfj_default_still_counts_both_senior_extras(self):
