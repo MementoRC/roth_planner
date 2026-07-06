@@ -82,7 +82,7 @@ def render(hh: Household):
 
     if ira_diff_85 > 0:
         st.success(
-            f"**Equity-first saves {fmt_dollars(ira_diff_85)} in IRA at 85** vs proportional, "
+            f"**Equity-first leaves {fmt_dollars(ira_diff_85)} less in traditional IRA at 85** (more in Roth), "
             f"reducing RMDs by ~{fmt_dollars(rmd_diff_85)}/yr. "
             f"After converting equities, IRA growth drops to ~{fmt_pct(eq_r.ira_growth_at_75)} "
             f"(mostly bonds) vs {fmt_pct(prop_r.ira_growth_at_75)} proportional."
