@@ -122,21 +122,21 @@ def _parse_equity_sales_lots(
         try:
             grant_price = float(lot.get("grant_price") or 0)
             qty_raw = lot.get("execution_quantity") or 0
-            # Cast string numerics; tolerate int/float too
-            qty = int(float(qty_raw)) if qty_raw not in ("", None) else 0
+            # Cast string numerics; tolerate int/float too; preserve full precision for spread
+            qty_f = float(qty_raw) if qty_raw not in ("", None) else 0.0
             gross = float(lot.get("gross_proceeds") or 0)
         except (TypeError, ValueError):
             snap.warnings.append(
                 f"lot skipped: non-numeric fields in {lot.get('grant_number', '?')}"
             )
             continue
-        if qty <= 0 or grant_price <= 0:
+        if qty_f <= 0 or grant_price <= 0:
             continue
-        spread = gross - (grant_price * qty)
+        spread = gross - (grant_price * qty_f)
         if spread < 0:
             snap.warnings.append(
                 f"negative spread for grant {lot.get('grant_number', '?')}: "
-                f"gross={gross}, strike*qty={grant_price * qty}"
+                f"gross={gross}, strike*qty={grant_price * qty_f}"
             )
             continue
         snap.total_spread += spread
@@ -151,7 +151,7 @@ def _parse_equity_sales_lots(
             snap.sale_info_by_grant[grant_id] = {
                 "grant_year": existing.get("grant_year") or grant_year,
                 "strike": existing.get("strike") or grant_price,
-                "shares_ytd": existing.get("shares_ytd", 0) + qty,
+                "shares_ytd": existing.get("shares_ytd", 0) + int(qty_f),
             }
     return snap
 
