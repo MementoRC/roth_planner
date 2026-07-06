@@ -156,18 +156,25 @@ def deductions(
 ) -> float:
     """Total standard deduction including senior extras.
 
-    Only MFJ has a second filer, so the spouse senior extra (IRC §63(f)) is
-    counted only for MFJ. For any other filing status the spouse_age argument is
-    ignored — mirrors the beneficiary gate in irmaa_for_year and prevents a
-    phantom-spouse double senior deduction for Single filers.
+    For MFJ each spouse's age is checked independently (up to two extras).
+    For any other filing status (Single, HoH, MFS) exactly one filer is
+    eligible; the real filer's age may live in either slot when the scenario
+    zeroes the deceased spouse's age, so we use max(your_age, spouse_age) to
+    select whichever slot holds the live filer — mirroring the already-correct
+    logic in senior_bonus_deduction() (IRC §63(f), audit 0706 #tax-deductions-1).
     """
     ded = index_value(std_ded, year, cpi)
     se = index_value(senior_extra, year, cpi)
     senior: float = 0.0
-    if your_age >= 65:
-        senior += se
-    if filing_status == "MFJ" and spouse_age >= 65:
-        senior += se
+    if filing_status == "MFJ":
+        if your_age >= 65:
+            senior += se
+        if spouse_age >= 65:
+            senior += se
+    else:
+        _filer_age = max(your_age, spouse_age)
+        if _filer_age >= 65:
+            senior += se
     return ded + senior
 
 
