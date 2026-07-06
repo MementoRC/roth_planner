@@ -18,7 +18,6 @@ import pytest
 
 from engine.sweet_spot_compute import (
     ConversionResult,
-    SweetSpotJump,
     find_sweet_spots,
 )
 
@@ -26,29 +25,33 @@ from engine.sweet_spot_compute import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DEFAULTS = dict(
-    conv_tax=0.0,
-    irmaa_delta=0.0,
-    aca_loss=0.0,
-    niit_delta=0.0,
-    ltcg_delta=0.0,
-    magi=0.0,
-    taxable_inc=0.0,
-    room_12=0.0,
-    room_22=0.0,
-)
+_DEFAULTS = {
+    "conv_tax": 0.0,
+    "irmaa_delta": 0.0,
+    "aca_loss": 0.0,
+    "niit_delta": 0.0,
+    "ltcg_delta": 0.0,
+    "magi": 0.0,
+    "taxable_inc": 0.0,
+    "room_12": 0.0,
+    "room_22": 0.0,
+}
 
 
 def _cr(conv: float, all_in: float, irmaa_delta: float = 0.0) -> ConversionResult:
     """Build a minimal ConversionResult for find_sweet_spots testing."""
-    return ConversionResult(conv=conv, all_in=all_in, irmaa_delta=irmaa_delta, **{
-        k: v for k, v in _DEFAULTS.items() if k != "irmaa_delta"
-    })
+    return ConversionResult(
+        conv=conv,
+        all_in=all_in,
+        irmaa_delta=irmaa_delta,
+        **{k: v for k, v in _DEFAULTS.items() if k != "irmaa_delta"},
+    )
 
 
 # ---------------------------------------------------------------------------
 # Core regression
 # ---------------------------------------------------------------------------
+
 
 class TestFindSweetSpotsFirstJump:
     """find_sweet_spots must surface the first-increment jump (i==1, not i>1)."""
@@ -68,9 +71,13 @@ class TestFindSweetSpotsFirstJump:
         marginal_tax_per_step = 22.0  # ~22% bracket, low-value stand-in
 
         results = [
-            _cr(conv=0,       all_in=0.0,                               irmaa_delta=0.0),
-            _cr(conv=1_000,   all_in=irmaa_surcharge,                   irmaa_delta=irmaa_surcharge),
-            _cr(conv=2_000,   all_in=irmaa_surcharge + marginal_tax_per_step, irmaa_delta=irmaa_surcharge),
+            _cr(conv=0, all_in=0.0, irmaa_delta=0.0),
+            _cr(conv=1_000, all_in=irmaa_surcharge, irmaa_delta=irmaa_surcharge),
+            _cr(
+                conv=2_000,
+                all_in=irmaa_surcharge + marginal_tax_per_step,
+                irmaa_delta=irmaa_surcharge,
+            ),
         ]
 
         spots = find_sweet_spots(results)
@@ -96,8 +103,8 @@ class TestFindSweetSpotsFirstJump:
     def test_minimal_two_element_first_jump(self) -> None:
         """Two-element list: the single step (i==1) is a large jump — must be caught."""
         results = [
-            _cr(conv=0,     all_in=0.0),
-            _cr(conv=1_000, all_in=100.0),   # 10% marginal — well above 2% threshold
+            _cr(conv=0, all_in=0.0),
+            _cr(conv=1_000, all_in=100.0),  # 10% marginal — well above 2% threshold
         ]
 
         spots = find_sweet_spots(results)
@@ -112,25 +119,23 @@ class TestFindSweetSpotsFirstJump:
     def test_no_false_positive_when_first_step_is_small(self) -> None:
         """First step is only 1% marginal — below threshold; no spot expected."""
         results = [
-            _cr(conv=0,     all_in=0.0),
-            _cr(conv=1_000, all_in=10.0),    # 1% marginal — below 2% threshold
-            _cr(conv=2_000, all_in=50.0),    # 4% marginal — jump here at i==2
+            _cr(conv=0, all_in=0.0),
+            _cr(conv=1_000, all_in=10.0),  # 1% marginal — below 2% threshold
+            _cr(conv=2_000, all_in=50.0),  # 4% marginal — jump here at i==2
         ]
 
         spots = find_sweet_spots(results)
 
         # The i==1 step (1%) must NOT produce a spot (delta vs 0.0 baseline = 1.0 < 2.0).
         # The i==2 step (4% vs 1%) must produce a spot (delta = 3.0 > 2.0).
-        assert len(spots) == 1, (
-            f"Expected exactly 1 spot (at i==2); got {len(spots)}: {spots}"
-        )
+        assert len(spots) == 1, f"Expected exactly 1 spot (at i==2); got {len(spots)}: {spots}"
         assert spots[0].conv == pytest.approx(1_000.0)
 
     def test_no_false_positive_small_first_step_only(self) -> None:
         """Only two elements; first step is below threshold — no spot."""
         results = [
-            _cr(conv=0,     all_in=0.0),
-            _cr(conv=1_000, all_in=5.0),    # 0.5% marginal
+            _cr(conv=0, all_in=0.0),
+            _cr(conv=1_000, all_in=5.0),  # 0.5% marginal
         ]
 
         spots = find_sweet_spots(results)
