@@ -336,11 +336,19 @@ def render(hh: Household):
                 )
             )
 
-    # Add 12% ceiling line (CPI-indexed, filing-status-aware)
+    # Add 12% ceiling line (CPI-indexed, per-year filing-status-aware).
+    # Uses yr.filing_status (not hh.filing_status) so post-death Single years
+    # in a SurvivorScenario get BRACKETS_SINGLE[1][0] (~$50,400) instead of
+    # the MFJ value (~$100,800), which would overstate conversion headroom.
     _cpi = hh.cpi_assumption
-    _br = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     ceil_12_values = [
-        yr.total_deductions + _index_value(_br[1][0], yr.year, _cpi) for yr in conv_window
+        yr.total_deductions
+        + _index_value(
+            (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[1][0],
+            yr.year,
+            _cpi,
+        )
+        for yr in conv_window
     ]
     fig_br.add_trace(
         go.Scatter(
