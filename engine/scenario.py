@@ -622,6 +622,7 @@ def run_scenario(
             + yr.extra_withdrawal
             + yr.spouse_extra_withdrawal
             + yr.combined_ss
+            + yr.option_income
             - yr.federal_tax_amt
         )
         yr.income_needed = max(yr.living_expenses - available_income, 0)
