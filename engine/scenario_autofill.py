@@ -122,9 +122,6 @@ def _auto_fill_core(
         cur_spouse_begin = spouse_ira
         ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
-        if ya > 80:
-            break
-
         # Option income
         opt = hh.option_income(year, early_exercise)
 
