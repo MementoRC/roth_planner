@@ -12,11 +12,9 @@ understating ordinary income for that year by a full RMD.
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from engine.upload_merge import build_user_defaults_session_updates
-
 
 # ---------------------------------------------------------------------------
 # Phase 1: import path (engine/upload_merge.py — pure function, no Streamlit)
