@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
 
