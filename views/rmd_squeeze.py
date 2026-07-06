@@ -45,7 +45,7 @@ def render(hh: Household):
         show_qcd = st.toggle(
             "Apply QCD Strategy",
             value=False,
-            help="Qualified Charitable Distributions reduce taxable RMD (up to $111K/yr per person age 70½+).",
+            help="Qualified Charitable Distributions reduce taxable RMD (up to $111K/yr per person age 71+ (planner gates at full year past 70½)).",
         )
     with col_s2:
         qcd_annual = st.number_input(
@@ -54,7 +54,7 @@ def render(hh: Household):
             step=5_000,
             format="%d",
             disabled=not show_qcd,
-            help=f"Your QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
+            help=f"Your QCD: max ${hh.qcd_limit:,.0f}/yr (age 71+ (planner gates at full year past 70½), 2026 limit).",
         )
     if _is_mfj:
         with col_s3:
@@ -64,7 +64,7 @@ def render(hh: Household):
                 step=5_000,
                 format="%d",
                 disabled=not show_qcd,
-                help=f"Spouse QCD: max ${hh.qcd_limit:,.0f}/yr (age 70½+, 2026 limit).",
+                help=f"Spouse QCD: max ${hh.qcd_limit:,.0f}/yr (age 71+ (planner gates at full year past 70½), 2026 limit).",
             )
     else:
         spouse_qcd_annual = 0
@@ -340,8 +340,8 @@ def render(hh: Household):
     )
     st.plotly_chart(fig_br, width="stretch")
 
-    # --- Chart 3: Annual Tax + IRMAA + Brokerage Tax ---
-    st.markdown("### All-In Annual Cost: Tax + IRMAA + Brokerage Drag")
+    # --- Chart 3: Annual Tax + IRMAA + NIIT + Brokerage Tax ---
+    st.markdown("### All-In Annual Cost: Tax + IRMAA + NIIT + Brokerage Drag")
 
     col_l, col_r = st.columns(2)
 
@@ -530,7 +530,7 @@ def render(hh: Household):
                 "Saved": fmt_dollars(nc.federal_tax_amt - wc.federal_tax_amt),
                 "IRMAA (NC)": fmt_dollars(nc.irmaa_cost),
                 "IRMAA (WC)": fmt_dollars(wc.irmaa_cost),
-                "Excess RMD": fmt_dollars(nc.excess_rmd),
+                "Excess RMD (NC)": fmt_dollars(nc.excess_rmd),
                 "Brok (NC)": fmt_dollars(nc.brokerage_balance),
             }
         )

@@ -152,7 +152,6 @@ def render(hh: Household):
                 )
 
             fig_aca.update_layout(
-                title="ACA Subsidy vs What You Pay",
                 xaxis_title="MAGI ($)",
                 xaxis_tickformat="$,.0s",
                 yaxis_title="Annual ($)",
@@ -200,7 +199,6 @@ def render(hh: Household):
                 )
 
         fig_irmaa.update_layout(
-            title=f"Annual IRMAA Surcharge ({'Individual' if hh.filing_status == 'Single' else 'Both Spouses'})",
             xaxis_title="MAGI ($)",
             xaxis_tickformat="$,.0s",
             yaxis_title="Surcharge ($/yr)",
@@ -225,8 +223,8 @@ def render(hh: Household):
             y=curves.aca_subsidy_loss_vals,
             name="ACA Subsidy Lost",
             stackgroup="cost",
-            line={"color": "#22c55e"},
-            fillcolor="rgba(34,197,94,0.3)",
+            line={"color": "#ef4444"},
+            fillcolor="rgba(239,68,68,0.3)",
             hovertemplate="MAGI: $%{x:,.0f}<br>ACA Lost: $%{y:,.0f}<extra></extra>",
         )
     )
@@ -273,7 +271,6 @@ def render(hh: Household):
     )
 
     fig_hidden.update_layout(
-        title="Hidden Costs Above Base MAGI (ACA Loss + IRMAA + NIIT)",
         xaxis_title="MAGI ($)",
         xaxis_tickformat="$,.0s",
         yaxis_title="Hidden Cost ($/yr)",
@@ -305,11 +302,14 @@ def render(hh: Household):
         entry = {
             "Year": row.year,
             "You": row.you_age,
-            "Spouse": row.spouse_age,
+        }
+        if hh.filing_status == "MFJ":
+            entry["Spouse"] = row.spouse_age
+        entry.update({
             "System": row.system,
             "IRMAA Tier": str(row.irmaa_tier) if row.irmaa_tier is not None else "—",
             "IRMAA Room": fmt_dollars(row.irmaa_room) if row.irmaa_room is not None else "—",
-        }
+        })
         if row.aca_subsidy is not None:
             entry["ACA Subsidy"] = fmt_dollars(row.aca_subsidy)
             entry["ACA You Pay"] = fmt_dollars(row.aca_you_pay)

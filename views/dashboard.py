@@ -105,7 +105,7 @@ def render(hh: Household):
         _summary = compute_summary_rows([no_conv, with_conv], no_conv)
         net = _summary[1].savings_vs_baseline  # positive = saves money vs no-conversion
         st.metric(
-            "Net Lifetime Benefit", fmt_dollars(net), f"{'Positive ✓' if net > 0 else 'Negative ✗'}"
+            "Net Lifetime Benefit", fmt_dollars(net), fmt_dollars(net, sign=True), delta_color="normal" if net >= 0 else "inverse"
         )
 
     st.markdown("---")
@@ -282,7 +282,7 @@ def render(hh: Household):
         nb_idx = age - hh.your_age
         nb = net_benefit[nb_idx] if nb_idx < len(net_benefit) else 0
         with col:
-            st.markdown(f"**Age {age}** (Sp {age - hh.age_gap})")
+            st.markdown(f"**Age {age}**" + (f" (Sp {age - hh.age_gap})" if hh.filing_status != "Single" else ""))
             st.caption(label)
             if yr_nc and yr_wc:
                 st.markdown(

@@ -82,7 +82,7 @@ def render(hh: Household):
             "Lifetime IRMAA": fmt_dollars(s.lifetime_irmaa),
             "Lifetime Brok Tax": fmt_dollars(s.lifetime_brok_tax),
             "Total All-In Cost": fmt_dollars(s.all_in_cost),
-            "Lifetime Savings vs No Conversion": fmt_dollars(s.savings_vs_baseline, sign=True),
+            f"Lifetime Savings vs {baseline.name}": fmt_dollars(s.savings_vs_baseline, sign=True),
             "IRA+Roth at 75": fmt_dollars_short(s.ira_at_75, decimals=2),
             "IRA+Roth at 85": fmt_dollars_short(s.ira_at_85, decimals=2),
             "IRA+Roth at 95": fmt_dollars_short(s.ira_at_95, decimals=2),
@@ -323,10 +323,8 @@ def render(hh: Household):
                 f"Modeling: **{who_dies}** dies in **{surv.death_year}** (age {death_age_display})."
             )
         else:
-            default_death_age = hh.your_age + 5
             st.caption(
-                f"Default snapshot (you die at age {default_death_age}) — "
-                "set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
+                f"Default sweep: you die at ages {death_ages} — set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
             )
 
         survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
