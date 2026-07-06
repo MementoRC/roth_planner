@@ -20,35 +20,12 @@ from engine.tax import (
     deductions,
     room_to_12,
     room_to_22,
-    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
 from engine.tax_indexing import index_value as _iv
 from models.household import Household
 from models.ytd_income import YTDSnapshot
-
-
-def _room_to_12_fs(
-    current_gross: float, total_deductions: float, *, year: int, cpi: float, filing_status: str
-) -> float:
-    """room_to_12 honoring filing status (single 12% ceiling for "Single")."""
-    if filing_status == "Single":
-        return room_to_bracket(
-            current_gross, total_deductions, _iv(BRACKETS_SINGLE[1][0], year, cpi)
-        )
-    return room_to_12(current_gross, total_deductions, year=year, cpi=cpi)
-
-
-def _room_to_22_fs(
-    current_gross: float, total_deductions: float, *, year: int, cpi: float, filing_status: str
-) -> float:
-    """room_to_22 honoring filing status (single 22% ceiling for "Single")."""
-    if filing_status == "Single":
-        return room_to_bracket(
-            current_gross, total_deductions, _iv(BRACKETS_SINGLE[2][0], year, cpi)
-        )
-    return room_to_22(current_gross, total_deductions, year=year, cpi=cpi)
 
 
 def _auto_fill_core(
@@ -245,7 +222,12 @@ def _auto_fill_core(
         # all §86-modified-AGI components (LTCG, qualified dividends, muni interest,
         # wages, etc.) and correctly excludes SS, making it the right provisional-
         # income proxy. Forecast years include brokerage income via brok_magi_extra.
-        other_fixed = ordinary_core + brok_magi_extra
+        # C-7 mirror: nqo_exercise_ytd is already in ordinary_core via opt; ytd.magi_ytd
+        # carries it again → subtract once to prevent MAGI/SS double-count. opt remains
+        # unchanged so fixed_gross (bracket base) correctly includes NQO as ordinary income
+        # (it is not in the ytd ordinary add-back list below). Mirrors scenario.py:324-326.
+        nqo_ytd = ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
+        other_fixed = ordinary_core - nqo_ytd + brok_magi_extra
         if ytd_year is not None:
             other_fixed += ytd_year.magi_ytd
         tss = taxable_ss(combined_ss, other_fixed, filing_status=current_filing_status)
@@ -377,7 +359,7 @@ def auto_fill_12(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi, fs: _room_to_12_fs(
+        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_12(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
@@ -396,7 +378,7 @@ def auto_fill_22(
         hh,
         early_exercise,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi, fs: _room_to_22_fs(
+        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_22(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
@@ -426,7 +408,7 @@ def auto_fill_irmaa_safe(
         irmaa_room = max(irmaa_threshold - base_magi, 0.0)
         return min(
             irmaa_room,
-            _room_to_22_fs(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
+            room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
         )
 
     return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
