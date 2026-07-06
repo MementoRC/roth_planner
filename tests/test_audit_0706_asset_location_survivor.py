@@ -19,7 +19,6 @@ import pytest
 from engine.asset_location import project_asset_location
 from models.household import Household, SurvivorScenario
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -104,7 +103,8 @@ class TestSurvivorSpouseDies:
         pre_death_yr = next(
             (y for y in result.years if y.year == self.DEATH_YEAR), None
         )
-        assert rollover_yr is not None and pre_death_yr is not None
+        assert rollover_yr is not None
+        assert pre_death_yr is not None
         # After rollover your IRA should be materially larger than it was just before
         assert rollover_yr.your_ira_end > pre_death_yr.your_ira_end * 1.5, (
             f"Rollover year your_ira_end={rollover_yr.your_ira_end:,.0f} "
@@ -144,7 +144,8 @@ class TestSurvivorYouDie:
         pre_death_yr = next(
             (y for y in result.years if y.year == self.DEATH_YEAR), None
         )
-        assert rollover_yr is not None and pre_death_yr is not None
+        assert rollover_yr is not None
+        assert pre_death_yr is not None
         assert rollover_yr.spouse_ira_end > pre_death_yr.spouse_ira_end * 1.5, (
             f"Rollover year spouse_ira_end={rollover_yr.spouse_ira_end:,.0f} "
             f"not materially larger than pre-death {pre_death_yr.spouse_ira_end:,.0f}"
