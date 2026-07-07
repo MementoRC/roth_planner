@@ -212,7 +212,7 @@ def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
             result["ira_conversions"] = result.get("ira_conversions", 0) + amount
         elif "distribution" in label or "1099-r" in label:
             result["ira_distributions"] = result.get("ira_distributions", 0) + amount
-        elif "nec" in label or "self-employment" in label:
+        elif "1099-nec" in label or "self-employment" in label:
             result["nec_income"] = result.get("nec_income", 0) + amount
     return result
 

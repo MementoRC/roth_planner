@@ -202,7 +202,7 @@ def get_household() -> Household:
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
         prior_year_magi={
-            int(k): float(v) for k, v in st.session_state.get("prior_year_magi", {}).items() if v
+            int(k): float(v) for k, v in st.session_state.get("prior_year_magi", {}).items() if v is not None and v != ""
         },
         cpi_assumption=float(st.session_state.get("cpi_assumption", 0.025)),
         filing_status=st.session_state.get("filing_status", "MFJ"),

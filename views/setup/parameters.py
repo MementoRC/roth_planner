@@ -438,6 +438,7 @@ def render_parameters_tab(hh: Household) -> None:
         your_fra_age = st.session_state.get("your_fra_age", 67)
         st.session_state.your_ss_fra = st.number_input(
             f"Your SS at FRA {your_fra_age} ($/mo)",
+            min_value=0,  # UU2-UI-06
             value=st.session_state.your_ss_fra,
             step=100,
             format="%d",
@@ -513,6 +514,7 @@ def render_parameters_tab(hh: Household) -> None:
         spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
         st.session_state.spouse_ss_fra = st.number_input(
             f"Spouse SS at FRA {spouse_fra_age} ($/mo)",
+            min_value=0,  # UU2-UI-06
             value=st.session_state.spouse_ss_fra,
             step=100,
             format="%d",
