@@ -102,16 +102,23 @@ TRAD_DEDUCTION_PHASEOUT_BY_YEAR: dict[int, dict[str, tuple[int, int]]] = {
 TRAD_DEDUCTION_PHASEOUT = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]
 
 
-def trad_deduction_phaseout_for_year(tax_year: int, key: str) -> tuple[float, float]:
+def trad_deduction_phaseout_for_year(
+    tax_year: int, key: str, cpi: float = DEFAULT_CPI
+) -> tuple[float, float]:
     """Traditional IRA deduction phase-out bounds for *key* in the given *tax_year*.
 
     Returns the (lower, upper) MAGI thresholds for the supplied key
     (``"MFJ_active"``, ``"MFJ_spouse_only"``, or ``"Single"``).
     Falls back to the earliest published year for any year before the table.
+    CPI-indexed past 2026 rather than frozen (mirrors roth_phaseout_for_year).
     """
-    year_data = TRAD_DEDUCTION_PHASEOUT_BY_YEAR.get(
-        tax_year, TRAD_DEDUCTION_PHASEOUT_BY_YEAR[min(TRAD_DEDUCTION_PHASEOUT_BY_YEAR)]
-    )
+    if tax_year in TRAD_DEDUCTION_PHASEOUT_BY_YEAR:
+        low, high = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[tax_year].get(key, (0, 0))
+        return (float(low), float(high))
+    if tax_year > 2026:
+        low, high = index_tuple(TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026].get(key, (0, 0)), tax_year, cpi)
+        return (float(low), float(high))
+    year_data = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[min(TRAD_DEDUCTION_PHASEOUT_BY_YEAR)]
     low, high = year_data.get(key, (0, 0))
     return (float(low), float(high))
 
