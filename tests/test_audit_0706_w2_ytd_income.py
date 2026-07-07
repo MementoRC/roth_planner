@@ -159,12 +159,9 @@ class TestModuleLevelImport:
         """views.ytd_income module must expose save_ytd_snapshot at module level
         (or engine.portfolio_sync must be importable at module level)."""
         import ast
-        import pathlib
+        from pathlib import Path
 
-        src = pathlib.Path(
-            "/home/memento/PycharmProjects/roth_planner/.claude/worktrees/agent-adf8ff93a8d8ecdec"
-            "/views/ytd_income.py"
-        ).read_text()
+        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income.py").read_text()
         tree = ast.parse(src)
 
         # Find all import statements at module level (not nested inside functions)
@@ -204,12 +201,9 @@ class TestQualifiedDividendsHelpText:
     def test_help_text_includes_zero_pct_tier(self):
         """The help string must include LTCG_RATES_MFJ[0] (0%) tier."""
         import ast
-        import pathlib
+        from pathlib import Path
 
-        src = pathlib.Path(
-            "/home/memento/PycharmProjects/roth_planner/.claude/worktrees/agent-adf8ff93a8d8ecdec"
-            "/views/ytd_income.py"
-        ).read_text()
+        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income.py").read_text()
         tree = ast.parse(src)
 
         # Find the help= kwarg for the qualified_dividends number_input
