@@ -485,6 +485,7 @@ def render(hh: Household) -> None:
             (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[1][0],
             yr.year,
             _cpi,
+            round50=True,
         )
         for yr in conv_window
     ]

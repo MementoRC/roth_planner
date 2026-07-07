@@ -85,7 +85,7 @@ def federal_tax(taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DE
     """Compute federal income tax on taxable income (MFJ)."""
     if taxable_income <= 0:
         return 0.0
-    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi)
+    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi, round50=True)
     tax = 0.0
     prev = 0.0
     for ceil, rate in brackets:
@@ -103,7 +103,7 @@ def marginal_rate(
     """Return the marginal bracket rate for given taxable income."""
     if taxable_income <= 0:
         return 0.0
-    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi)
+    brackets = index_bracket_list(BRACKETS_MFJ, year, cpi, round50=True)
     for ceil, rate in brackets:
         # Strict '<': income exactly on a bracket ceiling has its next dollar taxed
         # at the NEXT bracket, so the marginal rate is the higher one (audit C6 /
@@ -282,7 +282,7 @@ def room_to_12(
     filing_status: str = "MFJ",
 ) -> float:
     brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
-    ceiling = index_value(brackets[1][0], year, cpi)
+    ceiling = index_value(brackets[1][0], year, cpi, round50=True)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
@@ -295,7 +295,7 @@ def room_to_22(
     filing_status: str = "MFJ",
 ) -> float:
     brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
-    ceiling = index_value(brackets[2][0], year, cpi)
+    ceiling = index_value(brackets[2][0], year, cpi, round50=True)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
@@ -305,7 +305,7 @@ def federal_tax_single(
     """Compute federal income tax on taxable income (Single filer)."""
     if taxable_income <= 0:
         return 0.0
-    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi)
+    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi, round50=True)
     tax = 0.0
     prev = 0.0
     for ceil, rate in brackets:
@@ -323,7 +323,7 @@ def marginal_rate_single(
     """Return the marginal bracket rate for Single filer."""
     if taxable_income <= 0:
         return 0.0
-    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi)
+    brackets = index_bracket_list(BRACKETS_SINGLE, year, cpi, round50=True)
     for ceil, rate in brackets:
         # Strict '<': income exactly on a bracket ceiling has its next dollar taxed
         # at the NEXT bracket, so the marginal rate is the higher one (audit C6 /
@@ -405,13 +405,13 @@ def estimate_ytd_federal_tax(
     # walk and the LTCG stack-walk so both are evaluated on taxable income.
     if hh.filing_status == "MFJ":
         senior_count = (1 if hh.your_age >= 65 else 0) + (1 if hh.spouse_age >= 65 else 0)
-        std_ded = index_value(STD_DEDUCTION_MFJ, _year, _cpi) + senior_count * index_value(
-            SENIOR_EXTRA_MFJ, _year, _cpi
+        std_ded = index_value(STD_DEDUCTION_MFJ, _year, _cpi, round50=True) + senior_count * index_value(
+            SENIOR_EXTRA_MFJ, _year, _cpi, round50=True
         )
     else:
         senior_count = 1 if hh.your_age >= 65 else 0
-        std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi) + senior_count * index_value(
-            SENIOR_EXTRA_SINGLE, _year, _cpi
+        std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi, round50=True) + senior_count * index_value(
+            SENIOR_EXTRA_SINGLE, _year, _cpi, round50=True
         )
     # OBBBA senior bonus deduction also lowers the taxable income base.
     std_ded += senior_bonus_deduction(
@@ -433,7 +433,7 @@ def estimate_ytd_federal_tax(
     # Step 5: LTCG + qualified dividends taxed at preferential rate.
     # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
     _ltcg_thresholds = index_tuple(
-        LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi
+        LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi, round50=True
     )
     ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
     ltcg_start = taxable_ordinary
@@ -469,7 +469,7 @@ def estimate_ytd_federal_tax(
     # Step 8: room to next bracket ceiling — measured from TAXABLE ordinary income
     # against the taxable-income bracket ceilings (not from gross income).
     _indexed_brackets = index_bracket_list(
-        BRACKETS_SINGLE if is_single else BRACKETS_MFJ, _year, _cpi
+        BRACKETS_SINGLE if is_single else BRACKETS_MFJ, _year, _cpi, round50=True
     )
     room_next = 0.0
     for ceil, _rate in _indexed_brackets:

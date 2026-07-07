@@ -334,8 +334,8 @@ def all_in_at_conversion(
     # thresholds index to the INCOME year (same-year tax — NOT the IRMAA +2 payment year).
     _base_ltcg_thr = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
     _ltcg_thr = (
-        _index_value(_base_ltcg_thr[0], year, cpi),
-        _index_value(_base_ltcg_thr[1], year, cpi),
+        _index_value(_base_ltcg_thr[0], year, cpi, round50=True),
+        _index_value(_base_ltcg_thr[1], year, cpi, round50=True),
     )
     ltcg_with = _ltcg_stack_tax(taxable_inc, ltcg_eligible, _ltcg_thr)
     ltcg_without = _ltcg_stack_tax(base_taxable, ltcg_eligible, _ltcg_thr)
@@ -353,10 +353,10 @@ def all_in_at_conversion(
         all_in=all_in,
         magi=magi,
         taxable_inc=taxable_inc,
-        room_12=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi))
+        room_12=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi, round50=True))
         if single
         else room_to_12(gross, total_ded, year=year, cpi=cpi),
-        room_22=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[2][0], year, cpi))
+        room_22=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[2][0], year, cpi, round50=True))
         if single
         else room_to_22(gross, total_ded, year=year, cpi=cpi),
     )

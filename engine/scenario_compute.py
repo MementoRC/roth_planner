@@ -532,12 +532,12 @@ def compute_bracket_room(
         room_12 = room_to_bracket(
             combined_gross,
             total_deductions,
-            _index_value(BRACKETS_SINGLE[1][0], year, cpi),
+            _index_value(BRACKETS_SINGLE[1][0], year, cpi, round50=True),
         )
         room_22 = room_to_bracket(
             combined_gross,
             total_deductions,
-            _index_value(BRACKETS_SINGLE[2][0], year, cpi),
+            _index_value(BRACKETS_SINGLE[2][0], year, cpi, round50=True),
         )
     else:
         room_12 = room_to_12(combined_gross, total_deductions, year=year, cpi=cpi)
