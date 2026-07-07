@@ -91,17 +91,24 @@ def _load_token() -> str:
             try:
                 _mode = os.fstat(fd).st_mode
                 if _mode & 0o077:
+                    # SEC-02: fail CLOSED — lax perms on a token file are a
+                    # security risk; refuse to load the token rather than
+                    # warning and continuing (fail-open).
                     _log.warning(
-                        "%s is group/world-accessible (mode %#o); it holds a bearer "
-                        "token. Restrict it with: chmod 600 %s",
+                        "%s is group/world-accessible (mode %#o); refusing to load "
+                        "bearer token. Restrict it with: chmod 600 %s",
                         p,
                         stat.S_IMODE(_mode),
                         p,
                     )
+                    return ""
                 raw = os.read(fd, 65536)
             finally:
                 os.close(fd)
-            return raw.decode("utf-8").strip()
+            # SEC-03: route file token through _sanitise_env_token so embedded
+            # CR/LF (e.g. from a Windows-edited file) cannot reach the
+            # Authorization header and split HTTP headers.
+            return _sanitise_env_token(raw.decode("utf-8"))
         except OSError as exc:
             _log.warning("Could not read FinExtract auth token from %s: %s", p, exc)
             return ""
