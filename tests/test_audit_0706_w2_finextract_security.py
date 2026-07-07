@@ -172,15 +172,20 @@ class TestTokenFileTOCTOU:
                 tok = client._load_token()
         assert tok == "file-token"
 
-    def test_world_readable_token_file_warns_but_loads(
+    def test_world_readable_token_file_fails_closed(
         self, tmp_path: Path
     ) -> None:
-        """Group/world-readable token file triggers a warning but still loads."""
+        """Group/world-readable token file must be REFUSED (SEC-02: fail closed).
+
+        Prior behaviour warned but still loaded the token (fail-open).  After
+        the SEC-02 fix the function returns '' so a lax-perms token file cannot
+        silently leak credentials.
+        """
         auth_dir = tmp_path / ".finextract"
         auth_dir.mkdir()
         auth_file = auth_dir / "auth-token"
         auth_file.write_text("warn-token\n")
-        auth_file.chmod(0o644)  # group-readable → warning
+        auth_file.chmod(0o644)  # group-readable → must be refused
 
         env = {k: v for k, v in os.environ.items()
                if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
@@ -188,7 +193,9 @@ class TestTokenFileTOCTOU:
             client = _reload_client()
             with patch("pathlib.Path.home", return_value=tmp_path):
                 tok = client._load_token()
-        assert tok == "warn-token"
+        assert tok == "", (
+            "SEC-02: lax-perms token file must be refused (fail closed), not loaded"
+        )
 
     def test_symlink_to_token_file_is_rejected(self, tmp_path: Path) -> None:
         """A symlink to the token file must be rejected (O_NOFOLLOW)."""

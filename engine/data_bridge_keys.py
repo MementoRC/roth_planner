@@ -53,22 +53,6 @@ def _decode_keymaterial(s: str) -> bytes:
     raise ValueError(f"Expected {_KEY_LEN}-byte key in base64 or hex; got {len(s)} chars")
 
 
-def _read_keyfile_nofollow(path: Path) -> str:
-    """Read text from *path* without following symlinks (crypto-security-8).
-
-    Uses ``os.open`` with ``os.O_NOFOLLOW`` so a pre-planted symlink at the
-    expected path cannot redirect a private-key read to an attacker-readable
-    location.  Raises ``OSError`` (ELOOP on Linux) if *path* is a symlink.
-    """
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        file_size = os.fstat(fd).st_size
-        raw = os.read(fd, max(file_size, 4096))
-    finally:
-        os.close(fd)
-    return raw.decode("utf-8")
-
-
 def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | None:
     """Load key material from env var or file.
 
@@ -76,34 +60,62 @@ def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | Non
     permissions (mode & 0o077 == 0). If lax, return None rather than loading
     a potentially compromised key (SU1-SEC-01).
     When *secret* is False (public keys), lax permissions emit a warning only.
+
+    SU1-SEC-02: the fd is opened first with O_NOFOLLOW, then permissions are
+    derived from os.fstat(fd) — not from a separate path.stat() call — to
+    eliminate the TOCTOU race between the permission check and the open.
     """
     env = os.environ.get(env_name)
     if env:
         return _decode_keymaterial(env)
     if path.is_file():
         try:
-            file_mode = stat.S_IMODE(path.stat().st_mode)
-            if file_mode & 0o077:
-                if secret:
-                    # SU1-SEC-01: refuse to load secret key with lax permissions.
+            # SU1-SEC-02: open fd FIRST, then derive mode from fstat(fd) to
+            # eliminate the TOCTOU race between path.stat() and os.open().
+            # O_NOFOLLOW also prevents a pre-planted symlink redirect.
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                file_mode = stat.S_IMODE(os.fstat(fd).st_mode)
+                if file_mode & 0o077:
+                    if secret:
+                        # SU1-SEC-01: refuse to load secret key with lax permissions.
+                        warnings.warn(
+                            f"{path}: secret key file has lax permissions "
+                            f"(mode {oct(file_mode)}); refusing to load. "
+                            "Restrict to 0o600 to enable loading.",
+                            RuntimeWarning,
+                            stacklevel=3,
+                        )
+                        return None
                     warnings.warn(
-                        f"{path}: secret key file has lax permissions "
-                        f"(mode {oct(file_mode)}); refusing to load. "
-                        "Restrict to 0o600 to enable loading.",
+                        f"{path}: key file is group- or world-readable (mode {oct(file_mode)}); "
+                        "consider restricting to 0o600.",
                         RuntimeWarning,
                         stacklevel=3,
                     )
-                    return None
-                warnings.warn(
-                    f"{path}: key file is group- or world-readable (mode {oct(file_mode)}); "
-                    "consider restricting to 0o600.",
-                    RuntimeWarning,
-                    stacklevel=3,
-                )
-            # crypto-security-8: use O_NOFOLLOW to prevent symlink follow on read.
-            return _decode_keymaterial(_read_keyfile_nofollow(path))
+                # SU1-SEC-04: drain the fd in a loop rather than a single
+                # os.read() call to handle files larger than one 4096-byte
+                # read without under-reading (mirrors client.py pattern).
+                chunks: list[bytes] = []
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            finally:
+                os.close(fd)
+            raw_text = b"".join(chunks).decode("utf-8")
         except OSError:
             return None
+        except ValueError as e:
+            warnings.warn(
+                f"{path}: key file unreadable ({e}); ignoring.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            return None
+        try:
+            return _decode_keymaterial(raw_text)
         except ValueError as e:
             warnings.warn(
                 f"{path}: key file unreadable ({e}); ignoring.",

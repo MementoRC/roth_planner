@@ -89,7 +89,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     if "prior_year_magi" in data:
         # Keys arrive as strings from JSON; cast to int at load time
         updates["prior_year_magi"] = {
-            int(k): float(v) for k, v in data["prior_year_magi"].items() if v
+            int(k): float(v) for k, v in data["prior_year_magi"].items() if v is not None and v != ""
         }
     # survivor is a joint field (not spouse-specific); pass through as-is when not as_spouse
     if "survivor" in data and not as_spouse:

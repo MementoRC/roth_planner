@@ -23,6 +23,7 @@ from engine.scenario_compute import (
 from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
 from engine.tax import (
     LTCG_RATES_MFJ,
+    LTCG_RATES_SINGLE,
     LTCG_THRESHOLDS_MFJ,
     LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
@@ -592,8 +593,9 @@ def run_scenario(
             _ytd_ltcg_at_20 = max(
                 0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1])
             )
+            _ltcg_rates = LTCG_RATES_SINGLE if current_filing_status == "Single" else LTCG_RATES_MFJ
             yr.ytd_ltcg_tax = (
-                _ytd_ltcg_at_15 * LTCG_RATES_MFJ[1] + _ytd_ltcg_at_20 * LTCG_RATES_MFJ[2]
+                _ytd_ltcg_at_15 * _ltcg_rates[1] + _ytd_ltcg_at_20 * _ltcg_rates[2]
             )
             # grid-05: YTD realized LTCG tax is a real federal tax for the base year
             # but was previously orphaned (computed, never counted in any total). Fold
@@ -671,7 +673,8 @@ def run_scenario(
             min(_ltcg_end, ltcg_thresholds[1]) - max(_ltcg_start, ltcg_thresholds[0]),
         )
         _ltcg_at_20 = max(0.0, _ltcg_end - max(_ltcg_start, ltcg_thresholds[1]))
-        yr.brokerage_gain_tax = _ltcg_at_15 * LTCG_RATES_MFJ[1] + _ltcg_at_20 * LTCG_RATES_MFJ[2]
+        _ltcg_rates = LTCG_RATES_SINGLE if current_filing_status == "Single" else LTCG_RATES_MFJ
+        yr.brokerage_gain_tax = _ltcg_at_15 * _ltcg_rates[1] + _ltcg_at_20 * _ltcg_rates[2]
 
         # C2: the conversion-induced LTCG bracket-stacking bump is a real marginal
         # cost of converting this year. It is already captured in brokerage_gain_tax
@@ -687,7 +690,7 @@ def run_scenario(
         )
         _ltcg_at_20_base = max(0.0, _ltcg_end_base - max(_ltcg_start_base, ltcg_thresholds[1]))
         _brokerage_gain_tax_base = (
-            _ltcg_at_15_base * LTCG_RATES_MFJ[1] + _ltcg_at_20_base * LTCG_RATES_MFJ[2]
+            _ltcg_at_15_base * _ltcg_rates[1] + _ltcg_at_20_base * _ltcg_rates[2]
         )
         yr.conversion_ltcg_cost = max(0.0, yr.brokerage_gain_tax - _brokerage_gain_tax_base)
         yr.all_in_cost += yr.conversion_ltcg_cost

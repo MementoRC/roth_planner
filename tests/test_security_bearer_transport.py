@@ -149,7 +149,7 @@ class TestLoadTokenHardening:
 
         with caplog.at_level(logging.WARNING, logger="engine.portfolio_sync.client"):
             result = _load_token()
-        assert result == "tok"
+        assert result == ""
         assert any("chmod" in r.message for r in caplog.records)
 
 
