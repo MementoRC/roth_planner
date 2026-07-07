@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -19,7 +21,16 @@ _log = logging.getLogger(__name__)
 BASE_URL = os.environ.get("FINEXTRACT_URL", "http://127.0.0.1:7890")
 
 
-_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_LOCAL_HOSTS = frozenset({"localhost", "0.0.0.0", "::"})
+"""Host names/addresses that are always safe without HTTPS.
+
+Includes:
+- "localhost" — hostname alias for loopback
+- "0.0.0.0"  — wildcard bind address; only reachable from the same host
+- "::"        — IPv6 wildcard; same rationale as 0.0.0.0
+Any other numeric IP is checked via ipaddress.ip_address(host).is_loopback,
+which covers 127.0.0.1, 127.0.0.2 … 127.255.255.255, ::1, etc.
+"""
 
 
 def _token_transport_is_safe(base_url: str) -> bool:
@@ -28,11 +39,37 @@ def _token_transport_is_safe(base_url: str) -> bool:
     Safe when the target host is loopback (any scheme) or the scheme is HTTPS.
     A non-local HTTP endpoint would transmit the token in cleartext, so it is
     treated as unsafe and the Authorization header is omitted by the caller.
+
+    Loopback detection (crypto-security-0 / crypto-security-5):
+    - Explicit membership in _LOCAL_HOSTS for names and wildcard addresses.
+    - ipaddress.ip_address(host).is_loopback for all other numeric addresses
+      (covers 127.0.0.1, 127.0.0.2…127.255.255.255, ::1, etc.).
     """
     parsed = urlparse(base_url)
-    if parsed.hostname in _LOCAL_HOSTS:
+    host = parsed.hostname or ""
+    if host in _LOCAL_HOSTS:
         return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
     return parsed.scheme == "https"
+
+
+def _sanitise_env_token(tok: str) -> str:
+    """Strip whitespace and reject tokens containing embedded CR or LF.
+
+    crypto-security-3: An attacker who can inject a newline into the env var
+    could split HTTP headers.  Treat any such token as absent and log an error.
+    """
+    cleaned = tok.strip()
+    if "\r" in cleaned or "\n" in cleaned:
+        _log.error(
+            "FINEXTRACT_TOKEN / FINEXT_TOKEN contains embedded CR or LF — "
+            "rejecting token to prevent header-injection. Fix the token value."
+        )
+        return ""
+    return cleaned
 
 
 def _load_token() -> str:
@@ -41,23 +78,26 @@ def _load_token() -> str:
     Order: FINEXTRACT_TOKEN env, FINEXT_TOKEN env, ~/.finextract/auth-token file.
     Re-evaluated on every call so a token written after Streamlit launch is picked up.
     """
-    tok = os.environ.get("FINEXTRACT_TOKEN") or os.environ.get("FINEXT_TOKEN")
-    if tok:
-        return tok.strip()
+    raw_tok = os.environ.get("FINEXTRACT_TOKEN") or os.environ.get("FINEXT_TOKEN")
+    if raw_tok:
+        return _sanitise_env_token(raw_tok)
     p = Path.home() / ".finextract" / "auth-token"
     if p.is_file():
         try:
-            _mode = p.stat().st_mode
-            if _mode & 0o077:
-                _log.warning(
-                    "%s is group/world-accessible (mode %#o); it holds a bearer "
-                    "token. Restrict it with: chmod 600 %s",
-                    p,
-                    _mode & 0o777,
-                    p,
-                )
+            # crypto-security-2 + crypto-security-9: open first (O_NOFOLLOW
+            # rejects symlinks atomically), then fstat the live descriptor to
+            # avoid a TOCTOU race between stat() and open().
             fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
             try:
+                _mode = os.fstat(fd).st_mode
+                if _mode & 0o077:
+                    _log.warning(
+                        "%s is group/world-accessible (mode %#o); it holds a bearer "
+                        "token. Restrict it with: chmod 600 %s",
+                        p,
+                        stat.S_IMODE(_mode),
+                        p,
+                    )
                 raw = os.read(fd, 65536)
             finally:
                 os.close(fd)
