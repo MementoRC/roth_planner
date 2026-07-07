@@ -451,6 +451,12 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
         )
+        _your_rmd_stored = st.session_state.get("your_rmd_start_age")
+        if _your_rmd_stored is not None and _your_rmd_stored not in {73, 75}:
+            st.warning(
+                f"Stored RMD start age {_your_rmd_stored} is not valid (must be 73 or 75); "
+                "falling back to 75."
+            )
         st.session_state.your_rmd_start_age = st.selectbox(
             "Your RMD start age",
             options=[73, 75],
@@ -529,6 +535,12 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             disabled=_is_single,
         )
+        _spouse_rmd_stored = st.session_state.get("spouse_rmd_start_age")
+        if _spouse_rmd_stored is not None and _spouse_rmd_stored not in {73, 75}:
+            st.warning(
+                f"Stored spouse RMD start age {_spouse_rmd_stored} is not valid (must be 73 or 75); "
+                "falling back to 75."
+            )
         st.session_state.spouse_rmd_start_age = st.selectbox(
             "Spouse RMD start age",
             options=[73, 75],

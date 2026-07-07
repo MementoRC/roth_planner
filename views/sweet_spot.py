@@ -278,7 +278,7 @@ def render(hh: Household) -> None:
 
     # --- Cumulative all-in cost chart ---
     st.markdown("### Cumulative All-In Cost")
-    st.caption("Total cost (tax + IRMAA + ACA + NIIT) at each conversion level.")
+    st.caption("Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking) at each conversion level.")
 
     fig_c = go.Figure()
     fig_c.add_trace(
@@ -317,6 +317,16 @@ def render(hh: Household) -> None:
                 name="NIIT",
                 stackgroup="one",
                 line={"color": "#8b5cf6"},
+            )
+        )
+    if any(r.ltcg_delta > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.ltcg_delta for r in results],
+                name="LTCG Stacking",
+                stackgroup="one",
+                line={"color": "#06b6d4"},
             )
         )
 

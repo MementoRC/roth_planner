@@ -93,7 +93,14 @@ def fmt_pct(value: float | None, decimals: int = 1, sign: bool = False) -> str:
         decimals: digits after the decimal point (default 1).
         sign: include explicit + sign for non-negative values (default False).
     """
-    if value is None or (isinstance(value, float) and value != value):
-        value = 0.0
+    if value is None:
+        v = 0.0
+    else:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            v = 0.0
+    if v != v:  # NaN check (works for all numeric float types including numpy)
+        v = 0.0
     fmt_spec = f"{{:+.{decimals}f}}" if sign else f"{{:.{decimals}f}}"
-    return fmt_spec.format(value * 100) + "%"
+    return fmt_spec.format(v * 100) + "%"

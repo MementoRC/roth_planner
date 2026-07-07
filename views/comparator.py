@@ -176,15 +176,15 @@ def render(hh: Household):
         st.plotly_chart(fig_br, width="stretch")
 
     # --- Chart 3: Cumulative Net Benefit ---
-    st.markdown("### Cumulative Net Benefit vs No-Conversion Baseline")
+    # Find the no-conversion scenario (or use first as baseline)
+    baseline_idx = next((i for i, s in enumerate(scenarios) if "No Conv" in s.name), 0)
+    baseline_s = scenarios[baseline_idx]
+
+    st.markdown(f"### Cumulative Net Benefit vs {baseline_s.name}")
     st.caption(
         "Positive = this strategy has saved money vs doing nothing. "
         "Accounts for conversion tax paid, RMD tax saved, and brokerage tax saved."
     )
-
-    # Find the no-conversion scenario (or use first as baseline)
-    baseline_idx = next((i for i, s in enumerate(scenarios) if "No Conv" in s.name), 0)
-    baseline_s = scenarios[baseline_idx]
 
     fig_net = go.Figure()
     for i, s in enumerate(scenarios):
@@ -212,7 +212,7 @@ def render(hh: Household):
     )
     fig_net.update_layout(
         xaxis_title="Your Age",
-        yaxis_title="Net Benefit vs No Conversion ($)",
+        yaxis_title=f"Net Benefit vs {baseline_s.name} ($)",
         yaxis_tickformat="$,.0s",
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
