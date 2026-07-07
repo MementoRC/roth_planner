@@ -62,7 +62,10 @@ def compute_phase(
     if ya < rmd_yours and ya >= 70:
         return "ss_conv"
     if ya >= rmd_yours:
-        return "squeeze" if sa < rmd_spouse else "rmd"
+        # sa == 0 signals a single-filer (no spouse); treat RMD years as "rmd",
+        # not "squeeze" — squeeze applies only when a living spouse has not yet
+        # reached rmd_spouse (i.e. sa > 0 and sa < rmd_spouse).
+        return "squeeze" if (sa > 0 and sa < rmd_spouse) else "rmd"
     return "clean"
 
 
@@ -86,7 +89,18 @@ def compute_brokerage_dividends(
     if use_forecast_divs and brokerage_growth is not None:
         qual_div = brokerage_growth.qualified_div_for(year, brokerage)
         ord_div = brokerage_growth.ordinary_div_for(year, brokerage)
+    elif not use_forecast_divs:
+        # Base year with YTD actuals: suppress forecast to avoid double-counting
+        # real dividends already captured in ytd.qualified_dividends_ytd /
+        # ytd.ordinary_dividends_ytd.
+        qual_div = 0.0
+        ord_div = 0.0
     else:
+        # brokerage_growth is None: no GrowthProfile configured, so no yield_rate
+        # exists. GrowthProfile.yield_rate defaults to 0.0, so this is consistent
+        # with an unconfigured profile — dividends are implicitly zero.
+        # The brokerage_rate() (hh.growth_rate) models total return; no separate
+        # dividend component is available to extract.
         qual_div = 0.0
         ord_div = 0.0
     return qual_div, ord_div
