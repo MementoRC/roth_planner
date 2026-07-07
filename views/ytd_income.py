@@ -14,8 +14,10 @@ import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
 from engine.headroom import compute_headroom
+from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.portfolio_sync import save_ytd_snapshot
 from engine.tax import (
     LTCG_RATES_MFJ,
     SafeHarborGuidance,
@@ -71,7 +73,6 @@ def render(hh: Household):
                 apply_option_exercises,
                 fetch_option_exercises,
                 fetch_ytd_snapshot,
-                save_ytd_snapshot,
             )
 
             ytd_snap = fetch_ytd_snapshot()
@@ -129,7 +130,7 @@ def render(hh: Household):
                     value=int(ytd.qualified_dividends_ytd),
                     step=500,
                     format="%d",
-                    help=f"Taxed at LTCG rates ({fmt_pct(LTCG_RATES_MFJ[1], 0)}/{fmt_pct(LTCG_RATES_MFJ[2], 0)}); counts toward MAGI but not ordinary brackets.",
+                    help=f"Taxed at LTCG rates ({fmt_pct(LTCG_RATES_MFJ[0], 0)}/{fmt_pct(LTCG_RATES_MFJ[1], 0)}/{fmt_pct(LTCG_RATES_MFJ[2], 0)}); counts toward MAGI but not ordinary brackets.",
                 )
             with div_col2:
                 ordinary_dividends = st.number_input(
@@ -168,6 +169,13 @@ def render(hh: Household):
                 format="%d",
                 help="Spouse conversions already completed this year",
             )
+            federal_withholding = st.number_input(
+                "Federal Tax Withheld YTD",
+                value=int(ytd.federal_withholding_ytd),
+                step=1_000,
+                format="%d",
+                help="W-2 federal income tax withheld year-to-date; counts as 'Already paid' toward safe-harbor.",
+            )
 
         ytd = YTDSnapshot(
             tax_year=hh.base_year,
@@ -180,6 +188,7 @@ def render(hh: Household):
             tax_exempt_interest_ytd=float(tax_exempt_interest),
             ira_conversions_ytd=float(conversions_done),
             spouse_ira_conversions_ytd=float(spouse_conversions_done),
+            federal_withholding_ytd=float(federal_withholding),
             gain_events=ytd.gain_events,
             manually_entered=True,
         ).with_snapshot_date()
@@ -348,11 +357,27 @@ def render(hh: Household):
     # --- Section B: Tax Bracket Position ---
     # --- Section C: Estimated YTD Federal Tax ---
     # F20: pass combined annual SS so taxable_ss() applies IRC §86 cap.
-    # your_ss_at_70()/spouse_ss_at_70() return annual benefit at claimed age (monthly
-    # FRA benefit * delay-credit factor * 12); guard on start-age so pre-claim = 0.
-    _combined_ss = (hh.your_ss_at_70() if hh.your_age >= hh.your_ss_start_age else 0.0) + (
-        hh.spouse_ss_at_70() if hh.spouse_age >= hh.spouse_ss_start_age else 0.0
+    # Apply COLA growth for years already collecting so the YTD estimate reflects
+    # the actual current-year benefit, not the bare at-claim-age amount.
+    _your_ss = (
+        ss_with_cola(
+            ss_benefit_at_age(hh.your_ss_fra, min(hh.your_ss_start_age, 70), hh.your_fra_age),
+            hh.your_age - hh.your_ss_start_age,
+            hh.ss_cola,
+        )
+        if hh.your_age >= hh.your_ss_start_age
+        else 0.0
     )
+    _spouse_ss = (
+        ss_with_cola(
+            ss_benefit_at_age(hh.spouse_ss_fra, min(hh.spouse_ss_start_age, 70), hh.spouse_fra_age),
+            hh.spouse_age - hh.spouse_ss_start_age,
+            hh.ss_cola,
+        )
+        if hh.spouse_age >= hh.spouse_ss_start_age
+        else 0.0
+    )
+    _combined_ss = _your_ss + _spouse_ss
     estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh, combined_ss=_combined_ss)
 
     st.markdown("---")
@@ -394,9 +419,7 @@ def render(hh: Household):
     st.markdown("---")
     st.subheader("Mid-Year Safe-Harbor Payment Guidance")
     prior_year_tax = load_prior_year_federal_tax()
-    # federal_withholding_ytd not yet on YTDSnapshot — treat as 0 until added
-    # TODO: add federal_withholding_ytd field to YTDSnapshot
-    already_paid = float(getattr(ytd, "federal_withholding_ytd", 0.0))
+    already_paid = float(ytd.federal_withholding_ytd)
     # Prior-year AGI governs the 100% vs 110% safe-harbor rule (§6654). Use the household's cached
     # prior-year MAGI as the AGI proxy; None when unknown → the engine assumes 110% and labels it.
     prior_year = _date.today().year - 1
@@ -580,6 +603,4 @@ def render(hh: Household):
         )
 
     # Save snapshot for persistence
-    from engine.portfolio_sync import save_ytd_snapshot
-
     save_ytd_snapshot(ytd)

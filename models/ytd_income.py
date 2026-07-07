@@ -61,6 +61,9 @@ class YTDSnapshot:
     tax_exempt_interest_ytd: float = 0.0  # muni bond interest: in MAGI, NOT in ordinary brackets
     nqo_exercise_ytd: float = 0.0  # NQO ordinary-income spread from realized exercises
 
+    # Withholding / payments
+    federal_withholding_ytd: float = 0.0  # W-2 federal tax withheld YTD
+
     # Drill-down events
     gain_events: list[RealizedGainEvent] = field(default_factory=list)
 
