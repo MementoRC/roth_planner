@@ -237,6 +237,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "interest_ytd": ytd.interest_ytd,
         "tax_exempt_interest_ytd": ytd.tax_exempt_interest_ytd,
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
+        "federal_withholding_ytd": ytd.federal_withholding_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "manually_entered": ytd.manually_entered,
     }
@@ -261,4 +262,7 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     # Migrate pre-PR1 caches that lack nqo_exercise_ytd.
     if "nqo_exercise_ytd" not in data:
         data["nqo_exercise_ytd"] = 0.0
+    # PU1-M01: migrate old caches that predate federal_withholding_ytd field.
+    if "federal_withholding_ytd" not in data:
+        data["federal_withholding_ytd"] = 0.0
     return YTDSnapshot(**data, gain_events=events)

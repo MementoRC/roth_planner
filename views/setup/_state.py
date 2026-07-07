@@ -69,6 +69,7 @@ def _user_defaults_from_session() -> dict:
         "spouse_aca",
         "your_defer_first_rmd",
         "spouse_defer_first_rmd",
+        "growth_rate",
     ]
     payload: dict = {}
     for k in scalar_keys:
