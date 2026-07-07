@@ -1,14 +1,22 @@
 """Conversion Planner — interactive 20-year conversion grid.
 
 Shows the conversion window (WINDOW_YEARS years from the starting age) with:
-- Editable conversion amounts per year per spouse
+- Editable conversion amounts per year per spouse via st.data_editor
 - Live bracket/tax/room feedback
 - IRA balance tracking
 - Phase-based color coding
 - QCD inputs for squeeze years
 - Auto-fill buttons
+
+Performance note: replaced a loop of ~300 individual Streamlit widgets with a
+single st.data_editor call (audit-0706 w2, ui-primary-2).  Per-row constraints
+(IRA balance cap, age-gating) are now enforced by post-edit validation in
+apply_conversion_grid_edits() rather than at widget-render time.  The UX
+tradeoff is that users can type any value; invalid entries are silently clamped
+or zeroed and a warning banner explains what was adjusted.
 """
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -38,8 +46,133 @@ PHASE_LABELS = {
 
 WINDOW_YEARS = 20  # conversion grid horizon (years from the starting age)
 
+# session_state key used for the data_editor widget; cleared on auto-fill/clear
+_GRID_KEY = "conv_grid_editor"
 
-def render(hh: Household):
+
+# ---------------------------------------------------------------------------
+# Pure helper — testable without Streamlit
+# ---------------------------------------------------------------------------
+
+
+def apply_conversion_grid_edits(
+    edited_df: pd.DataFrame,
+    yr_rows: list[dict],
+) -> tuple[dict[int, float], dict[int, float], dict[int, float], dict[int, float], list[str]]:
+    """Validate and clamp conversion grid edits from st.data_editor.
+
+    Parameters
+    ----------
+    edited_df:
+        DataFrame returned by st.data_editor with columns:
+        year (int), your_conv, sp_conv, qcd, sp_qcd (all float/int).
+    yr_rows:
+        List of dicts with per-year metadata used for constraint checking.
+        Required keys per row: year, your_age, spouse_age, your_ira_begin,
+        spouse_ira_begin, your_rmd_start_age, spouse_rmd_start_age.
+        QCD age eligibility uses the engine constant QCD_MIN_AGE directly.
+
+    Returns
+    -------
+    conv_your, conv_sp, qcd_out, sp_qcd_out : dict[int, float]
+        Updated conversion/QCD amounts keyed by year (int).
+        Years with zero value are omitted unless explicitly needed.
+    warnings : list[str]
+        Human-readable messages describing any clamps or zeroing applied.
+    """
+    # Build lookup from year -> yr_row metadata
+    yr_lookup: dict[int, dict] = {int(r["year"]): r for r in yr_rows}
+
+    conv_your: dict[int, float] = {}
+    conv_sp: dict[int, float] = {}
+    qcd_out: dict[int, float] = {}
+    sp_qcd_out: dict[int, float] = {}
+    warnings: list[str] = []
+
+    for _, row in edited_df.iterrows():
+        year = int(row["year"])
+        meta = yr_lookup.get(year)
+        if meta is None:
+            continue
+
+        ya: int = int(meta["your_age"])
+        sa: int = int(meta["spouse_age"])
+        your_ira_begin: float = float(meta["your_ira_begin"])
+        spouse_ira_begin: float = float(meta["spouse_ira_begin"])
+        your_rmd_start: int = int(meta["your_rmd_start_age"])
+        spouse_rmd_start: int = int(meta["spouse_rmd_start_age"])
+
+        # --- your_conv: block in RMD era, clamp to IRA balance ---
+        raw_yc = max(0.0, float(row["your_conv"]))
+        if ya >= your_rmd_start:
+            if raw_yc > 0:
+                warnings.append(
+                    f"{year}: your conversion blocked (RMD era, age {ya} ≥ {your_rmd_start}); zeroed."
+                )
+            yc = 0.0
+        elif raw_yc > your_ira_begin:
+            warnings.append(
+                f"{year}: your conversion clamped from {raw_yc:,.0f} to {your_ira_begin:,.0f} (IRA balance limit)."
+            )
+            yc = your_ira_begin
+        else:
+            yc = raw_yc
+        if yc != 0.0:
+            conv_your[year] = yc
+
+        # --- sp_conv: block in RMD era, clamp to spouse IRA balance ---
+        raw_sc = max(0.0, float(row["sp_conv"]))
+        if sa >= spouse_rmd_start:
+            if raw_sc > 0:
+                warnings.append(
+                    f"{year}: spouse conversion blocked (RMD era, age {sa} ≥ {spouse_rmd_start}); zeroed."
+                )
+            sc = 0.0
+        elif raw_sc > spouse_ira_begin:
+            warnings.append(
+                f"{year}: spouse conversion clamped from {raw_sc:,.0f} to {spouse_ira_begin:,.0f} (IRA balance limit)."
+            )
+            sc = spouse_ira_begin
+        else:
+            sc = raw_sc
+        if sc != 0.0:
+            conv_sp[year] = sc
+
+        # --- qcd: IRC §408(d)(8)(B): QCD eligible at 70½; engine uses QCD_MIN_AGE = 71 ---
+        raw_qcd = max(0.0, float(row["qcd"]))
+        if ya >= QCD_MIN_AGE:
+            q = raw_qcd
+        else:
+            if raw_qcd > 0:
+                warnings.append(
+                    f"{year}: your QCD zeroed (age {ya} < QCD minimum age {QCD_MIN_AGE})."
+                )
+            q = 0.0
+        if q != 0.0:
+            qcd_out[year] = q
+
+        # --- sp_qcd: IRC §408(d)(8)(B): QCD eligible at 70½; engine uses QCD_MIN_AGE = 71 ---
+        raw_sp_qcd = max(0.0, float(row["sp_qcd"]))
+        if sa >= QCD_MIN_AGE:
+            sq = raw_sp_qcd
+        else:
+            if raw_sp_qcd > 0:
+                warnings.append(
+                    f"{year}: spouse QCD zeroed (age {sa} < QCD minimum age {QCD_MIN_AGE})."
+                )
+            sq = 0.0
+        if sq != 0.0:
+            sp_qcd_out[year] = sq
+
+    return conv_your, conv_sp, qcd_out, sp_qcd_out, warnings
+
+
+# ---------------------------------------------------------------------------
+# Render
+# ---------------------------------------------------------------------------
+
+
+def render(hh: Household) -> None:
     st.title("📋 Conversion Planner — 20-Year Grid")
     st.caption(
         "Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time."
@@ -62,8 +195,9 @@ def render(hh: Household):
             st.session_state.conv_plan_spouse = plan.spouse_conversions
             st.session_state.conv_plan_qcd = plan.qcds
             st.session_state.conv_plan_spouse_qcd = plan.spouse_qcds
+            # Clear old per-widget keys (backward compat) and grid editor key
             for _k in list(st.session_state):
-                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")):
+                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")) or _k == _GRID_KEY:
                     del st.session_state[_k]
             st.rerun()
 
@@ -74,7 +208,7 @@ def render(hh: Household):
             st.session_state.conv_plan_qcd = {}
             st.session_state.conv_plan_spouse_qcd = {}
             for _k in list(st.session_state):
-                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")):
+                if _k.startswith(("yc_", "sc_", "qcd_", "sp_qcd_")) or _k == _GRID_KEY:
                     del st.session_state[_k]
             st.rerun()
 
@@ -99,43 +233,18 @@ def render(hh: Household):
     )
     st.markdown(f"**Phases:** {legend}")
 
-    # --- Interactive grid ---
+    # --- Build grid DataFrame for data_editor ---
     st.markdown("### Conversion Grid")
     st.caption(
-        "Enter amounts in the Your Conv / Sp Conv columns. Yellow = editable, gray = blocked."
+        "Edit Your Conv / Sp Conv / QCD / Sp QCD columns. "
+        "Values exceeding the IRA balance or entered outside the eligible age window "
+        "are clamped or zeroed after editing, with a warning shown below the grid."
     )
 
-    # We'll use columns for a compact layout
-    # Header row
-    hdr_cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2])
-    headers = [
-        "Year",
-        "You",
-        "Sp",
-        "Your IRA",
-        "Options",
-        "Your Conv",
-        "Sp Conv",
-        "QCD",
-        "Sp QCD",
-        "Gross",
-        "Bracket",
-        "Conv Tax",
-        "Room 12%",
-        "Room 22%",
-    ]
-    for col, h in zip(hdr_cols, headers, strict=False):
-        col.markdown(f"**{h}**")
-
-    # Data rows
+    # Build per-year metadata for post-edit validation
+    yr_rows: list[dict] = []
+    grid_records: list[dict] = []
     for yr in conv_window:
-        ya, sa = yr.your_age, yr.spouse_age
-        you_can_conv = ya < hh.your_rmd_start_age
-        sp_can_conv = sa < hh.spouse_rmd_start_age
-
-        cols = st.columns([1, 0.6, 0.6, 1.5, 1.2, 1.5, 1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2])
-
-        # Phase color indicator
         phase_emoji = {
             "options": "🟣",
             "clean": "🟢",
@@ -143,103 +252,137 @@ def render(hh: Household):
             "squeeze": "🔴",
             "rmd": "⚪",
         }.get(yr.phase, "")
+        yr_rows.append(
+            {
+                "year": yr.year,
+                "your_age": yr.your_age,
+                "spouse_age": yr.spouse_age,
+                "your_ira_begin": yr.your_ira_begin,
+                "spouse_ira_begin": yr.spouse_ira_begin,
+                "your_rmd_start_age": hh.your_rmd_start_age,
+                "spouse_rmd_start_age": hh.spouse_rmd_start_age,
+            }
+        )
+        grid_records.append(
+            {
+                "Year": f"{phase_emoji} {yr.year}",
+                "year": yr.year,  # hidden integer key used by helper
+                "You": yr.your_age,
+                "Sp": yr.spouse_age,
+                "Your IRA": yr.your_ira_begin,
+                "Options": yr.option_income,
+                "your_conv": float(st.session_state.conv_plan_your.get(yr.year, 0)),
+                "sp_conv": float(st.session_state.conv_plan_spouse.get(yr.year, 0)),
+                "qcd": float(st.session_state.conv_plan_qcd.get(yr.year, 0)),
+                "sp_qcd": float(st.session_state.conv_plan_spouse_qcd.get(yr.year, 0)),
+                "Gross": yr.combined_gross,
+                "Bracket": yr.marginal_bracket * 100,
+                "Conv Tax": yr.conversion_tax,
+                "Room 12%": yr.room_12,
+                "Room 22%": yr.room_22,
+            }
+        )
 
-        cols[0].markdown(f"{phase_emoji} {yr.year}")
-        cols[1].markdown(f"**{ya}**")
-        cols[2].markdown(f"**{sa}**")
-        cols[3].markdown(fmt_dollars(yr.your_ira_begin))
-        cols[4].markdown(fmt_dollars(yr.option_income) if yr.option_income > 0 else "—")
+    grid_df = pd.DataFrame(grid_records)
 
-        # Your conversion input
-        if you_can_conv:
-            yc_key = f"yc_{yr.year}"
-            yc_val = st.session_state.conv_plan_your.get(yr.year, 0)
-            new_yc = cols[5].number_input(
-                f"yc{yr.year}",
-                value=int(yc_val),
-                step=5000,
+    edited_df = st.data_editor(
+        grid_df,
+        key=_GRID_KEY,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Year": st.column_config.TextColumn("Year", disabled=True),
+            "year": st.column_config.NumberColumn("year", disabled=True),
+            "You": st.column_config.NumberColumn("You", disabled=True, format="%d"),
+            "Sp": st.column_config.NumberColumn("Sp", disabled=True, format="%d"),
+            "Your IRA": st.column_config.NumberColumn(
+                "Your IRA", disabled=True, format="$%,.0f"
+            ),
+            "Options": st.column_config.NumberColumn(
+                "Options", disabled=True, format="$%,.0f"
+            ),
+            "your_conv": st.column_config.NumberColumn(
+                "Your Conv",
                 min_value=0,
-                max_value=int(yr.your_ira_begin),
-                label_visibility="collapsed",
-                key=yc_key,
-            )
-            if new_yc != yc_val:
-                st.session_state.conv_plan_your[yr.year] = new_yc
-        else:
-            cols[5].markdown("*RMD era*" if ya >= hh.your_rmd_start_age else "—")
-
-        # Spouse conversion input
-        if sp_can_conv:
-            sc_key = f"sc_{yr.year}"
-            sc_val = st.session_state.conv_plan_spouse.get(yr.year, 0)
-            new_sc = cols[6].number_input(
-                f"sc{yr.year}",
-                value=int(sc_val),
                 step=5000,
+                format="$%,.0f",
+                help="Your Roth conversion for this year (clamped to IRA balance after edit)",
+            ),
+            "sp_conv": st.column_config.NumberColumn(
+                "Sp Conv",
                 min_value=0,
-                max_value=int(yr.spouse_ira_begin),
-                label_visibility="collapsed",
-                key=sc_key,
-            )
-            if new_sc != sc_val:
-                st.session_state.conv_plan_spouse[yr.year] = new_sc
-        else:
-            cols[6].markdown("—")
-
-        # Your QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
-        if ya >= QCD_MIN_AGE:
-            qcd_key = f"qcd_{yr.year}"
-            qcd_val = st.session_state.conv_plan_qcd.get(yr.year, 0)
-            new_qcd = cols[7].number_input(
-                f"qcd{yr.year}",
-                value=int(qcd_val),
                 step=5000,
+                format="$%,.0f",
+                help="Spouse Roth conversion for this year (clamped to IRA balance after edit)",
+            ),
+            "qcd": st.column_config.NumberColumn(
+                "QCD",
                 min_value=0,
-                max_value=int(hh.qcd_limit),
-                label_visibility="collapsed",
-                key=qcd_key,
-            )
-            if new_qcd != qcd_val:
-                st.session_state.conv_plan_qcd[yr.year] = new_qcd
-        else:
-            cols[7].markdown("—")
-
-        # Spouse QCD input  # IRC §408(d)(8)(B): QCD eligible at 70½
-        if sa >= QCD_MIN_AGE:
-            sp_qcd_key = f"sp_qcd_{yr.year}"
-            sp_qcd_val = st.session_state.conv_plan_spouse_qcd.get(yr.year, 0)
-            new_sp_qcd = cols[8].number_input(
-                f"sp_qcd{yr.year}",
-                value=int(sp_qcd_val),
                 step=5000,
+                format="$%,.0f",
+                help="Your Qualified Charitable Distribution (requires age ≥ 71)",
+            ),
+            "sp_qcd": st.column_config.NumberColumn(
+                "Sp QCD",
                 min_value=0,
-                max_value=int(hh.qcd_limit),
-                label_visibility="collapsed",
-                key=sp_qcd_key,
-            )
-            if new_sp_qcd != sp_qcd_val:
-                st.session_state.conv_plan_spouse_qcd[yr.year] = new_sp_qcd
-        else:
-            cols[8].markdown("—")
+                step=5000,
+                format="$%,.0f",
+                help="Spouse Qualified Charitable Distribution (requires age ≥ 71)",
+            ),
+            "Gross": st.column_config.NumberColumn(
+                "Gross", disabled=True, format="$%,.0f"
+            ),
+            "Bracket": st.column_config.NumberColumn(
+                "Bracket", disabled=True, format="%.0f%%"
+            ),
+            "Conv Tax": st.column_config.NumberColumn(
+                "Conv Tax", disabled=True, format="$%,.0f"
+            ),
+            "Room 12%": st.column_config.NumberColumn(
+                "Room 12%", disabled=True, format="$%,.0f"
+            ),
+            "Room 22%": st.column_config.NumberColumn(
+                "Room 22%", disabled=True, format="$%,.0f"
+            ),
+        },
+        column_order=[
+            "Year", "You", "Sp", "Your IRA", "Options",
+            "your_conv", "sp_conv", "qcd", "sp_qcd",
+            "Gross", "Bracket", "Conv Tax", "Room 12%", "Room 22%",
+        ],
+    )
 
-        # Computed columns
-        cols[9].markdown(fmt_dollars(yr.combined_gross))
+    # Post-edit validation: clamp + age-gate, write back to session_state
+    # Extract just the editable columns needed by the helper
+    helper_df = edited_df[["year", "your_conv", "sp_conv", "qcd", "sp_qcd"]].copy()
+    conv_your, conv_sp, qcd_vals, sp_qcd_vals, edit_warnings = apply_conversion_grid_edits(
+        helper_df, yr_rows
+    )
 
-        # Bracket with color
-        br_pct = yr.marginal_bracket * 100
-        br_color = "green" if br_pct <= 12 else ("orange" if br_pct <= 22 else "red")
-        cols[10].markdown(f":{br_color}[**{br_pct:.0f}%**]")
+    if edit_warnings:
+        for msg in edit_warnings:
+            st.warning(msg)
 
-        cols[11].markdown(fmt_dollars(yr.conversion_tax) if yr.conversion_tax > 0 else "—")
+    # Update session_state only when values changed (avoids infinite rerun loop)
+    new_your = conv_your
+    new_sp = conv_sp
+    new_qcd = qcd_vals
+    new_sp_qcd = sp_qcd_vals
 
-        # Room with color
-        r12 = yr.room_12
-        r12_color = "green" if r12 > 50_000 else ("orange" if r12 > 0 else "red")
-        cols[12].markdown(f":{r12_color}[{fmt_dollars(r12)}]")
-
-        r22 = yr.room_22
-        r22_color = "green" if r22 > 50_000 else ("orange" if r22 > 0 else "red")
-        cols[13].markdown(f":{r22_color}[{fmt_dollars(r22)}]")
+    if (
+        new_your != dict(st.session_state.conv_plan_your)
+        or new_sp != dict(st.session_state.conv_plan_spouse)
+        or new_qcd != dict(st.session_state.conv_plan_qcd)
+        or new_sp_qcd != dict(st.session_state.conv_plan_spouse_qcd)
+    ):
+        st.session_state.conv_plan_your = new_your
+        st.session_state.conv_plan_spouse = new_sp
+        st.session_state.conv_plan_qcd = new_qcd
+        st.session_state.conv_plan_spouse_qcd = new_sp_qcd
+        if edit_warnings and _GRID_KEY in st.session_state:
+            # Clear grid key so data_editor re-renders with clamped values
+            del st.session_state[_GRID_KEY]
+        st.rerun()
 
     # --- Totals ---
     st.markdown("---")

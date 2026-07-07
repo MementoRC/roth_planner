@@ -287,8 +287,13 @@ class TestAppFilingStatusWiring:
 
 
 class TestPlannerSpouseConversionCap:
-    """Static contract: spouse conversion number_input must have max_value capped
-    at the spouse IRA balance, mirroring the 'Your Conv' input cap."""
+    """Contract: conversion amounts are capped at each owner's IRA balance.
+
+    ui-primary-2 (audit-0706 w2) replaced per-row number_input widgets with a
+    single st.data_editor + post-edit validation in apply_conversion_grid_edits.
+    The IRA-balance cap is now enforced in that helper rather than as a widget
+    max_value kwarg.  These tests verify the new enforcement pattern.
+    """
 
     def _planner_source(self) -> str:
         import inspect
@@ -298,50 +303,53 @@ class TestPlannerSpouseConversionCap:
         return inspect.getsource(planner_mod)
 
     def test_spouse_conv_input_has_max_value(self):
-        """Spouse conversion number_input must include a max_value kwarg.
+        """apply_conversion_grid_edits must clamp sp_conv to spouse_ira_begin.
 
-        Without max_value, a user can enter a conversion larger than the
-        spouse IRA balance, fabricating Roth dollars that don't exist.
+        Previously enforced via number_input max_value; now enforced in the
+        post-edit helper.  The source must reference spouse_ira_begin in the
+        clamp/block logic for sp_conv.
         """
         source = self._planner_source()
-        # Locate the Spouse conversion input block
-        sp_block_start = source.find("# Spouse conversion input")
-        assert sp_block_start != -1, "Spouse conversion input comment not found"
-        # Grab from that comment to the next blank line / else clause
+        # Locate the sp_conv block inside apply_conversion_grid_edits
+        sp_block_start = source.find("# --- sp_conv:")
+        assert sp_block_start != -1, (
+            "sp_conv clamp block comment not found in apply_conversion_grid_edits"
+        )
         sp_block = source[sp_block_start : sp_block_start + 600]
-        assert "max_value" in sp_block, (
-            "Spouse conversion number_input is missing max_value — "
+        assert "spouse_ira_begin" in sp_block, (
+            "sp_conv clamp does not reference spouse_ira_begin — "
             "users can enter amounts exceeding the spouse IRA balance"
         )
 
     def test_spouse_conv_cap_uses_spouse_ira_begin(self):
-        """The spouse conversion max_value must reference yr.spouse_ira_begin,
-        not yr.your_ira_begin or a hardcoded constant."""
+        """sp_conv clamp must compare against spouse_ira_begin, not your_ira_begin."""
         source = self._planner_source()
-        sp_block_start = source.find("# Spouse conversion input")
+        sp_block_start = source.find("# --- sp_conv:")
         sp_block = source[sp_block_start : sp_block_start + 600]
         assert "spouse_ira_begin" in sp_block, (
-            "Spouse conversion max_value does not use yr.spouse_ira_begin"
+            "Spouse conversion clamp does not use spouse_ira_begin"
         )
 
     def test_your_conv_cap_uses_your_ira_begin(self):
-        """Symmetry check: 'Your Conv' input uses yr.your_ira_begin as cap."""
+        """Symmetry: your_conv clamp uses your_ira_begin as the cap."""
         source = self._planner_source()
-        your_block_start = source.find("# Your conversion input")
-        assert your_block_start != -1, "Your conversion input comment not found"
-        your_block = source[your_block_start : your_block_start + 600]
-        assert "your_ira_begin" in your_block, (
-            "Your conversion max_value does not reference yr.your_ira_begin"
+        yc_block_start = source.find("# --- your_conv:")
+        assert yc_block_start != -1, (
+            "your_conv clamp block comment not found in apply_conversion_grid_edits"
+        )
+        yc_block = source[yc_block_start : yc_block_start + 600]
+        assert "your_ira_begin" in yc_block, (
+            "Your conversion clamp does not reference your_ira_begin"
         )
 
     def test_spouse_cap_is_not_greater_than_your_cap_pattern(self):
-        """Both conversion inputs follow the same int(yr.<owner>_ira_begin) pattern."""
+        """Both conversions follow the same owner_ira_begin clamp pattern."""
         source = self._planner_source()
-        assert "int(yr.your_ira_begin)" in source, (
-            "Your Conv max_value pattern int(yr.your_ira_begin) not found"
+        assert "your_ira_begin" in source, (
+            "your_ira_begin not referenced in planner.py clamp logic"
         )
-        assert "int(yr.spouse_ira_begin)" in source, (
-            "Spouse Conv max_value pattern int(yr.spouse_ira_begin) not found"
+        assert "spouse_ira_begin" in source, (
+            "spouse_ira_begin not referenced in planner.py clamp logic"
         )
 
 
