@@ -1,4 +1,4 @@
-"""Sweet Spot Finder — find the optimal Roth conversion amount per year.
+"""Sweet Spot Finder -- find the optimal Roth conversion amount per year.
 
 Sweeps conversion amounts from $0 to bracket ceiling and plots:
 - Marginal all-in cost per additional $1,000 converted
@@ -21,6 +21,7 @@ from engine.sweet_spot_compute import (
     compute_multi_year_summary,
     estimate_ltcg_eligible,
     find_sweet_spots,
+    irmaa_safe_max,
 )
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
@@ -29,7 +30,7 @@ from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
 
 
 def render(hh: Household) -> None:
-    st.title("🎯 Sweet Spot Finder")
+    st.title("\U0001f3af Sweet Spot Finder")
     st.caption(
         "Find the optimal Roth conversion amount where marginal cost jumps. "
         "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
@@ -67,7 +68,7 @@ def render(hh: Household) -> None:
 
     # Index IRMAA tiers and brackets for the selected year.
     # IRMAA: this year's MAGI is measured against payment-year (selected_year + 2) thresholds.
-    # Ordinary brackets: no lookback — index to the income year itself.
+    # Ordinary brackets: no lookback -- index to the income year itself.
     _cpi = hh.cpi_assumption
     irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year + 2, _cpi)  # +2: payment-year indexing
     _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
@@ -98,7 +99,7 @@ def render(hh: Household) -> None:
         most_recent = sorted_years[0]
         st.caption(
             f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi[most_recent])}"
-            " — used for IRMAA 2-year lookback"
+            " -- used for IRMAA 2-year lookback"
         )
 
     # --- Sweep conversion amounts ---
@@ -247,8 +248,13 @@ def render(hh: Household) -> None:
 
     with z3:
         st.markdown("#### IRMAA-Safe Max")
-        # Find the largest conversion that doesn't trigger IRMAA
-        irmaa_safe = max(irmaa_tiers[0][0] - base.base_magi, 0)
+        # Binary-search for the largest conversion that keeps magi at/under the tier-1
+        # threshold. The naive subtraction (threshold - base_magi) overstates the safe
+        # amount when SS provisional income is in the partial-taxability zone ($32K-$44K
+        # MFJ / $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
+        irmaa_safe = irmaa_safe_max(
+            hh, base, irmaa_tiers[0][0], net_inv_income, _ltcg_eligible
+        )
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
             irmaa_result = all_in_at_conversion(
@@ -265,7 +271,7 @@ def render(hh: Household) -> None:
         st.caption("Converting beyond these amounts triggers a significant cost increase.")
         for sp in sweet_spots:
             st.warning(
-                f"**{sp.label}** — marginal cost jumps from "
+                f"**{sp.label}** -- marginal cost jumps from "
                 f"{sp.marginal_before:.0f}% to {sp.marginal_after:.0f}% of each $1K converted "
                 f"({sp.reason})"
             )
@@ -376,9 +382,9 @@ def render(hh: Household) -> None:
     st.markdown("---")
     st.markdown("### How to Use This")
     st.markdown("""
-- **Flat sections** in the marginal chart are "sweet zones" — low marginal cost per dollar converted
+- **Flat sections** in the marginal chart are "sweet zones" -- low marginal cost per dollar converted
 - **Jumps** indicate bracket boundaries, IRMAA tier crossings, ACA cliffs, or NIIT thresholds
-- **Fill to 12%** is typically the safest conversion — low tax rate with no hidden costs
+- **Fill to 12%** is typically the safest conversion -- low tax rate with no hidden costs
 - **Fill to 22%** converts more aggressively but may trigger IRMAA in 2 years
 - **IRMAA-Safe Max** is the most you can convert without triggering Medicare surcharges
 - Compare the **average effective rate** against your expected RMD-era marginal rate (often 22-24%)
