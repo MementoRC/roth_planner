@@ -265,6 +265,7 @@ def render(hh: Household):
             (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[1][0],
             yr.year,
             _cpi,
+            round50=True,
         )
         for yr in rmd_nc
     ]
@@ -274,6 +275,7 @@ def render(hh: Household):
             (BRACKETS_SINGLE if yr.filing_status == "Single" else BRACKETS_MFJ)[2][0],
             yr.year,
             _cpi,
+            round50=True,
         )
         for yr in rmd_nc
     ]

@@ -582,7 +582,7 @@ def run_scenario(
             _base_ytd_ltcg_thresholds = (
                 LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
             )
-            _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi)
+            _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi, round50=True)
             _ytd_ltcg_start = max(0.0, yr.taxable_income)
             _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, _ytd_ltcg_total)
             _ytd_ltcg_at_15 = max(
@@ -664,7 +664,7 @@ def run_scenario(
         _base_ltcg_thresholds = (
             LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
         )
-        ltcg_thresholds = _index_tuple(_base_ltcg_thresholds, year, cpi)
+        ltcg_thresholds = _index_tuple(_base_ltcg_thresholds, year, cpi, round50=True)
         ltcg_eligible = realized_gains + qual_div_this_year
         _ltcg_start = max(0.0, yr.taxable_income)
         _ltcg_end = _ltcg_start + max(0.0, ltcg_eligible)

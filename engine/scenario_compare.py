@@ -82,7 +82,7 @@ def survivor_year_tax(
     # (IRC §1(h); mirrors estimate_ytd_federal_tax in engine/tax.py:391-405)
     ltcg_tax = 0.0
     if brok_ltcg_income > 0.0:
-        _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi)
+        _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi, round50=True)
         ltcg_start = taxable_ordinary
         ltcg_end = taxable_ordinary + brok_ltcg_income
         ltcg_at_15 = max(
@@ -251,7 +251,7 @@ def compute_survivor_snapshot(
                     cpi=hh.cpi_assumption,
                 )
                 _taxable_ord_this_year = max(_rmd_this_year - _ded_this_year, 0.0)
-                _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption)
+                _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption, round50=True)
                 _ltcg_start = _taxable_ord_this_year
                 _ltcg_end = _taxable_ord_this_year + brok_realized
                 _ltcg_at_15 = max(
