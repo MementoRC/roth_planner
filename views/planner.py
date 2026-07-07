@@ -182,11 +182,10 @@ def render(hh: Household) -> None:
     # --- Auto-fill buttons ---
     col_btn1, col_btn2 = st.columns(2)
 
-    if "conv_plan_your" not in st.session_state:
-        st.session_state.conv_plan_your = {}
-        st.session_state.conv_plan_spouse = {}
-        st.session_state.conv_plan_qcd = {}
-        st.session_state.conv_plan_spouse_qcd = {}
+    st.session_state.setdefault("conv_plan_your", {})
+    st.session_state.setdefault("conv_plan_spouse", {})
+    st.session_state.setdefault("conv_plan_qcd", {})
+    st.session_state.setdefault("conv_plan_spouse_qcd", {})
 
     with col_btn1:
         if st.button("🎯 Auto-Fill to 12%", width="stretch"):
@@ -270,6 +269,7 @@ def render(hh: Household) -> None:
                 "You": yr.your_age,
                 "Sp": yr.spouse_age,
                 "Your IRA": yr.your_ira_begin,
+                "Sp IRA": yr.spouse_ira_begin,
                 "Options": yr.option_income,
                 "your_conv": float(st.session_state.conv_plan_your.get(yr.year, 0)),
                 "sp_conv": float(st.session_state.conv_plan_spouse.get(yr.year, 0)),
@@ -297,6 +297,9 @@ def render(hh: Household) -> None:
             "Sp": st.column_config.NumberColumn("Sp", disabled=True, format="%d"),
             "Your IRA": st.column_config.NumberColumn(
                 "Your IRA", disabled=True, format="$%,.0f"
+            ),
+            "Sp IRA": st.column_config.NumberColumn(
+                "Sp IRA", disabled=True, format="$%,.0f"
             ),
             "Options": st.column_config.NumberColumn(
                 "Options", disabled=True, format="$%,.0f"
@@ -346,7 +349,7 @@ def render(hh: Household) -> None:
             ),
         },
         column_order=[
-            "Year", "You", "Sp", "Your IRA", "Options",
+            "Year", "You", "Sp", "Your IRA", "Sp IRA", "Options",
             "your_conv", "sp_conv", "qcd", "sp_qcd",
             "Gross", "Bracket", "Conv Tax", "Room 12%", "Room 22%",
         ],

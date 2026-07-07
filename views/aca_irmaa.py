@@ -307,7 +307,7 @@ def render(hh: Household):
             entry["Spouse"] = row.spouse_age
         entry.update({
             "System": row.system,
-            "IRMAA Tier": str(row.irmaa_tier) if row.irmaa_tier is not None else "—",
+            "IRMAA Tier": "—" if row.irmaa_tier is None else ("Base" if row.irmaa_tier == 0 else str(row.irmaa_tier)),
             "IRMAA Room": fmt_dollars(row.irmaa_room) if row.irmaa_room is not None else "—",
         })
         if row.aca_subsidy is not None:
