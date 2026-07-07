@@ -50,6 +50,7 @@ class BaseIncome:
     ded_base: float
     ytd_magi: float = 0.0
     ytd_niit_magi: float = 0.0
+    ytd_ordinary: float = 0.0  # ordinary-income portion of YTD: wages+NEC+STCG+ord-divs+interest+distributions (NOT LTCG, NOT qual-divs, NOT muni)
 
 
 @dataclass
@@ -173,6 +174,15 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     # income computation (F9) and the MAGI base below.
     ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
     ytd_niit_magi = ytd.niit_magi_ytd if ytd is not None else 0.0  # IRC §1411(d)(3)
+    # MU8-F1: ordinary-income portion of YTD for the bracket/LTCG-stack base.
+    # Mirrors scenario.py combined_gross YTD injection (lines 371-381): wages, NEC, STCG,
+    # ordinary dividends, interest, ira_conversions_ytd, spouse_ira_conversions_ytd,
+    # ira_distributions_ytd. Excludes LTCG and qualified dividends (preferential-rate, not
+    # in ordinary brackets) and muni interest (MAGI-only). nqo_exercise_ytd is already
+    # captured in opt for the base year, so we subtract it (matching scenario_compute.py:307-309).
+    ytd_ordinary = (
+        (ytd.total_ordinary_income - ytd.nqo_exercise_ytd) if ytd is not None else 0.0
+    )
 
     # Base taxable SS (without conversion).
     # F9: other_inc must include ytd_magi so that realized YTD ordinary income
@@ -205,16 +215,18 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
         ded_base=ded,
         ytd_magi=ytd_magi,
         ytd_niit_magi=ytd_niit_magi,
+        ytd_ordinary=ytd_ordinary,
     )
 
 
 def bracket_boundary_conversion(base: BaseIncome, bracket_ceiling: float) -> float:
     """Conversion amount that lifts taxable income to the given bracket ceiling."""
-    # all_in_at_conversion uses taxable_inc = (opt + conv + tss) - total_ded, and
-    # base.base_gross == opt + tss, so solving taxable_inc == ceiling gives
-    #   conv = ceiling + total_ded - opt - tss = ceiling + total_ded - base_gross.
-    # (The earlier view formula subtracted opt a second time, drawing boundaries low.)
-    return max(base.total_ded + bracket_ceiling - base.base_gross, 0.0)
+    # all_in_at_conversion uses taxable_inc = (opt + conv + tss + ytd_ordinary) - total_ded,
+    # and base.base_gross == opt + tss, so solving taxable_inc == ceiling gives
+    #   conv = ceiling + total_ded - opt - tss - ytd_ordinary
+    #        = ceiling + total_ded - base_gross - ytd_ordinary.
+    # MU8-F1: ytd_ordinary shifts the base up, narrowing the remaining conversion room.
+    return max(base.total_ded + bracket_ceiling - base.base_gross - base.ytd_ordinary, 0.0)
 
 
 def all_in_at_conversion(
@@ -237,7 +249,9 @@ def all_in_at_conversion(
     other_inc = base.opt + conv + base.ytd_magi
     tss = taxable_ss(base.combined_ss, other_inc, filing_status=hh.filing_status)
 
-    gross = base.opt + conv + tss
+    # MU8-F1: include ytd_ordinary in the ordinary bracket base, mirroring scenario.py
+    # combined_gross. ytd_magi (which includes LTCG + qual-divs + muni) stays in magi only.
+    gross = base.opt + conv + tss + base.ytd_ordinary
     magi = base.opt + conv + tss + base.ytd_magi
 
     # Recalculate senior bonus deduction at new NIIT-MAGI (excludes tax-exempt muni
@@ -253,7 +267,8 @@ def all_in_at_conversion(
     # Base tax (no conversion).
     # F9: include ytd_magi in provisional income base, consistent with the with-conversion path.
     base_tss = taxable_ss(base.combined_ss, base.opt + base.ytd_magi, filing_status=hh.filing_status)
-    base_gross = base.opt + base_tss
+    # MU8-F1: include ytd_ordinary in the no-conversion ordinary base.
+    base_gross = base.opt + base_tss + base.ytd_ordinary
     base_senior = senior_bonus_deduction(
         ya, sa, base.opt + base_tss + base.ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
     )

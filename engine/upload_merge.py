@@ -71,6 +71,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         "spouse_aca",
         "your_defer_first_rmd",
         "spouse_defer_first_rmd",
+        "growth_rate",
     ]
     for k in scalar_keys:
         if k in data:
