@@ -454,9 +454,11 @@ def estimate_ytd_federal_tax(
     niit_amount = niit(magi, net_investment_income, filing_status=hh.filing_status)
 
     total = ordinary_tax + ltcg_tax + niit_amount
-    # Denominator must include taxable SS — it is taxed in the numerator (folded into ordinary
-    # income above). Use the broad magi_ytd (incl. tax-exempt interest) plus tss.
-    _rate_base = ytd.magi_ytd + tss
+    # Denominator must include taxable SS (folded into ordinary income above).
+    # Use niit_magi_with_ss which EXCLUDES tax-exempt muni interest per IRC §1411(d)(3):
+    # including muni interest inflates the denominator and understates the effective rate.
+    # niit_magi_with_ss = ytd.niit_magi_ytd + tss = (ytd.magi_ytd - tax_exempt_interest) + tss.
+    _rate_base = niit_magi_with_ss
     effective_rate = total / _rate_base if _rate_base > 0 else 0.0
 
     # Step 7: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).

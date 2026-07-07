@@ -8,6 +8,8 @@ When TurboTax data is available via FinExtract, auto-populates income
 figures and IRA contribution amounts.
 """
 
+import math
+
 import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
@@ -115,14 +117,23 @@ def trad_deduction_phaseout_for_year(tax_year: int, key: str) -> tuple[float, fl
 
 
 def _phase_out(magi: float, lower: float, upper: float, limit: float) -> float:
-    """Reduce limit linearly between lower and upper MAGI thresholds."""
+    """Reduce limit linearly between lower and upper MAGI thresholds.
+
+    Rounding per IRS Pub 590-A worksheet:
+    - Round UP to the next $10 (math.ceil, not banker's round).
+    - If the result is positive but less than $200, raise it to $200 (minimum floor).
+    - A fully-phased-out result of $0.0 stays $0 (floor does not apply).
+    """
     if magi <= lower:
         return limit
     if magi >= upper:
         return 0.0
-    # Round up to nearest $10 per IRS rules
     reduced = limit * (upper - magi) / (upper - lower)
-    return max(0.0, round(reduced / 10) * 10)
+    rounded = math.ceil(reduced / 10) * 10
+    # Apply $200 floor only for a positive (partially-phased-out) result.
+    if 0 < rounded < 200:
+        rounded = 200
+    return float(rounded)
 
 
 def _roth_allowed(

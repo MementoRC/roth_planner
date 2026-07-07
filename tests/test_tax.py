@@ -670,20 +670,22 @@ class TestBrokerageGainTaxStackWalk:
 
 
 class TestEstimateYTDEffectiveRateDenominator:
-    """M4: estimate_ytd_federal_tax effective_rate must use full MAGI (muni-included) as denominator.
+    """MU1-F02: estimate_ytd_federal_tax effective_rate must use niit_magi_with_ss
+    (muni-EXCLUDED) as denominator per IRC §1411(d)(3).
 
-    Pre-fix: denominator was niit_magi_ytd (muni-excluded), overstating the displayed rate.
-    Post-fix: denominator is magi_ytd (economic-income denominator, muni-included).
+    Pre-fix (bug): denominator was magi_ytd (muni-included), understating the displayed rate.
+    Post-fix: denominator is niit_magi_with_ss = niit_magi_ytd + tss (muni-excluded).
 
-    The NIIT computation itself must remain on niit_magi_ytd (correct per §1411(d)(3)).
+    Including muni interest in the denominator inflates it, making the effective rate
+    appear lower than it actually is. The correct base excludes tax-exempt interest.
     """
 
-    def test_effective_rate_uses_full_magi_not_niit_magi(self) -> None:
-        """effective_rate denominator is magi_ytd, not niit_magi_ytd.
+    def test_effective_rate_uses_niit_magi_not_full_magi(self) -> None:
+        """effective_rate denominator is niit_magi_ytd (muni-excluded), not magi_ytd.
 
         Construct a YTDSnapshot with muni interest so the two MAGI variants differ.
-        Assert effective_rate == total / magi_ytd (full MAGI),
-        which is strictly less than total / niit_magi_ytd (muni-excluded, smaller denom).
+        Assert effective_rate == total / niit_magi_ytd (muni-excluded, per §1411(d)(3)),
+        which is strictly greater than total / magi_ytd (muni-included, larger denom).
         """
         from engine.tax import estimate_ytd_federal_tax
         from models.household import Household
@@ -713,18 +715,19 @@ class TestEstimateYTDEffectiveRateDenominator:
         niit_magi = ytd.niit_magi_ytd     # 150_000 (muni stripped)
 
         assert full_magi > niit_magi, "Precondition: muni must cause MAGI variants to differ"
-        assert full_magi > 0
+        assert niit_magi > 0
 
-        expected_rate = estimate.total / full_magi
-        wrong_rate = estimate.total / niit_magi
+        # MU1-F02 fix: denominator is niit_magi_ytd (tss=0 here since combined_ss=0)
+        expected_rate = estimate.total / niit_magi
+        wrong_rate = estimate.total / full_magi  # pre-fix (inflated denom → lower rate)
 
         assert estimate.effective_rate == pytest.approx(expected_rate, rel=1e-9), (
-            f"effective_rate should use full_magi denominator: "
+            f"effective_rate should use niit_magi denominator (MU1-F02): "
             f"got {estimate.effective_rate:.6f}, expected {expected_rate:.6f}"
         )
-        assert estimate.effective_rate < wrong_rate, (
-            "effective_rate must be strictly less than total/niit_magi "
-            "(muni-inclusive denom is larger → lower rate)"
+        assert estimate.effective_rate > wrong_rate, (
+            "effective_rate must be strictly greater than total/full_magi "
+            "(muni-exclusive denom is smaller → higher rate)"
         )
 
 
