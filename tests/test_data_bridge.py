@@ -192,6 +192,7 @@ class TestLoadPrivkey:
         _, priv = _fresh_keypair()
         priv_path = tmp_path / "data-bridge.priv"
         priv_path.write_text(base64.b64encode(priv).decode("ascii") + "\n", encoding="utf-8")
+        priv_path.chmod(0o600)  # SU1-SEC-01: secret key must have restrictive permissions
         monkeypatch.delenv(PRIVKEY_ENV, raising=False)
         monkeypatch.setattr("engine.data_bridge_keys.PRIVKEY_PATH", priv_path)
         assert load_privkey() == priv

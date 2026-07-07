@@ -69,7 +69,14 @@ def _read_keyfile_nofollow(path: Path) -> str:
     return raw.decode("utf-8")
 
 
-def _try_load(env_name: str, path: Path) -> bytes | None:
+def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | None:
+    """Load key material from env var or file.
+
+    When *secret* is True (private keys), the file must have restrictive
+    permissions (mode & 0o077 == 0). If lax, return None rather than loading
+    a potentially compromised key (SU1-SEC-01).
+    When *secret* is False (public keys), lax permissions emit a warning only.
+    """
     env = os.environ.get(env_name)
     if env:
         return _decode_keymaterial(env)
@@ -77,6 +84,16 @@ def _try_load(env_name: str, path: Path) -> bytes | None:
         try:
             file_mode = stat.S_IMODE(path.stat().st_mode)
             if file_mode & 0o077:
+                if secret:
+                    # SU1-SEC-01: refuse to load secret key with lax permissions.
+                    warnings.warn(
+                        f"{path}: secret key file has lax permissions "
+                        f"(mode {oct(file_mode)}); refusing to load. "
+                        "Restrict to 0o600 to enable loading.",
+                        RuntimeWarning,
+                        stacklevel=3,
+                    )
+                    return None
                 warnings.warn(
                     f"{path}: key file is group- or world-readable (mode {oct(file_mode)}); "
                     "consider restricting to 0o600.",
@@ -114,7 +131,7 @@ def load_privkey() -> bytes | None:
     ``~/.finextract/data-bridge.priv`` file. Returns 32 raw bytes,
     or ``None`` if no key is configured.
     """
-    return _try_load(PRIVKEY_ENV, PRIVKEY_PATH)
+    return _try_load(PRIVKEY_ENV, PRIVKEY_PATH, secret=True)
 
 
 def _write_keyfile(path: Path, text: str, mode: int, *, exclusive: bool = False) -> None:
