@@ -323,19 +323,19 @@ def render(hh: Household):
                 )
         if conv_years:
             df = pd.DataFrame(conv_years)
+            for col in (
+                "Options",
+                "Your Conv",
+                "Sp Conv",
+                "Gross",
+                "Taxable",
+                "Conv Tax",
+                "Room 12%",
+                "Room 22%",
+            ):
+                df[col] = df[col].apply(fmt_dollars)
             st.dataframe(
-                df.style.format(
-                    {
-                        "Options": "${:,.0f}",
-                        "Your Conv": "${:,.0f}",
-                        "Sp Conv": "${:,.0f}",
-                        "Gross": "${:,.0f}",
-                        "Taxable": "${:,.0f}",
-                        "Conv Tax": "${:,.0f}",
-                        "Room 12%": "${:,.0f}",
-                        "Room 22%": "${:,.0f}",
-                    }
-                ),
+                df,
                 width="stretch",
                 hide_index=True,
             )
@@ -369,18 +369,18 @@ def render(hh: Household):
                 )
         if rmd_years:
             df = pd.DataFrame(rmd_years)
+            for col in (
+                "IRA+Roth (NC)",
+                "IRA+Roth (WC)",
+                "RMD (NC)",
+                "RMD (WC)",
+                "Tax (NC)",
+                "Tax (WC)",
+                "Tax Saved",
+            ):
+                df[col] = df[col].apply(fmt_dollars)
             st.dataframe(
-                df.style.format(
-                    {
-                        "IRA+Roth (NC)": "${:,.0f}",
-                        "IRA+Roth (WC)": "${:,.0f}",
-                        "RMD (NC)": "${:,.0f}",
-                        "RMD (WC)": "${:,.0f}",
-                        "Tax (NC)": "${:,.0f}",
-                        "Tax (WC)": "${:,.0f}",
-                        "Tax Saved": "${:,.0f}",
-                    }
-                ),
+                df,
                 width="stretch",
                 hide_index=True,
             )
