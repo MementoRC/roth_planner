@@ -188,7 +188,7 @@ def render(hh: Household) -> None:
     st.session_state.setdefault("conv_plan_spouse_qcd", {})
 
     with col_btn1:
-        if st.button("🎯 Auto-Fill to 12%", width="stretch"):
+        if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
             plan = auto_fill_12(hh)
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
@@ -201,7 +201,7 @@ def render(hh: Household) -> None:
             st.rerun()
 
     with col_btn2:
-        if st.button("🗑️ Clear All", width="stretch"):
+        if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.conv_plan_your = {}
             st.session_state.conv_plan_spouse = {}
             st.session_state.conv_plan_qcd = {}
