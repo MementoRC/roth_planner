@@ -236,14 +236,22 @@ def render_portfolio_tab(hh: Household) -> None:
     """Extracted from setup.py render() — portfolio tab body."""
     snap: PortfolioSnapshot | None = st.session_state.get("portfolio_snapshot")
 
-    # Sync button + status banner — local install only (not available on Pyodide/stlite)
+    # FinExtract availability note — local install only (not available on Pyodide/stlite)
     if is_pyodide():
-        st.caption(
-            "Live sync from FinExtract requires a local install. "
-            "Use the V2 sealed upload widget on the Data bridge tab "
-            "to bring data prepared from a local install instead."
+        st.info(
+            "FinExtract sync isn't available on the public site — browsers block "
+            "the HTTPS page from reaching your local FinExtract server "
+            "(http://127.0.0.1:7890), no matter how it's running. "
+            "Bring in real data instead via ⚙️ Setup → \U0001f517 Data Bridge "
+            "(encrypted upload from a local install)."
         )
     else:
+        st.caption(
+            "FinExtract sync works here because the app is running locally "
+            "(`pixi run app`), with your local FinExtract server running."
+        )
+
+    if not is_pyodide():
         _sync = st.button("Sync from FinExtract", help="Pull live holdings from ingestion server")
         if snap is not None:
             st.caption(f"Loaded: {len(snap.accounts)} accounts, {len(snap.equity_grants)} grants")
