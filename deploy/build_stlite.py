@@ -31,7 +31,7 @@ REQUIREMENTS = [
     "pynacl",
 ]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 # Default stlite version (overridable via --stlite-version)
-DEFAULT_STLITE_VERSION = "0.80.0"
+DEFAULT_STLITE_VERSION = "0.83.0"
 
 
 def _collect_files(repo_root: Path) -> dict[str, str]:
