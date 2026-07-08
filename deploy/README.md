@@ -21,7 +21,7 @@ python -m http.server --directory _site 8000
 - **First load is slow** (~10-30s) — Pyodide + streamlit + pandas + plotly download once, then cache in the browser.
 - **FinExtract sync fails publicly** — the planner tries `http://127.0.0.1:7890` which the browser cannot reach. Existing graceful degradation shows cached data or a "no data" message.
 - **Personal data stays local** — public demo runs on synthetic `Acme Corp` defaults (config/defaults.py); your real values live in gitignored `.user_defaults.py` and never enter the deployed bundle.
-- **stlite version** — pin via `--stlite-version <N>` in the workflow if upstream breaks compat. Default: `0.75.0`.
+- **stlite version** — pin via `--stlite-version <N>` in the workflow if upstream breaks compat. Default: `0.80.0`. Note: the npm package was renamed from `@stlite/mountable` to `@stlite/browser` at v0.76.0 (`@stlite/mountable` never published past 0.75.0) — `deploy/template.html` references `@stlite/browser`.
 
 ## Personal mode
 

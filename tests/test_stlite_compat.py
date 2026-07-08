@@ -81,3 +81,26 @@ class TestWidthStretchUsedInViews:
             "If views were reverted to use_container_width=True, also update "
             "DEFAULT_STLITE_VERSION and this test."
         )
+
+
+class TestTemplateReferencesCurrentStlitePackage:
+    """deploy/template.html must reference @stlite/browser, not the retired @stlite/mountable name.
+
+    @stlite/mountable was renamed to @stlite/browser at v0.76.0 and never published a
+    newer version under the old name — referencing @stlite/mountable at any version
+    >=0.76.0 means the CDN URL 404s and the public site never boots. Caught in production
+    when DEFAULT_STLITE_VERSION was bumped to 0.80.0 (PR #202) without updating the
+    package name in template.html.
+    """
+
+    def test_template_does_not_reference_retired_mountable_package(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "@stlite/mountable" not in template, (
+            "deploy/template.html references the retired @stlite/mountable package "
+            "(renamed to @stlite/browser at v0.76.0, never published past 0.75.0) — "
+            "this 404s at DEFAULT_STLITE_VERSION >= 0.76.0"
+        )
+        assert "@stlite/browser" in template, (
+            "deploy/template.html should reference @stlite/browser (the current "
+            "package name post-rename)"
+        )
