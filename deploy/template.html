@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Roth Planner — Live Demo</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/mountable@__STLITE_VERSION__/build/stlite.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@__STLITE_VERSION__/build/stlite.css" />
   <style>
     html, body, #root { margin: 0; padding: 0; height: 100%; }
     #loading {
@@ -32,18 +32,43 @@
     </div>
   </div>
   <div id="root"></div>
-  <script src="https://cdn.jsdelivr.net/npm/@stlite/mountable@__STLITE_VERSION__/build/stlite.js"></script>
   <script>
+    // Global error surface: any error registered here shows in the loading
+    // panel instead of leaving the spinner running with no indication of failure.
+    window.__stliteShowError = (msg) => {
+      console.error("[stlite]", msg);
+      const note = document.querySelector("#loading .note");
+      if (note) {
+        note.textContent = msg;
+        note.style.color = "#ff4b4b";
+      }
+    };
+    window.addEventListener("error", (e) => {
+      window.__stliteShowError(`Unexpected error: ${e.message || e}. Try reloading the page.`);
+    });
+  </script>
+  <script
+    type="module"
+    onerror="window.__stliteShowError('Failed to load the stlite runtime from the CDN. Check your network connection, or try reloading.')"
+  >
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@__STLITE_VERSION__/build/stlite.js";
+
     const FILES = __FILE_MAP_JSON__;
     const REQUIREMENTS = __REQUIREMENTS_JSON__;
-    stlite.mount(
-      {
-        entrypoint: "app.py",
-        requirements: REQUIREMENTS,
-        files: FILES,
-      },
-      document.getElementById("root"),
-    );
+
+    try {
+      mount(
+        {
+          entrypoint: "app.py",
+          requirements: REQUIREMENTS,
+          files: FILES,
+        },
+        document.getElementById("root"),
+      );
+    } catch (err) {
+      window.__stliteShowError(`Failed to start: ${err.message}. Try reloading the page.`);
+    }
+
     // Hide loader once Streamlit renders (poll for the iframe/canvas)
     const hideLoader = () => {
       const loader = document.getElementById("loading");
@@ -54,7 +79,12 @@
       return false;
     };
     const interval = setInterval(() => { if (hideLoader()) clearInterval(interval); }, 500);
-    setTimeout(() => clearInterval(interval), 60000); // give up after 60s
+    setTimeout(() => {
+      clearInterval(interval);
+      if (document.getElementById("loading")?.style.display !== "none") {
+        window.__stliteShowError("Still loading after 60s — this may indicate a load failure. Check the browser console, or try reloading.");
+      }
+    }, 60000); // give up after 60s
   </script>
 </body>
 </html>
