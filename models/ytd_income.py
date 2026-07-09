@@ -34,6 +34,26 @@ class RealizedGainEvent:
 
 
 @dataclass
+class IncomeEvent:
+    """A single logged Roth conversion or IRA distribution, entered as it happens.
+
+    Custodian statements lag; the user is the only real-time source of truth
+    for "I converted/withdrew $X today" — this is an audit-trail log, not a
+    derived/synced value.
+    """
+
+    date: str  # ISO date string
+    amount: float
+    kind: str  # "conversion" or "distribution"
+    owner: str = "you"  # "you" or "spouse"
+
+
+def sum_income_events(events: list[IncomeEvent], *, kind: str, owner: str | None = None) -> float:
+    """Sum event amounts matching kind (and owner, if given)."""
+    return sum(e.amount for e in events if e.kind == kind and (owner is None or e.owner == owner))
+
+
+@dataclass
 class YTDSnapshot:
     """Aggregate year-to-date income actuals.
 
@@ -51,6 +71,7 @@ class YTDSnapshot:
     ira_conversions_ytd: float = 0.0  # conversions already done this year (your side)
     spouse_ira_conversions_ytd: float = 0.0  # spouse's conversions already done this year
     ira_distributions_ytd: float = 0.0  # non-conversion IRA withdrawals
+    income_events: list[IncomeEvent] = field(default_factory=list)
 
     # Investment income components
     ltcg_ytd: float = 0.0  # long-term capital gains (stop-loss triggers)
