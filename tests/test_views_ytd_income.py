@@ -530,6 +530,7 @@ class TestManualEntryFieldCoverage:
     """
 
     def test_manual_entry_preserves_nec_income(self):
+        """Covers nec_income_ytd only; ira_distributions_ytd deferred to Task 4."""
         hh = _stub_hh()
         ytd = YTDSnapshot(nec_income_ytd=5_000.0)
         mock_st = _make_mock_st(ytd)
