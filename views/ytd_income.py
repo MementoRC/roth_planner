@@ -27,7 +27,7 @@ from engine.tax import (
     safe_harbor_payment,
 )
 from models.household import Household
-from models.ytd_income import YTDSnapshot
+from models.ytd_income import IncomeEvent, YTDSnapshot, sum_income_events
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
 
@@ -162,20 +162,6 @@ def render(hh: Household):
                 help="Muni bond interest — counts toward MAGI/IRMAA and SS provisional income, not ordinary brackets.",
                 key="ytd_tax_exempt_interest",
             )
-            conversions_done = st.number_input(
-                "Roth Conversions Done YTD",
-                value=int(ytd.ira_conversions_ytd),
-                step=5_000,
-                format="%d",
-                help="Conversions already completed this year",
-            )
-            spouse_conversions_done = st.number_input(
-                "Spouse Roth Conversions Done YTD",
-                value=int(ytd.spouse_ira_conversions_ytd),
-                step=5_000,
-                format="%d",
-                help="Spouse conversions already completed this year",
-            )
             federal_withholding = st.number_input(
                 "Federal Tax Withheld YTD",
                 value=int(ytd.federal_withholding_ytd),
@@ -183,6 +169,67 @@ def render(hh: Household):
                 format="%d",
                 help="W-2 federal income tax withheld year-to-date; counts as 'Already paid' toward safe-harbor.",
             )
+
+        st.markdown("##### Roth Conversions & IRA Distributions")
+        st.caption(
+            "Log each conversion or distribution as you execute it — custodian statements "
+            "lag, so this is the most accurate running total."
+        )
+
+        income_events = st.session_state.get("income_events", list(ytd.income_events))
+
+        with st.form("add_income_event", clear_on_submit=True):
+            ie_col1, ie_col2, ie_col3, ie_col4 = st.columns(4)
+            with ie_col1:
+                ie_date = st.date_input("Date")
+            with ie_col2:
+                ie_kind = st.selectbox("Type", ["Conversion", "Distribution"])
+            with ie_col3:
+                owner_options = ["You"] if hh.filing_status == "Single" else ["You", "Spouse"]
+                ie_owner = st.selectbox("Whose", owner_options)
+            with ie_col4:
+                ie_amount = st.number_input("Amount", min_value=0, step=1_000, format="%d")
+            if st.form_submit_button("Add entry") and ie_amount > 0:
+                income_events.append(
+                    IncomeEvent(
+                        date=ie_date.isoformat(),
+                        amount=float(ie_amount),
+                        kind=ie_kind.lower(),
+                        owner=ie_owner.lower(),
+                    )
+                )
+                st.session_state["income_events"] = income_events
+
+        if income_events:
+            ie_rows = [
+                {
+                    "Date": e.date,
+                    "Type": e.kind.title(),
+                    "Whose": e.owner.title(),
+                    "Amount": fmt_dollars(e.amount),
+                }
+                for e in income_events
+            ]
+            st.dataframe(pd.DataFrame(ie_rows), width="stretch")
+            del_idx = st.selectbox(
+                "Remove an entry",
+                options=list(range(len(income_events))),
+                format_func=lambda i: (
+                    f"{income_events[i].date} — {income_events[i].kind.title()} — "
+                    f"{fmt_dollars(income_events[i].amount)}"
+                ),
+                index=None,
+                placeholder="Select an entry to remove",
+                key="income_event_delete_select",
+            )
+            if del_idx is not None and st.button("Remove selected entry"):
+                income_events.pop(del_idx)
+                st.session_state["income_events"] = income_events
+                st.rerun()
+
+        conversions_done = sum_income_events(income_events, kind="conversion", owner="you")
+        spouse_conversions_done = sum_income_events(income_events, kind="conversion", owner="spouse")
+        distributions_done = sum_income_events(income_events, kind="distribution")
 
         ytd = YTDSnapshot(
             tax_year=hh.base_year,
@@ -194,8 +241,10 @@ def render(hh: Household):
             ordinary_dividends_ytd=float(ordinary_dividends),
             interest_ytd=float(interest),
             tax_exempt_interest_ytd=float(tax_exempt_interest),
-            ira_conversions_ytd=float(conversions_done),
-            spouse_ira_conversions_ytd=float(spouse_conversions_done),
+            ira_conversions_ytd=conversions_done,
+            spouse_ira_conversions_ytd=spouse_conversions_done,
+            ira_distributions_ytd=distributions_done,
+            income_events=income_events,
             federal_withholding_ytd=float(federal_withholding),
             gain_events=ytd.gain_events,
             manually_entered=True,
