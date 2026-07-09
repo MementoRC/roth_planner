@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
+from engine.secure_io import read_pii_json, write_pii_json
+
 from .client import _flatten_query_rows, _get
 from .shapes import SSABenefitEstimate, SSASnapshot
+
+_SSA_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ssa_cache.json"
 
 
 def fetch_ssa_benefit_estimates() -> list[dict[str, Any]]:
@@ -52,3 +59,34 @@ def match_fra_estimate(estimates: list[SSABenefitEstimate], fra_age: int) -> SSA
     if exact is not None:
         return exact
     return min(estimates, key=lambda e: abs(e.retirement_age - fra_age))
+
+
+def save_ssa_snapshot(snap: SSASnapshot, *, owner: str) -> None:
+    """Save *snap* under *owner* ('you' or 'spouse') in the shared SSA cache file."""
+    existing: dict[str, Any] = {}
+    if _SSA_CACHE_PATH.exists():
+        try:
+            existing = read_pii_json(_SSA_CACHE_PATH)
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    existing[owner] = asdict(snap)
+    write_pii_json(_SSA_CACHE_PATH, existing)
+
+
+def load_ssa_snapshot(*, owner: str) -> SSASnapshot | None:
+    """Load the cached SSA snapshot for *owner*, or None if unavailable."""
+    if not _SSA_CACHE_PATH.exists():
+        return None
+    try:
+        data = read_pii_json(_SSA_CACHE_PATH)
+    except (json.JSONDecodeError, OSError):
+        return None
+    owner_data = data.get(owner)
+    if owner_data is None:
+        return None
+    estimates = [SSABenefitEstimate(**e) for e in owner_data.get("estimates", [])]
+    return SSASnapshot(
+        estimates=estimates,
+        server_available=owner_data.get("server_available", False),
+        error=owner_data.get("error"),
+    )

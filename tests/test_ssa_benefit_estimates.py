@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import requests
 
 from engine.portfolio_sync import client as client_module
-from engine.portfolio_sync.shapes import SSABenefitEstimate
+from engine.portfolio_sync import social_security
+from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.portfolio_sync.social_security import (
     fetch_ssa_benefit_estimates,
     fetch_ssa_snapshot,
+    load_ssa_snapshot,
     match_fra_estimate,
+    save_ssa_snapshot,
 )
 
 
@@ -101,3 +105,38 @@ class TestMatchFraEstimate:
 
     def test_empty_list_returns_none(self) -> None:
         assert match_fra_estimate([], 67) is None
+
+
+class TestSsaCache:
+    def test_round_trips_per_owner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+        you_snap = SSASnapshot(
+            estimates=[SSABenefitEstimate(67, "2032-01", "full", 2600.0)],
+            server_available=True,
+        )
+        spouse_snap = SSASnapshot(
+            estimates=[SSABenefitEstimate(67, "2033-01", "full", 1900.0)],
+            server_available=True,
+        )
+        save_ssa_snapshot(you_snap, owner="you")
+        save_ssa_snapshot(spouse_snap, owner="spouse")
+
+        loaded_you = load_ssa_snapshot(owner="you")
+        loaded_spouse = load_ssa_snapshot(owner="spouse")
+        assert loaded_you == you_snap
+        assert loaded_spouse == spouse_snap
+
+    def test_load_missing_file_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "missing.json")
+        assert load_ssa_snapshot(owner="you") is None
+
+    def test_load_missing_owner_key_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+        save_ssa_snapshot(SSASnapshot(server_available=True), owner="you")
+        assert load_ssa_snapshot(owner="spouse") is None
+
+    def test_load_corrupt_file_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = tmp_path / "ssa.json"
+        path.write_text("{not valid json")
+        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", path)
+        assert load_ssa_snapshot(owner="you") is None
