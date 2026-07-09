@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 import requests
 
+from engine import portfolio_sync
 from engine.portfolio_sync import client as client_module
-from engine.portfolio_sync import social_security
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.portfolio_sync.social_security import (
     fetch_ssa_benefit_estimates,
@@ -109,7 +109,7 @@ class TestMatchFraEstimate:
 
 class TestSsaCache:
     def test_round_trips_per_owner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
         you_snap = SSASnapshot(
             estimates=[SSABenefitEstimate(67, "2032-01", "full", 2600.0)],
             server_available=True,
@@ -127,16 +127,41 @@ class TestSsaCache:
         assert loaded_spouse == spouse_snap
 
     def test_load_missing_file_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "missing.json")
+        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "missing.json")
         assert load_ssa_snapshot(owner="you") is None
 
     def test_load_missing_owner_key_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
         save_ssa_snapshot(SSASnapshot(server_available=True), owner="you")
         assert load_ssa_snapshot(owner="spouse") is None
 
     def test_load_corrupt_file_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         path = tmp_path / "ssa.json"
         path.write_text("{not valid json")
-        monkeypatch.setattr(social_security, "_SSA_CACHE_PATH", path)
+        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", path)
         assert load_ssa_snapshot(owner="you") is None
+
+
+class TestPackageReexport:
+    def test_ssa_symbols_importable_from_package(self) -> None:
+        from engine.portfolio_sync import (
+            SSABenefitEstimate,
+            SSASnapshot,
+            fetch_ssa_benefit_estimates,
+            fetch_ssa_snapshot,
+            load_ssa_snapshot,
+            match_fra_estimate,
+            save_ssa_snapshot,
+        )
+
+        assert all(
+            [
+                SSABenefitEstimate,
+                SSASnapshot,
+                fetch_ssa_benefit_estimates,
+                fetch_ssa_snapshot,
+                match_fra_estimate,
+                save_ssa_snapshot,
+                load_ssa_snapshot,
+            ]
+        )
