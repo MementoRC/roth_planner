@@ -533,6 +533,44 @@ class TestScenarioWithYTD:
         assert len(loaded.gain_events) == 1
         assert loaded.gain_events[0].gain_loss == approx(200_000)
 
+    def test_ytd_save_load_roundtrip_income_events(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import IncomeEvent, YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            income_events=[
+                IncomeEvent(date="2026-03-15", amount=25_000.0, kind="conversion", owner="you"),
+                IncomeEvent(date="2026-05-01", amount=8_000.0, kind="distribution", owner="spouse"),
+            ],
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+
+        assert loaded is not None
+        assert len(loaded.income_events) == 2
+        assert loaded.income_events[0].date == "2026-03-15"
+        assert loaded.income_events[0].amount == 25_000.0
+        assert loaded.income_events[0].kind == "conversion"
+        assert loaded.income_events[1].owner == "spouse"
+
+    def test_ytd_load_missing_income_events_defaults_empty(self, tmp_path, monkeypatch):
+        """Old cache files predating this field must still load cleanly."""
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
+        (tmp_path / "ytd.json").write_text(json.dumps({"tax_year": 2026, "snapshot_date": "2026-06-01"}))
+
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.income_events == []
+
     def test_spouse_conversions_done_subtracted(self):
         """Fix #1: spouse_ira_conversions_ytd must reduce effective spouse_conversion
         symmetrically to how ira_conversions_ytd reduces your_conversion.
