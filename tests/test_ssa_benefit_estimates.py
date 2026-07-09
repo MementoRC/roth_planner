@@ -9,7 +9,7 @@ import requests
 
 from engine.portfolio_sync import client as client_module
 from engine.portfolio_sync.shapes import SSABenefitEstimate
-from engine.portfolio_sync.social_security import fetch_ssa_benefit_estimates, fetch_ssa_snapshot
+from engine.portfolio_sync.social_security import fetch_ssa_benefit_estimates, fetch_ssa_snapshot, match_fra_estimate
 
 
 def _fake_response(json_data, status_code=200):
@@ -77,3 +77,23 @@ class TestFetchSsaSnapshot:
         snap = fetch_ssa_snapshot()
         assert snap.server_available is True
         assert snap.estimates == []
+
+
+class TestMatchFraEstimate:
+    def test_exact_match(self) -> None:
+        estimates = [
+            SSABenefitEstimate(62, "2027-01", "early", 1800.0),
+            SSABenefitEstimate(67, "2032-01", "full", 2600.0),
+            SSABenefitEstimate(70, "2035-01", "delayed", 3200.0),
+        ]
+        assert match_fra_estimate(estimates, 67) == estimates[1]
+
+    def test_nearest_fallback_when_no_exact_match(self) -> None:
+        estimates = [
+            SSABenefitEstimate(62, "2027-01", "early", 1800.0),
+            SSABenefitEstimate(70, "2035-01", "delayed", 3200.0),
+        ]
+        assert match_fra_estimate(estimates, 68) == estimates[1]  # |68-62|=6, |68-70|=2
+
+    def test_empty_list_returns_none(self) -> None:
+        assert match_fra_estimate([], 67) is None

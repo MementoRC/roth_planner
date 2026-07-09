@@ -39,3 +39,16 @@ def fetch_ssa_snapshot() -> SSASnapshot:
         except (KeyError, TypeError, ValueError):
             continue
     return snap
+
+
+def match_fra_estimate(estimates: list[SSABenefitEstimate], fra_age: int) -> SSABenefitEstimate | None:
+    """Find the estimate at fra_age; fall back to the nearest retirement_age.
+
+    Returns None if estimates is empty.
+    """
+    if not estimates:
+        return None
+    exact = next((e for e in estimates if e.retirement_age == fra_age), None)
+    if exact is not None:
+        return exact
+    return min(estimates, key=lambda e: abs(e.retirement_age - fra_age))
