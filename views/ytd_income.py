@@ -109,6 +109,13 @@ def render(hh: Household):
                 step=5_000,
                 format="%d",
             )
+            nec_income = st.number_input(
+                "1099-NEC / Self-Employment Income YTD",
+                value=int(ytd.nec_income_ytd),
+                step=1_000,
+                format="%d",
+                help="Self-employment or contractor income year-to-date.",
+            )
             ltcg = st.number_input(
                 "Long-Term Capital Gains YTD",
                 value=int(ytd.ltcg_ytd) if ytd.ltcg_ytd > 0 else 0,
@@ -180,6 +187,7 @@ def render(hh: Household):
         ytd = YTDSnapshot(
             tax_year=hh.base_year,
             wages_ytd=float(wages),
+            nec_income_ytd=float(nec_income),
             ltcg_ytd=float(ltcg),
             stcg_ytd=float(stcg),
             qualified_dividends_ytd=float(qualified_dividends),

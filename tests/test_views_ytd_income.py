@@ -516,3 +516,33 @@ class TestTaxBracketAndSafeHarborSections:
         assert any("Capital Gains" in s for s in subheader_calls), (
             f"Expected 'Realized Capital Gains' subheader; got: {subheader_calls}"
         )
+
+
+class TestManualEntryFieldCoverage:
+    """Regression: manual entry must not silently drop fields with no dedicated widget.
+
+    Note: `ira_distributions_ytd` is intentionally NOT asserted here. As of this task
+    (Task 3 of the ytd-manual-entry-coverage plan), `views/ytd_income.py` has no widget
+    or passthrough for `ira_distributions_ytd` in the manual-entry `YTDSnapshot(...)`
+    reconstruction at all — it is dropped regardless of this fix. That field gets full
+    treatment as part of the income-event log in Task 4 (separate, later dispatch).
+    Task 3 is narrowly scoped to `nec_income_ytd` only.
+    """
+
+    def test_manual_entry_preserves_nec_income(self):
+        hh = _stub_hh()
+        ytd = YTDSnapshot(nec_income_ytd=5_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        # Echo back whatever `value=` kwarg each number_input was pre-filled with,
+        # simulating a user who hasn't touched a given widget yet.
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.nec_income_ytd == 5_000.0
