@@ -16,7 +16,7 @@ def fetch_equity_awards() -> list[dict[str, Any]]:
     """Fetch equity compensation awards."""
     try:
         resp = _get(
-            "/query/equity_comp",
+            "/query/equity_compensation",
             params={"data_type": "equity_awards"},
             timeout=5,
         )
@@ -31,7 +31,7 @@ def fetch_shares() -> list[dict[str, Any]]:
     """Fetch equity compensation shares held."""
     try:
         resp = _get(
-            "/query/equity_comp",
+            "/query/equity_compensation",
             params={"data_type": "shares"},
             timeout=5,
         )
