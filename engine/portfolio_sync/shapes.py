@@ -245,6 +245,25 @@ class TaxReturnSnapshot:
 
 
 @dataclass
+class SSABenefitEstimate:
+    """One row from FinExtract's ssa-retirement-benefit-estimates-v1 schema."""
+
+    retirement_age: int
+    claim_date: str
+    benefit_type: str
+    monthly_amount: float
+
+
+@dataclass
+class SSASnapshot:
+    """Parsed SSA benefit-estimate data for one person (you or spouse)."""
+
+    estimates: list[SSABenefitEstimate] = field(default_factory=list)
+    server_available: bool = False
+    error: str | None = None
+
+
+@dataclass
 class DividendsRollupSnapshot:
     """FinExtract /query/brokerage?data_type=dividends_rollup response.
 

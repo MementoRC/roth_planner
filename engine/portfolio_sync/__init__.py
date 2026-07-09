@@ -44,7 +44,17 @@ from .shapes import (
     MagiSnapshot,
     OptionExercisesSnapshot,
     PortfolioSnapshot,
+    SSABenefitEstimate,
+    SSASnapshot,
     TaxReturnSnapshot,
+)
+from .social_security import (
+    _SSA_CACHE_PATH,
+    fetch_ssa_benefit_estimates,
+    fetch_ssa_snapshot,
+    load_ssa_snapshot,
+    match_fra_estimate,
+    save_ssa_snapshot,
 )
 from .tax_return import (
     _TAX_CACHE_PATH,
@@ -72,8 +82,11 @@ __all__ = [
     "MagiSnapshot",
     "OptionExercisesSnapshot",
     "PortfolioSnapshot",
+    "SSABenefitEstimate",
+    "SSASnapshot",
     "TaxReturnSnapshot",
     "_CACHE_PATH",
+    "_SSA_CACHE_PATH",
     "_TAX_CACHE_PATH",
     "_YTD_CACHE_PATH",
     "_classify_account",
@@ -102,15 +115,20 @@ __all__ = [
     "fetch_option_exercises_with_cache",
     "fetch_portfolio",
     "fetch_shares",
+    "fetch_ssa_benefit_estimates",
+    "fetch_ssa_snapshot",
     "fetch_tax_return",
     "fetch_ytd_snapshot",
     "load_snapshot",
+    "load_ssa_snapshot",
     "load_tax_snapshot",
     "load_ytd_snapshot",
+    "match_fra_estimate",
     "merge_snapshots",
     "positions_for_forecast",
     "positions_for_forecast_multi",
     "save_snapshot",
+    "save_ssa_snapshot",
     "save_tax_snapshot",
     "save_ytd_snapshot",
 ]
@@ -153,6 +171,9 @@ from . import (
     shapes as _shapes,
 )
 from . import (
+    social_security as _social_security,
+)
+from . import (
     tax_return as _tax_return,
 )
 from . import (
@@ -170,8 +191,11 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "MagiSnapshot": _shapes,
     "OptionExercisesSnapshot": _shapes,
     "PortfolioSnapshot": _shapes,
+    "SSABenefitEstimate": _shapes,
+    "SSASnapshot": _shapes,
     "TaxReturnSnapshot": _shapes,
     "_CACHE_PATH": _portfolio,
+    "_SSA_CACHE_PATH": _social_security,
     "_TAX_CACHE_PATH": _tax_return,
     "_YTD_CACHE_PATH": _ytd,
     "_classify_account": _classify,
@@ -200,15 +224,20 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "fetch_option_exercises_with_cache": _exercises,
     "fetch_portfolio": _portfolio,
     "fetch_shares": _awards,
+    "fetch_ssa_benefit_estimates": _social_security,
+    "fetch_ssa_snapshot": _social_security,
     "fetch_tax_return": _tax_return,
     "fetch_ytd_snapshot": _ytd,
     "load_snapshot": _portfolio,
+    "load_ssa_snapshot": _social_security,
     "load_tax_snapshot": _tax_return,
     "load_ytd_snapshot": _ytd,
+    "match_fra_estimate": _social_security,
     "merge_snapshots": _holdings,
     "positions_for_forecast": _holdings,
     "positions_for_forecast_multi": _holdings,
     "save_snapshot": _portfolio,
+    "save_ssa_snapshot": _social_security,
     "save_tax_snapshot": _tax_return,
     "save_ytd_snapshot": _ytd,
 }

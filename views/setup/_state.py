@@ -165,6 +165,8 @@ def _clear_personal_session_state() -> None:
         "_v2_privkey_input",
         "tax_return_snapshot",
         "ytd_snapshot",
+        "ssa_snapshot_you",
+        "ssa_snapshot_spouse",
         "apply_ytd_to_projection",
         "ytd_manual_entry",
         # audit-0705 ui-5: these keys are seeded via setdefault in app.py but were
