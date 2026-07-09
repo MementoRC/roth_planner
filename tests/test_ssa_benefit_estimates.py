@@ -9,7 +9,11 @@ import requests
 
 from engine.portfolio_sync import client as client_module
 from engine.portfolio_sync.shapes import SSABenefitEstimate
-from engine.portfolio_sync.social_security import fetch_ssa_benefit_estimates, fetch_ssa_snapshot, match_fra_estimate
+from engine.portfolio_sync.social_security import (
+    fetch_ssa_benefit_estimates,
+    fetch_ssa_snapshot,
+    match_fra_estimate,
+)
 
 
 def _fake_response(json_data, status_code=200):
