@@ -59,3 +59,6 @@ ai_docs/
 
 # Deep-audit reports (local-only artifacts, never commit)
 AUDIT_*.md
+
+# Git worktrees (superpowers:using-git-worktrees)
+.worktrees/

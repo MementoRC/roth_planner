@@ -39,6 +39,9 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
     mock_st.columns.side_effect = _columns_side_effect
     mock_st.expander.return_value.__enter__ = MagicMock(return_value=MagicMock())
     mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
+    mock_st.form.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_st.form.return_value.__exit__ = MagicMock(return_value=False)
+    mock_st.form_submit_button.return_value = False
     mock_st.button.return_value = False
     return mock_st
 
@@ -516,3 +519,146 @@ class TestTaxBracketAndSafeHarborSections:
         assert any("Capital Gains" in s for s in subheader_calls), (
             f"Expected 'Realized Capital Gains' subheader; got: {subheader_calls}"
         )
+
+
+class TestManualEntryFieldCoverage:
+    """Regression: manual entry must not silently drop fields with no dedicated widget.
+
+    Note: `ira_distributions_ytd` is intentionally NOT asserted here. As of this task
+    (Task 3 of the ytd-manual-entry-coverage plan), `views/ytd_income.py` has no widget
+    or passthrough for `ira_distributions_ytd` in the manual-entry `YTDSnapshot(...)`
+    reconstruction at all — it is dropped regardless of this fix. That field gets full
+    treatment as part of the income-event log in Task 4 (separate, later dispatch).
+    Task 3 is narrowly scoped to `nec_income_ytd` only.
+    """
+
+    def test_manual_entry_preserves_nec_income(self):
+        """Covers nec_income_ytd only; ira_distributions_ytd deferred to Task 4."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(nec_income_ytd=5_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        # Echo back whatever `value=` kwarg each number_input was pre-filled with,
+        # simulating a user who hasn't touched a given widget yet.
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.nec_income_ytd == 5_000.0
+
+
+class TestIncomeEventLog:
+    """Tests for the income event log UI (replaces flat conversion/distribution inputs)."""
+
+    def test_owner_options_include_spouse_for_mfj(self):
+        """Manual entry ON, MFJ household: owner selectbox options include 'Spouse'."""
+        hh = _stub_hh()  # default filing_status == "MFJ"
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        found_spouse_options = False
+        for call in mock_st.selectbox.call_args_list:
+            options = call.args[1] if len(call.args) > 1 else call.kwargs.get("options")
+            if options and "Spouse" in options:
+                found_spouse_options = True
+                break
+        assert found_spouse_options, (
+            f"Expected a selectbox with 'Spouse' in options for MFJ; "
+            f"calls: {mock_st.selectbox.call_args_list}"
+        )
+
+    def test_owner_options_exclude_spouse_for_single(self):
+        """Manual entry ON, Single household: no selectbox options include 'Spouse'."""
+        hh = _stub_hh(filing_status="Single")
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        for call in mock_st.selectbox.call_args_list:
+            options = call.args[1] if len(call.args) > 1 else call.kwargs.get("options")
+            if options:
+                assert "Spouse" not in options, (
+                    f"Did not expect 'Spouse' in any selectbox options for Single filer; "
+                    f"got: {options}"
+                )
+
+    def test_existing_entries_display_in_dataframe(self):
+        """Seeded income_events render as rows in an st.dataframe call."""
+        from models.ytd_income import IncomeEvent
+
+        hh = _stub_hh()
+        events = [
+            IncomeEvent(date="2026-02-01", amount=10_000.0, kind="conversion", owner="you"),
+            IncomeEvent(date="2026-03-15", amount=4_000.0, kind="distribution", owner="spouse"),
+        ]
+        ytd = YTDSnapshot(income_events=events)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        found = None
+        for call in mock_st.dataframe.call_args_list:
+            data = call.args[0] if call.args else call.kwargs.get("data")
+            try:
+                import pandas as pd
+
+                if isinstance(data, pd.DataFrame) and len(data) == 2:
+                    found = data
+                    break
+            except ImportError:
+                pass
+        assert found is not None, (
+            f"Expected an st.dataframe call with 2 rows reflecting the seeded income_events; "
+            f"calls: {mock_st.dataframe.call_args_list}"
+        )
+
+    def test_add_entry_updates_conversions_done(self):
+        """Submitting the add-entry form with a conversion for 'You' updates ira_conversions_ytd."""
+        from datetime import date as _dt_date
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.number_input.return_value = 25_000
+        mock_st.form_submit_button.return_value = True
+        mock_st.date_input.return_value = _dt_date(2026, 3, 1)
+        # Form selectboxes (Type, Whose) return these; the post-add "Remove an entry"
+        # selectbox (a third selectbox call, since income_events is now non-empty)
+        # gets None so the "if del_idx is not None" branch is skipped.
+        mock_st.selectbox.side_effect = ["Conversion", "You", None]
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.ira_conversions_ytd == 25_000.0

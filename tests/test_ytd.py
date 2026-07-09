@@ -10,6 +10,7 @@ from engine.tax import (
     federal_tax,
 )
 from models.household import Household
+from models.ytd_income import IncomeEvent, sum_income_events
 
 
 def approx(expected, tol=1.0):
@@ -893,3 +894,39 @@ class TestEstimateYtdFederalTax:
         ytd = YTDSnapshot(wages_ytd=40_000.0, ltcg_ytd=25_000.0)
         result = estimate_ytd_federal_tax(ytd, hh)
         assert result.ltcg_tax == pytest.approx(0.0)
+
+
+class TestIncomeEvent:
+    def test_income_event_fields(self):
+        event = IncomeEvent(date="2026-03-15", amount=25_000.0, kind="conversion", owner="you")
+        assert event.date == "2026-03-15"
+        assert event.amount == 25_000.0
+        assert event.kind == "conversion"
+        assert event.owner == "you"
+
+    def test_income_event_owner_defaults_to_you(self):
+        event = IncomeEvent(date="2026-03-15", amount=10_000.0, kind="distribution")
+        assert event.owner == "you"
+
+
+class TestSumIncomeEvents:
+    def test_sums_matching_kind_and_owner(self):
+        events = [
+            IncomeEvent(date="2026-01-10", amount=10_000.0, kind="conversion", owner="you"),
+            IncomeEvent(date="2026-02-10", amount=15_000.0, kind="conversion", owner="you"),
+            IncomeEvent(date="2026-03-10", amount=5_000.0, kind="conversion", owner="spouse"),
+            IncomeEvent(date="2026-04-10", amount=8_000.0, kind="distribution", owner="you"),
+        ]
+        assert sum_income_events(events, kind="conversion", owner="you") == 25_000.0
+        assert sum_income_events(events, kind="conversion", owner="spouse") == 5_000.0
+        assert sum_income_events(events, kind="distribution", owner="you") == 8_000.0
+
+    def test_sum_with_no_owner_filter_combines_both(self):
+        events = [
+            IncomeEvent(date="2026-01-10", amount=8_000.0, kind="distribution", owner="you"),
+            IncomeEvent(date="2026-02-10", amount=3_000.0, kind="distribution", owner="spouse"),
+        ]
+        assert sum_income_events(events, kind="distribution") == 11_000.0
+
+    def test_empty_list_sums_to_zero(self):
+        assert sum_income_events([], kind="conversion", owner="you") == 0.0

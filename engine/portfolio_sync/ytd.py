@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import requests  # type: ignore[import-untyped]
 
 from engine.secure_io import read_pii_json, write_pii_json
-from models.ytd_income import RealizedGainEvent, YTDSnapshot
+from models.ytd_income import IncomeEvent, RealizedGainEvent, YTDSnapshot
 
 if TYPE_CHECKING:
     pass
@@ -239,6 +239,7 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "federal_withholding_ytd": ytd.federal_withholding_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
+        "income_events": [asdict(e) for e in ytd.income_events],
         "manually_entered": ytd.manually_entered,
     }
     write_pii_json(_YTD_CACHE_PATH, data)
@@ -254,6 +255,7 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
         return None
 
     events = [RealizedGainEvent(**e) for e in data.pop("gain_events", [])]
+    income_events = [IncomeEvent(**e) for e in data.pop("income_events", [])]
     # Migrate old cache files that stored a single dividends_ytd key.
     if "dividends_ytd" in data and "ordinary_dividends_ytd" not in data:
         data["ordinary_dividends_ytd"] = data.pop("dividends_ytd")
@@ -265,4 +267,4 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     # PU1-M01: migrate old caches that predate federal_withholding_ytd field.
     if "federal_withholding_ytd" not in data:
         data["federal_withholding_ytd"] = 0.0
-    return YTDSnapshot(**data, gain_events=events)
+    return YTDSnapshot(**data, gain_events=events, income_events=income_events)
