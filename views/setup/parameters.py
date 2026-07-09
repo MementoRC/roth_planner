@@ -11,6 +11,7 @@ from engine.data_bridge_browser import (
     is_pyodide,
 )
 from engine.irmaa import BASE_PART_B
+from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
     Form1040ParseError,
     load_pdf_tax_records,
@@ -381,6 +382,25 @@ def _render_prior_year_magi_anchor(base_year: int) -> None:
         st.session_state["prior_year_magi"] = prior_magi
 
 
+def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
+    """Fetch, match, and apply the FRA SSA benefit for *owner* ('you' or 'spouse').
+
+    Writes the matched monthly benefit into session_state and caches the raw
+    snapshot. Returns a warning message on failure/no-match, or None on success.
+    """
+    snap = fetch_ssa_snapshot()
+    if snap.error:
+        return f"SSA sync failed: {snap.error}"
+    match = match_fra_estimate(snap.estimates, fra_age)
+    if match is None:
+        return "No SSA benefit estimate found near the configured FRA age; sync skipped."
+    session_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
+    st.session_state[session_key] = match.monthly_amount
+    st.session_state[f"ssa_snapshot_{owner}"] = snap
+    save_ssa_snapshot(snap, owner=owner)
+    return None
+
+
 def render_parameters_tab(hh: Household) -> None:
     """Extracted from setup.py render() — parameters tab body."""
     _synced = bool(st.session_state.get("portfolio_snapshot"))
@@ -435,14 +455,23 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
         )
+        _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
         your_fra_age = st.session_state.get("your_fra_age", 67)
         st.session_state.your_ss_fra = st.number_input(
-            f"Your SS at FRA {your_fra_age} ($/mo)",
+            f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
             min_value=0,  # UU2-UI-06
             value=st.session_state.your_ss_fra,
             step=100,
             format="%d",
+            disabled=_ssa_synced_you,
+            help="Auto-synced from FinExtract (SSA benefit estimate)" if _ssa_synced_you else None,
         )
+        if st.button("Sync SS from FinExtract", key="_sync_ssa_you_btn"):
+            _warning = _sync_ssa_for("you", your_fra_age)
+            if _warning:
+                st.warning(_warning)
+            else:
+                st.rerun()
         st.session_state.your_ss_start_age = st.number_input(
             "Your SS claim age",
             min_value=62,
