@@ -546,15 +546,26 @@ def render_parameters_tab(hh: Household) -> None:
             format="%d",
             disabled=_is_single,
         )
+        _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
         spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
         st.session_state.spouse_ss_fra = st.number_input(
-            f"Spouse SS at FRA {spouse_fra_age} ($/mo)",
+            f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
+            + (" (synced)" if _ssa_synced_spouse else ""),
             min_value=0,  # UU2-UI-06
             value=st.session_state.spouse_ss_fra,
             step=100,
             format="%d",
-            disabled=_is_single,
+            disabled=_is_single or _ssa_synced_spouse,
+            help="Auto-synced from FinExtract (SSA benefit estimate)"
+            if _ssa_synced_spouse
+            else None,
         )
+        if st.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
+            _warning = _sync_ssa_for("spouse", spouse_fra_age)
+            if _warning:
+                st.warning(_warning)
+            else:
+                st.rerun()
         st.session_state.spouse_ss_start_age = st.number_input(
             "Spouse SS claim age",
             min_value=62,
