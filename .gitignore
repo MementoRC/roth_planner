@@ -44,6 +44,7 @@ Thumbs.db
 .portfolio_cache.json
 .tax_return_cache.json
 .ytd_cache.json
+.ssa_cache.json
 .dividend_rates.json
 .claude/
 .mcp.json
