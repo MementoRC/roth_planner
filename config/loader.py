@@ -17,10 +17,16 @@ happens in app.py, not here.
 
 Defaults are loaded at module-import time. Restart the app to pick
 up changes to the override file.
+
+Note: ``.user_defaults.json`` is no longer purely a manually-edited, read-only
+file — the app itself writes to it via :func:`save_user_defaults` whenever
+personal data (age, SS, etc.) changes on the Setup page, so overwrites of this
+file by the running app are expected.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -107,6 +113,25 @@ def _load_overrides_from_json(path: Path) -> Mapping[str, object]:
     if not isinstance(data, dict):
         return {}
     return data
+
+
+def save_user_defaults(data: dict) -> None:
+    """Write *data* to ``.user_defaults.json`` — the write-side counterpart to
+    :func:`load_defaults`.
+
+    Best-effort: this file can hold financial PII, but a failed save must
+    never raise or break page rendering, so I/O errors are caught and logged.
+    On success, the file is chmod'd to 0o600 (best-effort) since we are the
+    writer this time and can proactively enforce safe permissions.
+    """
+    path = Path(".user_defaults.json")
+    try:
+        path.write_text(json.dumps(data, indent=2, default=str))
+    except OSError:
+        _log.warning("Failed to save user defaults to %s", path)
+        return
+    with contextlib.suppress(OSError):
+        path.chmod(0o600)
 
 
 def load_defaults() -> dict:
