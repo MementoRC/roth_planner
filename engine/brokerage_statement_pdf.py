@@ -405,3 +405,87 @@ def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementReco
         "stcg_ytd": sum(r.stcg_net_ytd for r in records),
         "ltcg_ytd": sum(r.ltcg_net_ytd for r in records),
     }
+
+
+# ---------------------------------------------------------------------------
+# JSON caches -- statement records, folder path, account-type overrides
+# ---------------------------------------------------------------------------
+
+_STATEMENT_CACHE_PATH = Path(__file__).resolve().parent.parent / ".brokerage_statement_cache.json"
+_FOLDER_CONFIG_PATH = Path(__file__).resolve().parent.parent / ".statement_folder_config.json"
+_ACCOUNT_TYPE_OVERRIDES_PATH = Path(__file__).resolve().parent.parent / ".statement_account_overrides.json"
+
+
+def save_statement_records(records: dict[str, BrokerageStatementRecord]) -> None:
+    write_pii_json(_STATEMENT_CACHE_PATH, {k: v.to_dict() for k, v in records.items()})
+
+
+def load_statement_records() -> dict[str, BrokerageStatementRecord]:
+    if not _STATEMENT_CACHE_PATH.exists():
+        return {}
+    try:
+        raw = read_pii_json(_STATEMENT_CACHE_PATH)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    result: dict[str, BrokerageStatementRecord] = {}
+    for k, v in raw.items():
+        try:
+            result[k] = BrokerageStatementRecord.from_dict(v)
+        except (KeyError, ValueError, TypeError):
+            continue
+    return result
+
+
+def save_statement_folder_path(folder: str) -> None:
+    write_pii_json(_FOLDER_CONFIG_PATH, {"folder": folder})
+
+
+def load_statement_folder_path() -> str | None:
+    if not _FOLDER_CONFIG_PATH.exists():
+        return None
+    try:
+        raw = read_pii_json(_FOLDER_CONFIG_PATH)
+    except (json.JSONDecodeError, OSError):
+        return None
+    folder = raw.get("folder")
+    return str(folder) if folder else None
+
+
+def save_account_type_override(account_number: str, account_type: str) -> None:
+    if account_type not in ACCOUNT_TYPES:
+        raise ValueError(f"Invalid account_type {account_type!r}")
+    overrides = load_account_type_overrides()
+    overrides[account_number] = account_type
+    write_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH, overrides)
+
+
+def load_account_type_overrides() -> dict[str, str]:
+    if not _ACCOUNT_TYPE_OVERRIDES_PATH.exists():
+        return {}
+    try:
+        raw = read_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def apply_account_type_overrides(
+    by_account: dict[str, BrokerageStatementRecord],
+    overrides: dict[str, str],
+) -> dict[str, BrokerageStatementRecord]:
+    """Return a new dict with each record's account_type replaced per *overrides*.
+
+    Overrides apply regardless of the parser's original detection -- this lets
+    a user correct a wrong Vanguard detection too, not just fill in Schwab's
+    permanent "unknown". Records with no matching override pass through unchanged.
+    """
+    result: dict[str, BrokerageStatementRecord] = {}
+    for account_number, rec in by_account.items():
+        override = overrides.get(account_number)
+        if override is not None and override != rec.account_type:
+            from dataclasses import replace
+
+            result[account_number] = replace(rec, account_type=override)
+        else:
+            result[account_number] = rec
+    return result

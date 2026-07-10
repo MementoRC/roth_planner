@@ -373,3 +373,52 @@ class TestAggregateToYtdFields:
         assert totals["ordinary_dividends_ytd"] == 150.0
         assert totals["interest_ytd"] == 10.0
         assert totals["tax_exempt_interest_ytd"] == 5.0
+
+
+class TestCacheRoundTrip:
+    def test_save_and_load(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "cache.json")
+        rec = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0)
+        mod.save_statement_records({"111-1111": rec})
+        loaded = mod.load_statement_records()
+        assert loaded["111-1111"].dividends_taxable_ytd == 100.0
+
+    def test_load_missing_file_returns_empty(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "missing.json")
+        assert mod.load_statement_records() == {}
+
+
+class TestFolderPathConfig:
+    def test_save_and_load_folder_path(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "folder.json")
+        mod.save_statement_folder_path("/home/memento/Statements")
+        assert mod.load_statement_folder_path() == "/home/memento/Statements"
+
+    def test_load_folder_path_missing_returns_none(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "missing.json")
+        assert mod.load_statement_folder_path() is None
+
+
+class TestAccountTypeOverrides:
+    def test_save_and_apply_override(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", tmp_path / "overrides.json")
+        mod.save_account_type_override("3413-3847", "taxable")
+        overrides = mod.load_account_type_overrides()
+        assert overrides["3413-3847"] == "taxable"
+
+    def test_apply_overrides_reclassifies_unknown(self, tmp_path):
+        from engine.brokerage_statement_pdf import apply_account_type_overrides
+
+        unknown_acct = _rec("3413-3847", "2026-06-30", account_type="unknown")
+        result = apply_account_type_overrides({"3413-3847": unknown_acct}, {"3413-3847": "taxable"})
+        assert result["3413-3847"].account_type == "taxable"
