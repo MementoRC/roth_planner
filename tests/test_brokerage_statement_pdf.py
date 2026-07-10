@@ -4,6 +4,8 @@ trimmed to the pages containing the anchors this parser reads)."""
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from engine.brokerage_statement_pdf import (
@@ -11,6 +13,10 @@ from engine.brokerage_statement_pdf import (
     StatementParseError,
     parse_statement_text,
 )
+
+SCHWAB_SAMPLE = pathlib.Path("/home/memento/Downloads/Brokerage Statement_2026-06-30_847.PDF")
+VANGUARD_TAXABLE_SAMPLE = pathlib.Path("/home/memento/Downloads/2026-06 VG Statement x9320.pdf")
+VANGUARD_ROTH_SAMPLE = pathlib.Path("/home/memento/Downloads/2026-06 VG Statement Roth IRA x7368.pdf")
 
 # --- Real Schwab dump excerpt (page 1 of 12: account identity, Income
 # Summary, Gain or (Loss) Summary). Schwab's extract_text() strips spaces
@@ -209,6 +215,32 @@ class TestParseVanguardRoth:
         # exclude this record entirely via account_type, regardless of which
         # dollar figure lives in which field.
         assert rec.dividends_taxable_ytd == 283.86
+
+
+@pytest.mark.skipif(not SCHWAB_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_schwab_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    rec = parse_statement_pdf(SCHWAB_SAMPLE.read_bytes())
+    assert rec.account_type == "unknown"
+    assert rec.dividends_taxable_ytd > 0
+
+
+@pytest.mark.skipif(not VANGUARD_TAXABLE_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_vanguard_taxable_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    rec = parse_statement_pdf(VANGUARD_TAXABLE_SAMPLE.read_bytes())
+    assert rec.account_type == "taxable"
+    assert rec.dividends_taxable_ytd == pytest.approx(1028.55)
+
+
+@pytest.mark.skipif(not VANGUARD_ROTH_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_vanguard_roth_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    rec = parse_statement_pdf(VANGUARD_ROTH_SAMPLE.read_bytes())
+    assert rec.account_type == "roth_ira"
 
 
 class TestParseErrors:

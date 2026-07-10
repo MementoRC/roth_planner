@@ -303,3 +303,21 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"other_income_ytd": other, "pdf_pages_total": full_text.count("--- page")},
     )
+
+
+# ---------------------------------------------------------------------------
+# PDF wrapper (pdfplumber deferred -- Pyodide-safe)
+# ---------------------------------------------------------------------------
+
+
+def parse_statement_pdf(data: bytes) -> BrokerageStatementRecord:
+    """Parse a brokerage statement PDF from raw bytes. pdfplumber import
+    deferred for Pyodide safety -- only local installs call this."""
+    import io
+
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        pages = [page.extract_text() or "" for page in pdf.pages]
+
+    return parse_statement_text(pages)
