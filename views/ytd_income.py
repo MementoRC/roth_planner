@@ -140,8 +140,22 @@ def render(hh: Household):
             help="Local folder containing Schwab/Vanguard statement PDFs.",
         )
         if st.button("Scan statement folder", key="scan_statements_btn"):
-            folder_path = Path(folder_input).expanduser()
-            if not folder_path.is_dir():
+            # This is a local single-user desktop tool -- the account owner
+            # supplies a folder path on their own trusted machine (e.g.
+            # ~/Downloads or ~/Documents/Statements), so there is no attacker
+            # controlling this input in this tool's threat model. The
+            # mitigation is therefore normalization + directory-type
+            # validation -- reject blank input, then resolve away ".." and
+            # symlink traversal before the path is ever used in glob()/
+            # read_bytes() -- not sandboxing against a hostile actor.
+            if not folder_input or not folder_input.strip():
+                st.error("Statement folder cannot be empty.")
+                folder_path = None
+            else:
+                folder_path = Path(folder_input).expanduser().resolve()
+            if folder_path is None:
+                pass
+            elif not folder_path.is_dir():
                 st.error(f"Not a folder: {folder_path}")
             else:
                 save_statement_folder_path(str(folder_path))
