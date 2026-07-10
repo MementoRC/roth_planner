@@ -7,6 +7,7 @@ from typing import TypeVar
 
 import streamlit as st
 
+from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
@@ -20,6 +21,7 @@ from engine.tax_return_pdf import (
 )
 from models.household import Household
 from views._format import fmt_dollars
+from views.setup._state import _user_defaults_from_session
 
 _HH_FILING_LABEL_MFJ = "Married filing jointly"
 _HH_FILING_LABEL_SINGLE = "Single"
@@ -700,3 +702,6 @@ def render_parameters_tab(hh: Household) -> None:
         _render_pdf_1040_import()
         _render_survivor_scenario(hh.base_year)
         _render_inherited_iras(hh.base_year)
+
+    if not st.session_state.get("_suppress_snapshot_autoload"):
+        save_user_defaults(_user_defaults_from_session())

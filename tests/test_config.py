@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from config.defaults import DEFAULTS
-from config.loader import load_defaults
+from config.loader import load_defaults, save_user_defaults
 
 
 class TestSyntheticDefaults:
@@ -207,6 +207,42 @@ class TestPyOverrideIsTrusted:
             result = _py_override_is_trusted(p)
         assert result is False
         assert any("chmod" in r.message for r in caplog.records)
+
+
+class TestSaveUserDefaults:
+    """save_user_defaults is the write-side counterpart to load_defaults."""
+
+    def test_round_trips_through_load_defaults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        save_user_defaults({"your_age": 63, "spouse_age": 57})
+        result = load_defaults()
+        assert result["your_age"] == 63
+        assert result["spouse_age"] == 57
+        # Non-overridden keys still come from DEFAULTS
+        assert result["your_ira"] == DEFAULTS["your_ira"]
+
+    def test_writes_file_with_restrictive_permissions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        save_user_defaults({"your_age": 63})
+        path = tmp_path / ".user_defaults.json"
+        assert path.exists()
+        assert path.stat().st_mode & 0o777 == 0o600
+
+    def test_failed_write_does_not_raise(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A save into a nonexistent directory must not raise (best-effort)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "config.loader.Path",
+            lambda *_a, **_kw: tmp_path / "missing_dir" / ".user_defaults.json",
+        )
+        save_user_defaults({"your_age": 63})  # must not raise
 
 
 class TestSyntheticGrantStrikes:
