@@ -65,7 +65,6 @@ from .tax_return import (
 )
 from .ytd import (
     _YTD_CACHE_PATH,
-    _parse_ytd_income_rows,
     fetch_ytd_snapshot,
     load_ytd_snapshot,
     save_ytd_snapshot,
@@ -101,7 +100,6 @@ __all__ = [
     "_parse_option_exercises_rows",
     "_parse_quantity",
     "_parse_tax_rows",
-    "_parse_ytd_income_rows",
     "_resolve_override",
     "_resolve_owner_hint",
     "apply_dividends_rollup",
@@ -210,7 +208,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "_parse_option_exercises_rows": _exercises,
     "_parse_quantity": _classify,
     "_parse_tax_rows": _tax_return,
-    "_parse_ytd_income_rows": _ytd,
     "_resolve_override": _classify,
     "_resolve_owner_hint": _classify,
     "apply_dividends_rollup": _dividends,
