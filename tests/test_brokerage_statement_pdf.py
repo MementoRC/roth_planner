@@ -263,3 +263,38 @@ class TestParseErrors:
                 ltcg_net_ytd=0.0,
                 captured_at="2026-07-10T00:00:00+00:00",
             )
+
+
+class TestScanStatementFolder:
+    def test_skips_non_pdf_files(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("irrelevant")
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        records, errors = scan_statement_folder(tmp_path)
+        assert records == []
+        assert errors == []
+
+    def test_collects_parse_errors_without_raising(self, tmp_path):
+        (tmp_path / "corrupt.pdf").write_bytes(b"not a real pdf")
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        records, errors = scan_statement_folder(tmp_path)
+        assert records == []
+        assert len(errors) == 1
+        assert "corrupt.pdf" in errors[0]
+
+    @pytest.mark.skipif(
+        not (SCHWAB_SAMPLE.exists() and VANGUARD_TAXABLE_SAMPLE.exists()),
+        reason="Sample statements not present on this machine",
+    )
+    def test_parses_real_pdfs_in_folder(self, tmp_path):
+        import shutil
+
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        shutil.copy(SCHWAB_SAMPLE, tmp_path / "schwab.pdf")
+        shutil.copy(VANGUARD_TAXABLE_SAMPLE, tmp_path / "vanguard_taxable.pdf")
+        records, errors = scan_statement_folder(tmp_path)
+        assert errors == []
+        assert len(records) == 2
+        assert {r.broker for r in records} == {"schwab", "vanguard"}

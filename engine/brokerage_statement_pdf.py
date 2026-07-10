@@ -321,3 +321,21 @@ def parse_statement_pdf(data: bytes) -> BrokerageStatementRecord:
         pages = [page.extract_text() or "" for page in pdf.pages]
 
     return parse_statement_text(pages)
+
+
+# ---------------------------------------------------------------------------
+# Folder scanner
+# ---------------------------------------------------------------------------
+
+
+def scan_statement_folder(folder: Path) -> tuple[list[BrokerageStatementRecord], list[str]]:
+    """Parse every PDF in *folder*. Returns (records, error_messages) -- a
+    single malformed PDF does not abort the whole scan."""
+    records: list[BrokerageStatementRecord] = []
+    errors: list[str] = []
+    for pdf_path in sorted(folder.glob("*.[pP][dD][fF]")):
+        try:
+            records.append(parse_statement_pdf(pdf_path.read_bytes()))
+        except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
+            errors.append(f"{pdf_path.name}: {exc}")
+    return records, errors
