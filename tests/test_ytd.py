@@ -292,6 +292,61 @@ class TestFetchMagi:
         assert fetch_magi(2024) is None
 
 
+class TestApplyBrokerageStatementRecords:
+    def test_overlays_investment_fields_only(self):
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=50_000.0, interest_ytd=0.0)
+        rec = BrokerageStatementRecord(
+            account_number="111-1111",
+            broker="schwab",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=18.56,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=4846.82,
+            dividends_tax_exempt_ytd=78.74,
+            stcg_net_ytd=19.11,
+            ltcg_net_ytd=283895.77,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        result = apply_brokerage_statement_records(ytd, {"111-1111": rec})
+        assert result.interest_ytd == 18.56
+        assert result.tax_exempt_interest_ytd == 78.74
+        assert result.ordinary_dividends_ytd == 4846.82
+        assert result.wages_ytd == 50_000.0  # untouched
+
+    def test_caller_must_pre_filter_non_taxable(self):
+        # This test documents the contract, not new behavior: passing a
+        # non-taxable record here WOULD get summed, because filtering happens
+        # in partition_by_account_type, not here. The real safeguard is that
+        # views/ytd_income.py never constructs taxable_by_account from
+        # anything but partition_by_account_type's "taxable" output.
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        roth_rec = BrokerageStatementRecord(
+            account_number="XXXX7368",
+            broker="vanguard",
+            account_type="roth_ira",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=283.86,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        result = apply_brokerage_statement_records(YTDSnapshot(), {"XXXX7368": roth_rec})
+        assert result.ordinary_dividends_ytd == 283.86  # would be wrong in production --
+        # this is exactly why views/ytd_income.py must call partition_by_account_type
+        # first and only ever pass the "taxable" dict here.
+
+
 class TestTaxExemptInterestSaveLoad:
     """PR-3: tax_exempt_interest_ytd must survive a save_ytd_snapshot/load round-trip."""
 

@@ -9,32 +9,38 @@ from typing import TYPE_CHECKING
 
 import requests  # type: ignore[import-untyped]
 
+from engine.brokerage_statement_pdf import BrokerageStatementRecord, aggregate_to_ytd_fields
 from engine.secure_io import read_pii_json, write_pii_json
 from models.ytd_income import IncomeEvent, RealizedGainEvent, YTDSnapshot
 
 if TYPE_CHECKING:
     pass
 
-from .client import _flatten_query_rows, _get
+from .client import _get
 
 
 def fetch_ytd_snapshot() -> YTDSnapshot:
     """Fetch year-to-date income data from FinExtract.
 
-    Queries the brokerage realized_gains and investment_income endpoints.
-    Returns an empty snapshot if FinExtract is unavailable (the UI then falls
-    back to manual entry).
+    Only checks server availability (/status) to report sync freshness in the
+    UI. Returns an empty snapshot if FinExtract is unavailable (the UI then
+    falls back to manual entry).
+
+    Investment income (interest, dividends, tax-exempt split, realized gains)
+    is sourced exclusively from brokerage statement PDFs now, via
+    apply_brokerage_statement_records — NOT from FinExtract. FinExtract's
+    investment_income/realized_gains endpoints were retired from this function
+    because they structurally cannot distinguish tax-exempt income from
+    taxable income, or separate taxable accounts from Roth/IRA accounts
+    (confirmed against the live FinExtract server 2026-07-10) — see
+    docs/superpowers/plans/2026-07-10-brokerage-statement-pdf-ytd.md.
 
     wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
-    ira_distributions_ytd, and tax_exempt_interest_ytd are manual-entry-only
-    (see models.ytd_income.IncomeEvent / views/ytd_income.py) — FinExtract's
-    tax_return/ytd_income endpoint that used to supply them was TurboTax-derived
-    (stale mid-year data) and has been retired.
+    spouse_ira_conversions_ytd, and ira_distributions_ytd remain
+    manual-entry-only (see models.ytd_income.IncomeEvent / views/ytd_income.py).
     """
     ytd = YTDSnapshot()
 
-    # Check server availability; skip the early-return so individual endpoint
-    # try/except blocks can still succeed even when /status is unreachable.
     try:
         resp = _get("/status", timeout=3)
         resp.raise_for_status()
@@ -42,91 +48,28 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     except requests.RequestException:
         pass
 
-    # Realized gains
-    try:
-        resp = _get(
-            "/query/brokerage",
-            params={"data_type": "realized_gains"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        institution = data.get("institution", "")
-        captured_at = data.get("captured_at", "")
-        # Extract date portion from ISO timestamp (e.g. "2026-03-17T16:47:58.063Z" → "2026-03-17")
-        captured_date = captured_at[:10] if captured_at else ""
-        rows = _flatten_query_rows(data)
-        for row in rows:
-            if "long_term_gain" in row or "short_term_gain" in row:
-                # Schwab aggregated summary format (schwab-realized-gains-v2)
-                ltcg = row.get("long_term_gain", 0.0) or 0.0
-                stcg = row.get("short_term_gain", 0.0) or 0.0
-                ytd.ltcg_ytd += ltcg
-                ytd.stcg_ytd += stcg
-                if ltcg:
-                    ytd.gain_events.append(
-                        RealizedGainEvent(
-                            date=captured_date,
-                            description=f"{institution.title()} realized gains (YTD)",
-                            proceeds=0.0,
-                            cost_basis=0.0,
-                            holding_period="long",
-                            account_name=institution.title(),
-                        )
-                    )
-                if stcg:
-                    ytd.gain_events.append(
-                        RealizedGainEvent(
-                            date=captured_date,
-                            description=f"{institution.title()} realized gains (YTD)",
-                            proceeds=0.0,
-                            cost_basis=0.0,
-                            holding_period="short",
-                            account_name=institution.title(),
-                        )
-                    )
-            else:
-                # Per-event format (date, description, proceeds, cost_basis)
-                event = RealizedGainEvent(
-                    date=row.get("date", ""),
-                    description=row.get("description", ""),
-                    proceeds=row.get("proceeds", 0.0),
-                    cost_basis=row.get("cost_basis", 0.0),
-                    holding_period=row.get("holding_period", "long"),
-                    account_name=row.get("account", ""),
-                )
-                ytd.gain_events.append(event)
-                if event.is_ltcg:
-                    ytd.ltcg_ytd += event.gain_loss
-                else:
-                    ytd.stcg_ytd += event.gain_loss
-    except (requests.RequestException, ValueError):
-        pass
-
-    # Investment income (dividends + interest from brokerage).
-    # SOLE owner of ordinary_dividends_ytd and interest_ytd.
-    #
-    # wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
-    # spouse_ira_conversions_ytd, ira_distributions_ytd, and tax_exempt_interest_ytd
-    # are manual-entry-only — FinExtract's tax_return/ytd_income endpoint that used
-    # to supply them (TurboTax-derived, stale mid-year data) has been retired; this
-    # function no longer queries it. The caller (views/ytd_income.py) is responsible
-    # for preserving those fields across a sync since this function does not set them.
-    try:
-        resp = _get(
-            "/query/brokerage",
-            params={"data_type": "investment_income"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        rows = _flatten_query_rows(resp.json())
-        for row in rows:
-            ytd.ordinary_dividends_ytd += row.get("received_dividends", 0.0) or 0.0
-            ytd.interest_ytd += row.get("received_interest", 0.0) or 0.0
-    except (requests.RequestException, ValueError):
-        pass
-
     ytd.with_snapshot_date()
+    return ytd
+
+
+def apply_brokerage_statement_records(
+    ytd: YTDSnapshot, taxable_by_account: dict[str, BrokerageStatementRecord]
+) -> YTDSnapshot:
+    """Overlay statement-derived interest/dividend/gain YTD figures onto *ytd*.
+
+    *taxable_by_account* MUST already be filtered to account_type == "taxable"
+    (via engine.brokerage_statement_pdf.partition_by_account_type) — this
+    function does not re-check, so Roth/IRA/unknown accounts must never reach
+    here. Fields not covered by brokerage statements (wages, NEC income, IRA
+    conversions/distributions, qualified dividends) are left untouched,
+    mirroring apply_option_exercises' overlay pattern.
+    """
+    totals = aggregate_to_ytd_fields(taxable_by_account)
+    ytd.interest_ytd = totals["interest_ytd"]
+    ytd.tax_exempt_interest_ytd = totals["tax_exempt_interest_ytd"]
+    ytd.ordinary_dividends_ytd = totals["ordinary_dividends_ytd"]
+    ytd.stcg_ytd = totals["stcg_ytd"]
+    ytd.ltcg_ytd = totals["ltcg_ytd"]
     return ytd
 
 
