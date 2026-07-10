@@ -339,3 +339,69 @@ def scan_statement_folder(folder: Path) -> tuple[list[BrokerageStatementRecord],
         except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
             errors.append(f"{pdf_path.name}: {exc}")
     return records, errors
+
+
+# ---------------------------------------------------------------------------
+# Account-type partitioning + latest-per-account aggregation
+# ---------------------------------------------------------------------------
+
+
+def pick_latest_per_account(
+    records: list[BrokerageStatementRecord],
+) -> dict[str, BrokerageStatementRecord]:
+    """Keep only the latest (by statement_period_end) record per account_number."""
+    latest: dict[str, BrokerageStatementRecord] = {}
+    for rec in records:
+        current = latest.get(rec.account_number)
+        if current is None or rec.statement_period_end > current.statement_period_end:
+            latest[rec.account_number] = rec
+    return latest
+
+
+def partition_by_account_type(
+    by_account: dict[str, BrokerageStatementRecord],
+) -> tuple[
+    dict[str, BrokerageStatementRecord],
+    dict[str, BrokerageStatementRecord],
+    dict[str, BrokerageStatementRecord],
+]:
+    """Split accounts into (taxable, excluded_retirement, needs_confirmation).
+
+    - taxable: account_type == "taxable" -- safe to sum into YTD income.
+    - excluded_retirement: "traditional_ira" or "roth_ira" -- never counted,
+      but returned (not silently dropped) so the UI can show them explicitly.
+    - needs_confirmation: "unknown" -- excluded from sums by default until a
+      human confirms the type (see views/ytd_income.py).
+    """
+    taxable: dict[str, BrokerageStatementRecord] = {}
+    excluded: dict[str, BrokerageStatementRecord] = {}
+    unknown: dict[str, BrokerageStatementRecord] = {}
+    for account_number, rec in by_account.items():
+        if rec.account_type == "taxable":
+            taxable[account_number] = rec
+        elif rec.account_type in ("traditional_ira", "roth_ira"):
+            excluded[account_number] = rec
+        else:
+            unknown[account_number] = rec
+    return taxable, excluded, unknown
+
+
+def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementRecord]) -> dict[str, float]:
+    """Sum CONFIRMED-TAXABLE records into models.ytd_income.YTDSnapshot field names.
+
+    Callers must pass only the "taxable" partition from partition_by_account_type
+    -- this function does not re-check account_type, by design, so the filtering
+    decision is made in exactly one place.
+
+    dividends_tax_exempt_ytd and interest_tax_exempt_ytd both fold into
+    tax_exempt_interest_ytd -- IRS 1040 line 2a treats exempt-interest
+    dividends from muni funds the same as tax-exempt interest.
+    """
+    records = taxable_by_account.values()
+    return {
+        "interest_ytd": sum(r.interest_taxable_ytd for r in records),
+        "tax_exempt_interest_ytd": sum(r.interest_tax_exempt_ytd + r.dividends_tax_exempt_ytd for r in records),
+        "ordinary_dividends_ytd": sum(r.dividends_taxable_ytd for r in records),
+        "stcg_ytd": sum(r.stcg_net_ytd for r in records),
+        "ltcg_ytd": sum(r.ltcg_net_ytd for r in records),
+    }

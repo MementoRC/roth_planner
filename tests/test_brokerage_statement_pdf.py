@@ -298,3 +298,78 @@ class TestScanStatementFolder:
         assert errors == []
         assert len(records) == 2
         assert {r.broker for r in records} == {"schwab", "vanguard"}
+
+
+def _rec(account: str, period_end: str, account_type: str = "taxable", **overrides) -> BrokerageStatementRecord:
+    base = {
+        "account_number": account,
+        "broker": "schwab",
+        "account_type": account_type,
+        "statement_period_end": period_end,
+        "interest_taxable_ytd": 0.0,
+        "interest_tax_exempt_ytd": 0.0,
+        "dividends_taxable_ytd": 0.0,
+        "dividends_tax_exempt_ytd": 0.0,
+        "stcg_net_ytd": 0.0,
+        "ltcg_net_ytd": 0.0,
+        "captured_at": "2026-07-10T00:00:00+00:00",
+    }
+    base.update(overrides)
+    return BrokerageStatementRecord(**base)
+
+
+class TestPickLatestPerAccount:
+    def test_keeps_latest_period_end_per_account(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        older = _rec("111-1111", "2026-05-31", dividends_taxable_ytd=100.0)
+        newer = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=200.0)
+        result = pick_latest_per_account([older, newer])
+        assert result["111-1111"].dividends_taxable_ytd == 200.0
+
+    def test_keeps_separate_accounts_independent(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        acct_a = _rec("111-1111", "2026-06-30")
+        acct_b = _rec("222-2222", "2026-06-30")
+        result = pick_latest_per_account([acct_a, acct_b])
+        assert set(result.keys()) == {"111-1111", "222-2222"}
+
+
+class TestPartitionByAccountType:
+    def test_roth_ira_excluded_from_taxable(self):
+        # Regression test for the exact bug that motivated this whole feature:
+        # Roth/IRA income must never land in taxable YTD sums.
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        taxable_acct = _rec("XXXX9320", "2026-06-30", account_type="taxable", dividends_taxable_ytd=1028.55)
+        roth_acct = _rec("XXXX7368", "2026-06-30", account_type="roth_ira", dividends_taxable_ytd=283.86)
+        by_account = {"XXXX9320": taxable_acct, "XXXX7368": roth_acct}
+
+        taxable, excluded, unknown = partition_by_account_type(by_account)
+        assert set(taxable.keys()) == {"XXXX9320"}
+        assert set(excluded.keys()) == {"XXXX7368"}
+        assert unknown == {}
+
+    def test_unknown_is_excluded_by_default_not_summed(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        unknown_acct = _rec("3413-3847", "2026-06-30", account_type="unknown", dividends_taxable_ytd=4846.82)
+        taxable, excluded, unknown = partition_by_account_type({"3413-3847": unknown_acct})
+        assert taxable == {}
+        assert excluded == {}
+        assert set(unknown.keys()) == {"3413-3847"}
+
+
+class TestAggregateToYtdFields:
+    def test_sums_across_taxable_accounts_only(self):
+        from engine.brokerage_statement_pdf import aggregate_to_ytd_fields
+
+        taxable = {
+            "111-1111": _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0, interest_taxable_ytd=10.0),
+            "222-2222": _rec("222-2222", "2026-06-30", dividends_taxable_ytd=50.0, dividends_tax_exempt_ytd=5.0),
+        }
+        totals = aggregate_to_ytd_fields(taxable)
+        assert totals["ordinary_dividends_ytd"] == 150.0
+        assert totals["interest_ytd"] == 10.0
+        assert totals["tax_exempt_interest_ytd"] == 5.0
