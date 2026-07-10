@@ -392,6 +392,63 @@ class TestManualEntryAutoDeselect:
         # Assert: rerun was NOT called
         assert not mock_st.rerun.called, "On failed sync, st.rerun() should not be called"
 
+    def test_sync_preserves_manual_only_fields_not_zeroed(self):
+        """FinExtract's tax_return/ytd_income endpoint is retired — a sync must not
+        zero out the fields it used to own; whatever was already recorded (manual
+        entry) must survive."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            qualified_dividends_ytd=2_000.0,
+            nec_income_ytd=5_000.0,
+            ira_conversions_ytd=25_000.0,
+            spouse_ira_conversions_ytd=7_500.0,
+            ira_distributions_ytd=10_000.0,
+            tax_exempt_interest_ytd=1_500.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        # Manual entry off: this mock harness runs render() in a single pass with no
+        # real rerun, so leaving checkbox truthy would fall through into the manual
+        # entry block afterward and re-clobber session_state.ytd_snapshot from
+        # (mocked, zero-valued) widget inputs — unlike production, where st.rerun()
+        # halts execution immediately after a successful sync.
+        mock_st.checkbox.return_value = False
+
+        # Fresh sync — FinExtract no longer supplies the fields above, so they come
+        # back at their dataclass defaults (0.0) on the newly-fetched snapshot.
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            ltcg_ytd=50_000.0,
+            ordinary_dividends_ytd=3_000.0,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.wages_ytd == 80_000.0
+        assert result.qualified_dividends_ytd == 2_000.0
+        assert result.nec_income_ytd == 5_000.0
+        assert result.ira_conversions_ytd == 25_000.0
+        assert result.spouse_ira_conversions_ytd == 7_500.0
+        assert result.ira_distributions_ytd == 10_000.0
+        assert result.tax_exempt_interest_ytd == 1_500.0
+        # Fields FinExtract still supplies come from the fresh sync
+        assert result.ltcg_ytd == 50_000.0
+        assert result.ordinary_dividends_ytd == 3_000.0
+
 
 class TestTaxBracketAndSafeHarborSections:
     """Smoke tests for the new tax-bracket, estimated-tax, and safe-harbor sections."""

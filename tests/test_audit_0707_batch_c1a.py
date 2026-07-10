@@ -18,7 +18,6 @@ from engine.niit import (
     NIIT_THRESHOLD_SINGLE,
     niit,
 )
-from engine.portfolio_sync.ytd import _parse_ytd_income_rows
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan
 from engine.tax import LTCG_RATES_MFJ, LTCG_RATES_SINGLE
@@ -135,27 +134,8 @@ def test_upload_merge_drops_none_and_empty_string() -> None:
 
 
 # ── FIX 4: PU1-M03 — NEC label tightened to '1099-nec' ───────────────────────
-
-
-def test_parse_ytd_connect_does_not_route_to_nec() -> None:
-    """'connect' contains 'nec' substring — must NOT match NEC bucket after fix."""
-    rows = [{"label": "connect fee", "amount": 100.0}]
-    result = _parse_ytd_income_rows(rows)
-    assert "nec_income" not in result, "'connect' should not route to nec_income"
-
-
-def test_parse_ytd_1099_nec_routes_to_nec() -> None:
-    """'1099-nec' must match the NEC bucket."""
-    rows = [{"label": "1099-nec income", "amount": 5_000.0}]
-    result = _parse_ytd_income_rows(rows)
-    assert result.get("nec_income") == 5_000.0
-
-
-def test_parse_ytd_self_employment_routes_to_nec() -> None:
-    """'self-employment' must still match the NEC bucket."""
-    rows = [{"label": "self-employment income", "amount": 3_000.0}]
-    result = _parse_ytd_income_rows(rows)
-    assert result.get("nec_income") == 3_000.0
+# Removed: _parse_ytd_income_rows (and the FinExtract tax_return/ytd_income
+# endpoint it parsed) has been retired — see engine/portfolio_sync/ytd.py.
 
 
 # ── FIX 5: UU2-UI-06 — min_value=0 on SS FRA inputs ─────────────────────────

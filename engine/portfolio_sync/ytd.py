@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import warnings
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import requests  # type: ignore[import-untyped]
 
@@ -22,9 +21,15 @@ from .client import _flatten_query_rows, _get
 def fetch_ytd_snapshot() -> YTDSnapshot:
     """Fetch year-to-date income data from FinExtract.
 
-    Queries the brokerage realized_gains endpoint and tax_return ytd_income
-    endpoint.  Returns an empty snapshot if FinExtract is unavailable (the UI
-    then falls back to manual entry).
+    Queries the brokerage realized_gains and investment_income endpoints.
+    Returns an empty snapshot if FinExtract is unavailable (the UI then falls
+    back to manual entry).
+
+    wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
+    ira_distributions_ytd, and tax_exempt_interest_ytd are manual-entry-only
+    (see models.ytd_income.IncomeEvent / views/ytd_income.py) — FinExtract's
+    tax_return/ytd_income endpoint that used to supply them was TurboTax-derived
+    (stale mid-year data) and has been retired.
     """
     ytd = YTDSnapshot()
 
@@ -99,21 +104,14 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         pass
 
     # Investment income (dividends + interest from brokerage).
+    # SOLE owner of ordinary_dividends_ytd and interest_ytd.
     #
-    # Endpoint ownership contract (prevents double-count):
-    #   investment_income  → SOLE owner of ordinary_dividends_ytd and interest_ytd.
-    #                        These fields are written here and never touched again below.
-    #   ytd_income         → SOLE owner of wages_ytd, nec_income_ytd, qualified_dividends_ytd,
-    #                        ira_conversions_ytd, ira_distributions_ytd.
-    #                        It does NOT write ordinary_dividends_ytd or interest_ytd even
-    #                        though 1099-DIV/INT data appears in its rows — those are the
-    #                        same underlying transactions already captured here.
-    #
-    # Background: both endpoints can return dividend and interest figures simultaneously
-    # (investment_income from live brokerage transactions; ytd_income from 1099 tax forms
-    # covering the same period).  Accumulating with += into the same fields silently 2x'd
-    # those values → wrong total_ordinary_income → wrong MAGI → wrong IRMAA tier.
-    # (Surfaced by math audit 2026-06-12, finding #4.)
+    # wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
+    # spouse_ira_conversions_ytd, ira_distributions_ytd, and tax_exempt_interest_ytd
+    # are manual-entry-only — FinExtract's tax_return/ytd_income endpoint that used
+    # to supply them (TurboTax-derived, stale mid-year data) has been retired; this
+    # function no longer queries it. The caller (views/ytd_income.py) is responsible
+    # for preserving those fields across a sync since this function does not set them.
     try:
         resp = _get(
             "/query/brokerage",
@@ -128,93 +126,8 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     except (requests.RequestException, ValueError):
         pass
 
-    # YTD income summary (tax return endpoint — wages, conversions, etc.).
-    # Owns: wages_ytd, nec_income_ytd, qualified_dividends_ytd,
-    #       ira_conversions_ytd, ira_distributions_ytd.
-    # Does NOT touch ordinary_dividends_ytd or interest_ytd (see contract above).
-    try:
-        resp = _get(
-            "/query/tax_return",
-            params={"data_type": "ytd_income"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        rows = _flatten_query_rows(resp.json())
-        parsed = _parse_ytd_income_rows(rows)
-        ytd.wages_ytd = parsed.get("wages", 0.0)
-        ytd.nec_income_ytd = parsed.get("nec_income", 0.0)
-        # qualified_dividends_ytd from 1099-DIV box 1b (tax rate, not volume).
-        # ordinary_dividends_ytd is intentionally excluded here — owned by
-        # investment_income above to prevent double-count.
-        ytd.qualified_dividends_ytd = parsed.get("qualified_dividends", 0.0)
-        ytd.ira_conversions_ytd = parsed.get("ira_conversions", 0.0)
-        # spouse_ira_conversions_ytd: FinExtract ytd_income endpoint provides no
-        # per-owner split; leave at default 0.0 (entered manually via YTD view).
-        ytd.ira_distributions_ytd = parsed.get("ira_distributions", 0.0)
-        # Best-effort: FinExtract may not separately label muni interest; defaults to 0.0
-        # if the label doesn't match "tax-exempt"/"municipal"/"muni".
-        ytd.tax_exempt_interest_ytd = parsed.get("tax_exempt_interest", 0.0)
-        # Audit D-4: investment_income endpoint is the preferred owner of
-        # ordinary_dividends_ytd; only fall back to 1099-DIV box 1a here when
-        # that endpoint was unavailable (field still zero after its try-block).
-        total_div = parsed.get("total_dividends", 0.0)
-        if total_div and ytd.ordinary_dividends_ytd == 0.0:
-            ytd.ordinary_dividends_ytd = max(total_div - ytd.qualified_dividends_ytd, 0.0)
-            warnings.warn(
-                "Falling back to 1099-DIV box 1a minus qualified_dividends for "
-                "ordinary_dividends_ytd; investment_income endpoint preferred",
-                UserWarning,
-                stacklevel=2,
-            )
-        # psync-income-1/3: wire the interest bucket parsed above.
-        # investment_income endpoint is the preferred owner of interest_ytd; only
-        # fall back to the ytd_income row value when that endpoint was unavailable
-        # (field still zero after its try-block).
-        interest_fallback = parsed.get("interest", 0.0)
-        if interest_fallback and ytd.interest_ytd == 0.0:
-            ytd.interest_ytd = interest_fallback
-            warnings.warn(
-                "Falling back to ytd_income interest rows for interest_ytd; "
-                "investment_income endpoint preferred",
-                UserWarning,
-                stacklevel=2,
-            )
-    except (requests.RequestException, ValueError):
-        pass
-
     ytd.with_snapshot_date()
     return ytd
-
-
-def _parse_ytd_income_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
-    """Parse partial-year income rows from FinExtract."""
-    result: dict[str, float] = {}
-    for row in rows:
-        label = row.get("label", "").lower()
-        amount = row.get("amount", 0) or 0
-        if not amount:
-            continue
-        if "wage" in label or "w-2" in label:
-            result["wages"] = result.get("wages", 0) + amount
-        elif "qualified" in label and "non-qualified" not in label and "dividend" in label:
-            # 1099-DIV box 1b — qualified dividends (subset of total ordinary).
-            # Guard "non-qualified" prefix to avoid substring trap.
-            result["qualified_dividends"] = result.get("qualified_dividends", 0) + amount
-        elif "dividend" in label or "1099-div" in label:
-            # 1099-DIV box 1a — total ordinary dividends (includes qualified)
-            result["total_dividends"] = result.get("total_dividends", 0) + amount
-        elif "tax-exempt" in label or "tax exempt" in label or "municipal" in label or "muni" in label:
-            # Tax-exempt (muni bond) interest: in MAGI/IRMAA but NOT in ordinary brackets.
-            result["tax_exempt_interest"] = result.get("tax_exempt_interest", 0) + amount
-        elif "interest" in label:
-            result["interest"] = result.get("interest", 0) + amount
-        elif "conversion" in label:
-            result["ira_conversions"] = result.get("ira_conversions", 0) + amount
-        elif "distribution" in label or "1099-r" in label:
-            result["ira_distributions"] = result.get("ira_distributions", 0) + amount
-        elif "1099-nec" in label or "self-employment" in label:
-            result["nec_income"] = result.get("nec_income", 0) + amount
-    return result
 
 
 _YTD_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ytd_cache.json"

@@ -80,6 +80,21 @@ def render(hh: Household):
             if exercises.server_available:
                 ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
             if ytd_snap.snapshot_date:
+                # wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
+                # spouse_ira_conversions_ytd, ira_distributions_ytd, and
+                # tax_exempt_interest_ytd are manual-entry-only (FinExtract's
+                # tax_return/ytd_income endpoint that used to supply them has been
+                # retired) — preserve whatever was already recorded instead of letting
+                # a sync silently zero them out.
+                prev = st.session_state.get("ytd_snapshot")
+                if prev is not None:
+                    ytd_snap.wages_ytd = prev.wages_ytd
+                    ytd_snap.nec_income_ytd = prev.nec_income_ytd
+                    ytd_snap.qualified_dividends_ytd = prev.qualified_dividends_ytd
+                    ytd_snap.ira_conversions_ytd = prev.ira_conversions_ytd
+                    ytd_snap.spouse_ira_conversions_ytd = prev.spouse_ira_conversions_ytd
+                    ytd_snap.ira_distributions_ytd = prev.ira_distributions_ytd
+                    ytd_snap.tax_exempt_interest_ytd = prev.tax_exempt_interest_ytd
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:
