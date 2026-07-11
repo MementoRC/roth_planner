@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,9 +55,18 @@ def _parse_tax_rows(
     return result
 
 
-def fetch_tax_return() -> TaxReturnSnapshot:
-    """Fetch TurboTax income and deduction data from FinExtract."""
-    snap = TaxReturnSnapshot()
+def fetch_tax_return(previous: TaxReturnSnapshot | None = None) -> TaxReturnSnapshot:
+    """Fetch TurboTax income and deduction data from FinExtract.
+
+    Newly parsed values are merged onto ``previous`` (when given) so that any
+    field FinExtract does not return this time retains its previously-loaded
+    value instead of being reset to zero. This prevents a re-sync (or a sync
+    where a sub-endpoint fails silently) from erasing already-loaded data.
+    """
+    # Seed from a copy of the prior snapshot so unfetched fields are preserved.
+    snap = replace(previous) if previous is not None else TaxReturnSnapshot()
+    snap.error = None
+    snap.server_available = False
 
     try:
         resp = _get("/status", timeout=3)
@@ -89,16 +98,22 @@ def fetch_tax_return() -> TaxReturnSnapshot:
     all_rows = income_rows + deduction_rows
     parsed = _parse_tax_rows(all_rows, "amount_current")
 
-    snap.wages = parsed.get("wages", 0)
-    snap.nec_income = parsed.get("nec_income", 0)
-    snap.investment_income = parsed.get("investment_income", 0)
-    snap.ira_distributions = parsed.get("ira_distributions", 0)
-    snap.hsa_distributions = parsed.get("hsa_distributions", 0)
-    snap.misc_income = parsed.get("misc_income", 0)
-    snap.hsa_contributions = parsed.get("hsa_contributions", 0)
-    snap.ira_contributions = parsed.get("ira_contributions", 0)
-    snap.sales_tax = parsed.get("sales_tax", 0)
-    snap.foreign_tax_credit = parsed.get("foreign_tax_credit", 0)
+    # Merge only fields FinExtract actually returned. `_parse_tax_rows` omits any
+    # field whose amount was zero/missing, so absent keys keep their prior value.
+    for _field in (
+        "wages",
+        "nec_income",
+        "investment_income",
+        "ira_distributions",
+        "hsa_distributions",
+        "misc_income",
+        "hsa_contributions",
+        "ira_contributions",
+        "sales_tax",
+        "foreign_tax_credit",
+    ):
+        if _field in parsed:
+            setattr(snap, _field, parsed[_field])
 
     return snap
 

@@ -158,6 +158,78 @@ class TestTaxReturnParsing:
         assert "hsa_distributions" not in parsed
         assert parsed["hsa_contributions"] == 750
 
+    def test_fetch_tax_return_preserves_prior_values_when_no_new_data(self, monkeypatch):
+        """Regression: re-syncing must MERGE, not replace. Fields FinExtract does
+        not return this time must keep their previously-loaded values, not zero out.
+        This is the 'Sync TurboTax data erases already-loaded data' bug."""
+        from engine.portfolio_sync import TaxReturnSnapshot, fetch_tax_return
+        from engine.portfolio_sync import tax_return as tr
+
+        class _FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {}
+
+        monkeypatch.setattr(tr, "_get", lambda *a, **k: _FakeResp())
+        monkeypatch.setattr(tr, "_flatten_query_rows", lambda payload: [])
+
+        previous = TaxReturnSnapshot(
+            wages=150_000,
+            investment_income=20_000,
+            ira_contributions=14_000,
+            server_available=True,
+        )
+        result = fetch_tax_return(previous)
+        assert result.server_available is True
+        # None of these were returned by the (empty) FinExtract response, so they
+        # must survive the sync instead of being wiped to 0.
+        assert result.wages == 150_000
+        assert result.investment_income == 20_000
+        assert result.ira_contributions == 14_000
+
+    def test_fetch_tax_return_overwrites_returned_fields_keeps_others(self, monkeypatch):
+        """A field FinExtract DOES return is updated; unreturned fields are kept."""
+        from engine.portfolio_sync import TaxReturnSnapshot, fetch_tax_return
+        from engine.portfolio_sync import tax_return as tr
+
+        class _FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {}
+
+        monkeypatch.setattr(tr, "_get", lambda *a, **k: _FakeResp())
+
+        # _flatten_query_rows is called twice (income, then deductions). Return the
+        # wages row only on the first call so _parse_tax_rows doesn't double-count.
+        calls = {"n": 0}
+
+        def _fake_flatten(payload):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return [
+                    {
+                        "form_label": "Wages and Salaries (W-2)",
+                        "amount_current": 175_000,
+                        "amount_prior": 0,
+                    }
+                ]
+            return []
+
+        monkeypatch.setattr(tr, "_flatten_query_rows", _fake_flatten)
+
+        previous = TaxReturnSnapshot(
+            wages=150_000,
+            investment_income=20_000,
+            server_available=True,
+        )
+        result = fetch_tax_return(previous)
+        assert result.wages == 175_000  # freshly returned value overwrites
+        assert result.investment_income == 20_000  # not returned this sync -> preserved
+
 
 class TestForm8606NotModeled:
     """Document and lock the 100%-pretax conversion assumption (no Form 8606 basis).
