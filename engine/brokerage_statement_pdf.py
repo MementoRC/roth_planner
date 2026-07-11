@@ -43,7 +43,14 @@ from engine.secure_io import read_pii_json, write_pii_json
 
 # Account types a record can carry. "unknown" means the statement gave no
 # reliable signal — MUST be excluded from YTD sums until a human confirms it.
-ACCOUNT_TYPES = frozenset({"taxable", "traditional_ira", "roth_ira", "unknown"})
+# "hsa" is excluded from taxable YTD income the same way IRA accounts are --
+# dividends/interest earned *inside* an HSA are never currently-taxable
+# events. This does NOT model HSA *distribution* taxation (qualified medical
+# withdrawals are tax-free; non-qualified withdrawals before age 65 are
+# ordinary income plus a 20% penalty; after 65, ordinary income with no
+# penalty) -- a future feature would need to track HSA distributions as their
+# own income category once withdrawal modeling exists. Not built here.
+ACCOUNT_TYPES = frozenset({"taxable", "traditional_ira", "roth_ira", "hsa", "unknown"})
 
 
 class StatementParseError(Exception):
@@ -558,8 +565,11 @@ def partition_by_account_type(
     """Split accounts into (taxable, excluded_retirement, needs_confirmation).
 
     - taxable: account_type == "taxable" -- safe to sum into YTD income.
-    - excluded_retirement: "traditional_ira" or "roth_ira" -- never counted,
-      but returned (not silently dropped) so the UI can show them explicitly.
+    - excluded_retirement: "traditional_ira", "roth_ira", or "hsa" -- never
+      counted, but returned (not silently dropped) so the UI can show them
+      explicitly. HSA accounts are excluded here because dividends/interest
+      earned *inside* the account are never currently-taxable events; this
+      does NOT model HSA *distribution* taxation (see ACCOUNT_TYPES docstring).
     - needs_confirmation: "unknown" -- excluded from sums by default until a
       human confirms the type (see views/ytd_income.py).
     """
@@ -569,7 +579,7 @@ def partition_by_account_type(
     for account_number, rec in by_account.items():
         if rec.account_type == "taxable":
             taxable[account_number] = rec
-        elif rec.account_type in ("traditional_ira", "roth_ira"):
+        elif rec.account_type in ("traditional_ira", "roth_ira", "hsa"):
             excluded[account_number] = rec
         else:
             unknown[account_number] = rec

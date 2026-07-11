@@ -738,6 +738,19 @@ class TestPartitionByAccountType:
         assert excluded == {}
         assert set(unknown.keys()) == {"3413-3847"}
 
+    def test_hsa_is_valid_account_type(self):
+        rec = _rec("178-734462", "2026-06-30", account_type="hsa")
+        assert rec.account_type == "hsa"
+
+    def test_hsa_excluded_from_taxable_partition(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        hsa_acct = _rec("178-734462", "2026-06-30", account_type="hsa", dividends_taxable_ytd=100.0)
+        taxable, excluded, unknown = partition_by_account_type({"178-734462": hsa_acct})
+        assert taxable == {}
+        assert set(excluded.keys()) == {"178-734462"}
+        assert unknown == {}
+
 
 class TestAggregateToYtdFields:
     def test_sums_across_taxable_accounts_only(self):
