@@ -147,12 +147,23 @@ def render(hh: Household):
             # mitigation is therefore normalization + directory-type
             # validation -- reject blank input, then resolve away ".." and
             # symlink traversal before the path is ever used in glob()/
-            # read_bytes() -- not sandboxing against a hostile actor.
+            # read_bytes() -- not sandboxing against a hostile actor. As a
+            # real (not just documentation-only) containment boundary, the
+            # resolved path is also required to live under the user's home
+            # directory, since statements only ever live under e.g.
+            # ~/Downloads in actual usage.
             if not folder_input or not folder_input.strip():
                 st.error("Statement folder cannot be empty.")
                 folder_path = None
             else:
-                folder_path = Path(folder_input).expanduser().resolve()
+                candidate = Path(folder_input).expanduser().resolve()
+                if not candidate.is_relative_to(Path.home()):
+                    st.error(
+                        f"Statement folder must be under your home directory ({Path.home()}): {candidate}"
+                    )
+                    folder_path = None
+                else:
+                    folder_path = candidate
             if folder_path is None:
                 pass
             elif not folder_path.is_dir():
