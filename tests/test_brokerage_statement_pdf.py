@@ -621,6 +621,152 @@ def test_parse_real_ibkr_sample():
     assert len({r.account_number for r in recs}) == 3
 
 
+# --- Real Fidelity per-account excerpts (verbatim from a real 18-page
+# pdfplumber dump of a 2-account consolidated statement). Each begins with
+# its "Accounts Included in This Report" roster-line (informational only,
+# not used by the splitter) followed by the real per-account detail header,
+# Account Summary, and Income Summary. ---
+FIDELITY_ROLLOVER_IRA_TEXT = """4 FIDELITY ROLLOVER IRA CLAUDE R CIRBA - ROLLOVER IRA - FIDELITY 233-813501 $1,261,639.23 $1,265,478.63
+INVESTMENT REPORT
+June 1, 2026 - June 30, 2026
+Account # 233-813501
+Account Summary
+CLAUDE R CIRBA - ROLLOVER IRA
+Account Value: $1,265,478.63 Account Holdings
+Change in Account Value $3,839.40
+Income Summary
+This Period Year-to-Date
+Tax-deferred $3,919.90 $17,540.05
+Total $3,919.90 $17,540.05
+Contributions and Distributions
+This Period Year-to-Date
+2026 Contributions $800.00 $5,600.00
+"""
+
+FIDELITY_HSA_TEXT = """9 FIDELITY HEALTH SAVINGS ACCOUNT CLAUDE R CIRBA HEALTH SAVINGS ACCOUNT FIDELITY PERSONAL TRUST CO - CUSTODIAN 178-734462 $64,988.63 $65,435.87
+INVESTMENT REPORT
+June 1, 2026 - June 30, 2026
+Account # 178-734462
+Account Summary
+CLAUDE R CIRBA - HEALTH SAVINGS ACCOUNT
+Account Value: $65,435.87 Account Holdings
+Change in Account Value $447.24
+Income Summary
+This Period Year-to-Date
+Tax-free $119.36 $464.05
+Total $119.36 $464.05
+Contributions and Distributions
+This Period Year-to-Date
+2026 Partic. $515.00 $3,090.00
+"""
+
+
+class TestDetectFidelityAccountType:
+    def test_rollover_ira_is_traditional_ira(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        account_number, account_type = _detect_fidelity_account(FIDELITY_ROLLOVER_IRA_TEXT)
+        assert account_number == "233-813501"
+        assert account_type == "traditional_ira"
+
+    def test_hsa_is_hsa(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        account_number, account_type = _detect_fidelity_account(FIDELITY_HSA_TEXT)
+        assert account_number == "178-734462"
+        assert account_type == "hsa"
+
+    def test_unrecognized_fidelity_account_falls_back_to_unknown(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        text = "Account # 999-999999\nAccount Summary\nSOME OTHER ACCOUNT TYPE\n"
+        account_number, account_type = _detect_fidelity_account(text)
+        assert account_number == "999-999999"
+        assert account_type == "unknown"  # never guess -- same safety rule as Vanguard/IBKR fallbacks
+
+
+class TestSplitFidelitySections:
+    def test_splits_into_one_section_per_account(self):
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        full_text = FIDELITY_ROLLOVER_IRA_TEXT + FIDELITY_HSA_TEXT
+        sections = _split_fidelity_sections(full_text)
+        assert len(sections) == 2
+
+    def test_bare_account_hash_repeat_does_not_oversplit(self):
+        # Regression test: a bare "Account # <number>" repeats on every page
+        # of that account's section (Holdings, Activity, Cash Flow all
+        # restate it) -- only the "Account # <number>\nAccount Summary" combo
+        # should count as a section start, or this would over-split.
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        text = (
+            FIDELITY_ROLLOVER_IRA_TEXT
+            + "Account # 233-813501\nHoldings\nCLAUDE R CIRBA - ROLLOVER IRA\n"
+            + FIDELITY_HSA_TEXT
+        )
+        sections = _split_fidelity_sections(text)
+        assert len(sections) == 2
+
+    def test_no_account_summary_marker_raises(self):
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        with pytest.raises(StatementParseError):
+            _split_fidelity_sections("no account sections here")
+
+
+class TestExtractFidelityIncomeYtd:
+    def test_rollover_ira_tax_deferred_total(self):
+        from engine.brokerage_statement_pdf import _extract_fidelity_income_ytd
+
+        assert _extract_fidelity_income_ytd(FIDELITY_ROLLOVER_IRA_TEXT) == 17540.05
+
+    def test_hsa_tax_free_total(self):
+        from engine.brokerage_statement_pdf import _extract_fidelity_income_ytd
+
+        assert _extract_fidelity_income_ytd(FIDELITY_HSA_TEXT) == 464.05
+
+
+class TestParseFidelity:
+    def test_returns_one_record_per_account(self):
+        recs = parse_statement_text([FIDELITY_ROLLOVER_IRA_TEXT, FIDELITY_HSA_TEXT])
+        assert len(recs) == 2
+        assert {r.broker for r in recs} == {"fidelity"}
+        assert {r.account_type for r in recs} == {"traditional_ira", "hsa"}
+        assert all(r.statement_period_end == "2026-06-30" for r in recs)
+
+    def test_rollover_ira_income(self):
+        from engine.brokerage_statement_pdf import _parse_fidelity
+
+        recs = _parse_fidelity(FIDELITY_ROLLOVER_IRA_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "traditional_ira"
+        assert rec.dividends_taxable_ytd == 17540.05
+        assert rec.dividends_tax_exempt_ytd == 0.0
+
+    def test_hsa_income(self):
+        from engine.brokerage_statement_pdf import _parse_fidelity
+
+        recs = _parse_fidelity(FIDELITY_HSA_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "hsa"
+        assert rec.dividends_taxable_ytd == 464.05
+
+
+FIDELITY_SAMPLE = pathlib.Path("/home/memento/Downloads/FidelityStatement06302026.pdf")
+
+
+@pytest.mark.skipif(not FIDELITY_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_fidelity_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(FIDELITY_SAMPLE.read_bytes())
+    assert len(recs) == 2
+    account_types = {r.account_type for r in recs}
+    assert account_types == {"traditional_ira", "hsa"}
+    assert len({r.account_number for r in recs}) == 2
+
+
 class TestParseErrors:
     def test_unrecognized_broker_raises(self):
         with pytest.raises(StatementParseError):
