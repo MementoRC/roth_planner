@@ -47,6 +47,9 @@ Thumbs.db
 .ytd_cache.json
 .ssa_cache.json
 .dividend_rates.json
+.brokerage_statement_cache.json
+.statement_folder_config.json
+.statement_account_overrides.json
 .claude/
 .mcp.json
 .locks/

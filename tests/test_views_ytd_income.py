@@ -998,3 +998,101 @@ class TestBrokerageStatementSync:
         assert "home directory" in error_msg
         mock_scan.assert_not_called()
         mock_save.assert_not_called()
+
+    def test_scan_persists_to_cache_via_save_statement_records(self, tmp_path, monkeypatch):
+        """After a successful scan, save_statement_records is called with the
+        parsed-and-latest-per-account dict so the scan survives an app restart."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX9320",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1028.55,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([taxable_rec], [])),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.brokerage_statement_pdf.save_statement_records") as mock_save_records,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        mock_save_records.assert_called_once()
+        (saved_by_account,), _ = mock_save_records.call_args
+        assert saved_by_account["XXXX9320"].account_type == "taxable"
+
+    def test_hydrates_statement_by_account_from_cache_on_page_load(self, monkeypatch):
+        """With no prior scan this run (no 'statement_by_account' key in
+        session_state), the view must hydrate it from load_statement_records()
+        and re-apply saved overrides via apply_account_type_overrides, so a
+        scan survives an app restart."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False  # scan button not clicked this run
+
+        cached_rec = BrokerageStatementRecord(
+            account_number="XXXX1234",
+            broker="schwab",
+            account_type="taxable",
+            statement_period_end="2026-05-31",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=200.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-06-01T00:00:00+00:00",
+        )
+        cached_by_account = {"XXXX1234": cached_rec}
+
+        # session_state.get() must report "not present" so the hydration guard fires,
+        # matching this file's established pattern of a session_state mock whose
+        # .get() is not linked to bracket-assignment.
+        mock_st.session_state.__contains__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.load_statement_records", return_value=cached_by_account),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.brokerage_statement_pdf.apply_account_type_overrides") as mock_apply,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_apply.return_value = cached_by_account
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        mock_apply.assert_called_once_with(cached_by_account, {})
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, "Expected statement_by_account to be hydrated into session_state"
+        assert setitem_calls[-1][0][1] == cached_by_account
