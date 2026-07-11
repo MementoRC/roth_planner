@@ -130,13 +130,17 @@ def _parse_currency(raw: str) -> float:
 
 
 def _detect_broker(text: str) -> str:
-    """Check Schwab before Vanguard: a Schwab statement's holdings commonly
-    include Vanguard ETFs, so "Vanguard" alone is not a reliable signal."""
+    """Check Schwab and IBKR before Vanguard: both Schwab's and IBKR's
+    holdings can include Vanguard-branded funds (confirmed for IBKR: the
+    sampled Roth account holds Vanguard Mid-Cap Index Fund Admiral / VIMAX),
+    so "Vanguard" alone is not a reliable signal."""
     if re.search(r"Schwab One", text):
         return "schwab"
+    if re.search(r"Interactive Brokers", text):
+        return "ibkr"
     if re.search(r"Vanguard", text):
         return "vanguard"
-    raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard) in this PDF's text.")
+    raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR) in this PDF's text.")
 
 
 def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
@@ -307,6 +311,68 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"other_income_ytd": other, "pdf_pages_total": full_text.count("--- page")},
     )
+
+
+# --- Interactive Brokers ------------------------------------------------------
+#
+# IBKR's consolidated "Activity Statement" PDF contains multiple accounts in
+# one document -- unlike Schwab/Vanguard, which are always single-account.
+# Each account gets its own "Account Information" table (confirmed: the
+# string "Account Information" appears exactly once per account, nowhere
+# else, in a real 3-account sample) stating a "Customer Type" explicitly --
+# IBKR accounts never need the manual "unknown" confirmation step Schwab
+# requires.
+
+_IBKR_ACCOUNT_NUMBER_RE = re.compile(r"Account ([A-Z]\d{8})\b")
+
+# Order doesn't matter here (patterns are mutually exclusive), but each must
+# anchor on the literal "Customer Type" prefix specifically -- every IBKR
+# account's Information table also has an unrelated "Account Type Individual"
+# line (account structure, not tax treatment) -- a bare "Type Individual"
+# substring match would misfire on all three sampled accounts.
+_IBKR_CUSTOMER_TYPE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"Customer Type:?\s*IRA-Roth"), "roth_ira"),
+    (re.compile(r"Customer Type:?\s*IRA-Traditional"), "traditional_ira"),
+    (re.compile(r"Customer Type:?\s*Individual"), "taxable"),
+]
+
+
+def _detect_ibkr_account(section_text: str) -> tuple[str, str]:
+    """Return (account_number, account_type) for one IBKR account section.
+
+    Falls back to account_type "unknown" (never guessed) if the section
+    states a Customer Type this parser doesn't recognize -- same safety
+    rule as Vanguard's _detect_vanguard_account fallback.
+    """
+    m = _IBKR_ACCOUNT_NUMBER_RE.search(section_text)
+    if not m:
+        raise StatementParseError("No account number found in IBKR account section.")
+    account_number = m.group(1)
+    for pattern, account_type in _IBKR_CUSTOMER_TYPE_PATTERNS:
+        if pattern.search(section_text):
+            return account_number, account_type
+    return account_number, "unknown"
+
+
+_IBKR_SECTION_START_RE = re.compile(r"Account Information")
+
+
+def _split_ibkr_sections(full_text: str) -> list[str]:
+    """Split a consolidated IBKR statement's full text into one chunk per
+    account, each chunk starting at its "Account Information" table.
+
+    The roster/summary page (listing all accounts before any per-account
+    detail) has no "Account Information" table of its own (confirmed against
+    a real 3-account sample), so it is never treated as a bogus section here.
+    """
+    starts = [m.start() for m in _IBKR_SECTION_START_RE.finditer(full_text)]
+    if not starts:
+        raise StatementParseError("No IBKR account sections found (no 'Account Information' tables detected).")
+    sections = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(full_text)
+        sections.append(full_text[start:end])
+    return sections
 
 
 # ---------------------------------------------------------------------------

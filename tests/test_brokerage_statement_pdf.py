@@ -273,6 +273,131 @@ def test_parse_real_vanguard_roth_sample():
     assert rec.account_type == "roth_ira"
 
 
+# --- Real IBKR "Account Information" table excerpts (verbatim from a real
+# 16-page pdfplumber dump of a 3-account consolidated Activity Statement).
+# Note the deliberate absence of a colon after "Customer Type" -- pdfplumber
+# flattened it to plain space-separated text, same lesson as Schwab. Also
+# note the unrelated "Account Type Individual" line present on ALL THREE
+# accounts (IBKR account-structure field, not tax treatment) -- this is a
+# real trap the Customer Type detector must not fall into. ---
+IBKR_ACCOUNT_1_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA
+Account Alias Broker
+Account U24711481
+Account Type Individual
+Customer Type Individual
+Account Capabilities Margin
+"""
+
+IBKR_ACCOUNT_2_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA Rollover IRA, Interactive Brokers LLC Custodian
+Account Alias IRA
+Account U24721230
+Account Type Individual
+Customer Type IRA-Traditional Rollover
+Account Capabilities Margin
+"""
+
+IBKR_ACCOUNT_3_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA Roth IRA, Interactive Brokers LLC Custodian
+Account Alias Roth
+Account U24727897
+Account Type Individual
+Customer Type IRA-Roth New
+Account Capabilities Margin
+"""
+
+
+class TestDetectIbkrAccountType:
+    def test_individual_is_taxable(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_1_TEXT)
+        assert account_number == "U24711481"
+        assert account_type == "taxable"
+
+    def test_traditional_ira_rollover(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_2_TEXT)
+        assert account_number == "U24721230"
+        assert account_type == "traditional_ira"
+
+    def test_roth_ira_new(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_3_TEXT)
+        assert account_number == "U24727897"
+        assert account_type == "roth_ira"
+
+    def test_unrecognized_customer_type_falls_back_to_unknown(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        text = "Account Information\nAccount U99999999\nCustomer Type SEP-IRA\n"
+        account_number, account_type = _detect_ibkr_account(text)
+        assert account_number == "U99999999"
+        assert account_type == "unknown"
+
+    def test_account_type_individual_line_does_not_false_positive(self):
+        # Regression test: every IBKR account has an unrelated "Account Type
+        # Individual" line (account structure, not tax treatment) -- the
+        # Customer Type detector must not confuse the two fields.
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        _account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_2_TEXT)
+        assert account_type == "traditional_ira"  # not "taxable" despite "Account Type Individual" also present
+
+
+class TestSplitIbkrSections:
+    def test_splits_into_one_section_per_account(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        full_text = IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT + IBKR_ACCOUNT_3_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert len(sections) == 3
+
+    def test_each_section_contains_its_own_account_number(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        full_text = IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT + IBKR_ACCOUNT_3_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert "U24711481" in sections[0]
+        assert "U24721230" in sections[1]
+        assert "U24727897" in sections[2]
+
+    def test_roster_page_precedes_first_section_and_is_excluded(self):
+        # The page-0 roster table (listing all accounts by NAV) has no
+        # "Account Information" table of its own -- confirmed against a real
+        # 3-account sample -- so text before the first "Account Information"
+        # match must not become a bogus extra section.
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        roster = "Account Summary\nU24711481 Broker Claude R CIRBA 6,976.29 6,979.02 0.04%\n"
+        full_text = roster + IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert len(sections) == 2
+
+    def test_no_account_information_raises(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        with pytest.raises(StatementParseError):
+            _split_ibkr_sections("no account sections here")
+
+
+class TestDetectBrokerIbkrOrdering:
+    def test_ibkr_detected_even_with_vanguard_branded_holding(self):
+        # Regression test for a confirmed real scenario: the sampled Roth
+        # IBKR account holds a Vanguard-branded fund (VIMAX) -- IBKR must be
+        # checked before Vanguard in _detect_broker or this would misdetect.
+        from engine.brokerage_statement_pdf import _detect_broker
+
+        text = IBKR_ACCOUNT_3_TEXT + "\nVWO Vanguard Vanguard Mid-Cap Index Fund Admiral\n"
+        assert _detect_broker(text) == "ibkr"
+
+
 class TestParseErrors:
     def test_unrecognized_broker_raises(self):
         with pytest.raises(StatementParseError):
