@@ -149,19 +149,21 @@ def load_defaults() -> dict:
             if overrides:
                 return {**DEFAULTS, **overrides}
 
-    # 2. .user_defaults.json (preferred local file)
-    json_path = Path(".user_defaults.json")
-    if json_path.exists():
-        _warn_if_insecure_permissions(json_path)
-        overrides = dict(_load_overrides_from_json(json_path))
-        if overrides:
-            return {**DEFAULTS, **overrides}
+    # Test isolation: skip implicit local override files when set (see tests/conftest.py).
+    if not os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
+        # 2. .user_defaults.json (preferred local file)
+        json_path = Path(".user_defaults.json")
+        if json_path.exists():
+            _warn_if_insecure_permissions(json_path)
+            overrides = dict(_load_overrides_from_json(json_path))
+            if overrides:
+                return {**DEFAULTS, **overrides}
 
-    # 3. .user_defaults.py (legacy local file)
-    py_path = Path(".user_defaults.py")
-    if py_path.exists():
-        overrides = _load_overrides_from_py(py_path)
-        if overrides:
-            return {**DEFAULTS, **overrides}
+        # 3. .user_defaults.py (legacy local file)
+        py_path = Path(".user_defaults.py")
+        if py_path.exists():
+            overrides = _load_overrides_from_py(py_path)
+            if overrides:
+                return {**DEFAULTS, **overrides}
 
     return DEFAULTS
