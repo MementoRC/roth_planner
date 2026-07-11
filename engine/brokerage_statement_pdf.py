@@ -139,13 +139,17 @@ def _detect_broker(text: str) -> str:
     raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard) in this PDF's text.")
 
 
-def parse_statement_text(pages: list[str]) -> BrokerageStatementRecord:
-    """Detect broker, then dispatch to the broker-specific parser."""
+def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
+    """Detect broker, then dispatch to the broker-specific parser.
+
+    Returns one record per account found in the document. Schwab and
+    Vanguard statements are always single-account (one-element list).
+    """
     full_text = "\n".join(pages)
     broker = _detect_broker(full_text)
     if broker == "schwab":
-        return _parse_schwab(full_text)
-    return _parse_vanguard(full_text)
+        return [_parse_schwab(full_text)]
+    return [_parse_vanguard(full_text)]
 
 
 # --- Schwab -----------------------------------------------------------------
@@ -310,9 +314,11 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
 # ---------------------------------------------------------------------------
 
 
-def parse_statement_pdf(data: bytes) -> BrokerageStatementRecord:
+def parse_statement_pdf(data: bytes) -> list[BrokerageStatementRecord]:
     """Parse a brokerage statement PDF from raw bytes. pdfplumber import
-    deferred for Pyodide safety -- only local installs call this."""
+    deferred for Pyodide safety -- only local installs call this.
+
+    Returns one record per account found (see parse_statement_text)."""
     import io
 
     import pdfplumber
@@ -335,7 +341,7 @@ def scan_statement_folder(folder: Path) -> tuple[list[BrokerageStatementRecord],
     errors: list[str] = []
     for pdf_path in sorted(folder.glob("*.[pP][dD][fF]")):
         try:
-            records.append(parse_statement_pdf(pdf_path.read_bytes()))
+            records.extend(parse_statement_pdf(pdf_path.read_bytes()))
         except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
             errors.append(f"{pdf_path.name}: {exc}")
     return records, errors

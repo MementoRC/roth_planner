@@ -149,67 +149,91 @@ Year-to-date 283.86 0.00 0.00 0.00 0.00 0.00
 
 class TestParseSchwab:
     def test_account_number(self):
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.account_number == "****-*847"
         assert rec.broker == "schwab"
 
     def test_account_type_is_unknown(self):
         # Schwab statements never state account type -- must default to
         # unknown, NOT be inferred as taxable just because no IRA label was found.
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.account_type == "unknown"
 
     def test_interest_ytd_split(self):
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.interest_taxable_ytd == 18.56
         assert rec.interest_tax_exempt_ytd == 0.0
 
     def test_dividends_ytd_split(self):
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.dividends_taxable_ytd == 4846.82
         assert rec.dividends_tax_exempt_ytd == 78.74
 
     def test_gain_loss_ytd(self):
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.stcg_net_ytd == 19.11
         assert rec.ltcg_net_ytd == 283895.77
 
     def test_statement_period_end(self):
-        rec = parse_statement_text([SCHWAB_PAGE_TEXT])
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.statement_period_end == "2026-06-30"
 
 
 class TestParseVanguardTaxable:
     def test_account_type_taxable(self):
-        rec = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.account_type == "taxable"
         assert rec.account_number == "XXXX9320"
         assert rec.broker == "vanguard"
 
     def test_dividends_ytd(self):
-        rec = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.dividends_taxable_ytd == 1028.55
         assert rec.dividends_tax_exempt_ytd == 0.0
 
     def test_no_gains_or_interest(self):
-        rec = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.interest_taxable_ytd == 0.0
         assert rec.stcg_net_ytd == 0.0
         assert rec.ltcg_net_ytd == 0.0
 
     def test_statement_period_end(self):
-        rec = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.statement_period_end == "2026-06-30"
 
 
 class TestParseVanguardRoth:
     def test_account_type_roth(self):
-        rec = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         assert rec.account_type == "roth_ira"
         assert rec.account_number == "XXXX7368"
 
     def test_dividends_ytd(self):
-        rec = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
         # Note: "dividends_taxable_ytd" is just the dataclass field name inherited
         # from the taxable-column source; downstream aggregation must still
         # exclude this record entirely via account_type, regardless of which
@@ -221,7 +245,9 @@ class TestParseVanguardRoth:
 def test_parse_real_schwab_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
-    rec = parse_statement_pdf(SCHWAB_SAMPLE.read_bytes())
+    recs = parse_statement_pdf(SCHWAB_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
     assert rec.account_type == "unknown"
     assert rec.dividends_taxable_ytd > 0
 
@@ -230,7 +256,9 @@ def test_parse_real_schwab_sample():
 def test_parse_real_vanguard_taxable_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
-    rec = parse_statement_pdf(VANGUARD_TAXABLE_SAMPLE.read_bytes())
+    recs = parse_statement_pdf(VANGUARD_TAXABLE_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
     assert rec.account_type == "taxable"
     assert rec.dividends_taxable_ytd == pytest.approx(1028.55)
 
@@ -239,7 +267,9 @@ def test_parse_real_vanguard_taxable_sample():
 def test_parse_real_vanguard_roth_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
-    rec = parse_statement_pdf(VANGUARD_ROTH_SAMPLE.read_bytes())
+    recs = parse_statement_pdf(VANGUARD_ROTH_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
     assert rec.account_type == "roth_ira"
 
 
