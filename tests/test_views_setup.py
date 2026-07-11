@@ -719,3 +719,45 @@ class TestApplySingleFiler:
 
         hh = Household(filing_status="MFJ", spouse_ira=1_700_000)
         assert apply_single_filer(hh).spouse_ira == 1_700_000
+
+
+class TestSyncSsaForCoercesToInt:
+    """Regression: StreamlitMixedNumericTypesError when SSA sync overwrites the
+    int-typed your_ss_fra/spouse_ss_fra session value with a float monthly_amount.
+    _sync_ssa_for must coerce to int(round(...)) before writing to session_state."""
+
+    def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> dict:
+        from types import SimpleNamespace
+
+        import views.setup.parameters as parameters_mod
+
+        fake_snap = SimpleNamespace(
+            error=None,
+            estimates=[SimpleNamespace(monthly_amount=2501.4)],
+        )
+        fake_state: dict = {}
+        monkeypatch.setattr(parameters_mod.st, "session_state", fake_state)
+        monkeypatch.setattr(parameters_mod, "fetch_ssa_snapshot", lambda: fake_snap)
+        monkeypatch.setattr(
+            parameters_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
+        )
+        monkeypatch.setattr(parameters_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
+        warning = parameters_mod._sync_ssa_for(owner, 67)
+        assert warning is None
+        return fake_state
+
+    def test_your_ss_fra_coerced_to_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = self._run_sync(monkeypatch, "you")
+        assert state["your_ss_fra"] == 2501
+        assert isinstance(state["your_ss_fra"], int), (
+            "your_ss_fra must be int after SSA sync to avoid "
+            "StreamlitMixedNumericTypesError against the int-typed number_input"
+        )
+
+    def test_spouse_ss_fra_coerced_to_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = self._run_sync(monkeypatch, "spouse")
+        assert state["spouse_ss_fra"] == 2501
+        assert isinstance(state["spouse_ss_fra"], int), (
+            "spouse_ss_fra must be int after SSA sync to avoid "
+            "StreamlitMixedNumericTypesError against the int-typed number_input"
+        )

@@ -397,7 +397,7 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     if match is None:
         return "No SSA benefit estimate found near the configured FRA age; sync skipped."
     session_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
-    st.session_state[session_key] = match.monthly_amount
+    st.session_state[session_key] = int(round(match.monthly_amount))
     st.session_state[f"ssa_snapshot_{owner}"] = snap
     save_ssa_snapshot(snap, owner=owner)
     return None
@@ -462,7 +462,7 @@ def render_parameters_tab(hh: Household) -> None:
         st.session_state.your_ss_fra = st.number_input(
             f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
             min_value=0,  # UU2-UI-06
-            value=st.session_state.your_ss_fra,
+            value=int(round(st.session_state.your_ss_fra)),
             step=100,
             format="%d",
             disabled=_ssa_synced_you,
@@ -554,7 +554,7 @@ def render_parameters_tab(hh: Household) -> None:
             f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
             + (" (synced)" if _ssa_synced_spouse else ""),
             min_value=0,  # UU2-UI-06
-            value=st.session_state.spouse_ss_fra,
+            value=int(round(st.session_state.spouse_ss_fra)),
             step=100,
             format="%d",
             disabled=_is_single or _ssa_synced_spouse,
