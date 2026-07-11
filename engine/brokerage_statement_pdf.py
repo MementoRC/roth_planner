@@ -1,6 +1,6 @@
-"""Brokerage monthly-statement PDF parser (Schwab, Vanguard) — extracts YTD
-income directly from each statement's own Income Summary / Gain-Loss Summary
-tables, and the account's stated tax treatment.
+"""Brokerage monthly-statement PDF parser (Schwab, Vanguard, IBKR) — extracts
+YTD income directly from each statement's own Income Summary / Gain-Loss
+Summary tables, and the account's stated tax treatment.
 
 Text-anchor approach, same pattern as engine/tax_return_pdf.py. Statements
 already split Tax-Exempt vs. Taxable dividends/interest and are inherently
@@ -15,6 +15,16 @@ Schwab records are always account_type="unknown" and require one-time UI
 confirmation (see views/ytd_income.py) before counting toward YTD income.
 Mirrors tax_return_pdf.Form1040Record.filing_status, which is deferred to
 UI confirmation for the same reason: don't guess what the source doesn't say.
+
+IBKR's consolidated "Activity Statement" PDF is fundamentally different in
+shape: ONE PDF contains MULTIPLE accounts, each with its own "Account
+Information" table stating a "Customer Type" explicitly (Individual,
+IRA-Traditional Rollover, IRA-Roth New) — so IBKR accounts, like Vanguard's,
+never need the manual "unknown" confirmation step Schwab requires. IBKR's
+Cash Report gives no tax-exempt/taxable or qualified/ordinary dividend split
+at all (same limitation as Schwab/Vanguard) — both `*_tax_exempt_ytd` fields
+are always 0.0 for IBKR records, UNVERIFIED against a muni-holding IBKR
+account since neither sampled account holds one.
 
 pdfplumber import is DEFERRED into parse_statement_pdf to stay Pyodide-safe
 (same rationale as tax_return_pdf.py, PR #49 lesson).
@@ -147,13 +157,16 @@ def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
     """Detect broker, then dispatch to the broker-specific parser.
 
     Returns one record per account found in the document. Schwab and
-    Vanguard statements are always single-account (one-element list).
+    Vanguard statements are always single-account (one-element list); IBKR's
+    consolidated statements can contain multiple accounts.
     """
     full_text = "\n".join(pages)
     broker = _detect_broker(full_text)
     if broker == "schwab":
         return [_parse_schwab(full_text)]
-    return [_parse_vanguard(full_text)]
+    if broker == "vanguard":
+        return [_parse_vanguard(full_text)]
+    return _parse_ibkr(full_text)
 
 
 # --- Schwab -----------------------------------------------------------------
@@ -373,6 +386,111 @@ def _split_ibkr_sections(full_text: str) -> list[str]:
         end = starts[i + 1] if i + 1 < len(starts) else len(full_text)
         sections.append(full_text[start:end])
     return sections
+
+
+def _ibkr_row_ytd(label: str, section_text: str) -> float:
+    """Extract the Year-to-Date figure from an IBKR Cash Report row.
+
+    Every row in this table renders as the label followed by 5 numeric
+    columns (Total, Securities, Futures, Month to Date, Year to Date), with
+    YTD always the LAST whitespace-separated token on the line -- confirmed
+    against a real dump. Matching just "the first number after the label"
+    would capture the Total column (always 0.00 in the sampled accounts)
+    instead, silently under-reporting every account's real YTD figure.
+    """
+    m = re.search(rf"^{re.escape(label)}((?:\s+{_MONEY})+)\s*$", section_text, re.MULTILINE)
+    if not m:
+        return 0.0
+    return _parse_currency(m.group(1).split()[-1])
+
+
+def _extract_ibkr_cash_report(section_text: str) -> tuple[float, float]:
+    """Extract (dividends_ytd, interest_ytd) from one account section's Cash
+    Report table. A row is entirely absent when that account had zero cash
+    flow of that type this period (confirmed: the sampled Traditional IRA
+    account has no Dividends or Broker Interest row at all) -- absence
+    correctly falls back to 0.0, it is not a parse error.
+    """
+    dividends = _ibkr_row_ytd("Dividends", section_text)
+    interest = _ibkr_row_ytd("Broker Interest Paid and Received", section_text)
+    return dividends, interest
+
+
+_IBKR_PERFORMANCE_SUMMARY_HEADER_RE = re.compile(r"Month & Year to Date Performance Summary")
+_IBKR_TOTAL_ASSET_CLASS_ROW_RE = re.compile(rf"^Total \D+?((?:\s+{_MONEY}){{6}})\s*$", re.MULTILINE)
+
+
+def _extract_ibkr_gains(section_text: str) -> tuple[float, float]:
+    """Extract (stcg_net_ytd, ltcg_net_ytd) from the "Month & Year to Date
+    Performance Summary" table, summed across every asset class present.
+
+    This statement has THREE differently-titled "...Performance Summary"
+    tables; only this one carries realized S/T and L/T YTD columns. There is
+    no single "Total (All Assets)" row in this table (confirmed against a
+    real dump) -- only one "Total <AssetClass>" row per asset class (e.g.
+    "Total Stocks", "Total Mutual Funds") -- so every such row between this
+    header and the account's "Cash Report" (which always follows it,
+    confirmed ordering) must be summed, not just the first one matched.
+    Each row's 6 numeric columns are
+    [MTM_MTD, MTM_YTD, RealizedST_MTD, RealizedST_YTD, RealizedLT_MTD, RealizedLT_YTD].
+    """
+    header_m = _IBKR_PERFORMANCE_SUMMARY_HEADER_RE.search(section_text)
+    if not header_m:
+        return 0.0, 0.0
+    table_text = section_text[header_m.end() :]
+    cash_report_idx = table_text.find("Cash Report")
+    if cash_report_idx != -1:
+        table_text = table_text[:cash_report_idx]
+    stcg = 0.0
+    ltcg = 0.0
+    for row_m in _IBKR_TOTAL_ASSET_CLASS_ROW_RE.finditer(table_text):
+        tokens = row_m.group(1).split()
+        stcg += _parse_currency(tokens[3])
+        ltcg += _parse_currency(tokens[5])
+    return stcg, ltcg
+
+
+_IBKR_STATEMENT_DATE_RE = re.compile(r"Activity Statement[ \n-]+([A-Za-z]+ \d{1,2}, \d{4})")
+
+
+def _extract_ibkr_period_end(full_text: str) -> str:
+    """The statement's as-of date is document-wide, not per-account --
+    identical across every account section (confirmed: 3 identical matches
+    in a real 3-account sample)."""
+    m = _IBKR_STATEMENT_DATE_RE.search(full_text)
+    if not m:
+        raise StatementParseError("No statement date found in IBKR statement text.")
+    return datetime.strptime(m.group(1), "%B %d, %Y").date().isoformat()
+
+
+def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
+    sections = _split_ibkr_sections(full_text)
+    period_end = _extract_ibkr_period_end(full_text)
+    records = []
+    for section in sections:
+        account_number, account_type = _detect_ibkr_account(section)
+        dividends, interest = _extract_ibkr_cash_report(section)
+        stcg, ltcg = _extract_ibkr_gains(section)
+        records.append(
+            BrokerageStatementRecord(
+                account_number=account_number,
+                broker="ibkr",
+                account_type=account_type,
+                statement_period_end=period_end,
+                interest_taxable_ytd=interest,
+                # IBKR's Cash Report gives no tax-exempt/taxable split at all
+                # (unlike Schwab/Vanguard) -- UNVERIFIED against a muni-holding
+                # IBKR account, since neither sampled account holds one.
+                interest_tax_exempt_ytd=0.0,
+                dividends_taxable_ytd=dividends,
+                dividends_tax_exempt_ytd=0.0,
+                stcg_net_ytd=stcg,
+                ltcg_net_ytd=ltcg,
+                captured_at=datetime.now(UTC).isoformat(),
+                provenance={"pdf_pages_total": full_text.count("--- page")},
+            )
+        )
+    return records
 
 
 # ---------------------------------------------------------------------------

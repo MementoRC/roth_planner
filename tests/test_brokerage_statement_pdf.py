@@ -398,6 +398,213 @@ class TestDetectBrokerIbkrOrdering:
         assert _detect_broker(text) == "ibkr"
 
 
+# --- Real IBKR per-account full-text fixtures (Account Information + Month &
+# Year to Date Performance Summary + Cash Report), verbatim from the same
+# real 16-page dump. Confirmed real document order per account section:
+# Account Information, then Performance Summary, then Cash Report. ---
+IBKR_ACCOUNT_1_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 1 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA
+Account Alias Broker
+Account U24711481
+Account Type Individual
+Customer Type Individual
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+VHT VANGUARD HEALTH CARE ETF 158.13 620.77 0.00 0.00 0.00 0.00
+Total Stocks 158.13 620.77 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Cash Detail
+Starting Cash 541.68 541.68 0.00
+Deposits 0.00 0.00 0.00 0.00 500.14
+Withdrawals 0.00 0.00 0.00 0.00 -0.14
+Dividends 0.00 0.00 0.00 0.00 41.59
+Broker Interest Paid and Received 0.00 0.00 0.00 0.04 0.09
+Ending Cash 541.68 541.68 0.00
+Ending Settled Cash 541.68 541.68 0.00
+"""
+
+IBKR_ACCOUNT_2_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 2 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA Rollover IRA, Interactive Brokers LLC Custodian
+Account Alias IRA
+Account U24721230
+Account Type Individual
+Customer Type IRA-Traditional Rollover
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+XYZ SOME STOCK 18,370.00 -27,110.00 0.00 0.00 0.00 0.00
+Total Stocks 18,370.00 -27,110.00 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Starting Cash 0.00 0.00 0.00
+Ending Cash 0.00 0.00 0.00
+Ending Settled Cash 0.00 0.00 0.00
+"""
+
+IBKR_ACCOUNT_3_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 3 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name Claude R CIRBA Roth IRA, Interactive Brokers LLC Custodian
+Account Alias Roth
+Account U24727897
+Account Type Individual
+Customer Type IRA-Roth New
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Mutual Funds
+ABC SOME MUTUAL FUND 56.37 2,254.48 0.00 0.00 0.00 0.00
+Total Mutual Funds 56.37 2,254.48 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Starting Cash 5.89 5.89 0.00
+Dividends 0.00 0.00 0.00 0.00 128.42
+Trades (Purchase) 0.00 0.00 0.00 0.00 -122.53
+Ending Cash 5.89 5.89 0.00
+Ending Settled Cash 5.89 5.89 0.00
+"""
+
+
+class TestExtractIbkrCashReport:
+    def test_dividends_and_interest_ytd_take_last_column_not_first(self):
+        # Regression test for the exact bug the grounding step caught: a
+        # naive "first number after the label" match would capture the Total
+        # column (0.00), not the real YTD figure (last column).
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert dividends == 41.59
+        assert interest == 0.09
+
+    def test_missing_rows_fall_back_to_zero(self):
+        # The Traditional IRA account has zero cash flow of either type this
+        # period, so neither row appears at all -- confirmed real scenario.
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_2_FULL_TEXT)
+        assert dividends == 0.0
+        assert interest == 0.0
+
+    def test_dividends_present_without_interest_row(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_3_FULL_TEXT)
+        assert dividends == 128.42
+        assert interest == 0.0
+
+
+class TestExtractIbkrGains:
+    def test_zero_realized_gains_real_sample(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        stcg, ltcg = _extract_ibkr_gains(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert stcg == 0.0
+        assert ltcg == 0.0
+
+    def test_handles_comma_formatted_and_negative_numbers(self):
+        # Account 2's Performance Summary row uses comma-grouped and negative
+        # figures (18,370.00 / -27,110.00 in the MTM columns) -- confirms the
+        # extraction doesn't choke on either, even though the realized S/T/L/T
+        # columns themselves are zero in this sample.
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        stcg, ltcg = _extract_ibkr_gains(IBKR_ACCOUNT_2_FULL_TEXT)
+        assert stcg == 0.0
+        assert ltcg == 0.0
+
+    def test_sums_across_multiple_asset_classes(self):
+        # Synthetic test: no sampled account happens to hold >1 asset class
+        # with nonzero realized gains, so this exercises the summing logic
+        # itself (Bug #2 from grounding: there is no single "Total (All
+        # Assets)" row in this table -- every asset-class row must be summed).
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        section = """Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+ABC SOME STOCK 10.00 20.00 5.00 15.00 0.00 0.00
+Total Stocks 10.00 20.00 5.00 15.00 0.00 0.00
+Mutual Funds
+XYZ SOME FUND 1.00 2.00 0.00 0.00 3.00 40.00
+Total Mutual Funds 1.00 2.00 0.00 0.00 3.00 40.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Starting Cash 0.00 0.00 0.00
+"""
+        stcg, ltcg = _extract_ibkr_gains(section)
+        assert stcg == 15.00
+        assert ltcg == 40.00
+
+
+class TestExtractIbkrPeriodEnd:
+    def test_extracts_statement_date(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_period_end
+
+        assert _extract_ibkr_period_end(IBKR_ACCOUNT_1_FULL_TEXT) == "2026-07-09"
+
+    def test_missing_date_raises(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_period_end
+
+        with pytest.raises(StatementParseError):
+            _extract_ibkr_period_end("no date here")
+
+
+class TestParseIbkr:
+    def test_returns_one_record_per_account(self):
+        recs = parse_statement_text([IBKR_ACCOUNT_1_FULL_TEXT, IBKR_ACCOUNT_2_FULL_TEXT, IBKR_ACCOUNT_3_FULL_TEXT])
+        assert len(recs) == 3
+        assert {r.account_number for r in recs} == {"U24711481", "U24721230", "U24727897"}
+        assert all(r.broker == "ibkr" for r in recs)
+        assert all(r.statement_period_end == "2026-07-09" for r in recs)
+
+    def test_individual_account_dividends_and_interest(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.broker == "ibkr"
+        assert rec.account_type == "taxable"
+        assert rec.dividends_taxable_ytd == 41.59
+        assert rec.interest_taxable_ytd == 0.09
+        assert rec.dividends_tax_exempt_ytd == 0.0  # IBKR gives no split -- see module docstring
+        assert rec.interest_tax_exempt_ytd == 0.0
+        assert rec.stcg_net_ytd == 0.0
+        assert rec.ltcg_net_ytd == 0.0
+
+    def test_traditional_ira_account_zero_dividends(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_2_FULL_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "traditional_ira"
+        assert rec.dividends_taxable_ytd == 0.0
+        assert rec.interest_taxable_ytd == 0.0
+
+    def test_roth_account_dividends(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_3_FULL_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "roth_ira"
+        assert rec.dividends_taxable_ytd == 128.42
+
+
 class TestParseErrors:
     def test_unrecognized_broker_raises(self):
         with pytest.raises(StatementParseError):
