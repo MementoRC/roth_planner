@@ -162,6 +162,9 @@ def render(hh: Household):
                 if any(ord(ch) < 32 for ch in raw_folder):
                     st.error("Statement folder contains invalid characters.")
                     folder_path = None
+                elif ".." in raw_folder:
+                    st.error("Statement folder path may not contain '..'.")
+                    folder_path = None
                 else:
                     candidate = Path(raw_folder).expanduser().resolve()
                     if not candidate.is_relative_to(Path.home()):

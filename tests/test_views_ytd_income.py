@@ -892,17 +892,18 @@ class TestBrokerageStatementSync:
         mock_scan.assert_not_called()
         mock_save.assert_not_called()
 
-    def test_traversal_path_is_resolved_before_scan(self, tmp_path, monkeypatch):
-        """A folder path containing '..' segments must be normalized
-        (.expanduser().resolve()) before it reaches scan_statement_folder —
-        the scanner should only ever see the fully-resolved path, never the
-        raw traversal-shaped string."""
+    def test_traversal_input_is_rejected_before_path_construction(self, tmp_path, monkeypatch):
+        """A folder path containing a literal '..' segment must be rejected
+        with a clear st.error BEFORE any Path object is ever constructed —
+        this is now the earliest possible rejection point (ahead of
+        .expanduser()/.resolve()), per the CodeQL py/path-injection query,
+        which flags the Path() construction line itself as the taint sink.
+        Silently normalizing '..' away downstream is no longer acceptable;
+        traversal-shaped input must never reach Path() at all."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         real_dir = tmp_path / "Statements"
         real_dir.mkdir()
-        traversal_input = str(tmp_path / "Statements" / "sub" / ".." )
-        # traversal_input resolves to real_dir; "sub" doesn't need to exist
-        # since resolve() normalizes the ".." away lexically/via os.path.
+        traversal_input = str(tmp_path / "Statements" / "sub" / "..")
 
         hh = _stub_hh()
         ytd = YTDSnapshot()
@@ -913,9 +914,9 @@ class TestBrokerageStatementSync:
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([], [])) as mock_scan,
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
-            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -923,10 +924,45 @@ class TestBrokerageStatementSync:
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
 
-        assert mock_scan.called, "Expected scan_statement_folder to be called for a valid resolved directory"
-        called_path = mock_scan.call_args[0][0]
-        assert called_path == real_dir.resolve()
-        assert ".." not in str(called_path)
+        assert mock_st.error.called, "Expected st.error for a folder path containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_double_dot_substring_rejected_before_scan(self, tmp_path, monkeypatch):
+        """A statement-folder input containing '..' as a substring (classic
+        path-traversal shape, e.g. '../../etc' or 'foo/../bar') must be
+        rejected with a clear st.error before scan_statement_folder or
+        save_statement_folder_path is ever called — regression test for the
+        persistent CodeQL py/path-injection alert on PR #348, which flags the
+        Path() construction line itself as the taint sink. The guard must
+        run strictly before any Path()-based operation."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = "../../etc"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder input containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
 
     def test_folder_outside_home_is_rejected(self, tmp_path, monkeypatch):
         """A resolved statement-folder path outside the user's home directory must
