@@ -156,14 +156,21 @@ def render(hh: Household):
                 st.error("Statement folder cannot be empty.")
                 folder_path = None
             else:
-                candidate = Path(folder_input).expanduser().resolve()
-                if not candidate.is_relative_to(Path.home()):
-                    st.error(
-                        f"Statement folder must be under your home directory ({Path.home()}): {candidate}"
-                    )
+                raw_folder = folder_input.strip()
+                # Defensive input validation before path construction.
+                # Reject control characters (including NUL) in user-provided text.
+                if any(ord(ch) < 32 for ch in raw_folder):
+                    st.error("Statement folder contains invalid characters.")
                     folder_path = None
                 else:
-                    folder_path = candidate
+                    candidate = Path(raw_folder).expanduser().resolve()
+                    if not candidate.is_relative_to(Path.home()):
+                        st.error(
+                            f"Statement folder must be under your home directory ({Path.home()}): {candidate}"
+                        )
+                        folder_path = None
+                    else:
+                        folder_path = candidate
             if folder_path is None:
                 pass
             elif not folder_path.is_dir():

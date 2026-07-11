@@ -863,6 +863,35 @@ class TestBrokerageStatementSync:
         mock_scan.assert_not_called()
         mock_save.assert_not_called()
 
+    def test_control_char_in_folder_input_rejected(self):
+        """A statement-folder input containing a control character (e.g. an
+        embedded NUL byte) must be rejected with a clear st.error before a
+        Path object is ever constructed — defensive validation requested on
+        PR #348 (reject ord(ch) < 32 in user-provided text)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = "\x00/some/path"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a control character in statement-folder input"
+        error_msg = mock_st.error.call_args[0][0]
+        assert "invalid characters" in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
     def test_traversal_path_is_resolved_before_scan(self, tmp_path, monkeypatch):
         """A folder path containing '..' segments must be normalized
         (.expanduser().resolve()) before it reaches scan_statement_folder —
