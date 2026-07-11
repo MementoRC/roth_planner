@@ -605,6 +605,22 @@ class TestParseIbkr:
         assert rec.dividends_taxable_ytd == 128.42
 
 
+IBKR_SAMPLE = pathlib.Path("/home/memento/Downloads/MULTI_20260709.pdf")
+
+
+@pytest.mark.skipif(not IBKR_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_ibkr_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(IBKR_SAMPLE.read_bytes())
+    assert len(recs) == 3
+    account_types = {r.account_type for r in recs}
+    assert account_types == {"taxable", "traditional_ira", "roth_ira"}
+    # Every account number must be unique -- if the splitter double-counted a
+    # section or missed a boundary, this catches it.
+    assert len({r.account_number for r in recs}) == 3
+
+
 class TestParseErrors:
     def test_unrecognized_broker_raises(self):
         with pytest.raises(StatementParseError):
