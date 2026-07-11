@@ -1,6 +1,6 @@
-"""Brokerage monthly-statement PDF parser (Schwab, Vanguard) — extracts YTD
-income directly from each statement's own Income Summary / Gain-Loss Summary
-tables, and the account's stated tax treatment.
+"""Brokerage monthly-statement PDF parser (Schwab, Vanguard, IBKR, Fidelity)
+— extracts YTD income directly from each statement's own Income Summary /
+Gain-Loss Summary tables, and the account's stated tax treatment.
 
 Text-anchor approach, same pattern as engine/tax_return_pdf.py. Statements
 already split Tax-Exempt vs. Taxable dividends/interest and are inherently
@@ -15,6 +15,23 @@ Schwab records are always account_type="unknown" and require one-time UI
 confirmation (see views/ytd_income.py) before counting toward YTD income.
 Mirrors tax_return_pdf.Form1040Record.filing_status, which is deferred to
 UI confirmation for the same reason: don't guess what the source doesn't say.
+
+IBKR's consolidated "Activity Statement" PDF is fundamentally different in
+shape: ONE PDF contains MULTIPLE accounts, each with its own "Account
+Information" table stating a "Customer Type" explicitly (Individual,
+IRA-Traditional Rollover, IRA-Roth New) — so IBKR accounts, like Vanguard's,
+never need the manual "unknown" confirmation step Schwab requires. IBKR's
+Cash Report gives no tax-exempt/taxable or qualified/ordinary dividend split
+at all (same limitation as Schwab/Vanguard) — both `*_tax_exempt_ytd` fields
+are always 0.0 for IBKR records, UNVERIFIED against a muni-holding IBKR
+account since neither sampled account holds one.
+
+Fidelity's consolidated statement is also multi-account (like IBKR), but its
+sampled accounts (a Rollover IRA and an HSA) are both already excluded from
+taxable YTD income by account_type, so its Income Summary total is mapped
+into dividends_taxable_ytd purely for informational/display completeness —
+it is NOT actually taxable, and there is no "Taxable" column in this
+statement's Income Summary at all (only "Tax-deferred"/"Tax-free").
 
 pdfplumber import is DEFERRED into parse_statement_pdf to stay Pyodide-safe
 (same rationale as tax_return_pdf.py, PR #49 lesson).
@@ -33,7 +50,14 @@ from engine.secure_io import read_pii_json, write_pii_json
 
 # Account types a record can carry. "unknown" means the statement gave no
 # reliable signal — MUST be excluded from YTD sums until a human confirms it.
-ACCOUNT_TYPES = frozenset({"taxable", "traditional_ira", "roth_ira", "unknown"})
+# "hsa" is excluded from taxable YTD income the same way IRA accounts are --
+# dividends/interest earned *inside* an HSA are never currently-taxable
+# events. This does NOT model HSA *distribution* taxation (qualified medical
+# withdrawals are tax-free; non-qualified withdrawals before age 65 are
+# ordinary income plus a 20% penalty; after 65, ordinary income with no
+# penalty) -- a future feature would need to track HSA distributions as their
+# own income category once withdrawal modeling exists. Not built here.
+ACCOUNT_TYPES = frozenset({"taxable", "traditional_ira", "roth_ira", "hsa", "unknown"})
 
 
 class StatementParseError(Exception):
@@ -130,22 +154,42 @@ def _parse_currency(raw: str) -> float:
 
 
 def _detect_broker(text: str) -> str:
-    """Check Schwab before Vanguard: a Schwab statement's holdings commonly
-    include Vanguard ETFs, so "Vanguard" alone is not a reliable signal."""
+    """Check Schwab and IBKR before Vanguard: both Schwab's and IBKR's
+    holdings can include Vanguard-branded funds (confirmed for IBKR: the
+    sampled Roth account holds Vanguard Mid-Cap Index Fund Admiral / VIMAX),
+    so "Vanguard" alone is not a reliable signal. Fidelity is checked last,
+    on a bare "Fidelity" match (no more specific single distinguishing phrase
+    found in a real sample) -- safe regardless of ordering here since a
+    Schwab/IBKR/Vanguard statement that happens to mention a Fidelity-branded
+    fund in its holdings already matches its own broker check above and
+    returns before reaching this one."""
     if re.search(r"Schwab One", text):
         return "schwab"
+    if re.search(r"Interactive Brokers", text):
+        return "ibkr"
     if re.search(r"Vanguard", text):
         return "vanguard"
-    raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard) in this PDF's text.")
+    if re.search(r"Fidelity", text, re.IGNORECASE):
+        return "fidelity"
+    raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR, Fidelity) in this PDF's text.")
 
 
-def parse_statement_text(pages: list[str]) -> BrokerageStatementRecord:
-    """Detect broker, then dispatch to the broker-specific parser."""
+def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
+    """Detect broker, then dispatch to the broker-specific parser.
+
+    Returns one record per account found in the document. Schwab and
+    Vanguard statements are always single-account (one-element list); IBKR's
+    consolidated statements can contain multiple accounts.
+    """
     full_text = "\n".join(pages)
     broker = _detect_broker(full_text)
     if broker == "schwab":
-        return _parse_schwab(full_text)
-    return _parse_vanguard(full_text)
+        return [_parse_schwab(full_text)]
+    if broker == "vanguard":
+        return [_parse_vanguard(full_text)]
+    if broker == "fidelity":
+        return _parse_fidelity(full_text)
+    return _parse_ibkr(full_text)
 
 
 # --- Schwab -----------------------------------------------------------------
@@ -305,14 +349,311 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
     )
 
 
+# --- Interactive Brokers ------------------------------------------------------
+#
+# IBKR's consolidated "Activity Statement" PDF contains multiple accounts in
+# one document -- unlike Schwab/Vanguard, which are always single-account.
+# Each account gets its own "Account Information" table (confirmed: the
+# string "Account Information" appears exactly once per account, nowhere
+# else, in a real 3-account sample) stating a "Customer Type" explicitly --
+# IBKR accounts never need the manual "unknown" confirmation step Schwab
+# requires.
+
+_IBKR_ACCOUNT_NUMBER_RE = re.compile(r"Account ([A-Z]\d{8})\b")
+
+# Order doesn't matter here (patterns are mutually exclusive), but each must
+# anchor on the literal "Customer Type" prefix specifically -- every IBKR
+# account's Information table also has an unrelated "Account Type Individual"
+# line (account structure, not tax treatment) -- a bare "Type Individual"
+# substring match would misfire on all three sampled accounts.
+_IBKR_CUSTOMER_TYPE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"Customer Type:?\s*IRA-Roth"), "roth_ira"),
+    (re.compile(r"Customer Type:?\s*IRA-Traditional"), "traditional_ira"),
+    (re.compile(r"Customer Type:?\s*Individual"), "taxable"),
+]
+
+
+def _detect_ibkr_account(section_text: str) -> tuple[str, str]:
+    """Return (account_number, account_type) for one IBKR account section.
+
+    Falls back to account_type "unknown" (never guessed) if the section
+    states a Customer Type this parser doesn't recognize -- same safety
+    rule as Vanguard's _detect_vanguard_account fallback.
+    """
+    m = _IBKR_ACCOUNT_NUMBER_RE.search(section_text)
+    if not m:
+        raise StatementParseError("No account number found in IBKR account section.")
+    account_number = m.group(1)
+    for pattern, account_type in _IBKR_CUSTOMER_TYPE_PATTERNS:
+        if pattern.search(section_text):
+            return account_number, account_type
+    return account_number, "unknown"
+
+
+_IBKR_SECTION_START_RE = re.compile(r"Account Information")
+
+
+def _split_ibkr_sections(full_text: str) -> list[str]:
+    """Split a consolidated IBKR statement's full text into one chunk per
+    account, each chunk starting at its "Account Information" table.
+
+    The roster/summary page (listing all accounts before any per-account
+    detail) has no "Account Information" table of its own (confirmed against
+    a real 3-account sample), so it is never treated as a bogus section here.
+    """
+    starts = [m.start() for m in _IBKR_SECTION_START_RE.finditer(full_text)]
+    if not starts:
+        raise StatementParseError("No IBKR account sections found (no 'Account Information' tables detected).")
+    sections = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(full_text)
+        sections.append(full_text[start:end])
+    return sections
+
+
+def _ibkr_row_ytd(label: str, section_text: str) -> float:
+    """Extract the Year-to-Date figure from an IBKR Cash Report row.
+
+    Every row in this table renders as the label followed by 5 numeric
+    columns (Total, Securities, Futures, Month to Date, Year to Date), with
+    YTD always the LAST whitespace-separated token on the line -- confirmed
+    against a real dump. Matching just "the first number after the label"
+    would capture the Total column (always 0.00 in the sampled accounts)
+    instead, silently under-reporting every account's real YTD figure.
+    """
+    m = re.search(rf"^{re.escape(label)}((?:\s+{_MONEY})+)\s*$", section_text, re.MULTILINE)
+    if not m:
+        return 0.0
+    return _parse_currency(m.group(1).split()[-1])
+
+
+def _extract_ibkr_cash_report(section_text: str) -> tuple[float, float]:
+    """Extract (dividends_ytd, interest_ytd) from one account section's Cash
+    Report table. A row is entirely absent when that account had zero cash
+    flow of that type this period (confirmed: the sampled Traditional IRA
+    account has no Dividends or Broker Interest row at all) -- absence
+    correctly falls back to 0.0, it is not a parse error.
+    """
+    dividends = _ibkr_row_ytd("Dividends", section_text)
+    interest = _ibkr_row_ytd("Broker Interest Paid and Received", section_text)
+    return dividends, interest
+
+
+_IBKR_PERFORMANCE_SUMMARY_HEADER_RE = re.compile(r"Month & Year to Date Performance Summary")
+_IBKR_TOTAL_ASSET_CLASS_ROW_RE = re.compile(rf"^Total \D+?((?:\s+{_MONEY}){{6}})\s*$", re.MULTILINE)
+
+
+def _extract_ibkr_gains(section_text: str) -> tuple[float, float]:
+    """Extract (stcg_net_ytd, ltcg_net_ytd) from the "Month & Year to Date
+    Performance Summary" table, summed across every asset class present.
+
+    This statement has THREE differently-titled "...Performance Summary"
+    tables; only this one carries realized S/T and L/T YTD columns. There is
+    no single "Total (All Assets)" row in this table (confirmed against a
+    real dump) -- only one "Total <AssetClass>" row per asset class (e.g.
+    "Total Stocks", "Total Mutual Funds") -- so every such row between this
+    header and the account's "Cash Report" (which always follows it,
+    confirmed ordering) must be summed, not just the first one matched.
+    Each row's 6 numeric columns are
+    [MTM_MTD, MTM_YTD, RealizedST_MTD, RealizedST_YTD, RealizedLT_MTD, RealizedLT_YTD].
+    """
+    header_m = _IBKR_PERFORMANCE_SUMMARY_HEADER_RE.search(section_text)
+    if not header_m:
+        return 0.0, 0.0
+    table_text = section_text[header_m.end() :]
+    cash_report_idx = table_text.find("Cash Report")
+    if cash_report_idx != -1:
+        table_text = table_text[:cash_report_idx]
+    stcg = 0.0
+    ltcg = 0.0
+    for row_m in _IBKR_TOTAL_ASSET_CLASS_ROW_RE.finditer(table_text):
+        tokens = row_m.group(1).split()
+        stcg += _parse_currency(tokens[3])
+        ltcg += _parse_currency(tokens[5])
+    return stcg, ltcg
+
+
+_IBKR_STATEMENT_DATE_RE = re.compile(r"Activity Statement[ \n-]+([A-Za-z]+ \d{1,2}, \d{4})")
+
+
+def _extract_ibkr_period_end(full_text: str) -> str:
+    """The statement's as-of date is document-wide, not per-account --
+    identical across every account section (confirmed: 3 identical matches
+    in a real 3-account sample)."""
+    m = _IBKR_STATEMENT_DATE_RE.search(full_text)
+    if not m:
+        raise StatementParseError("No statement date found in IBKR statement text.")
+    return datetime.strptime(m.group(1), "%B %d, %Y").date().isoformat()
+
+
+def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
+    sections = _split_ibkr_sections(full_text)
+    period_end = _extract_ibkr_period_end(full_text)
+    records = []
+    for section in sections:
+        account_number, account_type = _detect_ibkr_account(section)
+        dividends, interest = _extract_ibkr_cash_report(section)
+        stcg, ltcg = _extract_ibkr_gains(section)
+        records.append(
+            BrokerageStatementRecord(
+                account_number=account_number,
+                broker="ibkr",
+                account_type=account_type,
+                statement_period_end=period_end,
+                interest_taxable_ytd=interest,
+                # IBKR's Cash Report gives no tax-exempt/taxable split at all
+                # (unlike Schwab/Vanguard) -- UNVERIFIED against a muni-holding
+                # IBKR account, since neither sampled account holds one.
+                interest_tax_exempt_ytd=0.0,
+                dividends_taxable_ytd=dividends,
+                dividends_tax_exempt_ytd=0.0,
+                stcg_net_ytd=stcg,
+                ltcg_net_ytd=ltcg,
+                captured_at=datetime.now(UTC).isoformat(),
+                provenance={"pdf_pages_total": full_text.count("--- page")},
+            )
+        )
+    return records
+
+
+# --- Fidelity -----------------------------------------------------------------
+#
+# Fidelity's consolidated statement PDF is also multi-account (like IBKR),
+# but each account's section-start marker is shaped differently: a bare
+# "Account # <number>" repeats on EVERY page of that account's section
+# (Account Summary, Holdings, Activity, Cash Flow all restate it -- confirmed
+# against a real dump), so it is not usable alone as a splitter anchor. The
+# 2-line combo "Account # <number>\nAccount Summary" occurs exactly once per
+# account and is the correct anchor. Kept as its own function rather than
+# sharing IBKR's splitter -- the marker shapes are meaningfully different.
+
+_FIDELITY_ACCOUNT_NUMBER_RE = re.compile(r"\b(\d{3}-\d{6})\b")
+
+# Order doesn't matter -- both phrases are disjoint and non-overlapping.
+_FIDELITY_ACCOUNT_TYPE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"HEALTH SAVINGS ACCOUNT", re.IGNORECASE), "hsa"),
+    (re.compile(r"ROLLOVER IRA", re.IGNORECASE), "traditional_ira"),
+]
+
+
+def _detect_fidelity_account(section_text: str) -> tuple[str, str]:
+    """Return (account_number, account_type) for one Fidelity account section.
+    Falls back to "unknown" (never guessed) for any account type this parser
+    doesn't recognize -- same safety rule as Vanguard/IBKR fallbacks."""
+    m = _FIDELITY_ACCOUNT_NUMBER_RE.search(section_text)
+    if not m:
+        raise StatementParseError("No account number found in Fidelity account section.")
+    account_number = m.group(1)
+    # Restrict the account-type search to a window near the section start --
+    # the account-name header line (e.g. "CLAUDE R CIRBA - ROLLOVER IRA")
+    # always appears right after "Account Summary" (confirmed against a real
+    # dump). Searching the WHOLE section risks a false match against
+    # unrelated boilerplate or cross-references to other accounts appearing
+    # later in that account's own pages.
+    header_window = section_text[:200]
+    for pattern, account_type in _FIDELITY_ACCOUNT_TYPE_PATTERNS:
+        if pattern.search(header_window):
+            return account_number, account_type
+    return account_number, "unknown"
+
+
+_FIDELITY_SECTION_START_RE = re.compile(r"Account # \d{3}-\d{6}\nAccount Summary")
+
+
+def _split_fidelity_sections(full_text: str) -> list[str]:
+    """Split a consolidated Fidelity statement's full text into one chunk per
+    account, each chunk starting at its "Account # <number>\nAccount Summary"
+    header (confirmed: occurs exactly once per account in a real 2-account
+    sample). A portfolio-level combined summary page precedes the first
+    account's Account Summary and has no such marker of its own, so it is
+    naturally excluded, same as IBKR's roster page.
+    """
+    starts = [m.start() for m in _FIDELITY_SECTION_START_RE.finditer(full_text)]
+    if not starts:
+        raise StatementParseError(
+            "No Fidelity account sections found (no 'Account # ... Account Summary' header detected)."
+        )
+    sections = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(full_text)
+        sections.append(full_text[start:end])
+    return sections
+
+
+_FIDELITY_INCOME_SUMMARY_HEADER_RE = re.compile(r"Income Summary")
+_FIDELITY_TOTAL_INCOME_ROW_RE = re.compile(rf"^Total\s+({_MONEY})\s+({_MONEY})\s*$", re.MULTILINE)
+
+
+def _extract_fidelity_income_ytd(section_text: str) -> float:
+    """Extract the Income Summary's "Total" row Year-to-Date figure.
+
+    Fidelity's Income Summary gives only ONE combined YTD total per account
+    -- a "Tax-deferred" row for the Rollover IRA, a "Tax-free" row for the
+    HSA, never both on the same account, and no "Taxable" column exists at
+    all (confirmed against a real dump). Mapped into dividends_taxable_ytd
+    purely for informational/display completeness; this is NOT actually
+    taxable income -- the record's account_type ("traditional_ira"/"hsa")
+    already excludes the whole record from taxable YTD sums via
+    partition_by_account_type.
+    """
+    header_m = _FIDELITY_INCOME_SUMMARY_HEADER_RE.search(section_text)
+    if not header_m:
+        return 0.0
+    row_m = _FIDELITY_TOTAL_INCOME_ROW_RE.search(section_text, header_m.end())
+    if not row_m:
+        return 0.0
+    return _parse_currency(row_m.group(2))
+
+
+_FIDELITY_PERIOD_RE = re.compile(r"[A-Za-z]+ \d{1,2}, \d{4} - ([A-Za-z]+ \d{1,2}, \d{4})")
+
+
+def _extract_fidelity_period_end(full_text: str) -> str:
+    """The statement period renders as a repeating "<start> - <end>" range
+    header on every page (confirmed: identical across a real 18-page sample)
+    -- the period end is the second date in the range."""
+    m = _FIDELITY_PERIOD_RE.search(full_text)
+    if not m:
+        raise StatementParseError("No statement period found in Fidelity statement text.")
+    return datetime.strptime(m.group(1), "%B %d, %Y").date().isoformat()
+
+
+def _parse_fidelity(full_text: str) -> list[BrokerageStatementRecord]:
+    sections = _split_fidelity_sections(full_text)
+    period_end = _extract_fidelity_period_end(full_text)
+    records = []
+    for section in sections:
+        account_number, account_type = _detect_fidelity_account(section)
+        income_ytd = _extract_fidelity_income_ytd(section)
+        records.append(
+            BrokerageStatementRecord(
+                account_number=account_number,
+                broker="fidelity",
+                account_type=account_type,
+                statement_period_end=period_end,
+                interest_taxable_ytd=0.0,
+                interest_tax_exempt_ytd=0.0,
+                dividends_taxable_ytd=income_ytd,
+                dividends_tax_exempt_ytd=0.0,
+                stcg_net_ytd=0.0,
+                ltcg_net_ytd=0.0,
+                captured_at=datetime.now(UTC).isoformat(),
+                provenance={"pdf_pages_total": full_text.count("--- page")},
+            )
+        )
+    return records
+
+
 # ---------------------------------------------------------------------------
 # PDF wrapper (pdfplumber deferred -- Pyodide-safe)
 # ---------------------------------------------------------------------------
 
 
-def parse_statement_pdf(data: bytes) -> BrokerageStatementRecord:
+def parse_statement_pdf(data: bytes) -> list[BrokerageStatementRecord]:
     """Parse a brokerage statement PDF from raw bytes. pdfplumber import
-    deferred for Pyodide safety -- only local installs call this."""
+    deferred for Pyodide safety -- only local installs call this.
+
+    Returns one record per account found (see parse_statement_text)."""
     import io
 
     import pdfplumber
@@ -335,7 +676,7 @@ def scan_statement_folder(folder: Path) -> tuple[list[BrokerageStatementRecord],
     errors: list[str] = []
     for pdf_path in sorted(folder.glob("*.[pP][dD][fF]")):
         try:
-            records.append(parse_statement_pdf(pdf_path.read_bytes()))
+            records.extend(parse_statement_pdf(pdf_path.read_bytes()))
         except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
             errors.append(f"{pdf_path.name}: {exc}")
     return records, errors
@@ -368,8 +709,11 @@ def partition_by_account_type(
     """Split accounts into (taxable, excluded_retirement, needs_confirmation).
 
     - taxable: account_type == "taxable" -- safe to sum into YTD income.
-    - excluded_retirement: "traditional_ira" or "roth_ira" -- never counted,
-      but returned (not silently dropped) so the UI can show them explicitly.
+    - excluded_retirement: "traditional_ira", "roth_ira", or "hsa" -- never
+      counted, but returned (not silently dropped) so the UI can show them
+      explicitly. HSA accounts are excluded here because dividends/interest
+      earned *inside* the account are never currently-taxable events; this
+      does NOT model HSA *distribution* taxation (see ACCOUNT_TYPES docstring).
     - needs_confirmation: "unknown" -- excluded from sums by default until a
       human confirms the type (see views/ytd_income.py).
     """
@@ -379,7 +723,7 @@ def partition_by_account_type(
     for account_number, rec in by_account.items():
         if rec.account_type == "taxable":
             taxable[account_number] = rec
-        elif rec.account_type in ("traditional_ira", "roth_ira"):
+        elif rec.account_type in ("traditional_ira", "roth_ira", "hsa"):
             excluded[account_number] = rec
         else:
             unknown[account_number] = rec
