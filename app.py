@@ -110,7 +110,7 @@ if "ssa_snapshot_you" not in st.session_state:
         if _your_fra_age is not None:
             _your_fra_match = match_fra_estimate(_cached_ssa_you.estimates, _your_fra_age)
             if _your_fra_match is not None:
-                st.session_state.your_ss_fra = _your_fra_match.monthly_amount
+                st.session_state.your_ss_fra = int(round(_your_fra_match.monthly_amount))
 
 if "ssa_snapshot_spouse" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
@@ -122,7 +122,7 @@ if "ssa_snapshot_spouse" not in st.session_state:
         if _spouse_fra_age is not None:
             _spouse_fra_match = match_fra_estimate(_cached_ssa_spouse.estimates, _spouse_fra_age)
             if _spouse_fra_match is not None:
-                st.session_state.spouse_ss_fra = _spouse_fra_match.monthly_amount
+                st.session_state.spouse_ss_fra = int(round(_spouse_fra_match.monthly_amount))
 
 # Hydrate prior_year_magi from PDF cache (FinExtract wins; PDF fills historical gaps).
 # merge_pdf_magi only fills absent/zero years so manual edits are preserved.
