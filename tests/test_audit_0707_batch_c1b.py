@@ -172,11 +172,12 @@ class TestSU1SEC02TOCTOU:
         result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=True)
         assert result == key
 
-    def test_non_secret_0o644_loads_with_warning(
+    def test_non_secret_0o644_loads_without_warning(
         self, tmp_path: Path
     ) -> None:
-        """Non-secret key with lax perms must warn but still load."""
+        """Non-secret key with 0o644 (readable, not writable) loads with no warning."""
         import base64
+        import warnings
 
         from engine.data_bridge_keys import _try_load
 
@@ -185,7 +186,25 @@ class TestSU1SEC02TOCTOU:
         key_file.write_text(base64.b64encode(key).decode("ascii") + "\n")
         key_file.chmod(0o644)
 
-        with pytest.warns(RuntimeWarning, match="group- or world-readable"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=False)
+        assert result == key
+
+    def test_non_secret_world_writable_loads_with_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-secret key with a world-writable mode must warn but still load."""
+        import base64
+
+        from engine.data_bridge_keys import _try_load
+
+        key = b"\xef" * 32
+        key_file = tmp_path / "data-bridge.pub"
+        key_file.write_text(base64.b64encode(key).decode("ascii") + "\n")
+        key_file.chmod(0o646)
+
+        with pytest.warns(RuntimeWarning, match="group- or world-writable"):
             result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=False)
         assert result == key
 
