@@ -125,10 +125,12 @@ def render(hh: Household):
             apply_account_type_overrides,
             load_account_type_overrides,
             load_statement_folder_path,
+            load_statement_records,
             partition_by_account_type,
             pick_latest_per_account,
             save_account_type_override,
             save_statement_folder_path,
+            save_statement_records,
             scan_statement_folder,
         )
 
@@ -187,6 +189,15 @@ def render(hh: Household):
                 overrides = load_account_type_overrides()
                 by_account = apply_account_type_overrides(by_account, overrides)
                 st.session_state["statement_by_account"] = by_account
+                save_statement_records(by_account)
+
+        if "statement_by_account" not in st.session_state:
+            _cached_by_account = load_statement_records()
+            if _cached_by_account:
+                _cached_by_account = apply_account_type_overrides(
+                    _cached_by_account, load_account_type_overrides()
+                )
+            st.session_state["statement_by_account"] = _cached_by_account
 
         statement_by_account = st.session_state.get("statement_by_account", {})
         if statement_by_account:
