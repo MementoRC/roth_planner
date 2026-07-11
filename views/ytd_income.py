@@ -8,6 +8,7 @@ Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
 from datetime import date as _date
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -65,7 +66,7 @@ def render(hh: Household):
         with col_sync:
             sync_ytd = st.button(
                 "Sync from FinExtract",
-                help="Pull realized gains and YTD income from ingestion server",
+                help="Pull NQO exercise income from ingestion server",
                 key="ytd_sync_btn",
             )
         if sync_ytd:
@@ -81,11 +82,13 @@ def render(hh: Household):
                 ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
             if ytd_snap.snapshot_date:
                 # wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
-                # spouse_ira_conversions_ytd, ira_distributions_ytd, and
-                # tax_exempt_interest_ytd are manual-entry-only (FinExtract's
-                # tax_return/ytd_income endpoint that used to supply them has been
-                # retired) — preserve whatever was already recorded instead of letting
-                # a sync silently zero them out.
+                # spouse_ira_conversions_ytd, and ira_distributions_ytd are
+                # manual-entry-only. interest_ytd, tax_exempt_interest_ytd,
+                # ordinary_dividends_ytd, ltcg_ytd, stcg_ytd, and gain_events are now
+                # sourced from brokerage statement PDFs (see the section below), not
+                # FinExtract — fetch_ytd_snapshot no longer populates any of these.
+                # Preserve whatever was already recorded instead of letting this
+                # NQO-only sync silently zero them out.
                 prev = st.session_state.get("ytd_snapshot")
                 if prev is not None:
                     ytd_snap.wages_ytd = prev.wages_ytd
@@ -94,17 +97,135 @@ def render(hh: Household):
                     ytd_snap.ira_conversions_ytd = prev.ira_conversions_ytd
                     ytd_snap.spouse_ira_conversions_ytd = prev.spouse_ira_conversions_ytd
                     ytd_snap.ira_distributions_ytd = prev.ira_distributions_ytd
+                    ytd_snap.interest_ytd = prev.interest_ytd
                     ytd_snap.tax_exempt_interest_ytd = prev.tax_exempt_interest_ytd
+                    ytd_snap.ordinary_dividends_ytd = prev.ordinary_dividends_ytd
+                    ytd_snap.ltcg_ytd = prev.ltcg_ytd
+                    ytd_snap.stcg_ytd = prev.stcg_ytd
+                    ytd_snap.gain_events = prev.gain_events
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:
-                    st.success(f"Synced YTD data ({len(ytd_snap.gain_events)} gain events)")
+                    st.success(f"Synced NQO exercise data ({len(ytd_snap.gain_events)} gain events)")
                 # Auto-deselect manual entry so the page switches to synced-data display
                 st.session_state["ytd_manual_entry"] = False
                 st.rerun()
             else:
                 with col_status:
                     st.warning("FinExtract unavailable — use manual entry below")
+
+        st.markdown("##### Sync from Brokerage Statements (PDF)")
+        st.caption(
+            "Reads the latest monthly/quarterly statement per account for accurate YTD "
+            "interest, dividends (with tax-exempt split), and realized gains. This is the "
+            "authoritative source for these figures — FinExtract's live feed cannot "
+            "distinguish tax-exempt income or separate taxable from Roth/IRA accounts."
+        )
+        from engine.brokerage_statement_pdf import (
+            apply_account_type_overrides,
+            load_account_type_overrides,
+            load_statement_folder_path,
+            partition_by_account_type,
+            pick_latest_per_account,
+            save_account_type_override,
+            save_statement_folder_path,
+            scan_statement_folder,
+        )
+
+        default_folder = load_statement_folder_path() or ""
+        folder_input = st.text_input(
+            "Statement folder",
+            value=default_folder,
+            key="statement_folder_path",
+            help="Local folder containing Schwab/Vanguard statement PDFs.",
+        )
+        if st.button("Scan statement folder", key="scan_statements_btn"):
+            # This is a local single-user desktop tool -- the account owner
+            # supplies a folder path on their own trusted machine (e.g.
+            # ~/Downloads or ~/Documents/Statements), so there is no attacker
+            # controlling this input in this tool's threat model. The
+            # mitigation is therefore normalization + directory-type
+            # validation -- reject blank input, then resolve away ".." and
+            # symlink traversal before the path is ever used in glob()/
+            # read_bytes() -- not sandboxing against a hostile actor. As a
+            # real (not just documentation-only) containment boundary, the
+            # resolved path is also required to live under the user's home
+            # directory, since statements only ever live under e.g.
+            # ~/Downloads in actual usage.
+            if not folder_input or not folder_input.strip():
+                st.error("Statement folder cannot be empty.")
+                folder_path = None
+            else:
+                raw_folder = folder_input.strip()
+                # Defensive input validation before path construction.
+                # Reject control characters (including NUL) in user-provided text.
+                if any(ord(ch) < 32 for ch in raw_folder):
+                    st.error("Statement folder contains invalid characters.")
+                    folder_path = None
+                elif ".." in raw_folder:
+                    st.error("Statement folder path may not contain '..'.")
+                    folder_path = None
+                else:
+                    candidate = Path(raw_folder).expanduser().resolve()
+                    if not candidate.is_relative_to(Path.home()):
+                        st.error(
+                            f"Statement folder must be under your home directory ({Path.home()}): {candidate}"
+                        )
+                        folder_path = None
+                    else:
+                        folder_path = candidate
+            if folder_path is None:
+                pass
+            elif not folder_path.is_dir():
+                st.error(f"Not a folder: {folder_path}")
+            else:
+                save_statement_folder_path(str(folder_path))
+                records, errors = scan_statement_folder(folder_path)
+                if errors:
+                    st.warning(f"{len(errors)} file(s) could not be parsed: " + "; ".join(errors))
+                by_account = pick_latest_per_account(records)
+                overrides = load_account_type_overrides()
+                by_account = apply_account_type_overrides(by_account, overrides)
+                st.session_state["statement_by_account"] = by_account
+
+        statement_by_account = st.session_state.get("statement_by_account", {})
+        if statement_by_account:
+            stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(statement_by_account)
+
+            if stmt_excluded:
+                st.info(
+                    "Excluded (retirement account, never counted toward taxable YTD income): "
+                    + ", ".join(f"{acc} ({rec.broker}, {rec.account_type})" for acc, rec in stmt_excluded.items())
+                )
+
+            if stmt_unknown:
+                st.warning(
+                    f"{len(stmt_unknown)} account(s) have no stated tax status in their statement "
+                    "(this is normal for Schwab) — confirm each before its figures count:"
+                )
+                for account_number, rec in stmt_unknown.items():
+                    choice = st.selectbox(
+                        f"Account {account_number} ({rec.broker})",
+                        options=["-- confirm --", "taxable", "traditional_ira", "roth_ira"],
+                        key=f"account_type_confirm_{account_number}",
+                    )
+                    if choice != "-- confirm --":
+                        save_account_type_override(account_number, choice)
+                        st.rerun()
+
+            if stmt_taxable:
+                st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
+                if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
+                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+
+                    prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
+                    updated_ytd = apply_brokerage_statement_records(prev_ytd, stmt_taxable)
+                    updated_ytd.with_snapshot_date()
+                    st.session_state.ytd_snapshot = updated_ytd
+                    st.session_state["ytd_manual_entry"] = False
+                    save_ytd_snapshot(updated_ytd)
+                    st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+                    st.rerun()
 
     manual = st.checkbox(
         "Manual entry",

@@ -1,5 +1,6 @@
 """Smoke tests for views/ytd_income.py — NQO exercises display (PR3)."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import views.ytd_income as ytd_income_mod
@@ -393,9 +394,10 @@ class TestManualEntryAutoDeselect:
         assert not mock_st.rerun.called, "On failed sync, st.rerun() should not be called"
 
     def test_sync_preserves_manual_only_fields_not_zeroed(self):
-        """FinExtract's tax_return/ytd_income endpoint is retired — a sync must not
-        zero out the fields it used to own; whatever was already recorded (manual
-        entry) must survive."""
+        """The FinExtract sync button is NQO-exercises-only now — investment income
+        (interest/dividends/gains) comes from brokerage statement PDFs instead, and
+        the manual-entry-only fields were always FinExtract-independent. Neither
+        category may be zeroed out by an NQO-only sync."""
         hh = _stub_hh()
         prior_ytd = YTDSnapshot(
             tax_year=hh.base_year,
@@ -406,6 +408,10 @@ class TestManualEntryAutoDeselect:
             spouse_ira_conversions_ytd=7_500.0,
             ira_distributions_ytd=10_000.0,
             tax_exempt_interest_ytd=1_500.0,
+            ltcg_ytd=50_000.0,
+            stcg_ytd=4_000.0,
+            ordinary_dividends_ytd=3_000.0,
+            interest_ytd=600.0,
         )
         mock_st = _make_mock_st(prior_ytd)
         mock_st.button.return_value = True
@@ -416,12 +422,12 @@ class TestManualEntryAutoDeselect:
         # halts execution immediately after a successful sync.
         mock_st.checkbox.return_value = False
 
-        # Fresh sync — FinExtract no longer supplies the fields above, so they come
-        # back at their dataclass defaults (0.0) on the newly-fetched snapshot.
+        # Fresh sync — fetch_ytd_snapshot no longer supplies ANY investment-income
+        # field (that's brokerage-statement-sourced now); a real sync only ever sets
+        # manually_entered/snapshot_date, so the fresh snapshot has none of the
+        # fields above populated.
         synced_ytd = YTDSnapshot(
             tax_year=hh.base_year,
-            ltcg_ytd=50_000.0,
-            ordinary_dividends_ytd=3_000.0,
             snapshot_date="2026-06-12",
         )
 
@@ -445,9 +451,12 @@ class TestManualEntryAutoDeselect:
         assert result.spouse_ira_conversions_ytd == 7_500.0
         assert result.ira_distributions_ytd == 10_000.0
         assert result.tax_exempt_interest_ytd == 1_500.0
-        # Fields FinExtract still supplies come from the fresh sync
+        # Investment-income fields are statement-sourced now, not FinExtract-sourced
+        # -- an NQO-only sync must preserve them from the prior snapshot too.
         assert result.ltcg_ytd == 50_000.0
+        assert result.stcg_ytd == 4_000.0
         assert result.ordinary_dividends_ytd == 3_000.0
+        assert result.interest_ytd == 600.0
 
 
 class TestTaxBracketAndSafeHarborSections:
@@ -719,3 +728,273 @@ class TestIncomeEventLog:
 
         saved = mock_st.session_state.ytd_snapshot
         assert saved.ira_conversions_ytd == 25_000.0
+
+
+class TestBrokerageStatementSync:
+    """Tests for the 'Sync from Brokerage Statements (PDF)' section — the account-type
+    safety property this whole feature exists for: a Roth/IRA statement scanned
+    alongside a taxable one must never contribute to taxable YTD income."""
+
+    def test_scan_stores_parsed_accounts_in_session_state(self, tmp_path, monkeypatch):
+        """Clicking 'Scan statement folder' stores the parsed-and-latest-per-account
+        dict in session_state under 'statement_by_account' (verified via the same
+        __setitem__ call-tracking pattern used elsewhere in this file, since the
+        session_state mock's .get() is not linked to bracket-assignment)."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX9320",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1028.55,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([taxable_rec], [])),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, "Expected statement_by_account to be stored in session_state after a scan"
+        stored = setitem_calls[-1][0][1]
+        assert stored["XXXX9320"].account_type == "taxable"
+
+    def test_roth_ira_statement_excluded_from_taxable_partition(self, tmp_path, monkeypatch):
+        """Regression test for the exact bug that motivated this whole feature: a
+        Roth IRA statement scanned into session_state must partition to 'excluded',
+        never to 'taxable' — verified by re-running the same partition function the
+        view uses on whatever it actually stored."""
+        from engine.brokerage_statement_pdf import (
+            BrokerageStatementRecord,
+            partition_by_account_type,
+        )
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        roth_rec = BrokerageStatementRecord(
+            account_number="XXXX7368",
+            broker="vanguard",
+            account_type="roth_ira",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=283.86,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([roth_rec], [])),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls
+        stored = setitem_calls[-1][0][1]
+        taxable, excluded, unknown = partition_by_account_type(stored)
+        assert "XXXX7368" not in taxable
+        assert "XXXX7368" in excluded
+        assert unknown == {}
+
+    def test_blank_folder_input_rejected_without_crashing(self):
+        """Empty/blank statement-folder input must produce a clear st.error,
+        not a Path()/glob() crash — regression test for the CodeQL path-injection
+        finding on PR #348 (validate-before-construct)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = "   "  # blank/whitespace-only
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for blank statement-folder input"
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_control_char_in_folder_input_rejected(self):
+        """A statement-folder input containing a control character (e.g. an
+        embedded NUL byte) must be rejected with a clear st.error before a
+        Path object is ever constructed — defensive validation requested on
+        PR #348 (reject ord(ch) < 32 in user-provided text)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = "\x00/some/path"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a control character in statement-folder input"
+        error_msg = mock_st.error.call_args[0][0]
+        assert "invalid characters" in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_traversal_input_is_rejected_before_path_construction(self, tmp_path, monkeypatch):
+        """A folder path containing a literal '..' segment must be rejected
+        with a clear st.error BEFORE any Path object is ever constructed —
+        this is now the earliest possible rejection point (ahead of
+        .expanduser()/.resolve()), per the CodeQL py/path-injection query,
+        which flags the Path() construction line itself as the taint sink.
+        Silently normalizing '..' away downstream is no longer acceptable;
+        traversal-shaped input must never reach Path() at all."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        real_dir = tmp_path / "Statements"
+        real_dir.mkdir()
+        traversal_input = str(tmp_path / "Statements" / "sub" / "..")
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = traversal_input
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder path containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_double_dot_substring_rejected_before_scan(self, tmp_path, monkeypatch):
+        """A statement-folder input containing '..' as a substring (classic
+        path-traversal shape, e.g. '../../etc' or 'foo/../bar') must be
+        rejected with a clear st.error before scan_statement_folder or
+        save_statement_folder_path is ever called — regression test for the
+        persistent CodeQL py/path-injection alert on PR #348, which flags the
+        Path() construction line itself as the taint sink. The guard must
+        run strictly before any Path()-based operation."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = "../../etc"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder input containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_folder_outside_home_is_rejected(self, tmp_path, monkeypatch):
+        """A resolved statement-folder path outside the user's home directory must
+        be rejected with a clear st.error and must never reach scan_statement_folder
+        — the real containment boundary behind the CodeQL 'uncontrolled data used in
+        path expression' fix, not just normalization."""
+        fake_home = tmp_path / "home_dir"
+        fake_home.mkdir()
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = str(outside_dir)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder outside the home directory"
+        error_msg = mock_st.error.call_args[0][0]
+        assert "home directory" in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
