@@ -251,10 +251,10 @@ class TestSecretKeyPermissions:
         result = _try_load("ROTH_PLANNER_DATA_BRIDGE_PRIVKEY", key_file, secret=True)
         assert result == expected_key
 
-    def test_non_secret_lax_644_still_loads_with_warning(
+    def test_non_secret_644_loads_without_warning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Public key (secret=False) with 0o644 loads successfully but emits a warning."""
+        """Public key (secret=False) with 0o644 loads successfully with no warning."""
         from engine.data_bridge_keys import _try_load
 
         key_file = tmp_path / "data-bridge.pub"
@@ -266,8 +266,27 @@ class TestSecretKeyPermissions:
             result = _try_load("ROTH_PLANNER_DATA_BRIDGE_PUBKEY", key_file, secret=False)
 
         assert result == expected_key, "Public key with 0o644 should load"
+        assert not any(issubclass(warning.category, RuntimeWarning) for warning in w), (
+            "0o644 is readable-but-not-writable and should not warn"
+        )
+
+    def test_non_secret_world_writable_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Public key (secret=False) with a world-writable mode loads but emits a warning."""
+        from engine.data_bridge_keys import _try_load
+
+        key_file = tmp_path / "data-bridge.pub"
+        expected_key = self._write_key_with_mode(key_file, 0o646)
+        monkeypatch.delenv("ROTH_PLANNER_DATA_BRIDGE_PUBKEY", raising=False)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _try_load("ROTH_PLANNER_DATA_BRIDGE_PUBKEY", key_file, secret=False)
+
+        assert result == expected_key, "Public key with 0o646 should still load"
         assert any(issubclass(warning.category, RuntimeWarning) for warning in w), (
-            "Expected RuntimeWarning for lax-permission public key"
+            "Expected RuntimeWarning for world-writable public key"
         )
 
     def test_load_privkey_uses_secret_path(

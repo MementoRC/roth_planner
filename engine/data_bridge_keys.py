@@ -59,7 +59,9 @@ def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | Non
     When *secret* is True (private keys), the file must have restrictive
     permissions (mode & 0o077 == 0). If lax, return None rather than loading
     a potentially compromised key (SU1-SEC-01).
-    When *secret* is False (public keys), lax permissions emit a warning only.
+    When *secret* is False (public keys), only group/world-*writable*
+    permissions emit a warning; readable-but-not-writable (e.g. 0o644) is
+    fine and does not warn.
 
     SU1-SEC-02: the fd is opened first with O_NOFOLLOW, then permissions are
     derived from os.fstat(fd) — not from a separate path.stat() call — to
@@ -76,7 +78,12 @@ def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | Non
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             try:
                 file_mode = stat.S_IMODE(os.fstat(fd).st_mode)
-                if file_mode & 0o077:
+                # Secret keys: any group/world access is unsafe. Public keys:
+                # only group/world-*writable* is a threat (an attacker could
+                # substitute their own pubkey and redirect encrypted exports);
+                # readability is fine and intended — write_keypair writes 0o644.
+                lax_mask = 0o077 if secret else 0o022
+                if file_mode & lax_mask:
                     if secret:
                         # SU1-SEC-01: refuse to load secret key with lax permissions.
                         warnings.warn(
@@ -88,8 +95,8 @@ def _try_load(env_name: str, path: Path, *, secret: bool = False) -> bytes | Non
                         )
                         return None
                     warnings.warn(
-                        f"{path}: key file is group- or world-readable (mode {oct(file_mode)}); "
-                        "consider restricting to 0o600.",
+                        f"{path}: public key file is group- or world-writable (mode {oct(file_mode)}); "
+                        "consider restricting to 0o644.",
                         RuntimeWarning,
                         stacklevel=3,
                     )

@@ -450,18 +450,35 @@ class TestKeyfileNofollow:
         write_keypair(b"\x01" * 32, b"\x02" * 32)
         assert stat.S_IMODE(priv_path.stat().st_mode) == 0o600
 
-    def test_load_warns_on_world_readable_keyfile(self, monkeypatch, tmp_path):
-        """L2: loading a world-readable key file emits a RuntimeWarning."""
+    def test_load_no_warning_on_world_readable_public_keyfile(self, monkeypatch, tmp_path):
+        """L2: a 0o644 (readable, not writable) public key loads without warning."""
         import base64
 
         raw = b"\xcc" * 32
         key_path = tmp_path / "data-bridge.priv"
         key_path.write_bytes(base64.b64encode(raw) + b"\n")
-        key_path.chmod(0o644)  # group+world readable — should warn
+        key_path.chmod(0o644)  # group+world readable, not writable — should NOT warn
 
         monkeypatch.delenv(PRIVKEY_ENV, raising=False)
 
-        with pytest.warns(RuntimeWarning, match="group- or world-readable"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            result = _try_load(PRIVKEY_ENV, key_path)
+
+        assert result == raw
+
+    def test_load_warns_on_world_writable_keyfile(self, monkeypatch, tmp_path):
+        """L2: loading a group/world-writable public key file emits a RuntimeWarning."""
+        import base64
+
+        raw = b"\xbb" * 32
+        key_path = tmp_path / "data-bridge.priv"
+        key_path.write_bytes(base64.b64encode(raw) + b"\n")
+        key_path.chmod(0o646)  # group+world writable — should warn
+
+        monkeypatch.delenv(PRIVKEY_ENV, raising=False)
+
+        with pytest.warns(RuntimeWarning, match="group- or world-writable"):
             result = _try_load(PRIVKEY_ENV, key_path)
 
         assert result == raw
