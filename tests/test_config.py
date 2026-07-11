@@ -49,12 +49,14 @@ class TestOverrideLoader:
     def test_no_override_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)  # no .user_defaults.py in cwd
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         result = load_defaults()
         assert result == DEFAULTS
 
     def test_cwd_override_file_wins(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.py").write_text(
             "OVERRIDES = {'your_age': 99, 'your_ira': 9_000_000}\n"
         )
@@ -66,6 +68,7 @@ class TestOverrideLoader:
 
     def test_env_var_overrides_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.py").write_text("OVERRIDES = {'your_age': 50}\n")
         env_file = tmp_path / "env_overrides.py"
         env_file.write_text("OVERRIDES = {'your_age': 70}\n")
@@ -76,6 +79,7 @@ class TestOverrideLoader:
     def test_partial_override_merges(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.py").write_text("OVERRIDES = {'your_ira': 1_000_000}\n")
         result = load_defaults()
         assert result["your_ira"] == 1_000_000
@@ -86,6 +90,7 @@ class TestOverrideLoader:
         """If the file exists but has no OVERRIDES, fall through to DEFAULTS."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.py").write_text("# empty\n")
         result = load_defaults()
         assert result == DEFAULTS
@@ -99,6 +104,7 @@ class TestJsonOverrideLoader:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.json").write_text(
             json.dumps({"your_age": 63, "spouse_age": 57})
         )
@@ -113,6 +119,7 @@ class TestJsonOverrideLoader:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         strikes = {"2019": 104.41, "2020": 130.52, "2021": 169.23}
         (tmp_path / ".user_defaults.json").write_text(json.dumps({"grant_strikes": strikes}))
         result = load_defaults()
@@ -124,6 +131,7 @@ class TestJsonOverrideLoader:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         json_file = tmp_path / "my_overrides.json"
         json_file.write_text(json.dumps({"your_age": 70, "living_expenses": 80_000}))
         monkeypatch.setenv("ROTH_PLANNER_DEFAULTS", str(json_file))
@@ -135,6 +143,7 @@ class TestJsonOverrideLoader:
         """When both .user_defaults.json and .user_defaults.py exist, JSON wins."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.json").write_text(json.dumps({"your_age": 99}))
         (tmp_path / ".user_defaults.py").write_text("OVERRIDES = {'your_age': 1}\n")
         result = load_defaults()
@@ -145,6 +154,7 @@ class TestJsonOverrideLoader:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.json").write_text("not valid json{{")
         result = load_defaults()
         assert result["your_age"] == DEFAULTS["your_age"]
@@ -217,6 +227,7 @@ class TestSaveUserDefaults:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         save_user_defaults({"your_age": 63, "spouse_age": 57})
         result = load_defaults()
         assert result["your_age"] == 63
