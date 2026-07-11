@@ -8,8 +8,7 @@ import stat
 import pytest
 
 from engine.portfolio_sync.portfolio import save_snapshot
-from engine.portfolio_sync.shapes import PortfolioSnapshot, TaxReturnSnapshot
-from engine.portfolio_sync.tax_return import save_tax_snapshot
+from engine.portfolio_sync.shapes import PortfolioSnapshot
 from engine.tax_return_pdf import save_pdf_tax_records
 
 
@@ -20,12 +19,6 @@ class TestCacheFilePermissions:
         cache_file = tmp_path / ".portfolio_cache.json"
         monkeypatch.setattr("engine.portfolio_sync.portfolio._CACHE_PATH", cache_file)
         save_snapshot(PortfolioSnapshot())
-        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
-
-    def test_tax_return_cache_mode_600(self, monkeypatch, tmp_path):
-        cache_file = tmp_path / ".tax_return_cache.json"
-        monkeypatch.setattr("engine.portfolio_sync.tax_return._TAX_CACHE_PATH", cache_file)
-        save_tax_snapshot(TaxReturnSnapshot())
         assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
 
     def test_pdf_tax_cache_mode_600(self, monkeypatch, tmp_path):

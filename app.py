@@ -86,13 +86,6 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_s
         if _spouse_roth > 0:
             st.session_state.spouse_roth = int(_spouse_roth)
 
-if "tax_return_snapshot" not in st.session_state:
-    from engine.portfolio_sync import load_tax_snapshot
-
-    _cached_tax = load_tax_snapshot()
-    if _cached_tax is not None:
-        st.session_state.tax_return_snapshot = _cached_tax
-
 if "ytd_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_ytd_snapshot
 

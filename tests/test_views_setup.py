@@ -379,14 +379,6 @@ class TestClearPersonalSessionState:
             "the text_input widget retains the pasted key after Reset to demo"
         )
 
-    def test_tax_return_snapshot_cleared(self):
-        """tax_return_snapshot must be cleared on Reset-to-demo (M16)."""
-        source = self._state_source()
-        assert "tax_return_snapshot" in source, (
-            "_clear_personal_session_state does not clear tax_return_snapshot — "
-            "stale prior-year MAGI survives a Reset to demo"
-        )
-
     def test_ytd_snapshot_cleared(self):
         """ytd_snapshot must be cleared on Reset-to-demo (M16)."""
         source = self._state_source()

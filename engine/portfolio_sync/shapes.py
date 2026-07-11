@@ -203,48 +203,6 @@ class PortfolioSnapshot:
 
 
 @dataclass
-class TaxReturnSnapshot:
-    """Parsed TurboTax income and deduction data from FinExtract."""
-
-    tax_year: str = "current"  # "current" or "prior"
-    wages: float = 0.0  # W-2 wages
-    nec_income: float = 0.0  # 1099-NEC (self-employment/contract)
-    investment_income: float = 0.0  # Investments and savings (1099-B/DIV/INT)
-    ira_distributions: float = 0.0  # 1099-R IRA/401k/pension withdrawals
-    hsa_distributions: float = 0.0  # 1099-SA HSA/MSA
-    misc_income: float = 0.0  # 1099-MISC, 1099-A, 1099-C
-    hsa_contributions: float = 0.0  # Form 5498 HSA
-    ira_contributions: float = 0.0  # Form 5498 IRA (Traditional + Roth combined)
-    sales_tax: float = 0.0
-    foreign_tax_credit: float = 0.0
-    server_available: bool = False
-    error: str | None = None
-
-    @property
-    def total_income(self) -> float:
-        """Sum of all income sources (rough AGI proxy)."""
-        return (
-            self.wages
-            + self.nec_income
-            + self.investment_income
-            + self.ira_distributions
-            + self.hsa_distributions
-            + self.misc_income
-        )
-
-    @property
-    def estimated_magi(self) -> float:
-        """Rough MAGI estimate: total income minus above-the-line deductions.
-
-        For Roth eligibility, MAGI ≈ AGI + foreign income exclusion.
-        HSA contributions are above-the-line. Half SE tax on 1099-NEC is too.
-        This is approximate — TurboTax shows the real number.
-        """
-        se_deduction = self.nec_income * 0.07065  # employer-equiv half SE tax: 0.9235 × 15.3% / 2
-        return self.total_income - self.hsa_contributions - se_deduction
-
-
-@dataclass
 class SSABenefitEstimate:
     """One row from FinExtract's ssa-retirement-benefit-estimates-v1 schema."""
 

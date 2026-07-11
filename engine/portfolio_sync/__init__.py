@@ -46,7 +46,6 @@ from .shapes import (
     PortfolioSnapshot,
     SSABenefitEstimate,
     SSASnapshot,
-    TaxReturnSnapshot,
 )
 from .social_security import (
     _SSA_CACHE_PATH,
@@ -55,13 +54,6 @@ from .social_security import (
     load_ssa_snapshot,
     match_fra_estimate,
     save_ssa_snapshot,
-)
-from .tax_return import (
-    _TAX_CACHE_PATH,
-    _parse_tax_rows,
-    fetch_tax_return,
-    load_tax_snapshot,
-    save_tax_snapshot,
 )
 from .ytd import (
     _YTD_CACHE_PATH,
@@ -83,10 +75,8 @@ __all__ = [
     "PortfolioSnapshot",
     "SSABenefitEstimate",
     "SSASnapshot",
-    "TaxReturnSnapshot",
     "_CACHE_PATH",
     "_SSA_CACHE_PATH",
-    "_TAX_CACHE_PATH",
     "_YTD_CACHE_PATH",
     "_classify_account",
     "_classify_symbol",
@@ -99,7 +89,6 @@ __all__ = [
     "_parse_equity_sales_lots",
     "_parse_option_exercises_rows",
     "_parse_quantity",
-    "_parse_tax_rows",
     "_resolve_override",
     "_resolve_owner_hint",
     "apply_dividends_rollup",
@@ -115,11 +104,9 @@ __all__ = [
     "fetch_shares",
     "fetch_ssa_benefit_estimates",
     "fetch_ssa_snapshot",
-    "fetch_tax_return",
     "fetch_ytd_snapshot",
     "load_snapshot",
     "load_ssa_snapshot",
-    "load_tax_snapshot",
     "load_ytd_snapshot",
     "match_fra_estimate",
     "merge_snapshots",
@@ -127,7 +114,6 @@ __all__ = [
     "positions_for_forecast_multi",
     "save_snapshot",
     "save_ssa_snapshot",
-    "save_tax_snapshot",
     "save_ytd_snapshot",
 ]
 
@@ -172,9 +158,6 @@ from . import (
     social_security as _social_security,
 )
 from . import (
-    tax_return as _tax_return,
-)
-from . import (
     ytd as _ytd,
 )
 
@@ -191,10 +174,8 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "PortfolioSnapshot": _shapes,
     "SSABenefitEstimate": _shapes,
     "SSASnapshot": _shapes,
-    "TaxReturnSnapshot": _shapes,
     "_CACHE_PATH": _portfolio,
     "_SSA_CACHE_PATH": _social_security,
-    "_TAX_CACHE_PATH": _tax_return,
     "_YTD_CACHE_PATH": _ytd,
     "_classify_account": _classify,
     "_classify_symbol": _classify,
@@ -207,7 +188,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "_parse_equity_sales_lots": _exercises,
     "_parse_option_exercises_rows": _exercises,
     "_parse_quantity": _classify,
-    "_parse_tax_rows": _tax_return,
     "_resolve_override": _classify,
     "_resolve_owner_hint": _classify,
     "apply_dividends_rollup": _dividends,
@@ -223,11 +203,9 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "fetch_shares": _awards,
     "fetch_ssa_benefit_estimates": _social_security,
     "fetch_ssa_snapshot": _social_security,
-    "fetch_tax_return": _tax_return,
     "fetch_ytd_snapshot": _ytd,
     "load_snapshot": _portfolio,
     "load_ssa_snapshot": _social_security,
-    "load_tax_snapshot": _tax_return,
     "load_ytd_snapshot": _ytd,
     "match_fra_estimate": _social_security,
     "merge_snapshots": _holdings,
@@ -235,7 +213,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "positions_for_forecast_multi": _holdings,
     "save_snapshot": _portfolio,
     "save_ssa_snapshot": _social_security,
-    "save_tax_snapshot": _tax_return,
     "save_ytd_snapshot": _ytd,
 }
 

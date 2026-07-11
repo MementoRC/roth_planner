@@ -13,55 +13,6 @@ import datetime
 import pytest
 
 
-class TestPsyncIncome2HsaSavingsClassification:
-    """psync-income-2: HSA savings rows must not be misclassified as investment_income.
-
-    The 'savings' substring in the investment check fires before the HSA check,
-    so a label like 'HSA savings account distribution' becomes investment_income.
-    Fix: move the HSA distribution check before the investment/savings check.
-    """
-
-    def _parse(self, label: str, amount: float = 500.0) -> dict:
-        from engine.portfolio_sync.tax_return import _parse_tax_rows
-
-        rows = [{"form_label": label, "amount_current": amount}]
-        return _parse_tax_rows(rows, "amount_current")
-
-    def test_hsa_savings_distribution_goes_to_hsa_not_investment(self):
-        """'HSA savings account distribution' must map to hsa_distributions, not investment_income."""
-        result = self._parse("HSA savings account distribution")
-        assert "hsa_distributions" in result, (
-            "Expected hsa_distributions key for HSA savings label"
-        )
-        assert result["hsa_distributions"] == pytest.approx(500.0)
-        assert "investment_income" not in result, (
-            "HSA savings label must NOT produce investment_income"
-        )
-
-    def test_1099_sa_distribution_goes_to_hsa(self):
-        """Standard 1099-SA label must still map to hsa_distributions."""
-        result = self._parse("1099-SA HSA distribution")
-        assert result.get("hsa_distributions") == pytest.approx(500.0)
-        assert "investment_income" not in result
-
-    def test_hsa_savings_contribution_not_reclassified(self):
-        """HSA savings contribution should NOT map to hsa_distributions (has 'contribution')."""
-        result = self._parse("HSA savings account contribution")
-        assert "hsa_contributions" in result
-        assert "hsa_distributions" not in result
-
-    def test_plain_savings_without_hsa_still_investment(self):
-        """A savings label without hsa context must still map to investment_income."""
-        result = self._parse("Interest from savings account")
-        assert result.get("investment_income") == pytest.approx(500.0)
-        assert "hsa_distributions" not in result
-
-    def test_investment_label_still_maps_to_investment_income(self):
-        """Pure investment label must not be affected by the reorder."""
-        result = self._parse("Investment income from brokerage")
-        assert result.get("investment_income") == pytest.approx(500.0)
-
-
 class TestPsyncIncome5MagiYearRangeGuard:
     """psync-income-5: apply_magi must reject out-of-range year values.
 

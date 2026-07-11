@@ -4,15 +4,14 @@ Determines whether you can make a direct Roth IRA contribution based on
 MAGI, and whether the backdoor Roth strategy makes sense given existing
 Traditional IRA balances (pro-rata rule).
 
-When TurboTax data is available via FinExtract, auto-populates income
-figures and IRA contribution amounts.
+MAGI defaults from the prior-year 1040 PDF import (see Setup → Data Bridge)
+when available.
 """
 
 import math
 
 import streamlit as st
 
-from engine.data_bridge_browser import is_pyodide
 from engine.tax_indexing import DEFAULT_CPI, index_tuple, index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
@@ -259,74 +258,17 @@ def render(hh: Household):
         "and whether a backdoor Roth makes sense given your IRA balances."
     )
 
-    # --- TurboTax data sync ---
-    tax_snap = st.session_state.get("tax_return_snapshot")
-
-    if is_pyodide():
-        st.caption(
-            "Live TurboTax sync via FinExtract requires a local install. "
-            "Upload your data in ⚙️ Setup → \U0001f517 Data Bridge."
-        )
-    else:
-        col_sync, col_status = st.columns([1, 3])
-        with col_sync:
-            sync_tax = st.button(
-                "Sync TurboTax Data",
-                help="Pull income & deduction data from FinExtract ingestion server",
-            )
-        if sync_tax:
-            from engine.portfolio_sync import (
-                fetch_tax_return,
-                load_tax_snapshot,
-                save_tax_snapshot,
-            )
-
-            previous_tax = st.session_state.get("tax_return_snapshot") or load_tax_snapshot()
-            tax_snap = fetch_tax_return(previous_tax)
-            if tax_snap.server_available:
-                st.session_state.tax_return_snapshot = tax_snap
-                save_tax_snapshot(tax_snap)
-                with col_status:
-                    st.success("Synced TurboTax data from FinExtract")
-            else:
-                with col_status:
-                    st.error(f"Server unavailable: {tax_snap.error}")
-
-    # Load cached on first visit
-    if tax_snap is None and "tax_return_snapshot" not in st.session_state:
-        from engine.portfolio_sync import load_tax_snapshot
-
-        tax_snap = load_tax_snapshot()
-        if tax_snap is not None:
-            st.session_state.tax_return_snapshot = tax_snap
-
-    # --- Income summary from TurboTax ---
-    if tax_snap and tax_snap.server_available:
-        st.markdown("### Income Summary (from TurboTax)")
-        inc_cols = st.columns(4)
-        inc_cols[0].metric("W-2 Wages", fmt_dollars(tax_snap.wages))
-        inc_cols[1].metric("1099-NEC", fmt_dollars(tax_snap.nec_income))
-        inc_cols[2].metric("Investments", fmt_dollars(tax_snap.investment_income))
-        inc_cols[3].metric("Est. MAGI", fmt_dollars(tax_snap.estimated_magi))
-
-        if tax_snap.ira_distributions > 0:
-            st.write(
-                f"IRA/Pension Distributions (1099-R): **{fmt_dollars(tax_snap.ira_distributions)}**"
-            )
-        if tax_snap.ira_contributions > 0:
-            st.write(
-                f"IRA Contributions (Form 5498): **{fmt_dollars(tax_snap.ira_contributions)}**"
-            )
-        st.markdown("---")
+    # Prior-year MAGI anchor (from the 1040 PDF import) seeds the MAGI default
+    # and the IRMAA 2-year lookback.
+    prior_magi_anchor = st.session_state.get("prior_year_magi") or {}
+    most_recent_year = sorted(prior_magi_anchor.keys(), reverse=True)[0] if prior_magi_anchor else None
 
     # --- Inputs ---
     st.markdown("### Tax Year Info")
     col1, col2 = st.columns(2)
 
-    # Default MAGI from TurboTax if available
-    default_magi = (
-        int(tax_snap.estimated_magi) if tax_snap and tax_snap.server_available else 200_000
-    )
+    # Default MAGI from the most-recent imported 1040 (prior-year anchor), else a placeholder.
+    default_magi = int(prior_magi_anchor[most_recent_year]) if most_recent_year else 200_000
 
     with col1:
         tax_year = st.selectbox(
@@ -339,46 +281,32 @@ def render(hh: Household):
         )
     with col2:
         magi = st.number_input(
-            "Modified AGI" + (" (from TurboTax)" if tax_snap and tax_snap.server_available else ""),
+            "Modified AGI" + (f" (from {most_recent_year} 1040)" if most_recent_year else ""),
             value=default_magi,
             step=5_000,
             format="%d",
-            help="Form 1040 line 11 adjusted for Roth eligibility. "
+            help="Form 1040 line 11 adjusted for Roth eligibility."
             + (
-                "Auto-populated from TurboTax — adjust if needed."
-                if tax_snap and tax_snap.server_available
+                f" Defaulted from your {most_recent_year} 1040 import — adjust if needed."
+                if most_recent_year
                 else ""
             ),
         )
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
-    prior_magi_anchor = st.session_state.get("prior_year_magi") or {}
-    if prior_magi_anchor:
-        sorted_years = sorted(prior_magi_anchor.keys(), reverse=True)
-        most_recent = sorted_years[0]
+    if most_recent_year:
         st.caption(
-            f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi_anchor[most_recent])}"
+            f"Prior-year MAGI anchor ({most_recent_year}): "
+            f"{fmt_dollars(prior_magi_anchor[most_recent_year])}"
             " — used for IRMAA 2-year lookback"
         )
 
     st.markdown("### Your Situation")
     col1, col2, col3 = st.columns(3)
 
-    # Default IRA contributions from TurboTax (split evenly for MFJ as approximation)
-    default_ira_contrib = (
-        int(tax_snap.ira_contributions) if tax_snap and tax_snap.server_available else 0
-    )
-    # If MFJ and total is $8K+, likely both spouses contributed
-    if filing == "MFJ" and default_ira_contrib >= 14_000:
-        default_you = default_ira_contrib // 2
-        default_spouse = default_ira_contrib - default_you
-    elif filing == "MFJ" and default_ira_contrib > 0:
-        # Assume primary contributed, spouse did not (user can adjust)
-        default_you = min(default_ira_contrib, 8_000)
-        default_spouse = max(0, default_ira_contrib - default_you)
-    else:
-        default_you = default_ira_contrib
-        default_spouse = 0
+    # IRA contributions are entered by the user (no TurboTax pre-fill).
+    default_you = 0
+    default_spouse = 0
 
     with col1:
         your_age = st.number_input("Your Age (end of tax year)", value=hh.your_age, step=1)
@@ -396,15 +324,10 @@ def render(hh: Household):
             spouse_workplace = False
     with col3:
         trad_contrib_you = st.number_input(
-            "Your Trad IRA contribution (this year)"
-            + (" *" if tax_snap and tax_snap.server_available else ""),
+            "Your Trad IRA contribution (this year)",
             value=default_you,
             step=500,
             format="%d",
-            help="From TurboTax Form 5498. Includes Traditional + Roth combined — "
-            "adjust to show only Traditional."
-            if tax_snap and tax_snap.server_available
-            else None,
         )
         if filing != "Single":
             trad_contrib_spouse = st.number_input(
@@ -415,12 +338,6 @@ def render(hh: Household):
             )
         else:
             trad_contrib_spouse = 0
-
-    if tax_snap and tax_snap.server_available and default_ira_contrib > 0:
-        st.caption(
-            f"\\* TurboTax reports {fmt_dollars(default_ira_contrib)} total IRA contributions (Form 5498). "
-            "This includes both Traditional and Roth — adjust above to reflect only Traditional contributions."
-        )
 
     st.markdown("### IRA Balances (Dec 31)")
     st.caption(
