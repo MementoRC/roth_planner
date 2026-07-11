@@ -275,9 +275,14 @@ def render(hh: Household):
                 help="Pull income & deduction data from FinExtract ingestion server",
             )
         if sync_tax:
-            from engine.portfolio_sync import fetch_tax_return, save_tax_snapshot
+            from engine.portfolio_sync import (
+                fetch_tax_return,
+                load_tax_snapshot,
+                save_tax_snapshot,
+            )
 
-            tax_snap = fetch_tax_return()
+            previous_tax = st.session_state.get("tax_return_snapshot") or load_tax_snapshot()
+            tax_snap = fetch_tax_return(previous_tax)
             if tax_snap.server_available:
                 st.session_state.tax_return_snapshot = tax_snap
                 save_tax_snapshot(tax_snap)

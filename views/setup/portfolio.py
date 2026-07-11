@@ -24,6 +24,7 @@ from engine.portfolio_sync import (
     fetch_portfolio,
     fetch_tax_return,
     fetch_ytd_snapshot,
+    load_tax_snapshot,
     save_snapshot,
     save_tax_snapshot,
     save_ytd_snapshot,
@@ -278,8 +279,9 @@ def render_portfolio_tab(hh: Household) -> None:
                     snap = apply_dividends_rollup(snap, div_rollup)
                 save_snapshot(snap)
                 st.session_state.portfolio_snapshot = snap
-                # Also sync tax return data
-                tax_snap = fetch_tax_return()
+                # Also sync tax return data (merge onto prior snapshot; never erase)
+                previous_tax = st.session_state.get("tax_return_snapshot") or load_tax_snapshot()
+                tax_snap = fetch_tax_return(previous_tax)
                 if tax_snap.server_available:
                     st.session_state.tax_return_snapshot = tax_snap
                     save_tax_snapshot(tax_snap)
