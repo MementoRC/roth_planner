@@ -317,6 +317,29 @@ def render(hh: Household):
                 help="W-2 federal income tax withheld year-to-date; counts as 'Already paid' toward safe-harbor.",
             )
 
+        st.markdown("##### Above-the-line adjustments")
+        st.caption(
+            "These reduce MAGI (IRMAA/NIIT/ACA) AND ordinary bracket room — they lower AGI "
+            "before either is computed."
+        )
+        atl_col1, atl_col2 = st.columns(2)
+        with atl_col1:
+            hsa_contribution = st.number_input(
+                "HSA contribution YTD",
+                value=int(ytd.hsa_contribution_ytd),
+                step=500,
+                format="%d",
+                help="Deductible HSA contribution (Form 8889). Above-the-line: lowers AGI/MAGI and widens bracket room.",
+            )
+        with atl_col2:
+            deductible_ira = st.number_input(
+                "Deductible IRA contribution YTD",
+                value=int(ytd.deductible_ira_contribution_ytd),
+                step=500,
+                format="%d",
+                help="Deductible traditional-IRA contribution (Schedule 1). Above-the-line: lowers AGI/MAGI and widens bracket room.",
+            )
+
         st.markdown("##### Roth Conversions & IRA Distributions")
         st.caption(
             "Log each conversion or distribution as you execute it — custodian statements "
@@ -393,6 +416,8 @@ def render(hh: Household):
             ira_distributions_ytd=distributions_done,
             income_events=income_events,
             federal_withholding_ytd=float(federal_withholding),
+            hsa_contribution_ytd=float(hsa_contribution),
+            deductible_ira_contribution_ytd=float(deductible_ira),
             gain_events=ytd.gain_events,
             manually_entered=True,
         ).with_snapshot_date()

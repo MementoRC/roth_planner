@@ -51,6 +51,36 @@ class TestHeadroom:
         assert hr_stcg.room_to_12pct < hr_none.room_to_12pct
         assert hr_stcg.room_to_irmaa_t1 < hr_none.room_to_irmaa_t1
 
+    def test_above_the_line_adjustments_widen_all_headroom_by_exact_amount(self):
+        """HSA + deductible-IRA contributions reduce MAGI and ordinary income equally,
+        so every headroom figure they touch should widen by exactly the adjustment total.
+
+        Baseline: default Household (age 61/55, zero SS) with $100K wages — well below
+        IRMAA T1 ($218K) and NIIT ($250K) thresholds and well inside the 12%/22% bracket
+        rooms, so none of the max(..., 0) clamps are hit and deltas are exact.
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        adjustment = 21_150.0
+
+        ytd_base = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        hr_base = compute_headroom(hh, ytd_base)
+
+        ytd_adj = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=100_000.0,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        hr_adj = compute_headroom(hh, ytd_adj)
+
+        assert hr_adj.room_to_12pct - hr_base.room_to_12pct == approx(adjustment)
+        assert hr_adj.room_to_22pct - hr_base.room_to_22pct == approx(adjustment)
+        assert hr_adj.room_to_irmaa_t1 - hr_base.room_to_irmaa_t1 == approx(adjustment)
+        assert hr_adj.room_to_niit - hr_base.room_to_niit == approx(adjustment)
+
     def test_irmaa_not_relevant_before_63(self):
         """Below age 63, IRMAA doesn't apply (Medicare starts at 65, 2-year lookback)."""
         from engine.headroom import compute_headroom
