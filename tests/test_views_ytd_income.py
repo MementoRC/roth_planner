@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import views.ytd_income as ytd_income_mod
+from engine.pdf_import import PdfImportResult
 from models.grants import StockGrant
 from models.household import Household
 from models.ytd_income import YTDSnapshot
@@ -748,7 +749,7 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         taxable_rec = BrokerageStatementRecord(
             account_number="XXXX9320",
@@ -766,7 +767,10 @@ class TestBrokerageStatementSync:
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([taxable_rec], [])),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
@@ -799,7 +803,7 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         roth_rec = BrokerageStatementRecord(
             account_number="XXXX7368",
@@ -817,7 +821,10 @@ class TestBrokerageStatementSync:
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([roth_rec], [])),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[roth_rec]),
+            ),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
@@ -846,11 +853,11 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = "   "  # blank/whitespace-only
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
@@ -873,11 +880,11 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = "\x00/some/path"
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
@@ -910,11 +917,11 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False
         mock_st.text_input.return_value = traversal_input
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
@@ -945,11 +952,11 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False
         mock_st.text_input.return_value = "../../etc"
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
@@ -980,11 +987,11 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False
         mock_st.text_input.return_value = str(outside_dir)
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder") as mock_scan,
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
@@ -1010,7 +1017,7 @@ class TestBrokerageStatementSync:
         mock_st = _make_mock_st(ytd)
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
-        mock_st.button.side_effect = lambda label, **kw: label == "Scan statement folder"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
 
         taxable_rec = BrokerageStatementRecord(
             account_number="XXXX9320",
@@ -1028,7 +1035,10 @@ class TestBrokerageStatementSync:
 
         with (
             patch.object(ytd_income_mod, "st", mock_st),
-            patch("engine.brokerage_statement_pdf.scan_statement_folder", return_value=([taxable_rec], [])),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),

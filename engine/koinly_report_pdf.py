@@ -159,6 +159,15 @@ def _extract_income(income_text: str) -> tuple[float, dict[str, float], float | 
     return summed, per_category, reported_total
 
 
+def is_koinly_report(pages: list[str]) -> bool:
+    """True if *pages* look like a Koinly crypto tax report.
+
+    Content-based, since filenames are unreliable. The vendor name "Koinly" is
+    stamped throughout every report and does not appear in brokerage statements
+    or IRS tax forms, so it is a safe, filename-independent signal."""
+    return any("koinly" in (page or "").lower() for page in pages)
+
+
 def parse_koinly_text(pages: list[str]) -> KoinlyReport:
     """Parse crypto YTD figures from Koinly report page texts. Pure -- no I/O."""
     year: int | None = None
