@@ -163,7 +163,6 @@ def _clear_personal_session_state() -> None:
         "account_type_overrides",
         "data_bridge_privkey_b64",
         "_v2_privkey_input",
-        "tax_return_snapshot",
         "ytd_snapshot",
         "ssa_snapshot_you",
         "ssa_snapshot_spouse",

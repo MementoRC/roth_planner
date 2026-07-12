@@ -44,18 +44,6 @@ class TestPiiJsonSaverModes:
         assert cache_path.exists()
         assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
 
-    def test_save_tax_snapshot_mode_600(self, tmp_path, monkeypatch):
-        from engine.portfolio_sync import tax_return as tr_mod
-        from engine.portfolio_sync.shapes import TaxReturnSnapshot
-
-        cache_path = tmp_path / ".tax_return_cache.json"
-        monkeypatch.setattr(tr_mod, "_TAX_CACHE_PATH", cache_path)
-
-        tr_mod.save_tax_snapshot(TaxReturnSnapshot())
-
-        assert cache_path.exists()
-        assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
-
     def test_save_pdf_tax_records_mode_600(self, tmp_path, monkeypatch):
         import engine.tax_return_pdf as pdf_mod
 
