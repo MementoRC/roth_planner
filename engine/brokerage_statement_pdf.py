@@ -153,16 +153,23 @@ def _parse_currency(raw: str) -> float:
     return float(s)
 
 
-def _detect_broker(text: str) -> str:
-    """Check Schwab and IBKR before Vanguard: both Schwab's and IBKR's
-    holdings can include Vanguard-branded funds (confirmed for IBKR: the
-    sampled Roth account holds Vanguard Mid-Cap Index Fund Admiral / VIMAX),
-    so "Vanguard" alone is not a reliable signal. Fidelity is checked last,
-    on a bare "Fidelity" match (no more specific single distinguishing phrase
-    found in a real sample) -- safe regardless of ordering here since a
-    Schwab/IBKR/Vanguard statement that happens to mention a Fidelity-branded
-    fund in its holdings already matches its own broker check above and
-    returns before reaching this one."""
+def detect_broker(text: str) -> str | None:
+    """Return the broker key for *text*, or None if no recognized broker.
+
+    Content-based (filenames are unreliable). Check Schwab and IBKR before
+    Vanguard: both Schwab's and IBKR's holdings can include Vanguard-branded
+    funds (confirmed for IBKR: the sampled Roth account holds Vanguard Mid-Cap
+    Index Fund Admiral / VIMAX), so "Vanguard" alone is not a reliable signal.
+    Fidelity is checked last, on a bare "Fidelity" match (no more specific
+    single distinguishing phrase found in a real sample) -- safe regardless of
+    ordering here since a Schwab/IBKR/Vanguard statement that happens to mention
+    a Fidelity-branded fund in its holdings already matches its own broker check
+    above and returns before reaching this one.
+
+    Note: a TurboTax Form 1040 export can list these same broker names as 1099
+    payers, so the document-level classifier (engine/pdf_import.py) runs its
+    1040 check BEFORE calling this, ensuring a tax return is never misread as a
+    brokerage statement."""
     if re.search(r"Schwab One", text):
         return "schwab"
     if re.search(r"Interactive Brokers", text):
@@ -171,7 +178,16 @@ def _detect_broker(text: str) -> str:
         return "vanguard"
     if re.search(r"Fidelity", text, re.IGNORECASE):
         return "fidelity"
-    raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR, Fidelity) in this PDF's text.")
+    return None
+
+
+def _detect_broker(text: str) -> str:
+    """Strict variant of :func:`detect_broker` that raises when no broker is
+    recognized. Used by the single-document parse path."""
+    broker = detect_broker(text)
+    if broker is None:
+        raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR, Fidelity) in this PDF's text.")
+    return broker
 
 
 def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:

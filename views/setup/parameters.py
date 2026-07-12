@@ -292,7 +292,7 @@ def _render_pdf_1040_import() -> None:
                     st.warning(f"{len(scan_errors)} file(s) could not be parsed: " + "; ".join(scan_errors))
                 st.session_state["_pdf_1040_scanned"] = scanned
                 if not scanned:
-                    st.info("No 1040 PDFs found (filenames must contain '1040' or 'taxreturn').")
+                    st.info("No Form 1040 PDFs found in that folder.")
 
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
         for _year in sorted(scanned_records):

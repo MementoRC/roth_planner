@@ -118,12 +118,12 @@ def render(hh: Household):
                 with col_status:
                     st.warning("FinExtract unavailable — use manual entry below")
 
-        st.markdown("##### Sync from Brokerage Statements (PDF)")
+        st.markdown("##### Import from PDF folder")
         st.caption(
-            "Reads the latest monthly/quarterly statement per account for accurate YTD "
-            "interest, dividends (with tax-exempt split), and realized gains. This is the "
-            "authoritative source for these figures — FinExtract's live feed cannot "
-            "distinguish tax-exempt income or separate taxable from Roth/IRA accounts."
+            "Drop every statement in one folder — brokerage statements, your Koinly "
+            "crypto tax report, and TurboTax 1040 exports. One scan identifies each file "
+            "by its contents (filenames are ignored) and imports everything it recognizes: "
+            "statement interest/dividends/gains, Koinly crypto figures, and prior-year 1040 MAGI."
         )
         from engine.brokerage_statement_pdf import (
             apply_account_type_overrides,
@@ -135,18 +135,18 @@ def render(hh: Household):
             save_account_type_override,
             save_statement_folder_path,
             save_statement_records,
-            scan_statement_folder,
             validate_local_folder,
         )
+        from engine.pdf_import import scan_pdf_folder
 
         default_folder = load_statement_folder_path() or ""
         folder_input = st.text_input(
-            "Statement folder",
+            "PDF folder",
             value=default_folder,
             key="statement_folder_path",
-            help="Local folder containing Schwab/Vanguard statement PDFs.",
+            help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
         )
-        if st.button("Scan statement folder", key="scan_statements_btn"):
+        if st.button("Scan folder", key="scan_pdf_folder_btn"):
             # Local single-user desktop tool: path validation (under $HOME, no
             # '..') lives in validate_local_folder.
             folder_path, folder_err = validate_local_folder(folder_input)
@@ -154,14 +154,61 @@ def render(hh: Household):
                 st.error(folder_err)
             else:
                 save_statement_folder_path(str(folder_path))
-                records, errors = scan_statement_folder(folder_path)
-                if errors:
-                    st.warning(f"{len(errors)} file(s) could not be parsed: " + "; ".join(errors))
-                by_account = pick_latest_per_account(records)
+                result = scan_pdf_folder(folder_path)
+
+                # Brokerage statements -> newest record per account.
+                by_account = pick_latest_per_account(result.brokerage_records)
                 overrides = load_account_type_overrides()
                 by_account = apply_account_type_overrides(by_account, overrides)
                 st.session_state["statement_by_account"] = by_account
                 save_statement_records(by_account)
+
+                # Koinly crypto report (newest in folder).
+                if result.koinly_report is not None:
+                    from engine.koinly_report_pdf import save_koinly_report
+
+                    st.session_state["koinly_report"] = result.koinly_report
+                    save_koinly_report(result.koinly_report)
+
+                # Prior-year 1040 exports -> MAGI cache (filing status is refined
+                # on the Setup -> Parameters page).
+                if result.form_1040_records:
+                    from engine.tax_return_pdf import (
+                        load_pdf_tax_records,
+                        save_pdf_tax_records,
+                    )
+
+                    merged_1040 = load_pdf_tax_records()
+                    merged_1040.update(result.form_1040_records)
+                    save_pdf_tax_records(merged_1040)
+                    st.session_state["_pdf_1040_scanned"] = merged_1040
+
+                # Per-type import summary.
+                loaded_bits: list[str] = []
+                if by_account:
+                    loaded_bits.append(f"{len(by_account)} brokerage account(s)")
+                if result.koinly_report is not None:
+                    loaded_bits.append(f"Koinly {result.koinly_report.tax_year}")
+                if result.form_1040_records:
+                    loaded_bits.append(
+                        "Form 1040 " + ", ".join(str(y) for y in sorted(result.form_1040_records))
+                    )
+                if loaded_bits:
+                    st.success("Imported: " + "; ".join(loaded_bits))
+                elif not (result.skipped or result.unrecognized or result.errors):
+                    st.info("No importable financial PDFs found in that folder.")
+                if result.skipped:
+                    st.info(
+                        "Skipped (recognized, nothing to import): "
+                        + "; ".join(f"{name} — {why}" for name, why in result.skipped)
+                    )
+                if result.unrecognized:
+                    st.warning("Unrecognized (no known format): " + ", ".join(result.unrecognized))
+                if result.errors:
+                    st.warning(
+                        f"{len(result.errors)} file(s) could not be parsed: "
+                        + "; ".join(f"{name}: {msg}" for name, msg in result.errors)
+                    )
 
         if "statement_by_account" not in st.session_state:
             _cached_by_account = load_statement_records()
@@ -210,45 +257,8 @@ def render(hh: Household):
                     st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
                     st.rerun()
 
-        st.markdown("##### Sync Crypto from Koinly Report (PDF)")
-        st.caption(
-            "Reads the newest Koinly complete-tax-report PDF (koinly_*.pdf) from your "
-            "shared statement folder and fills the three crypto fields below "
-            "(short-term gains / long-term gains / income)."
-        )
-        if is_pyodide():
-            st.caption("Koinly PDF import requires a local install.")
-        else:
-            from engine.koinly_report_pdf import (
-                load_koinly_report,
-                save_koinly_report,
-                scan_koinly_folder,
-            )
-
-            koinly_folder_default = load_statement_folder_path() or ""
-            koinly_folder_input = st.text_input(
-                "Koinly report folder",
-                value=koinly_folder_default,
-                key="koinly_folder_path",
-                help="Shared with the brokerage-statement folder; drop koinly_*.pdf there.",
-            )
-            if st.button("Scan for Koinly report", key="scan_koinly_btn"):
-                koinly_path, koinly_err = validate_local_folder(koinly_folder_input)
-                if koinly_err:
-                    st.error(koinly_err)
-                else:
-                    save_statement_folder_path(str(koinly_path))
-                    report, koinly_errors = scan_koinly_folder(koinly_path)
-                    if koinly_errors:
-                        st.warning(
-                            f"{len(koinly_errors)} Koinly file(s) could not be parsed: "
-                            + "; ".join(koinly_errors)
-                        )
-                    if report is None:
-                        st.info("No koinly_*.pdf found in that folder.")
-                    else:
-                        st.session_state["koinly_report"] = report
-                        save_koinly_report(report)
+        if not is_pyodide():
+            from engine.koinly_report_pdf import load_koinly_report
 
             if "koinly_report" not in st.session_state:
                 _cached_koinly = load_koinly_report()
