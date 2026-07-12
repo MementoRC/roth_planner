@@ -233,6 +233,116 @@ class TestAboveTheLineAdjustments:
         assert ytd_with_adj.total_investment_income == approx(ytd_no_adj.total_investment_income)
 
 
+class TestCryptoFields:
+    """Koinly-aligned crypto YTD fields: STCG, LTCG, and staking/DeFi/airdrop income.
+
+    crypto_stcg_ytd  -> ordinary brackets + MAGI + NIIT (identical to stcg_ytd).
+    crypto_ltcg_ytd  -> MAGI + NIIT, NOT ordinary brackets (identical to ltcg_ytd).
+    crypto_income_ytd -> ordinary brackets + MAGI, NOT NIIT (staking-as-NII unsettled;
+    conservative to exclude from the investment-income base).
+    """
+
+    def test_defaults_to_zero(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot()
+        assert ytd.crypto_stcg_ytd == 0.0
+        assert ytd.crypto_ltcg_ytd == 0.0
+        assert ytd.crypto_income_ytd == 0.0
+
+    def test_crypto_stcg_hits_ordinary_magi_and_niit(self):
+        from models.ytd_income import YTDSnapshot
+
+        base = YTDSnapshot(wages_ytd=100_000.0)
+        with_stcg = YTDSnapshot(wages_ytd=100_000.0, crypto_stcg_ytd=10_000.0)
+
+        assert with_stcg.total_ordinary_income - base.total_ordinary_income == approx(10_000.0)
+        assert with_stcg.magi_ytd - base.magi_ytd == approx(10_000.0)
+        assert with_stcg.total_investment_income - base.total_investment_income == approx(10_000.0)
+
+    def test_crypto_ltcg_hits_magi_and_niit_not_ordinary(self):
+        from models.ytd_income import YTDSnapshot
+
+        base = YTDSnapshot(wages_ytd=100_000.0)
+        with_ltcg = YTDSnapshot(wages_ytd=100_000.0, crypto_ltcg_ytd=20_000.0)
+
+        assert with_ltcg.total_ordinary_income == approx(base.total_ordinary_income)
+        assert with_ltcg.magi_ytd - base.magi_ytd == approx(20_000.0)
+        assert with_ltcg.total_investment_income - base.total_investment_income == approx(20_000.0)
+
+    def test_crypto_income_hits_ordinary_and_magi_not_niit(self):
+        from models.ytd_income import YTDSnapshot
+
+        base = YTDSnapshot(wages_ytd=100_000.0)
+        with_income = YTDSnapshot(wages_ytd=100_000.0, crypto_income_ytd=5_000.0)
+
+        assert with_income.total_ordinary_income - base.total_ordinary_income == approx(5_000.0)
+        assert with_income.magi_ytd - base.magi_ytd == approx(5_000.0)
+        assert with_income.total_investment_income == approx(base.total_investment_income)
+
+    def test_niit_magi_increases_by_sum_of_all_three(self):
+        from models.ytd_income import YTDSnapshot
+
+        base = YTDSnapshot(wages_ytd=100_000.0, tax_exempt_interest_ytd=2_000.0)
+        all_crypto = YTDSnapshot(
+            wages_ytd=100_000.0,
+            tax_exempt_interest_ytd=2_000.0,
+            crypto_stcg_ytd=10_000.0,
+            crypto_ltcg_ytd=20_000.0,
+            crypto_income_ytd=5_000.0,
+        )
+        assert all_crypto.niit_magi_ytd - base.niit_magi_ytd == approx(35_000.0)
+
+
+class TestCryptoFieldsCacheRoundtrip:
+    """save_ytd_snapshot/load_ytd_snapshot must preserve crypto fields, with migration."""
+
+    def test_roundtrip_preserves_new_fields(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_crypto.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=80_000.0,
+            crypto_stcg_ytd=10_000.0,
+            crypto_ltcg_ytd=20_000.0,
+            crypto_income_ytd=5_000.0,
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.crypto_stcg_ytd == 10_000.0
+        assert loaded.crypto_ltcg_ytd == 20_000.0
+        assert loaded.crypto_income_ytd == 5_000.0
+
+    def test_cache_missing_new_keys_migrates_to_zero(self, tmp_path, monkeypatch):
+        """Pre-existing caches lacking the new keys must load without raising."""
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        cache_path = tmp_path / "ytd_legacy_crypto.json"
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
+
+        save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
+        data = json.loads(cache_path.read_text())
+        data.pop("crypto_stcg_ytd", None)
+        data.pop("crypto_ltcg_ytd", None)
+        data.pop("crypto_income_ytd", None)
+        cache_path.write_text(json.dumps(data))
+
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.crypto_stcg_ytd == 0.0
+        assert loaded.crypto_ltcg_ytd == 0.0
+        assert loaded.crypto_income_ytd == 0.0
+
+
 class TestYTDDividendSplit:
     """Tests for the qualified/ordinary YTD dividend split."""
 

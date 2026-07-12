@@ -81,6 +81,68 @@ class TestHeadroom:
         assert hr_adj.room_to_irmaa_t1 - hr_base.room_to_irmaa_t1 == approx(adjustment)
         assert hr_adj.room_to_niit - hr_base.room_to_niit == approx(adjustment)
 
+    def test_crypto_income_reduces_all_four_rooms_by_exact_amount(self):
+        """Crypto staking/DeFi/airdrop income (Sch 1 8z): ordinary + MAGI, not NIIT-excluded
+        here since it still consumes NIIT room via being in MAGI... no: crypto_income_ytd is
+        excluded from total_investment_income (NIIT base) per spec, but NIIT room is based on
+        niit_magi_ytd (derived from magi_ytd), which crypto_income_ytd DOES increase. So all
+        four room figures fall by exactly X, mirroring wages.
+        """
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        x = 10_000.0
+
+        ytd_base = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        hr_base = compute_headroom(hh, ytd_base)
+
+        ytd_crypto = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0, crypto_income_ytd=x)
+        hr_crypto = compute_headroom(hh, ytd_crypto)
+
+        assert hr_base.room_to_12pct - hr_crypto.room_to_12pct == approx(x)
+        assert hr_base.room_to_22pct - hr_crypto.room_to_22pct == approx(x)
+        assert hr_base.room_to_irmaa_t1 - hr_crypto.room_to_irmaa_t1 == approx(x)
+        assert hr_base.room_to_niit - hr_crypto.room_to_niit == approx(x)
+
+    def test_crypto_stcg_reduces_all_four_rooms_by_exact_amount(self):
+        """Crypto STCG: ordinary brackets + MAGI + NIIT — identical treatment to stcg_ytd."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        x = 10_000.0
+
+        ytd_base = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        hr_base = compute_headroom(hh, ytd_base)
+
+        ytd_crypto = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0, crypto_stcg_ytd=x)
+        hr_crypto = compute_headroom(hh, ytd_crypto)
+
+        assert hr_base.room_to_12pct - hr_crypto.room_to_12pct == approx(x)
+        assert hr_base.room_to_22pct - hr_crypto.room_to_22pct == approx(x)
+        assert hr_base.room_to_irmaa_t1 - hr_crypto.room_to_irmaa_t1 == approx(x)
+        assert hr_base.room_to_niit - hr_crypto.room_to_niit == approx(x)
+
+    def test_crypto_ltcg_reduces_irmaa_and_niit_not_brackets(self):
+        """Crypto LTCG: MAGI + NIIT only — brackets unaffected, mirroring ltcg_ytd."""
+        from engine.headroom import compute_headroom
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        x = 10_000.0
+
+        ytd_base = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        hr_base = compute_headroom(hh, ytd_base)
+
+        ytd_crypto = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0, crypto_ltcg_ytd=x)
+        hr_crypto = compute_headroom(hh, ytd_crypto)
+
+        assert hr_crypto.room_to_12pct == approx(hr_base.room_to_12pct)
+        assert hr_crypto.room_to_22pct == approx(hr_base.room_to_22pct)
+        assert hr_base.room_to_irmaa_t1 - hr_crypto.room_to_irmaa_t1 == approx(x)
+        assert hr_base.room_to_niit - hr_crypto.room_to_niit == approx(x)
+
     def test_irmaa_not_relevant_before_63(self):
         """Below age 63, IRMAA doesn't apply (Medicare starts at 65, 2-year lookback)."""
         from engine.headroom import compute_headroom

@@ -91,6 +91,11 @@ class YTDSnapshot:
         0.0  # Sch 1 deductible traditional-IRA contribution (reduces AGI/MAGI)
     )
 
+    # Crypto (Koinly-sourced)
+    crypto_stcg_ytd: float = 0.0  # crypto short-term capital gains (Koinly): ordinary brackets + MAGI + NIIT
+    crypto_ltcg_ytd: float = 0.0  # crypto long-term capital gains (Koinly): MAGI + NIIT, not brackets
+    crypto_income_ytd: float = 0.0  # crypto staking/DeFi/airdrop income (Sch 1 8z): ordinary brackets + MAGI, not NIIT
+
     # Drill-down events
     gain_events: list[RealizedGainEvent] = field(default_factory=list)
 
@@ -117,6 +122,8 @@ class YTDSnapshot:
         count toward bracket headroom and SS taxation.
         Net of above-the-line HSA/IRA adjustments — this is the AGI-basis figure used for
         the ordinary bracket walk, since those deductions apply before brackets are computed.
+        Crypto STCG and crypto income (staking/DeFi/airdrops, Sch 1 8z) are ordinary income
+        and stack into brackets; crypto LTCG does not (preferential rate, see magi_ytd).
         """
         return (
             self.wages_ytd
@@ -128,6 +135,8 @@ class YTDSnapshot:
             + self.ordinary_dividends_ytd
             + self.interest_ytd
             + self.nqo_exercise_ytd
+            + self.crypto_stcg_ytd
+            + self.crypto_income_ytd
             - self.above_the_line_adjustments_ytd
         )
 
@@ -137,8 +146,18 @@ class YTDSnapshot:
 
         NIIT applies to: LTCG + STCG + dividends + interest.
         Does NOT include wages, SS, or IRA distributions.
+        Crypto STCG/LTCG count as capital gains and are included. Crypto staking/DeFi/
+        airdrop income (crypto_income_ytd) is deliberately excluded — staking-as-NII
+        is unsettled, so it is conservatively treated as non-investment income here.
         """
-        return self.ltcg_ytd + self.stcg_ytd + self.dividends_ytd + self.interest_ytd
+        return (
+            self.ltcg_ytd
+            + self.stcg_ytd
+            + self.dividends_ytd
+            + self.interest_ytd
+            + self.crypto_stcg_ytd
+            + self.crypto_ltcg_ytd
+        )
 
     @property
     def magi_ytd(self) -> float:
@@ -150,6 +169,8 @@ class YTDSnapshot:
         tax-exempt interest + non-taxable SS + foreign earned income exclusion.
         MAGI is AGI-basis: above-the-line HSA/IRA adjustments reduce AGI and are
         therefore subtracted here too.
+        Crypto STCG, crypto LTCG, and crypto income (staking/DeFi/airdrops) are all
+        included in MAGI regardless of their bracket/NIIT treatment.
         """
         return (
             self.wages_ytd
@@ -163,6 +184,9 @@ class YTDSnapshot:
             + self.interest_ytd
             + self.tax_exempt_interest_ytd
             + self.nqo_exercise_ytd
+            + self.crypto_stcg_ytd
+            + self.crypto_ltcg_ytd
+            + self.crypto_income_ytd
             - self.above_the_line_adjustments_ytd
         )
 

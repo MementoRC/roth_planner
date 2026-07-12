@@ -96,6 +96,9 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "federal_withholding_ytd": ytd.federal_withholding_ytd,
         "hsa_contribution_ytd": ytd.hsa_contribution_ytd,
         "deductible_ira_contribution_ytd": ytd.deductible_ira_contribution_ytd,
+        "crypto_stcg_ytd": ytd.crypto_stcg_ytd,
+        "crypto_ltcg_ytd": ytd.crypto_ltcg_ytd,
+        "crypto_income_ytd": ytd.crypto_income_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "income_events": [asdict(e) for e in ytd.income_events],
         "manually_entered": ytd.manually_entered,
@@ -130,4 +133,11 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
         data["hsa_contribution_ytd"] = 0.0
     if "deductible_ira_contribution_ytd" not in data:
         data["deductible_ira_contribution_ytd"] = 0.0
+    # Migrate old caches that predate the crypto (Koinly-sourced) fields.
+    if "crypto_stcg_ytd" not in data:
+        data["crypto_stcg_ytd"] = 0.0
+    if "crypto_ltcg_ytd" not in data:
+        data["crypto_ltcg_ytd"] = 0.0
+    if "crypto_income_ytd" not in data:
+        data["crypto_income_ytd"] = 0.0
     return YTDSnapshot(**data, gain_events=events, income_events=income_events)

@@ -103,7 +103,7 @@ def compute_headroom(
 
     # --- YTD display values ---
     result.ytd_ordinary = ytd.total_ordinary_income
-    result.ytd_ltcg = ytd.ltcg_ytd
+    result.ytd_ltcg = ytd.ltcg_ytd + ytd.crypto_ltcg_ytd
     result.ytd_total_magi = ytd.magi_ytd
     result.conversions_done = ytd.ira_conversions_ytd
 

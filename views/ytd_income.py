@@ -103,6 +103,11 @@ def render(hh: Household):
                     ytd_snap.ltcg_ytd = prev.ltcg_ytd
                     ytd_snap.stcg_ytd = prev.stcg_ytd
                     ytd_snap.gain_events = prev.gain_events
+                    ytd_snap.hsa_contribution_ytd = prev.hsa_contribution_ytd
+                    ytd_snap.deductible_ira_contribution_ytd = prev.deductible_ira_contribution_ytd
+                    ytd_snap.crypto_stcg_ytd = prev.crypto_stcg_ytd
+                    ytd_snap.crypto_ltcg_ytd = prev.crypto_ltcg_ytd
+                    ytd_snap.crypto_income_ytd = prev.crypto_income_ytd
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:
@@ -340,6 +345,39 @@ def render(hh: Household):
                 help="Deductible traditional-IRA contribution (Schedule 1). Above-the-line: lowers AGI/MAGI and widens bracket room.",
             )
 
+        st.markdown("##### Crypto (from Koinly)")
+        st.caption(
+            "These three numbers come from a Koinly tax report (short-term gains / "
+            "long-term gains / income). Short-term gains and income are ordinary-rate "
+            "and hit brackets + MAGI; long-term gains are preferential-rate (MAGI + NIIT, "
+            "not brackets); income (staking/DeFi/airdrops) hits brackets + MAGI but not NIIT."
+        )
+        crypto_col1, crypto_col2, crypto_col3 = st.columns(3)
+        with crypto_col1:
+            crypto_stcg = st.number_input(
+                "Crypto short-term gains YTD",
+                value=int(ytd.crypto_stcg_ytd),
+                step=1_000,
+                format="%d",
+                help="Koinly short-term capital gains. Ordinary-rate: hits brackets, MAGI, and NIIT.",
+            )
+        with crypto_col2:
+            crypto_ltcg = st.number_input(
+                "Crypto long-term gains YTD",
+                value=int(ytd.crypto_ltcg_ytd),
+                step=1_000,
+                format="%d",
+                help="Koinly long-term capital gains. Preferential-rate: hits MAGI and NIIT but not ordinary brackets.",
+            )
+        with crypto_col3:
+            crypto_income = st.number_input(
+                "Crypto income YTD (staking/DeFi)",
+                value=int(ytd.crypto_income_ytd),
+                step=1_000,
+                format="%d",
+                help="Koinly income report (staking, DeFi, airdrops). Ordinary income: hits brackets and MAGI.",
+            )
+
         st.markdown("##### Roth Conversions & IRA Distributions")
         st.caption(
             "Log each conversion or distribution as you execute it — custodian statements "
@@ -418,6 +456,9 @@ def render(hh: Household):
             federal_withholding_ytd=float(federal_withholding),
             hsa_contribution_ytd=float(hsa_contribution),
             deductible_ira_contribution_ytd=float(deductible_ira),
+            crypto_stcg_ytd=float(crypto_stcg),
+            crypto_ltcg_ytd=float(crypto_ltcg),
+            crypto_income_ytd=float(crypto_income),
             gain_events=ytd.gain_events,
             manually_entered=True,
         ).with_snapshot_date()
