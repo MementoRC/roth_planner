@@ -14,9 +14,8 @@ from engine.data_bridge_browser import (
 from engine.irmaa import BASE_PART_B
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
-    Form1040ParseError,
+    Form1040Record,
     load_pdf_tax_records,
-    parse_form_1040_pdf,
     save_pdf_tax_records,
 )
 from models.household import Household
@@ -264,74 +263,82 @@ def _render_pdf_1040_import() -> None:
             return
 
         st.caption(
-            "Upload a TurboTax-exported 1040 PDF to back-fill prior-year MAGI. "
-            "Supports tax years 2023 and 2024. "
-            "Parsed values are shown for confirmation before saving."
+            "Reads TurboTax-exported 1040 PDFs (filenames containing '1040' or "
+            "'taxreturn') from your shared statement folder to back-fill prior-year "
+            "MAGI. Supports tax years 2023 and 2024. Parsed values are shown for "
+            "confirmation before saving."
         )
-        pdf_file = st.file_uploader(
-            "Form 1040 PDF (TurboTax export)",
-            type=["pdf"],
-            key="pdf_1040_upload",
+        from engine.brokerage_statement_pdf import (
+            load_statement_folder_path,
+            save_statement_folder_path,
+            validate_local_folder,
         )
+        from engine.tax_return_pdf import scan_1040_folder
 
-        if pdf_file is None:
-            return
-
-        # Parse on every render while a file is present; cache result in session_state
-        # to avoid re-parsing on every widget interaction after the file is loaded.
-        cache_key = f"_pdf_1040_parsed_{pdf_file.name}_{pdf_file.size}"
-        if cache_key not in st.session_state:
-            try:
-                with st.spinner("Parsing 1040 PDF…"):
-                    rec = parse_form_1040_pdf(pdf_file.read())
-                st.session_state[cache_key] = rec
-            except Form1040ParseError as exc:
-                st.error(f"Could not parse {pdf_file.name}: {exc}")
-                return
-
-        rec = st.session_state[cache_key]
-
-        st.write("**Parsed values — please confirm:**")
-        col_a, col_b, col_c = st.columns(3)
-        col_a.metric("Tax Year", str(rec.tax_year))
-        col_b.metric("AGI", fmt_dollars(rec.agi))
-        col_c.metric("MAGI", fmt_dollars(rec.magi))
-        col_d, col_e = st.columns(2)
-        col_d.metric("Tax-Exempt Interest", fmt_dollars(rec.tax_exempt_interest))
-        col_e.metric("FEIE", fmt_dollars(rec.feie))
-
-        status_idx = (
-            _FILING_STATUS_OPTIONS.index(rec.filing_status)
-            if rec.filing_status in _FILING_STATUS_OPTIONS
-            else 0
+        folder_input = st.text_input(
+            "Statement folder",
+            value=load_statement_folder_path() or "",
+            key="tax_1040_folder_path",
+            help="Shared folder holding your TurboTax 1040 PDF exports (and brokerage/Koinly PDFs).",
         )
-        chosen_status = st.selectbox(
-            "Filing Status",
-            options=_FILING_STATUS_OPTIONS,
-            index=status_idx,
-            format_func=lambda s: _FILING_STATUS_LABELS.get(s, s),
-            key=f"_pdf_1040_filing_status_{rec.tax_year}",
-            help="Select the filing status for this return (parser cannot auto-detect checkboxes).",
-        )
+        if st.button("Scan for 1040 PDFs", key="scan_1040_btn"):
+            folder_path, folder_err = validate_local_folder(folder_input)
+            if folder_err:
+                st.error(folder_err)
+            else:
+                save_statement_folder_path(str(folder_path))
+                scanned, scan_errors = scan_1040_folder(folder_path)
+                if scan_errors:
+                    st.warning(f"{len(scan_errors)} file(s) could not be parsed: " + "; ".join(scan_errors))
+                st.session_state["_pdf_1040_scanned"] = scanned
+                if not scanned:
+                    st.info("No 1040 PDFs found (filenames must contain '1040' or 'taxreturn').")
 
-        if st.button("Save 1040 record", key=f"_pdf_1040_save_{rec.tax_year}"):
-            rec.filing_status = chosen_status
-            records = load_pdf_tax_records()
-            records[rec.tax_year] = rec
-            with st.spinner("Saving…"):
-                save_pdf_tax_records(records)
-            # Direct write — user just confirmed; overrides any existing value
-            prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
-            prior_magi[rec.tax_year] = rec.magi
-            st.session_state["prior_year_magi"] = prior_magi
-            # Clear parse cache so a new upload starts fresh
-            st.session_state.pop(cache_key, None)
-            st.success(
-                f"Saved {rec.tax_year} 1040 record "
-                f"(MAGI {fmt_dollars(rec.magi)}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
-                "Rerunning…"
+        scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
+        for _year in sorted(scanned_records):
+            rec = scanned_records[_year]
+            st.write(f"**Parsed {rec.tax_year} 1040 — please confirm:**")
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Tax Year", str(rec.tax_year))
+            col_b.metric("AGI", fmt_dollars(rec.agi))
+            col_c.metric("MAGI", fmt_dollars(rec.magi))
+            col_d, col_e = st.columns(2)
+            col_d.metric("Tax-Exempt Interest", fmt_dollars(rec.tax_exempt_interest))
+            col_e.metric("FEIE", fmt_dollars(rec.feie))
+
+            status_idx = (
+                _FILING_STATUS_OPTIONS.index(rec.filing_status)
+                if rec.filing_status in _FILING_STATUS_OPTIONS
+                else 0
             )
-            st.rerun()
+            chosen_status = st.selectbox(
+                "Filing Status",
+                options=_FILING_STATUS_OPTIONS,
+                index=status_idx,
+                format_func=lambda s: _FILING_STATUS_LABELS.get(s, s),
+                key=f"_pdf_1040_filing_status_{rec.tax_year}",
+                help="Select the filing status for this return (parser cannot auto-detect checkboxes).",
+            )
+
+            if st.button("Save 1040 record", key=f"_pdf_1040_save_{rec.tax_year}"):
+                rec.filing_status = chosen_status
+                records = load_pdf_tax_records()
+                records[rec.tax_year] = rec
+                with st.spinner("Saving…"):
+                    save_pdf_tax_records(records)
+                # Direct write — user just confirmed; overrides any existing value
+                prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
+                prior_magi[rec.tax_year] = rec.magi
+                st.session_state["prior_year_magi"] = prior_magi
+                # Drop the confirmed year so it doesn't re-prompt on rerun
+                scanned_records.pop(_year, None)
+                st.session_state["_pdf_1040_scanned"] = scanned_records
+                st.success(
+                    f"Saved {rec.tax_year} 1040 record "
+                    f"(MAGI {fmt_dollars(rec.magi)}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
+                    "Rerunning…"
+                )
+                st.rerun()
 
 
 def _render_prior_year_magi_anchor(base_year: int) -> None:

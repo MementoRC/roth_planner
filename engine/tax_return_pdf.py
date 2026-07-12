@@ -456,3 +456,23 @@ def merge_pdf_magi(
         if not result.get(year):
             result[year] = rec.magi
     return result
+
+
+def scan_1040_folder(folder: Path) -> tuple[dict[int, Form1040Record], list[str]]:
+    """Parse 1040 PDFs in *folder* (filenames containing '1040' or 'taxreturn',
+    case-insensitive), keyed by tax year. Returns (records_by_year, errors).
+
+    A single malformed file does not abort the scan. When two files parse to the
+    same tax year, the later one in sorted order wins (last write per year)."""
+    records: dict[int, Form1040Record] = {}
+    errors: list[str] = []
+    for pdf_path in sorted(folder.glob("*.[pP][dD][fF]")):
+        name = pdf_path.name.lower()
+        if "1040" not in name and "taxreturn" not in name:
+            continue
+        try:
+            rec = parse_form_1040_pdf(pdf_path.read_bytes())
+            records[rec.tax_year] = rec
+        except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
+            errors.append(f"{pdf_path.name}: {exc}")
+    return records, errors
