@@ -158,6 +158,81 @@ class TestYTDSnapshot:
         assert result_no_interest.ltcg_tax < result.ltcg_tax
 
 
+class TestAboveTheLineAdjustments:
+    """HSA + deductible-IRA contributions are above-the-line: reduce AGI/MAGI."""
+
+    def test_defaults_to_zero(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot()
+        assert ytd.hsa_contribution_ytd == 0.0
+        assert ytd.deductible_ira_contribution_ytd == 0.0
+        assert ytd.above_the_line_adjustments_ytd == 0.0
+
+    def test_above_the_line_adjustments_ytd_sums_both_fields(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(hsa_contribution_ytd=5_150.0, deductible_ira_contribution_ytd=16_000.0)
+        assert ytd.above_the_line_adjustments_ytd == approx(21_150.0)
+
+    def test_total_ordinary_income_reduced_by_adjustments(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(
+            wages_ytd=100_000.0,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        assert ytd.total_ordinary_income == approx(100_000.0 - 21_150.0)
+
+    def test_magi_ytd_reduced_by_adjustments(self):
+        from models.ytd_income import YTDSnapshot
+
+        base_kwargs = {
+            "wages_ytd": 100_000.0,
+            "stcg_ytd": 10_000.0,
+            "ltcg_ytd": 20_000.0,
+            "ordinary_dividends_ytd": 3_000.0,
+            "interest_ytd": 1_000.0,
+        }
+        ytd_no_adj = YTDSnapshot(**base_kwargs)
+        ytd_with_adj = YTDSnapshot(
+            **base_kwargs,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        assert ytd_no_adj.magi_ytd - ytd_with_adj.magi_ytd == approx(21_150.0)
+
+    def test_niit_magi_ytd_reduced_by_same_amount(self):
+        from models.ytd_income import YTDSnapshot
+
+        base_kwargs = {
+            "wages_ytd": 100_000.0,
+            "ltcg_ytd": 20_000.0,
+            "tax_exempt_interest_ytd": 2_000.0,
+        }
+        ytd_no_adj = YTDSnapshot(**base_kwargs)
+        ytd_with_adj = YTDSnapshot(
+            **base_kwargs,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        assert ytd_no_adj.niit_magi_ytd - ytd_with_adj.niit_magi_ytd == approx(21_150.0)
+
+    def test_total_investment_income_unchanged_by_adjustments(self):
+        """HSA/IRA contributions are not investment income; NIIT base must be unaffected."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd_no_adj = YTDSnapshot(ltcg_ytd=50_000.0, interest_ytd=2_000.0)
+        ytd_with_adj = YTDSnapshot(
+            ltcg_ytd=50_000.0,
+            interest_ytd=2_000.0,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        assert ytd_with_adj.total_investment_income == approx(ytd_no_adj.total_investment_income)
+
+
 class TestYTDDividendSplit:
     """Tests for the qualified/ordinary YTD dividend split."""
 
@@ -364,6 +439,51 @@ class TestTaxExemptInterestSaveLoad:
         assert loaded.tax_exempt_interest_ytd == 6_000.0, (
             f"Expected tax_exempt_interest_ytd=6000 after round-trip; got {loaded.tax_exempt_interest_ytd}"
         )
+
+
+class TestAboveTheLineAdjustmentsCacheRoundtrip:
+    """save_ytd_snapshot/load_ytd_snapshot must preserve HSA/IRA fields, with migration."""
+
+    def test_roundtrip_preserves_new_fields(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_atl.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=80_000.0,
+            hsa_contribution_ytd=5_150.0,
+            deductible_ira_contribution_ytd=16_000.0,
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.hsa_contribution_ytd == 5_150.0
+        assert loaded.deductible_ira_contribution_ytd == 16_000.0
+
+    def test_cache_missing_new_keys_migrates_to_zero(self, tmp_path, monkeypatch):
+        """Pre-existing caches lacking the new keys must load without raising."""
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        cache_path = tmp_path / "ytd_legacy.json"
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
+
+        save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
+        data = json.loads(cache_path.read_text())
+        data.pop("hsa_contribution_ytd", None)
+        data.pop("deductible_ira_contribution_ytd", None)
+        cache_path.write_text(json.dumps(data))
+
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.hsa_contribution_ytd == 0.0
+        assert loaded.deductible_ira_contribution_ytd == 0.0
 
 
 class TestEstimateYtdFederalTax:

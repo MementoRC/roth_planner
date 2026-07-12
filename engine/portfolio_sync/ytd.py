@@ -94,6 +94,8 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "tax_exempt_interest_ytd": ytd.tax_exempt_interest_ytd,
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "federal_withholding_ytd": ytd.federal_withholding_ytd,
+        "hsa_contribution_ytd": ytd.hsa_contribution_ytd,
+        "deductible_ira_contribution_ytd": ytd.deductible_ira_contribution_ytd,
         "gain_events": [asdict(e) for e in ytd.gain_events],
         "income_events": [asdict(e) for e in ytd.income_events],
         "manually_entered": ytd.manually_entered,
@@ -123,4 +125,9 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     # PU1-M01: migrate old caches that predate federal_withholding_ytd field.
     if "federal_withholding_ytd" not in data:
         data["federal_withholding_ytd"] = 0.0
+    # Migrate old caches that predate the above-the-line HSA/IRA adjustment fields.
+    if "hsa_contribution_ytd" not in data:
+        data["hsa_contribution_ytd"] = 0.0
+    if "deductible_ira_contribution_ytd" not in data:
+        data["deductible_ira_contribution_ytd"] = 0.0
     return YTDSnapshot(**data, gain_events=events, income_events=income_events)

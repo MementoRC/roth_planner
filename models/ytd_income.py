@@ -85,6 +85,12 @@ class YTDSnapshot:
     # Withholding / payments
     federal_withholding_ytd: float = 0.0  # W-2 federal tax withheld YTD
 
+    # Above-the-line adjustments
+    hsa_contribution_ytd: float = 0.0  # Form 8889 deductible HSA contribution (reduces AGI/MAGI)
+    deductible_ira_contribution_ytd: float = (
+        0.0  # Sch 1 deductible traditional-IRA contribution (reduces AGI/MAGI)
+    )
+
     # Drill-down events
     gain_events: list[RealizedGainEvent] = field(default_factory=list)
 
@@ -97,6 +103,11 @@ class YTDSnapshot:
         return self.qualified_dividends_ytd + self.ordinary_dividends_ytd
 
     @property
+    def above_the_line_adjustments_ytd(self) -> float:
+        """HSA + deductible-IRA contributions; above-the-line, reduce AGI (hence MAGI and ordinary bracket base)."""
+        return self.hsa_contribution_ytd + self.deductible_ira_contribution_ytd
+
+    @property
     def total_ordinary_income(self) -> float:
         """Income that stacks into ordinary tax brackets.
 
@@ -104,6 +115,8 @@ class YTDSnapshot:
         Excludes: LTCG and qualified dividends (taxed at preferential rates, not in brackets).
         Ordinary (non-qualified) dividends and interest are taxed as ordinary income and must
         count toward bracket headroom and SS taxation.
+        Net of above-the-line HSA/IRA adjustments — this is the AGI-basis figure used for
+        the ordinary bracket walk, since those deductions apply before brackets are computed.
         """
         return (
             self.wages_ytd
@@ -115,6 +128,7 @@ class YTDSnapshot:
             + self.ordinary_dividends_ytd
             + self.interest_ytd
             + self.nqo_exercise_ytd
+            - self.above_the_line_adjustments_ytd
         )
 
     @property
@@ -134,6 +148,8 @@ class YTDSnapshot:
         LTCG is in MAGI even though it's not in ordinary brackets.
         Tax-exempt interest (muni bonds) is included: IRMAA MAGI = AGI +
         tax-exempt interest + non-taxable SS + foreign earned income exclusion.
+        MAGI is AGI-basis: above-the-line HSA/IRA adjustments reduce AGI and are
+        therefore subtracted here too.
         """
         return (
             self.wages_ytd
@@ -147,6 +163,7 @@ class YTDSnapshot:
             + self.interest_ytd
             + self.tax_exempt_interest_ytd
             + self.nqo_exercise_ytd
+            - self.above_the_line_adjustments_ytd
         )
 
     @property
