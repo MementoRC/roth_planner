@@ -795,6 +795,31 @@ def load_statement_folder_path() -> str | None:
     return str(folder) if folder else None
 
 
+def validate_local_folder(raw: str) -> tuple[Path | None, str | None]:
+    """Validate a user-supplied local folder path for statement/report scanning.
+
+    Returns (resolved_path, None) on success or (None, error_message) on failure.
+    Single-user desktop tool: the owner supplies a folder on their own trusted
+    machine, so this is normalization + containment (reject blank, control chars,
+    '..'; resolve; require the path under $HOME), not a sandbox against a hostile
+    actor. Shared by the brokerage, Koinly, and 1040 folder-scan blocks so the
+    rule lives in exactly one place.
+    """
+    if not raw or not raw.strip():
+        return None, "Folder path cannot be empty."
+    stripped = raw.strip()
+    if any(ord(ch) < 32 for ch in stripped):
+        return None, "Folder path contains invalid characters."
+    if ".." in stripped:
+        return None, "Folder path may not contain '..'."
+    candidate = Path(stripped).expanduser().resolve()
+    if not candidate.is_relative_to(Path.home()):
+        return None, f"Folder must be under your home directory ({Path.home()}): {candidate}"
+    if not candidate.is_dir():
+        return None, f"Not a folder: {candidate}"
+    return candidate, None
+
+
 def save_account_type_override(account_number: str, account_type: str) -> None:
     if account_type not in ACCOUNT_TYPES:
         raise ValueError(f"Invalid account_type {account_type!r}")

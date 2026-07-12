@@ -8,7 +8,6 @@ Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
 from datetime import date as _date
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -137,6 +136,7 @@ def render(hh: Household):
             save_statement_folder_path,
             save_statement_records,
             scan_statement_folder,
+            validate_local_folder,
         )
 
         default_folder = load_statement_folder_path() or ""
@@ -147,44 +147,11 @@ def render(hh: Household):
             help="Local folder containing Schwab/Vanguard statement PDFs.",
         )
         if st.button("Scan statement folder", key="scan_statements_btn"):
-            # This is a local single-user desktop tool -- the account owner
-            # supplies a folder path on their own trusted machine (e.g.
-            # ~/Downloads or ~/Documents/Statements), so there is no attacker
-            # controlling this input in this tool's threat model. The
-            # mitigation is therefore normalization + directory-type
-            # validation -- reject blank input, then resolve away ".." and
-            # symlink traversal before the path is ever used in glob()/
-            # read_bytes() -- not sandboxing against a hostile actor. As a
-            # real (not just documentation-only) containment boundary, the
-            # resolved path is also required to live under the user's home
-            # directory, since statements only ever live under e.g.
-            # ~/Downloads in actual usage.
-            if not folder_input or not folder_input.strip():
-                st.error("Statement folder cannot be empty.")
-                folder_path = None
-            else:
-                raw_folder = folder_input.strip()
-                # Defensive input validation before path construction.
-                # Reject control characters (including NUL) in user-provided text.
-                if any(ord(ch) < 32 for ch in raw_folder):
-                    st.error("Statement folder contains invalid characters.")
-                    folder_path = None
-                elif ".." in raw_folder:
-                    st.error("Statement folder path may not contain '..'.")
-                    folder_path = None
-                else:
-                    candidate = Path(raw_folder).expanduser().resolve()
-                    if not candidate.is_relative_to(Path.home()):
-                        st.error(
-                            f"Statement folder must be under your home directory ({Path.home()}): {candidate}"
-                        )
-                        folder_path = None
-                    else:
-                        folder_path = candidate
-            if folder_path is None:
-                pass
-            elif not folder_path.is_dir():
-                st.error(f"Not a folder: {folder_path}")
+            # Local single-user desktop tool: path validation (under $HOME, no
+            # '..') lives in validate_local_folder.
+            folder_path, folder_err = validate_local_folder(folder_input)
+            if folder_err:
+                st.error(folder_err)
             else:
                 save_statement_folder_path(str(folder_path))
                 records, errors = scan_statement_folder(folder_path)
@@ -241,6 +208,73 @@ def render(hh: Household):
                     st.session_state["ytd_manual_entry"] = False
                     save_ytd_snapshot(updated_ytd)
                     st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+                    st.rerun()
+
+        st.markdown("##### Sync Crypto from Koinly Report (PDF)")
+        st.caption(
+            "Reads the newest Koinly complete-tax-report PDF (koinly_*.pdf) from your "
+            "shared statement folder and fills the three crypto fields below "
+            "(short-term gains / long-term gains / income)."
+        )
+        if is_pyodide():
+            st.caption("Koinly PDF import requires a local install.")
+        else:
+            from engine.koinly_report_pdf import (
+                load_koinly_report,
+                save_koinly_report,
+                scan_koinly_folder,
+            )
+
+            koinly_folder_default = load_statement_folder_path() or ""
+            koinly_folder_input = st.text_input(
+                "Koinly report folder",
+                value=koinly_folder_default,
+                key="koinly_folder_path",
+                help="Shared with the brokerage-statement folder; drop koinly_*.pdf there.",
+            )
+            if st.button("Scan for Koinly report", key="scan_koinly_btn"):
+                koinly_path, koinly_err = validate_local_folder(koinly_folder_input)
+                if koinly_err:
+                    st.error(koinly_err)
+                else:
+                    save_statement_folder_path(str(koinly_path))
+                    report, koinly_errors = scan_koinly_folder(koinly_path)
+                    if koinly_errors:
+                        st.warning(
+                            f"{len(koinly_errors)} Koinly file(s) could not be parsed: "
+                            + "; ".join(koinly_errors)
+                        )
+                    if report is None:
+                        st.info("No koinly_*.pdf found in that folder.")
+                    else:
+                        st.session_state["koinly_report"] = report
+                        save_koinly_report(report)
+
+            if "koinly_report" not in st.session_state:
+                _cached_koinly = load_koinly_report()
+                if _cached_koinly is not None:
+                    st.session_state["koinly_report"] = _cached_koinly
+
+            koinly_report = st.session_state.get("koinly_report")
+            if koinly_report is not None:
+                st.write(f"**Parsed Koinly report (tax year {koinly_report.tax_year}):**")
+                kc1, kc2, kc3 = st.columns(3)
+                kc1.metric("Short-term gains", fmt_dollars(koinly_report.crypto_stcg))
+                kc2.metric("Long-term gains", fmt_dollars(koinly_report.crypto_ltcg))
+                kc3.metric("Income (staking/DeFi)", fmt_dollars(koinly_report.crypto_income))
+                _mismatch = koinly_report.provenance.get("income_total_mismatch")
+                if _mismatch:
+                    st.warning(_mismatch)
+                if st.button("Apply to crypto fields below", key="apply_koinly_btn"):
+                    _snap = st.session_state.get("ytd_snapshot")
+                    if _snap is None:
+                        _snap = YTDSnapshot(tax_year=hh.base_year)
+                    _snap.crypto_stcg_ytd = float(koinly_report.crypto_stcg)
+                    _snap.crypto_ltcg_ytd = float(koinly_report.crypto_ltcg)
+                    _snap.crypto_income_ytd = float(koinly_report.crypto_income)
+                    st.session_state["ytd_snapshot"] = _snap
+                    save_ytd_snapshot(_snap)
+                    st.success("Applied Koinly figures to the crypto fields.")
                     st.rerun()
 
     manual = st.checkbox(
@@ -356,25 +390,25 @@ def render(hh: Household):
         with crypto_col1:
             crypto_stcg = st.number_input(
                 "Crypto short-term gains YTD",
-                value=int(ytd.crypto_stcg_ytd),
-                step=1_000,
-                format="%d",
+                value=float(ytd.crypto_stcg_ytd),
+                step=100.0,
+                format="%.2f",
                 help="Koinly short-term capital gains. Ordinary-rate: hits brackets, MAGI, and NIIT.",
             )
         with crypto_col2:
             crypto_ltcg = st.number_input(
                 "Crypto long-term gains YTD",
-                value=int(ytd.crypto_ltcg_ytd),
-                step=1_000,
-                format="%d",
+                value=float(ytd.crypto_ltcg_ytd),
+                step=100.0,
+                format="%.2f",
                 help="Koinly long-term capital gains. Preferential-rate: hits MAGI and NIIT but not ordinary brackets.",
             )
         with crypto_col3:
             crypto_income = st.number_input(
                 "Crypto income YTD (staking/DeFi)",
-                value=int(ytd.crypto_income_ytd),
-                step=1_000,
-                format="%d",
+                value=float(ytd.crypto_income_ytd),
+                step=100.0,
+                format="%.2f",
                 help="Koinly income report (staking, DeFi, airdrops). Ordinary income: hits brackets and MAGI.",
             )
 
