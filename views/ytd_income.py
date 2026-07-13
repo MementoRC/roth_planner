@@ -183,15 +183,19 @@ def render(hh: Household):
                     _snap = apply_brokerage_statement_records(_snap, stmt_taxable_now)
                     applied_bits.append(f"{len(stmt_taxable_now)} taxable brokerage account(s)")
 
-                if result.koinly_report is not None:
+                # TODO(Task 6): multiple Koinly reports (one per owner) may now
+                # survive a scan; only the first is applied here until the
+                # owner-confirm UI and per-owner ledger derive land.
+                if result.koinly_reports:
                     from engine.koinly_report_pdf import save_koinly_report
 
-                    st.session_state["koinly_report"] = result.koinly_report
-                    save_koinly_report(result.koinly_report)
-                    _snap.crypto_stcg_ytd = float(result.koinly_report.crypto_stcg)
-                    _snap.crypto_ltcg_ytd = float(result.koinly_report.crypto_ltcg)
-                    _snap.crypto_income_ytd = float(result.koinly_report.crypto_income)
-                    applied_bits.append(f"Koinly {result.koinly_report.tax_year} crypto")
+                    _koinly_report = result.koinly_reports[0]
+                    st.session_state["koinly_report"] = _koinly_report
+                    save_koinly_report(_koinly_report)
+                    _snap.crypto_stcg_ytd = float(_koinly_report.crypto_stcg)
+                    _snap.crypto_ltcg_ytd = float(_koinly_report.crypto_ltcg)
+                    _snap.crypto_income_ytd = float(_koinly_report.crypto_income)
+                    applied_bits.append(f"Koinly {_koinly_report.tax_year} crypto")
 
                 if applied_bits:
                     _snap.with_snapshot_date()
@@ -216,8 +220,8 @@ def render(hh: Household):
                 parsed_bits: list[str] = []
                 if by_account:
                     parsed_bits.append(f"{len(by_account)} brokerage account(s)")
-                if result.koinly_report is not None:
-                    parsed_bits.append(f"Koinly {result.koinly_report.tax_year}")
+                if result.koinly_reports:
+                    parsed_bits.append(f"Koinly {result.koinly_reports[0].tax_year}")
                 if result.form_1040_records:
                     parsed_bits.append(
                         "Form 1040 " + ", ".join(str(y) for y in sorted(result.form_1040_records))
