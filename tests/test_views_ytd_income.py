@@ -1435,3 +1435,92 @@ class TestBrokerageOwnerAttributionScanFlow:
         # reassigned this render -- ytd1 itself is the load-bearing check,
         # not the mock's auto-generated attribute (which was never set).
         assert ytd1.interest_ytd == pytest.approx(0.0)
+
+
+class TestCombinedKoinlyAndBrokerageScanFlow:
+    """Regression coverage for the shared owner_map/ledger threading across
+    the brokerage loop (views/ytd_income.py runs first) and the Koinly loop
+    (runs second) within a SINGLE render, per the spouse-pdf-owner-attribution
+    design. Neither loop may clobber the other's owner_map learning or ledger
+    writes when both doc types appear in one scan_pdf_folder result."""
+
+    def _run_scan(
+        self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+    ):
+        import engine.brokerage_statement_pdf as stmt_mod
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
+            patch.object(stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"),
+        ):
+            ytd_income_mod.render(hh)
+
+    def test_combined_koinly_and_brokerage_scan_resolves_both_owners(self, tmp_path, monkeypatch):
+        """One scan_pdf_folder result containing BOTH a Koinly report (owner
+        'you') and a taxable brokerage record (owner 'spouse') -- both must
+        resolve via the manual-confirm selectbox, both must apply to the
+        snapshot, and both must persist to the ledger/owner_map without the
+        brokerage loop (which runs first) being overwritten by the later
+        Koinly loop, or vice versa."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.text_input.return_value = str(tmp_path)
+
+        # Neither owner_key is in the (empty) learned map yet, so both loops
+        # fall into the "no recognized owner" branch and consult the manual
+        # confirm selectbox. Route by the selectbox label so the brokerage
+        # account resolves to "spouse" and the Koinly report resolves to
+        # "you" within the SAME render.
+        def _selectbox_router(label, *args, **kwargs):
+            if "account" in label.lower():
+                return "spouse"
+            if "koinly" in label.lower():
+                return "you"
+            raise AssertionError(f"unexpected selectbox call: {label!r}")
+
+        mock_st.selectbox.side_effect = _selectbox_router
+
+        result = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "jane r cirba", interest=20.0, dividends=8.0)],
+            koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)],
+        )
+        ledger_path = tmp_path / ".pdf_import_ledger.json"
+        owner_map_path = tmp_path / ".pdf_owner_map.json"
+        overrides_path = tmp_path / ".statement_account_overrides.json"
+        self._run_scan(hh, mock_st, result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch)
+
+        # Both loops applied their fields to the SAME snapshot in one render.
+        final_snap = mock_st.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(20.0)
+        assert final_snap.ordinary_dividends_ytd == pytest.approx(8.0)
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+        assert final_snap.crypto_ltcg_ytd == pytest.approx(200.0)
+        assert final_snap.crypto_income_ytd == pytest.approx(50.0)
+
+        # Both owners persisted to the on-disk ledger -- neither loop clobbered
+        # the other's writes (brokerage under "spouse", Koinly under "you").
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        with (
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+        ):
+            persisted_ledger = ledger_mod.load_ledger()
+            persisted_owner_map = owner_mod.load_owner_map()
+
+        assert set(persisted_ledger["brokerage"].keys()) == {"spouse"}
+        assert set(persisted_ledger["koinly"].keys()) == {"you"}
+        assert persisted_owner_map.get("jane r cirba") == "spouse"
+        assert persisted_owner_map.get("claude r cirba") == "you"
