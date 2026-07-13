@@ -95,6 +95,7 @@ class BrokerageStatementRecord:
     source: str = "pdf"
     parser_version: str = "1.0.0"
     provenance: dict[str, Any] = field(default_factory=dict)
+    owner_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.account_type not in ACCOUNT_TYPES:
@@ -116,6 +117,7 @@ class BrokerageStatementRecord:
             "source": self.source,
             "parser_version": self.parser_version,
             "provenance": self.provenance,
+            "owner_key": self.owner_key,
         }
 
     @classmethod
@@ -135,6 +137,7 @@ class BrokerageStatementRecord:
             source=str(data.get("source", "pdf")),
             parser_version=str(data.get("parser_version", "1.0.0")),
             provenance=dict(data.get("provenance", {})),
+            owner_key=data.get("owner_key"),
         )
 
 
@@ -188,6 +191,45 @@ def _detect_broker(text: str) -> str:
     if broker is None:
         raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR, Fidelity) in this PDF's text.")
     return broker
+
+
+# --- Owner-key extraction (account-holder name) -----------------------------
+#
+# Best-effort per-broker holder-name extraction for the owner-attribution
+# ledger (see engine/pdf_owner.py, engine/pdf_ledger.py). Returns None (never
+# guesses) when no recognizable holder-name line is found -- the caller falls
+# back to manual owner selection in the UI, same safety rule as account_type
+# "unknown".
+
+_SCHWAB_HOLDER_NAME_RE = re.compile(
+    r"AccountNumber StatementPeriod\s*\n([A-Z]+)\n", re.MULTILINE
+)
+_VANGUARD_HOLDER_NAME_RE = re.compile(
+    r"account—XXXX\d+ Vanguard Personal Investor\s*\n(.+?)\s+\d{3}-\d{3}-\d{4}"
+)
+
+
+def extract_owner_key(full_text: str) -> str | None:
+    """Best-effort extraction of the account-holder's name from statement
+    text, for owner attribution. Dispatches by detected broker; returns None
+    (never guesses) if no recognized broker or no holder-name line matches.
+
+    TODO(verify): only Schwab's and Vanguard's single-holder patterns are
+    covered against the real fixtures captured in this repo. IBKR and
+    Fidelity's per-account "Account Information" sections were not inspected
+    for a holder-name line as part of this plan -- extend
+    _detect_ibkr_account / _detect_fidelity_account-style anchors if needed;
+    until then, IBKR/Fidelity records fall back to owner_key=None (manual
+    confirmation in the UI), which is an acceptable degraded outcome.
+    """
+    broker = detect_broker(full_text)
+    if broker == "schwab":
+        m = _SCHWAB_HOLDER_NAME_RE.search(full_text)
+        return m.group(1) if m else None
+    if broker == "vanguard":
+        m = _VANGUARD_HOLDER_NAME_RE.search(full_text)
+        return m.group(1).strip() if m else None
+    return None
 
 
 def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
@@ -285,6 +327,7 @@ def _parse_schwab(full_text: str) -> BrokerageStatementRecord:
         ltcg_net_ytd=ltcg_net,
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"pdf_pages_total": full_text.count("--- page")},
+        owner_key=extract_owner_key(full_text),
     )
 
 
@@ -362,6 +405,7 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
         ltcg_net_ytd=ltcg,
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"other_income_ytd": other, "pdf_pages_total": full_text.count("--- page")},
+        owner_key=extract_owner_key(full_text),
     )
 
 
@@ -527,6 +571,7 @@ def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
                 ltcg_net_ytd=ltcg,
                 captured_at=datetime.now(UTC).isoformat(),
                 provenance={"pdf_pages_total": full_text.count("--- page")},
+                owner_key=None,  # IBKR owner extraction out of scope -- see extract_owner_key TODO(verify)
             )
         )
     return records
@@ -655,6 +700,7 @@ def _parse_fidelity(full_text: str) -> list[BrokerageStatementRecord]:
                 ltcg_net_ytd=0.0,
                 captured_at=datetime.now(UTC).isoformat(),
                 provenance={"pdf_pages_total": full_text.count("--- page")},
+                owner_key=None,  # Fidelity owner extraction out of scope -- see extract_owner_key TODO(verify)
             )
         )
     return records

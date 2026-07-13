@@ -11,6 +11,7 @@ import pytest
 from engine.brokerage_statement_pdf import (
     BrokerageStatementRecord,
     StatementParseError,
+    extract_owner_key,
     parse_statement_text,
 )
 
@@ -942,6 +943,24 @@ class TestFolderPathConfig:
 
         monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "missing.json")
         assert mod.load_statement_folder_path() is None
+
+
+class TestExtractOwnerKeySchwab:
+    def test_extracts_account_holder_name(self) -> None:
+        # Schwab's extract_text() strips spaces from labels but NOT from the
+        # holder's own name line ("CLAUDECIRBA" in the real dump has no space
+        # because Schwab renders it as one run -- confirmed in SCHWAB_PAGE_TEXT).
+        assert extract_owner_key(SCHWAB_PAGE_TEXT) == "CLAUDECIRBA"
+
+
+class TestExtractOwnerKeyVanguard:
+    def test_extracts_account_holder_name(self) -> None:
+        assert extract_owner_key(VANGUARD_TAXABLE_OVERVIEW_TEXT) == "Claude R Cirba"
+
+
+class TestExtractOwnerKeyAbsent:
+    def test_returns_none_when_no_name_found(self) -> None:
+        assert extract_owner_key("Some Broker Statement\nNo holder name here\n") is None
 
 
 class TestAccountTypeOverrides:
