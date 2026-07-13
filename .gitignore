@@ -50,6 +50,7 @@ Thumbs.db
 .brokerage_statement_cache.json
 .pdf_owner_map.json
 .pdf_import_ledger.json
+.koinly_cache.json
 .statement_folder_config.json
 .statement_account_overrides.json
 .claude/
