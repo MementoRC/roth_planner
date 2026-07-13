@@ -49,6 +49,13 @@ INCOME_CATEGORIES: tuple[str, ...] = (
 # Currency token: "$1,234.56", "$0.00", "$-2.02" (minus after the $).
 _CURRENCY = r"\$\s*(-?[\d,]+(?:\.\d{1,2})?)"
 
+# TODO(verify): the "Prepared for <name>" anchor is UNVERIFIED against a real
+# Koinly report cover page -- confirm against
+# PDF-Statements/koinly_2026_complete_tax_report_July.pdf and adjust the regex
+# before relying on this in production.
+_OWNER_NAME_RE = re.compile(r"Prepared for\s+(.+)", re.IGNORECASE)
+_OWNER_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
 PARSER_VERSION = "1.0.0"
 
 
@@ -64,6 +71,7 @@ class KoinlyReport:
     source: str = "koinly_pdf"
     parser_version: str = PARSER_VERSION
     provenance: dict[str, Any] = field(default_factory=dict)
+    owner_key: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +83,7 @@ class KoinlyReport:
             "source": self.source,
             "parser_version": self.parser_version,
             "provenance": self.provenance,
+            "owner_key": self.owner_key,
         }
 
     @classmethod
@@ -88,6 +97,7 @@ class KoinlyReport:
             source=str(data.get("source", "koinly_pdf")),
             parser_version=str(data.get("parser_version", PARSER_VERSION)),
             provenance=dict(data.get("provenance", {})),
+            owner_key=data.get("owner_key"),
         )
 
 
@@ -168,6 +178,27 @@ def _extract_income(income_text: str) -> tuple[float, dict[str, float], float | 
     return summed, per_category, reported_total
 
 
+def extract_owner_key(pages: list[str]) -> str | None:
+    """Best-effort extraction of an owner-identifying string (name or email)
+    from a Koinly report's cover/header text.
+
+    TODO(verify): the "Prepared for <name>" anchor is UNVERIFIED against a
+    real Koinly report cover page -- confirm against
+    PDF-Statements/koinly_2026_complete_tax_report_July.pdf and adjust the
+    regex before relying on this in production. Returns None (never guesses)
+    when no name or email pattern is found, matching the design's documented
+    fallback to manual owner selection in the UI.
+    """
+    full_text = "\n".join(pages)
+    name_m = _OWNER_NAME_RE.search(full_text)
+    if name_m:
+        return name_m.group(1).strip().splitlines()[0].strip()
+    email_m = _OWNER_EMAIL_RE.search(full_text)
+    if email_m:
+        return email_m.group(0)
+    return None
+
+
 def is_koinly_report(pages: list[str]) -> bool:
     """True if *pages* look like a Koinly crypto tax report.
 
@@ -218,6 +249,7 @@ def parse_koinly_text(pages: list[str]) -> KoinlyReport:
         crypto_income=income,
         captured_at=datetime.now(UTC).isoformat(),
         provenance=provenance,
+        owner_key=extract_owner_key(pages),
     )
 
 

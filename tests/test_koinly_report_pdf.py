@@ -11,6 +11,7 @@ from engine.koinly_report_pdf import (
     KoinlyParseError,
     KoinlyReport,
     _parse_currency,
+    extract_owner_key,
     load_koinly_report,
     parse_koinly_text,
     save_koinly_report,
@@ -174,6 +175,19 @@ def test_parse_real_koinly_sample() -> None:
     assert rec.crypto_stcg == pytest.approx(0.0, abs=0.01)
     assert rec.crypto_ltcg == pytest.approx(-2.02, abs=0.01)
     assert rec.crypto_income == pytest.approx(384.45, abs=0.01)
+
+
+class TestExtractOwnerKey:
+    def test_extracts_name_from_cover_page(self) -> None:
+        cover = "Complete Tax Report\nPrepared for Claude R Cirba\nTAX YEAR 2026\n"
+        assert extract_owner_key([cover, _CG_PAGE, _INCOME_PAGE]) == "Claude R Cirba"
+
+    def test_extracts_email_when_no_name_line(self) -> None:
+        cover = "Complete Tax Report\nclaude.cirba@example.com\nTAX YEAR 2026\n"
+        assert extract_owner_key([cover, _CG_PAGE, _INCOME_PAGE]) == "claude.cirba@example.com"
+
+    def test_returns_none_when_absent(self) -> None:
+        assert extract_owner_key([_CG_PAGE, _INCOME_PAGE]) is None
 
 
 def test_extract_income_two_column_page_picks_income_total_not_expenses():
