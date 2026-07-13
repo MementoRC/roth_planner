@@ -163,12 +163,41 @@ def render(hh: Household):
                 st.session_state["statement_by_account"] = by_account
                 save_statement_records(by_account)
 
-                # Koinly crypto report (newest in folder).
+                # One scan == one import: auto-apply everything parsed straight into
+                # the YTD snapshot (no separate "Apply" click). apply_brokerage_*
+                # and the Koinly assignment SET the statement/Koinly-derived fields,
+                # so re-scanning is idempotent and manual-only fields (wages, NEC,
+                # IRA conversions, qualified dividends) are never touched. Accounts
+                # whose tax status is not stated are the sole exception: they wait
+                # for per-account confirmation below and are applied via the explicit
+                # "Apply to YTD snapshot" button after you confirm them.
+                applied_bits: list[str] = []
+                _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
+
+                stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
+                    partition_by_account_type(by_account) if by_account else ({}, {}, {})
+                )
+                if stmt_taxable_now:
+                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+
+                    _snap = apply_brokerage_statement_records(_snap, stmt_taxable_now)
+                    applied_bits.append(f"{len(stmt_taxable_now)} taxable brokerage account(s)")
+
                 if result.koinly_report is not None:
                     from engine.koinly_report_pdf import save_koinly_report
 
                     st.session_state["koinly_report"] = result.koinly_report
                     save_koinly_report(result.koinly_report)
+                    _snap.crypto_stcg_ytd = float(result.koinly_report.crypto_stcg)
+                    _snap.crypto_ltcg_ytd = float(result.koinly_report.crypto_ltcg)
+                    _snap.crypto_income_ytd = float(result.koinly_report.crypto_income)
+                    applied_bits.append(f"Koinly {result.koinly_report.tax_year} crypto")
+
+                if applied_bits:
+                    _snap.with_snapshot_date()
+                    st.session_state["ytd_snapshot"] = _snap
+                    st.session_state["ytd_manual_entry"] = False
+                    save_ytd_snapshot(_snap)
 
                 # Prior-year 1040 exports -> MAGI cache (filing status is refined
                 # on the Setup -> Parameters page).
@@ -183,20 +212,29 @@ def render(hh: Household):
                     save_pdf_tax_records(merged_1040)
                     st.session_state["_pdf_1040_scanned"] = merged_1040
 
-                # Per-type import summary.
-                loaded_bits: list[str] = []
+                # Summary: what was parsed, what was applied, what still needs action.
+                parsed_bits: list[str] = []
                 if by_account:
-                    loaded_bits.append(f"{len(by_account)} brokerage account(s)")
+                    parsed_bits.append(f"{len(by_account)} brokerage account(s)")
                 if result.koinly_report is not None:
-                    loaded_bits.append(f"Koinly {result.koinly_report.tax_year}")
+                    parsed_bits.append(f"Koinly {result.koinly_report.tax_year}")
                 if result.form_1040_records:
-                    loaded_bits.append(
+                    parsed_bits.append(
                         "Form 1040 " + ", ".join(str(y) for y in sorted(result.form_1040_records))
                     )
-                if loaded_bits:
-                    st.success("Imported: " + "; ".join(loaded_bits))
+                if parsed_bits:
+                    st.success("Imported: " + "; ".join(parsed_bits))
                 elif not (result.skipped or result.unrecognized or result.errors):
                     st.info("No importable financial PDFs found in that folder.")
+                if applied_bits:
+                    st.success("Applied to YTD snapshot: " + "; ".join(applied_bits))
+                if stmt_unknown_now:
+                    st.info(
+                        f"{len(stmt_unknown_now)} account(s) need a tax-status confirmation "
+                        "below before their income can be applied."
+                    )
+                if result.form_1040_records:
+                    st.info("Form 1040 MAGI saved — set filing status on Setup → Parameters.")
                 if result.skipped:
                     st.info(
                         "Skipped (recognized, nothing to import): "

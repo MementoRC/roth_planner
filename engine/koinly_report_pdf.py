@@ -144,16 +144,25 @@ def _extract_income(income_text: str) -> tuple[float, dict[str, float], float | 
     column), so this is robust to the Expenses column sharing the page.
     """
     per_category: dict[str, float] = {}
+    last_category_end = 0
     for label in INCOME_CATEGORIES:
         m = re.search(re.escape(label) + r"\s+" + _CURRENCY, income_text, re.IGNORECASE)
         per_category[label] = _parse_currency(m.group(1)) if m else 0.0
+        if m:
+            last_category_end = max(last_category_end, m.end())
     summed = sum(per_category.values())
 
-    # Reported income Total: only trust a line that STARTS with "Total" (the
-    # income column's Total lands on its own line; the expenses Total shares a
-    # line with an income category label and won't match a line-start anchor).
+    # Reported income Total. The Income and Expenses summaries are two side-by-side
+    # columns on one page; pdfplumber flattens the page by vertical position, so
+    # BOTH columns' "Total" lines land in the text and the shorter Expenses column's
+    # "Total" frequently appears FIRST. Anchor the income Total to the first
+    # line-start "Total" that appears AFTER the last income-category row -- the
+    # income column's Total always follows its own last category, regardless of
+    # which column is longer. This keeps the cross-check honest (it can still catch
+    # a Koinly-added category the fixed sum misses) instead of latching onto the
+    # Expenses total.
     reported_total: float | None = None
-    tm = re.search(r"(?mi)^\s*Total\s+" + _CURRENCY, income_text)
+    tm = re.search(r"(?mi)^\s*Total\s+" + _CURRENCY, income_text[last_category_end:])
     if tm:
         reported_total = _parse_currency(tm.group(1))
     return summed, per_category, reported_total
