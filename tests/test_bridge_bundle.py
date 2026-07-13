@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 
 from engine.bridge_bundle import (
@@ -6,6 +7,7 @@ from engine.bridge_bundle import (
     build_bundle,
     read_format_version,
 )
+from engine.data_bridge_crypto import generate_keypair, open_uploaded_payload, seal
 
 
 @dataclass
@@ -134,3 +136,40 @@ class TestApplyBundle:
         )
         assert "spouse" not in new_led["koinly"]
         assert "spouse" not in new_led["brokerage"]
+
+
+class TestExportImportRoundTrip:
+    """Engine-boundary round-trip: build_bundle -> seal -> open_uploaded_payload
+    -> json -> apply_bundle. No Streamlit; exercises the same pipeline the
+    data-bridge view wires together."""
+
+    def test_sealed_bundle_round_trips_into_target_owner_slot(self):
+        pub, priv = generate_keypair()
+        exporter_snap = _Snap(accounts=[_Acct("you", "ExportedIRA")])
+        bundle = build_bundle(
+            {"your_age": 61}, exporter_snap, _existing_ledger(), owner="you"
+        )
+
+        ciphertext = seal(json.dumps(bundle).encode("utf-8"), pub)
+
+        plaintext = open_uploaded_payload(ciphertext, priv)
+        received = json.loads(plaintext.decode("utf-8"))
+
+        assert read_format_version(received) == BUNDLE_FORMAT_VERSION
+
+        incoming_accounts = [
+            _A(a["owner"], a["account_name"])
+            for a in received["sections"]["portfolio"]["accounts"]
+        ]
+        received["sections"]["portfolio"]["accounts"] = incoming_accounts
+
+        existing_snap = _Snap2([_A("you", "MyIRA")])
+        new_snap, new_led = apply_bundle(
+            "spouse", received,
+            existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+        )
+
+        by_name = {a.account_name: a.owner for a in new_snap.accounts}
+        assert by_name == {"MyIRA": "you", "ExportedIRA": "spouse"}
+        assert received["sections"]["setup_scalars"] == {"your_age": 61}
+        assert new_led["koinly"]["spouse"] == {"stcg": 10.0}
