@@ -1280,7 +1280,346 @@ git commit -m "feat(ytd): wire owner attribution into YTD scan flow; fix Koinly 
 
 ---
 
-## Task 7: Final verification pass
+## Task 7: Wire BROKERAGE statements through the per-owner ledger (fix the second override bug)
+
+**Context — verified against the current code (Tasks 1-6 already landed; Koinly is ledger-backed, brokerage is NOT):**
+
+- `views/ytd_income.py` lines 176-201: on "Scan folder", `by_account = pick_latest_per_account(result.brokerage_records)` → `apply_account_type_overrides` → `st.session_state["statement_by_account"] = by_account` (line 180, **wholesale replace**) → `save_statement_records(by_account)` (line 181, **wholesale replace of `.brokerage_statement_cache.json`**) → `partition_by_account_type` → if `stmt_taxable_now`: `_snap = apply_brokerage_statement_records(_snap, stmt_taxable_now)` (line 200, **direct-assigns** `interest_ytd`/`tax_exempt_interest_ytd`/`ordinary_dividends_ytd`/`stcg_ytd`/`ltcg_ytd` from only *this scan's* accounts).
+- Lines 303-309: on later renders, `statement_by_account` is rehydrated from `load_statement_records()` (the same wholesale-replaced disk cache) if not already in `st.session_state`.
+- Lines 311-348: `partition_by_account_type(statement_by_account)` → `stmt_unknown` accounts get a per-account `st.selectbox` confirm (lines 326-334, writes `save_account_type_override` + `st.rerun()`) → if `stmt_taxable`: explicit **"Apply to YTD snapshot"** button (line 338) calls `apply_brokerage_statement_records(prev_ytd, stmt_taxable)` (line 342, same direct-assign function, same override bug for spouse's later scan).
+- `engine/portfolio_sync/ytd.py` lines 55-73: `apply_brokerage_statement_records(ytd, taxable_by_account)` calls `aggregate_to_ytd_fields(taxable_by_account)` and assigns exactly `ytd.interest_ytd`, `ytd.tax_exempt_interest_ytd`, `ytd.ordinary_dividends_ytd`, `ytd.stcg_ytd`, `ytd.ltcg_ytd` — no other snapshot fields.
+- `engine/brokerage_statement_pdf.py` line 795: `aggregate_to_ytd_fields` returns keys `{interest_ytd, tax_exempt_interest_ytd, ordinary_dividends_ytd, stcg_ytd, ltcg_ytd}`.
+- `engine/pdf_ledger.py` line 97 `derive_brokerage_totals` returns the **identical key set** `{interest_ytd, tax_exempt_interest_ytd, ordinary_dividends_ytd, stcg_ytd, ltcg_ytd}` from the identical source record fields (`interest_taxable_ytd`; `interest_tax_exempt_ytd + dividends_tax_exempt_ytd`; `dividends_taxable_ytd`; `stcg_net_ytd`; `ltcg_net_ytd`).
+
+**Verification #1 result — field sets MATCH, no reconciliation needed:**
+
+| Field | `aggregate_to_ytd_fields` | `derive_brokerage_totals` |
+|---|---|---|
+| `interest_ytd` | ✅ `interest_taxable_ytd` | ✅ `interest_taxable_ytd` |
+| `tax_exempt_interest_ytd` | ✅ `interest_tax_exempt_ytd + dividends_tax_exempt_ytd` | ✅ same |
+| `ordinary_dividends_ytd` | ✅ `dividends_taxable_ytd` | ✅ same |
+| `stcg_ytd` | ✅ `stcg_net_ytd` | ✅ same |
+| `ltcg_ytd` | ✅ `ltcg_net_ytd` | ✅ same |
+
+Both functions are already algebraically identical, just scoped differently (`aggregate_to_ytd_fields` takes a flat `dict[account_number, record]`; `derive_brokerage_totals` takes the owner-scoped ledger and flattens across owners first). **No field renaming/adjustment step is required** — Task 7 only needs to route writes through `write_brokerage_contribution` and reads through `derive_brokerage_totals` instead of `aggregate_to_ytd_fields`/`apply_brokerage_statement_records` directly.
+
+**Verification #2 result — `write_brokerage_contribution` stores enough:** it stores `record.to_dict()` in full (line 78 of `engine/pdf_ledger.py`), which includes `account_type`, `interest_taxable_ytd`, `interest_tax_exempt_ytd`, `dividends_taxable_ytd`, `dividends_tax_exempt_ytd`, `stcg_net_ytd`, `ltcg_net_ytd`, `owner_key`, `provenance`, etc. — the full record, not a narrowed projection. Sufficient to reconstruct totals per (owner, account) and to re-derive `account_type` later if ever needed (not required by this task, since only taxable-confirmed records are written — see below).
+
+**Verification #3 result — taxable-status interplay:** `write_brokerage_contribution` must be called ONLY for records already in the `taxable` partition returned by `partition_by_account_type` (identical safety contract `aggregate_to_ytd_fields` already relies on — "Callers must pass only the taxable partition... this function does not re-check account_type"). The existing `stmt_unknown` confirm-loop (lines 321-334, `st.selectbox` + `save_account_type_override` + `st.rerun()`) is UNCHANGED by this task — it still gates which accounts even enter the taxable partition on the next render after confirmation. This task does not touch that loop's logic, only what happens to `stmt_taxable`/`stmt_taxable_now` afterward.
+
+**Design decision — disk cache and session_state coexistence:** `.brokerage_statement_cache.json` (`save_statement_records`/`load_statement_records`) and `st.session_state["statement_by_account"]` remain the source of truth for the **tax-status confirmation UI only** (which accounts exist, their `account_type`, the `stmt_unknown` confirm loop, the `stmt_excluded` display). They are NO LONGER the source of the **applied YTD totals** — that becomes `derive_brokerage_totals(ledger)` exclusively, summed across ALL owners' ledger slots, not just the current scan's `by_account`. This avoids double-count because the ledger and the statement cache track different things: the statement cache is "what accounts exist and their confirmed type" (still wholesale-replaced per scan, which is fine — it doesn't accumulate across owners, it just needs to reflect what a fresh scan found for THAT owner's paperwork), while the ledger is "what has been confirmed-taxable and applied, ever, per owner+account" (additive, never wholesale-replaced).
+
+**Files:**
+- Modify: `/home/memento/PycharmProjects/roth_planner/views/ytd_income.py`
+- Modify: `/home/memento/PycharmProjects/roth_planner/engine/portfolio_sync/ytd.py` (no signature change expected — see Step 7.3)
+- Test: `/home/memento/PycharmProjects/roth_planner/tests/test_views_ytd_income.py`
+- Test: `/home/memento/PycharmProjects/roth_planner/tests/test_pdf_ledger.py` (already covers `write_brokerage_contribution`/`derive_brokerage_totals` at the unit level from Task 2 — no new engine-level tests needed, confirmed by re-reading `TestBrokerageAdditive` in that file; this task's new tests are view-level only)
+
+### Step 7.1: Write failing tests
+
+Add to `tests/test_views_ytd_income.py` (same file/imports as `TestOwnerAttributionScanFlow`; reuse `_run_scan` pattern — extend it to also patch `engine.brokerage_statement_pdf.load_account_type_overrides`/`save_account_type_override` paths onto `tmp_path` the same way the existing `TestBrokerageStatementSync` class in this file already does):
+
+```python
+from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+
+def _brokerage_record(
+    account_number: str,
+    owner_key: str | None,
+    interest: float = 0.0,
+    dividends: float = 0.0,
+) -> BrokerageStatementRecord:
+    return BrokerageStatementRecord(
+        account_number=account_number,
+        broker="schwab",
+        account_type="taxable",
+        statement_period_end="2026-06-30",
+        interest_taxable_ytd=interest,
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=dividends,
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=0.0,
+        ltcg_net_ytd=0.0,
+        captured_at="2026-07-13T00:00:00+00:00",
+        owner_key=owner_key,
+    )
+
+
+class TestBrokerageOwnerAttributionScanFlow:
+    """Regression coverage for the brokerage override bug (Task 7 of the
+    spouse-pdf-owner-attribution plan): scanning a second owner's brokerage
+    statements must ADD to interest_ytd/ordinary_dividends_ytd/etc., not
+    overwrite them -- the same fix already proven for Koinly in Task 6."""
+
+    def _run_scan(
+        self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+    ):
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+        import engine.brokerage_statement_pdf as stmt_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
+            patch.object(stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"),
+        ):
+            ytd_income_mod.render(hh)
+
+    def test_two_owner_brokerage_scan_sums_not_overrides(self, tmp_path, monkeypatch):
+        """Core regression: scan owner A's accounts, then owner B's accounts
+        in a SEPARATE render -- final interest_ytd/ordinary_dividends_ytd must
+        be the SUM of both owners' accounts, not just B's (today's bug)."""
+        hh = _stub_hh()
+
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result1 = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "claude r cirba", interest=10.0, dividends=5.0)]
+        )
+        self._run_scan(
+            hh, mock_st1, result1,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "spouse"
+        result2 = PdfImportResult(
+            brokerage_records=[_brokerage_record("B1", "jane r cirba", interest=20.0, dividends=8.0)]
+        )
+        self._run_scan(
+            hh, mock_st2, result2,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(30.0)
+        assert final_snap.ordinary_dividends_ytd == pytest.approx(13.0)
+
+    def test_idempotent_rescan_same_owner_same_account_unchanged(self, tmp_path, monkeypatch):
+        hh = _stub_hh()
+        result = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "claude r cirba", interest=10.0)]
+        )
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st2, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(10.0)
+
+    def test_unstated_account_does_not_contribute_until_confirmed(self, tmp_path, monkeypatch):
+        """account_type='unknown' must NOT reach the ledger -- it stays gated
+        behind the existing stmt_unknown confirm-loop (unchanged by Task 7)."""
+        hh = _stub_hh()
+        from dataclasses import replace
+
+        base = _brokerage_record("A1", "claude r cirba", interest=10.0)
+        unstated = replace(base, account_type="unknown")
+        result = PdfImportResult(brokerage_records=[unstated])
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        final_snap = mock_st1.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(0.0)
+```
+
+TODO(verify): `test_unstated_account_does_not_contribute_until_confirmed` assumes owner-resolution UI is only invoked for accounts that already made it into the taxable partition (mirroring how Koinly's owner-confirm loop runs unconditionally per report, but brokerage's account-type confirm loop runs first and independently). If the implementation resolves owner BEFORE partitioning by tax status, adjust this test's `mock_st1.selectbox.return_value` handling — the assertion on `interest_ytd == 0.0` is the load-bearing check, not the exact selectbox call count.
+
+### Step 7.2: Run test, expect FAIL
+
+```
+pixi run -e ci test -- tests/test_views_ytd_income.py::TestBrokerageOwnerAttributionScanFlow -v
+```
+Expected: `test_two_owner_brokerage_scan_sums_not_overrides` FAILS with `interest_ytd == 20.0` (spouse's account only) instead of `30.0` — reproducing today's override bug at the view-test level. The other two tests may pass vacuously (single-owner and unstated behavior are already correct today) — that's fine; they exist to pin non-regression through the refactor in Step 7.3.
+
+### Step 7.3: Minimal implementation
+
+In `views/ytd_income.py`, mirror the Koinly loop (lines 203-246) for brokerage. Replace the `stmt_taxable_now` block (lines 194-201):
+
+```python
+                stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
+                    partition_by_account_type(by_account) if by_account else ({}, {}, {})
+                )
+                if stmt_taxable_now:
+                    for account_number, rec in stmt_taxable_now.items():
+                        resolved = resolve_owner(rec.owner_key, owner_map)
+                        if resolved is None:
+                            st.warning(
+                                f"Account {account_number} ({rec.broker}) has no recognized "
+                                f"owner ({rec.owner_key!r}) — confirm whose it is:"
+                            )
+                            resolved = st.selectbox(
+                                f"Owner for account {account_number} ({rec.broker})",
+                                sorted(OWNER_ROLES),
+                                key=f"brokerage_owner_confirm_{account_number}",
+                            )
+                            if rec.owner_key is not None:
+                                owner_map = learn_owner(rec.owner_key, resolved, owner_map)
+                        elif rec.owner_key is not None:
+                            corrected = st.selectbox(
+                                f"Owner for account {account_number} (auto-resolved: {resolved})",
+                                sorted(OWNER_ROLES),
+                                index=sorted(OWNER_ROLES).index(resolved),
+                                key=f"brokerage_owner_correct_{account_number}",
+                            )
+                            if corrected != resolved:
+                                owner_map = learn_owner(rec.owner_key, corrected, owner_map)
+                                resolved = corrected
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+
+                    save_ledger(ledger)
+                    save_owner_map(owner_map)
+
+                    brokerage_totals = derive_brokerage_totals(ledger)
+                    _snap.interest_ytd = brokerage_totals["interest_ytd"]
+                    _snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    _snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    _snap.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    _snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    applied_bits.append(
+                        f"{len(stmt_taxable_now)} taxable brokerage account(s) "
+                        f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
+                    )
+```
+
+`owner_map = load_owner_map()` must be hoisted to run once before this block (currently declared at line 206 inside the `if result.koinly_reports:` branch) — move it up to just before the `stmt_taxable_now` check so both the brokerage and Koinly loops share one `owner_map` read/write per render (avoids the Koinly block's `save_owner_map` clobbering a brokerage-loop correction made earlier in the same render, or vice versa). Do not call `save_owner_map` twice if both blocks ran in the same render — call it once after both loops, or accept the idempotent double-write (same content) if simpler; TODO(verify): confirm no ordering bug from calling `save_owner_map` twice with monotonically-updated `owner_map` (should be harmless since each call writes the latest merged dict, not a stale one — verify by reading through the actual diff before commit).
+
+Update `apply_brokerage_statement_records`'s import (line 198's local `from engine.portfolio_sync.ytd import apply_brokerage_statement_records`) — **remove it**; it is no longer called from the scan-button branch. `engine/portfolio_sync/ytd.py`'s `apply_brokerage_statement_records` function itself is left in place (Step 7.3 does not delete engine code) because it may still be called from the manual "Apply to YTD snapshot" button flow — see below.
+
+Replace the manual "Apply to YTD snapshot" button block (lines 336-348) similarly — it must also derive from the ledger rather than wholesale-replacing:
+
+```python
+            if stmt_taxable:
+                st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
+                if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
+                    owner_map = load_owner_map()
+                    for account_number, rec in stmt_taxable.items():
+                        resolved = resolve_owner(rec.owner_key, owner_map) or "household"
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+                    save_ledger(ledger)
+
+                    brokerage_totals = derive_brokerage_totals(ledger)
+                    prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
+                    prev_ytd.interest_ytd = brokerage_totals["interest_ytd"]
+                    prev_ytd.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    prev_ytd.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    prev_ytd.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    prev_ytd.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    prev_ytd.with_snapshot_date()
+                    st.session_state.ytd_snapshot = prev_ytd
+                    st.session_state["ytd_manual_entry"] = False
+                    save_ytd_snapshot(prev_ytd)
+                    st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+                    st.rerun()
+```
+
+TODO(verify): this manual-button path defaults unresolved owners to `"household"` rather than showing a selectbox (unlike the scan-time path), because this block runs on every render where `stmt_taxable` is non-empty (not gated behind a fresh scan) and adding a per-render selectbox here risks a confusing/duplicate widget vs. the scan-time confirm already shown moments earlier for the same accounts. If accounts reach this button without ever having gone through a scan-time owner resolution (e.g. loaded purely from `load_statement_records()` cache on a fresh process restart), `"household"` is a safe non-double-counting default but loses per-owner breakdown fidelity for that account until the user re-scans. Flag for user confirmation before merge; an alternative is to also show the confirm/correct selectbox here, mirroring the scan-time block exactly.
+
+Add imports at the top of `views/ytd_income.py`:
+
+```python
+from engine.pdf_ledger import (
+    derive_brokerage_totals,
+    write_brokerage_contribution,
+)
+```
+(add to the existing `from engine.pdf_ledger import (...)` block already present at lines 20-25 — do not create a duplicate import statement.)
+
+Add a per-owner brokerage breakdown expander, mirroring the Koinly one (near lines 374-381):
+
+```python
+            if ledger.get("brokerage"):
+                with st.expander("Per-owner brokerage breakdown"):
+                    for owner, accounts in sorted(ledger["brokerage"].items()):
+                        totals = derive_brokerage_totals({"koinly": {}, "brokerage": {owner: accounts}})
+                        st.caption(
+                            f"{owner.title()} ({len(accounts)} account(s)): "
+                            f"Interest {fmt_dollars(totals['interest_ytd'])}, "
+                            f"Dividends {fmt_dollars(totals['ordinary_dividends_ytd'])}, "
+                            f"STCG {fmt_dollars(totals['stcg_ytd'])}, "
+                            f"LTCG {fmt_dollars(totals['ltcg_ytd'])}"
+                        )
+```
+
+### Step 7.4: Run test, expect PASS
+
+```
+pixi run -e ci test -- tests/test_views_ytd_income.py -v
+```
+Expected: all tests pass, including the 3 new `TestBrokerageOwnerAttributionScanFlow` cases, all pre-existing `TestBrokerageStatementSync`/`TestOwnerAttributionScanFlow`/NQO smoke tests (no regression — the `stmt_unknown` confirm loop and `stmt_excluded` display are untouched).
+
+### Step 7.5: Full test suite + lint + type-check
+
+```
+pixi run -e ci test
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+Fix any fallout. Grep first for other call sites of the now-scan-button-unused import: `grep -rn "apply_brokerage_statement_records" views/ engine/ tests/` — confirm the manual-button path (Step 7.3's second block) is the only remaining view-level caller, and that `engine/portfolio_sync/ytd.py`'s function definition + its own unit tests in `tests/test_portfolio_sync_ytd.py` (or equivalent) are unaffected (the function itself is not deleted, only one of its two call sites in the view).
+
+### Step 7.6: Commit
+
+```
+git add views/ytd_income.py tests/test_views_ytd_income.py
+git commit -m "feat(ytd): wire brokerage statements into per-owner ledger; fix spouse override bug
+
+Brokerage-derived YTD fields (interest, dividends, STCG, LTCG, tax-exempt
+interest) now route through the same per-owner pdf_ledger already used for
+Koinly (Task 6), fixing the analogous override bug: a second owner's
+brokerage scan no longer replaces the first owner's applied totals.
+write_brokerage_contribution/derive_brokerage_totals (previously dead code
+from Task 2) are now load-bearing. The tax-status confirmation flow
+(stmt_unknown per-account selectbox, .brokerage_statement_cache.json) is
+unchanged -- only what happens to the confirmed-taxable partition afterward
+changes, from wholesale-replace direct-assignment to ledger derive-sum.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+```
+
+**Files:**
+- Modify: `/home/memento/PycharmProjects/roth_planner/views/ytd_income.py`
+- Modify: `/home/memento/PycharmProjects/roth_planner/tests/test_views_ytd_income.py`
+
+---
+
+## Task 8: Final verification pass
 
 - [ ] Full suite green: `pixi run -e ci test`
 - [ ] Lint clean: `pixi run -e ci lint`
@@ -1288,6 +1627,7 @@ git commit -m "feat(ytd): wire owner attribution into YTD scan flow; fix Koinly 
 - [ ] Confirm `git status` shows no new untracked cache files (`.pdf_owner_map.json`, `.pdf_import_ledger.json` must be gitignored, not staged) — re-check after any manual local testing that exercises the real scan flow.
 - [ ] Re-read the design spec's Non-Goals section once more: confirm no engine tax-math file (`engine/headroom.py`, `engine/tax.py`, `engine/irmaa.py`, `engine/niit.py`) was touched.
 - [ ] Update `docs/superpowers/plans/` cross-reference in project MEMORY.md if the user's workflow expects it (check existing pattern from PR #357-#360 plans first — do not invent a new logging convention).
+- [ ] Confirm Task 7's brokerage ledger wiring did not reintroduce the tax-status confirmation bypass: `stmt_unknown` accounts must still require explicit confirmation (`save_account_type_override`) before any `write_brokerage_contribution` call is reachable for them.
 
 **Files:** none (verification only).
 
@@ -1298,3 +1638,4 @@ git commit -m "feat(ytd): wire owner attribution into YTD scan flow; fix Koinly 
 1. **Task 3** — Koinly `extract_owner_key` "Prepared for" regex is UNVERIFIED against the real sample PDF; executor must inspect `PDF-Statements/koinly_2026_complete_tax_report_July.pdf` cover page before trusting it.
 2. **Task 4** — Schwab/Vanguard `extract_owner_key` anchors are inferred from the single captured fixture per broker; IBKR/Fidelity owner-key extraction is explicitly out of scope (falls back to `None` -> manual UI confirmation).
 3. **Task 6** — exact `st.selectbox` call layout/ordering for owner confirm/correct controls must be finalized during implementation and the test mocks in Step 6.1 adjusted to match; the cached single-report "Apply to crypto fields below" block's fate (read-only display vs. removal) is a judgment call flagged for the executor; `ledger` variable scoping (loaded once per render vs. only inside the button branch) needs confirmation during implementation.
+4. **Task 7** — owner-resolution UI ordering relative to the `stmt_unknown` tax-status confirm loop is unverified (does owner-confirm run before or after tax-status confirm in the same render?); `save_owner_map` being called from both the Koinly and brokerage blocks in the same render (idempotent but redundant) is flagged for cleanup; the manual "Apply to YTD snapshot" button's owner-default-to-"household" fallback (vs. showing a selectbox) is a judgment call for user confirmation before merge.
