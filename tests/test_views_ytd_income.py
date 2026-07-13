@@ -787,6 +787,54 @@ class TestBrokerageStatementSync:
         stored = setitem_calls[-1][0][1]
         assert stored["XXXX9320"].account_type == "taxable"
 
+    def test_scan_auto_applies_taxable_statement_to_ytd_snapshot(self, tmp_path, monkeypatch):
+        """Clicking 'Scan folder' must auto-apply a taxable account's parsed
+        interest/dividends straight into the YTD snapshot and persist it via
+        save_ytd_snapshot — no separate 'Apply to YTD snapshot' click required."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX9320",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=500.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1028.55,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save_snapshot,
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        assert mock_save_snapshot.called, "Expected save_ytd_snapshot to be called during scan (auto-apply)"
+        saved_snapshot = mock_save_snapshot.call_args[0][0]
+        assert saved_snapshot.interest_ytd == 500.0
+        assert saved_snapshot.ordinary_dividends_ytd == 1028.55
+
     def test_roth_ira_statement_excluded_from_taxable_partition(self, tmp_path, monkeypatch):
         """Regression test for the exact bug that motivated this whole feature: a
         Roth IRA statement scanned into session_state must partition to 'excluded',
