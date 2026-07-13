@@ -48,6 +48,8 @@ Thumbs.db
 .ssa_cache.json
 .dividend_rates.json
 .brokerage_statement_cache.json
+.pdf_owner_map.json
+.pdf_import_ledger.json
 .statement_folder_config.json
 .statement_account_overrides.json
 .claude/
