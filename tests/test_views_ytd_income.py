@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import views.ytd_income as ytd_income_mod
+from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.koinly_report_pdf import KoinlyReport
 from engine.pdf_import import PdfImportResult
 from models.grants import StockGrant
@@ -744,6 +745,8 @@ class TestBrokerageStatementSync:
         dict in session_state under 'statement_by_account' (verified via the same
         __setitem__ call-tracking pattern used elsewhere in this file, since the
         session_state mock's .get() is not linked to bracket-assignment)."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -753,6 +756,7 @@ class TestBrokerageStatementSync:
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
         mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
 
         taxable_rec = BrokerageStatementRecord(
             account_number="XXXX9320",
@@ -779,6 +783,8 @@ class TestBrokerageStatementSync:
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
@@ -794,6 +800,8 @@ class TestBrokerageStatementSync:
         """Clicking 'Scan folder' must auto-apply a taxable account's parsed
         interest/dividends straight into the YTD snapshot and persist it via
         save_ytd_snapshot — no separate 'Apply to YTD snapshot' click required."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -803,6 +811,7 @@ class TestBrokerageStatementSync:
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
         mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
 
         taxable_rec = BrokerageStatementRecord(
             account_number="XXXX9320",
@@ -829,6 +838,8 @@ class TestBrokerageStatementSync:
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save_snapshot,
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
@@ -1060,6 +1071,8 @@ class TestBrokerageStatementSync:
     def test_scan_persists_to_cache_via_save_statement_records(self, tmp_path, monkeypatch):
         """After a successful scan, save_statement_records is called with the
         parsed-and-latest-per-account dict so the scan survives an app restart."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -1069,6 +1082,7 @@ class TestBrokerageStatementSync:
         mock_st.checkbox.return_value = False  # manual entry off
         mock_st.text_input.return_value = str(tmp_path)
         mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
 
         taxable_rec = BrokerageStatementRecord(
             account_number="XXXX9320",
@@ -1096,6 +1110,8 @@ class TestBrokerageStatementSync:
             patch("engine.brokerage_statement_pdf.save_statement_records") as mock_save_records,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
@@ -1279,3 +1295,143 @@ class TestOwnerAttributionScanFlow:
             "you" in (c.args[1] if len(c.args) > 1 else c.kwargs.get("options", []))
             for c in selectbox_calls
         )
+
+
+def _brokerage_record(
+    account_number: str,
+    owner_key: str | None,
+    interest: float = 0.0,
+    dividends: float = 0.0,
+) -> BrokerageStatementRecord:
+    return BrokerageStatementRecord(
+        account_number=account_number,
+        broker="schwab",
+        account_type="taxable",
+        statement_period_end="2026-06-30",
+        interest_taxable_ytd=interest,
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=dividends,
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=0.0,
+        ltcg_net_ytd=0.0,
+        captured_at="2026-07-13T00:00:00+00:00",
+        owner_key=owner_key,
+    )
+
+
+class TestBrokerageOwnerAttributionScanFlow:
+    """Regression coverage for the brokerage override bug (Task 7 of the
+    spouse-pdf-owner-attribution plan): scanning a second owner's brokerage
+    statements must ADD to interest_ytd/ordinary_dividends_ytd/etc., not
+    overwrite them -- the same fix already proven for Koinly in Task 6."""
+
+    def _run_scan(
+        self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+    ):
+        import engine.brokerage_statement_pdf as stmt_mod
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
+            patch.object(stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"),
+        ):
+            ytd_income_mod.render(hh)
+
+    def test_two_owner_brokerage_scan_sums_not_overrides(self, tmp_path, monkeypatch):
+        """Core regression: scan owner A's accounts, then owner B's accounts
+        in a SEPARATE render -- final interest_ytd/ordinary_dividends_ytd must
+        be the SUM of both owners' accounts, not just B's (today's bug)."""
+        hh = _stub_hh()
+
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result1 = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "claude r cirba", interest=10.0, dividends=5.0)]
+        )
+        self._run_scan(
+            hh, mock_st1, result1,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "spouse"
+        result2 = PdfImportResult(
+            brokerage_records=[_brokerage_record("B1", "jane r cirba", interest=20.0, dividends=8.0)]
+        )
+        self._run_scan(
+            hh, mock_st2, result2,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(30.0)
+        assert final_snap.ordinary_dividends_ytd == pytest.approx(13.0)
+
+    def test_idempotent_rescan_same_owner_same_account_unchanged(self, tmp_path, monkeypatch):
+        hh = _stub_hh()
+        result = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "claude r cirba", interest=10.0)]
+        )
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st2, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(10.0)
+
+    def test_unstated_account_does_not_contribute_until_confirmed(self, tmp_path, monkeypatch):
+        """account_type='unknown' must NOT reach the ledger -- it stays gated
+        behind the existing stmt_unknown confirm-loop (unchanged by Task 7)."""
+        hh = _stub_hh()
+        from dataclasses import replace
+
+        base = _brokerage_record("A1", "claude r cirba", interest=10.0)
+        unstated = replace(base, account_type="unknown")
+        result = PdfImportResult(brokerage_records=[unstated])
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+        )
+        # An unstated (unknown tax-status) account contributes nothing, so
+        # applied_bits stays empty and st.session_state.ytd_snapshot is never
+        # reassigned this render -- ytd1 itself is the load-bearing check,
+        # not the mock's auto-generated attribute (which was never set).
+        assert ytd1.interest_ytd == pytest.approx(0.0)

@@ -18,9 +18,11 @@ from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.pdf_ledger import (
+    derive_brokerage_totals,
     derive_koinly_totals,
     load_ledger,
     save_ledger,
+    write_brokerage_contribution,
     write_koinly_contribution,
 )
 from engine.pdf_owner import (
@@ -191,19 +193,54 @@ def render(hh: Household):
                 applied_bits: list[str] = []
                 _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
 
+                owner_map = load_owner_map()
+
                 stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
                     partition_by_account_type(by_account) if by_account else ({}, {}, {})
                 )
                 if stmt_taxable_now:
-                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+                    for account_number, rec in stmt_taxable_now.items():
+                        resolved = resolve_owner(rec.owner_key, owner_map)
+                        if resolved is None:
+                            st.warning(
+                                f"Account {account_number} ({rec.broker}) has no recognized "
+                                f"owner ({rec.owner_key!r}) — confirm whose it is:"
+                            )
+                            resolved = st.selectbox(
+                                f"Owner for account {account_number} ({rec.broker})",
+                                sorted(OWNER_ROLES),
+                                key=f"brokerage_owner_confirm_{account_number}",
+                            )
+                            if rec.owner_key is not None:
+                                owner_map = learn_owner(rec.owner_key, resolved, owner_map)
+                        elif rec.owner_key is not None:
+                            corrected = st.selectbox(
+                                f"Owner for account {account_number} (auto-resolved: {resolved})",
+                                sorted(OWNER_ROLES),
+                                index=sorted(OWNER_ROLES).index(resolved),
+                                key=f"brokerage_owner_correct_{account_number}",
+                            )
+                            if corrected != resolved:
+                                owner_map = learn_owner(rec.owner_key, corrected, owner_map)
+                                resolved = corrected
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
 
-                    _snap = apply_brokerage_statement_records(_snap, stmt_taxable_now)
-                    applied_bits.append(f"{len(stmt_taxable_now)} taxable brokerage account(s)")
+                    save_ledger(ledger)
+                    save_owner_map(owner_map)
+
+                    brokerage_totals = derive_brokerage_totals(ledger)
+                    _snap.interest_ytd = brokerage_totals["interest_ytd"]
+                    _snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    _snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    _snap.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    _snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    applied_bits.append(
+                        f"{len(stmt_taxable_now)} taxable brokerage account(s) "
+                        f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
+                    )
 
                 if result.koinly_reports:
                     from engine.koinly_report_pdf import save_koinly_report
-
-                    owner_map = load_owner_map()
 
                     for report in result.koinly_reports:
                         resolved = resolve_owner(report.owner_key, owner_map)
@@ -336,14 +373,23 @@ def render(hh: Household):
             if stmt_taxable:
                 st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
                 if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
-                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+                    owner_map = load_owner_map()
+                    for rec in stmt_taxable.values():
+                        resolved = resolve_owner(rec.owner_key, owner_map) or "household"
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+                    save_ledger(ledger)
 
+                    brokerage_totals = derive_brokerage_totals(ledger)
                     prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-                    updated_ytd = apply_brokerage_statement_records(prev_ytd, stmt_taxable)
-                    updated_ytd.with_snapshot_date()
-                    st.session_state.ytd_snapshot = updated_ytd
+                    prev_ytd.interest_ytd = brokerage_totals["interest_ytd"]
+                    prev_ytd.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    prev_ytd.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    prev_ytd.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    prev_ytd.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    prev_ytd.with_snapshot_date()
+                    st.session_state.ytd_snapshot = prev_ytd
                     st.session_state["ytd_manual_entry"] = False
-                    save_ytd_snapshot(updated_ytd)
+                    save_ytd_snapshot(prev_ytd)
                     st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
                     st.rerun()
 
@@ -378,6 +424,18 @@ def render(hh: Household):
                             f"{owner.title()}: STCG {fmt_dollars(figures['stcg'])}, "
                             f"LTCG {fmt_dollars(figures['ltcg'])}, "
                             f"Income {fmt_dollars(figures['income'])}"
+                        )
+
+            if ledger.get("brokerage"):
+                with st.expander("Per-owner brokerage breakdown"):
+                    for owner, accounts in sorted(ledger["brokerage"].items()):
+                        totals = derive_brokerage_totals({"koinly": {}, "brokerage": {owner: accounts}})
+                        st.caption(
+                            f"{owner.title()} ({len(accounts)} account(s)): "
+                            f"Interest {fmt_dollars(totals['interest_ytd'])}, "
+                            f"Dividends {fmt_dollars(totals['ordinary_dividends_ytd'])}, "
+                            f"STCG {fmt_dollars(totals['stcg_ytd'])}, "
+                            f"LTCG {fmt_dollars(totals['ltcg_ytd'])}"
                         )
 
     manual = st.checkbox(
