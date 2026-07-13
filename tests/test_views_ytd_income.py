@@ -3,7 +3,10 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import views.ytd_income as ytd_income_mod
+from engine.koinly_report_pdf import KoinlyReport
 from engine.pdf_import import PdfImportResult
 from models.grants import StockGrant
 from models.household import Household
@@ -1154,3 +1157,125 @@ class TestBrokerageStatementSync:
         ]
         assert setitem_calls, "Expected statement_by_account to be hydrated into session_state"
         assert setitem_calls[-1][0][1] == cached_by_account
+
+
+def _koinly_report(owner_key: str | None, stcg: float, ltcg: float, income: float) -> KoinlyReport:
+    return KoinlyReport(
+        tax_year=2026,
+        crypto_stcg=stcg,
+        crypto_ltcg=ltcg,
+        crypto_income=income,
+        captured_at="2026-07-13T00:00:00+00:00",
+        owner_key=owner_key,
+    )
+
+
+class TestOwnerAttributionScanFlow:
+    """Regression coverage for the Koinly override bug (docs/superpowers/specs/
+    2026-07-13-spouse-pdf-owner-attribution-design.md): scanning a second
+    owner's Koinly report must ADD to crypto_stcg_ytd/crypto_ltcg_ytd/
+    crypto_income_ytd, not overwrite them."""
+
+    def _run_scan(self, hh, mock_st, canned_result, ledger_path, owner_map_path, tmp_path, monkeypatch):
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        # validate_local_folder requires the scanned folder to be under
+        # Path.home(); pytest's tmp_path lives under /tmp, so home must be
+        # repointed here (mirrors the pattern used by TestBrokerageStatementSync
+        # elsewhere in this file).
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+        ):
+            ytd_income_mod.render(hh)
+
+    def test_two_owner_koinly_scan_sums_not_overrides(self, tmp_path, monkeypatch):
+        """Core regression: scan 'you' Koinly, then scan 'spouse' Koinly in a
+        SEPARATE render call -- final crypto_*_ytd must be the SUM, matching
+        the design's derive-sum contract, not the second report's raw value."""
+        hh = _stub_hh()
+
+        # First render: "you" scans a Koinly report.
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result1 = PdfImportResult(koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)])
+        self._run_scan(
+            hh, mock_st1, result1,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+        )
+
+        # Second render: "spouse" scans a separate Koinly report. Ledger/owner
+        # map persist on disk between renders (same tmp_path), same as two
+        # separate Streamlit sessions on the same machine.
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "spouse"
+        result2 = PdfImportResult(koinly_reports=[_koinly_report("jane r cirba", 10.0, 20.0, 5.0)])
+        self._run_scan(
+            hh, mock_st2, result2,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+        )
+
+        # Read back via direct attribute access to match test file's established pattern
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(110.0)
+        assert final_snap.crypto_ltcg_ytd == pytest.approx(220.0)
+        assert final_snap.crypto_income_ytd == pytest.approx(55.0)
+
+    def test_idempotent_rescan_same_owner_unchanged_total(self, tmp_path, monkeypatch):
+        hh = _stub_hh()
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result = PdfImportResult(koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)])
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+        )
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "you"
+        self._run_scan(
+            hh, mock_st2, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+        )
+        # Read back via direct attribute access to match test file's established pattern
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+
+    def test_no_owner_key_falls_back_to_manual_selectbox(self, tmp_path, monkeypatch):
+        """A Koinly report with owner_key=None must not silently apply --
+        the UI's manual role selectbox must be consulted."""
+        hh = _stub_hh()
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "household"
+        result = PdfImportResult(koinly_reports=[_koinly_report(None, 100.0, 200.0, 50.0)])
+        self._run_scan(
+            hh, mock_st1, result,
+            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+        )
+        # Manual role selectbox must have been invoked with the owner options.
+        selectbox_calls = mock_st1.selectbox.call_args_list
+        assert any(
+            "you" in (c.args[1] if len(c.args) > 1 else c.kwargs.get("options", []))
+            for c in selectbox_calls
+        )
