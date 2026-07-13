@@ -1,6 +1,5 @@
 """Tests for engine.pdf_import -- the content-based PDF classifier and router."""
 
-import os
 from pathlib import Path
 
 import pytest
@@ -89,7 +88,7 @@ def test_scan_routes_each_type(tmp_path, stub_parsers):
     result = scan_pdf_folder(tmp_path)
 
     assert result.brokerage_records == ["BROKER_REC"]
-    assert result.koinly_report is not None
+    assert len(result.koinly_reports) == 1
     assert set(result.form_1040_records) == {2023}
     assert [n for n, _ in result.skipped] == ["d.pdf"]
     assert result.unrecognized == ["e.pdf"]
@@ -111,7 +110,7 @@ def test_scan_collects_parse_errors_without_aborting(tmp_path, monkeypatch):
 
     result = scan_pdf_folder(tmp_path)
 
-    assert result.koinly_report is not None
+    assert len(result.koinly_reports) == 1
     assert len(result.errors) == 1
     assert result.errors[0][0] == "bad.pdf"
     assert "bad schwab" in result.errors[0][1]
@@ -131,16 +130,18 @@ def test_scan_unreadable_pdf_goes_to_errors(tmp_path, monkeypatch):
     assert "could not read PDF" in result.errors[0][1]
 
 
-def test_newest_koinly_wins(tmp_path, monkeypatch):
+def test_multiple_koinly_reports_all_survive_scan(tmp_path, monkeypatch):
+    """Two owners' Koinly PDFs in one folder must BOTH appear in the result --
+    this is the pdf_import half of the override-fix (engine/pdf_ledger.py
+    proves the derive-sum half). No mtime-based collapse to a single winner."""
     monkeypatch.setattr(
         pdf_import, "extract_pages", lambda data: (data.decode("utf-8").split("\f"), None)
     )
     monkeypatch.setattr(pdf_import, "parse_koinly_text", lambda pages: _FakeKoinly(pages[0]))
-    _write(tmp_path, "old.pdf", "Koinly OLD")
-    _write(tmp_path, "new.pdf", "Koinly NEW")
-    os.utime(tmp_path / "old.pdf", (1_000_000, 1_000_000))
-    os.utime(tmp_path / "new.pdf", (1_000_100, 1_000_100))
+    _write(tmp_path, "you.pdf", "Koinly YOU")
+    _write(tmp_path, "spouse.pdf", "Koinly SPOUSE")
 
     result = scan_pdf_folder(tmp_path)
 
-    assert result.koinly_report.tag == "Koinly NEW"
+    tags = {r.tag for r in result.koinly_reports}
+    assert tags == {"Koinly YOU", "Koinly SPOUSE"}

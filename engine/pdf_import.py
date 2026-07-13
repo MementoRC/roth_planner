@@ -92,7 +92,7 @@ class PdfImportResult:
     """Aggregated outcome of scanning a shared folder of mixed PDFs."""
 
     brokerage_records: list[BrokerageStatementRecord] = field(default_factory=list)
-    koinly_report: KoinlyReport | None = None
+    koinly_reports: list[KoinlyReport] = field(default_factory=list)
     form_1040_records: dict[int, Form1040Record] = field(default_factory=dict)
     # (filename, reason) -- recognized document with no importable data (e.g. 4868).
     skipped: list[tuple[str, str]] = field(default_factory=list)
@@ -108,12 +108,12 @@ def scan_pdf_folder(folder: Path) -> PdfImportResult:
     A single unreadable or malformed file never aborts the scan -- it is
     collected into ``errors`` and the next file is tried. Files that belong to a
     different (still recognized) type are routed correctly, never reported as a
-    broker-detection failure. When several Koinly reports are present the newest
-    by mtime wins; when several 1040s share a tax year the last in sorted order
-    wins.
+    broker-detection failure. Every Koinly report found is kept -- owner
+    attribution and any per-owner dedup happens downstream in
+    engine/pdf_ledger.py, not here. When several 1040s share a tax year the
+    last in sorted order wins.
     """
     result = PdfImportResult()
-    koinly_candidates: list[tuple[float, KoinlyReport]] = []
 
     for pdf_path in sorted(folder.glob("*.[pP][dD][fF]")):
         name = pdf_path.name
@@ -128,7 +128,7 @@ def scan_pdf_folder(folder: Path) -> PdfImportResult:
             if kind is DocKind.BROKERAGE:
                 result.brokerage_records.extend(parse_statement_text(pages))
             elif kind is DocKind.KOINLY:
-                koinly_candidates.append((pdf_path.stat().st_mtime, parse_koinly_text(pages)))
+                result.koinly_reports.append(parse_koinly_text(pages))
             elif kind is DocKind.FORM_1040:
                 rec = parse_form_1040_text(pages, pdf_creator=creator)
                 result.form_1040_records[rec.tax_year] = rec
@@ -138,9 +138,5 @@ def scan_pdf_folder(folder: Path) -> PdfImportResult:
                 result.unrecognized.append(name)
         except Exception as exc:  # noqa: BLE001 -- one bad file must not kill the scan
             result.errors.append((name, str(exc)))
-
-    if koinly_candidates:
-        koinly_candidates.sort(key=lambda t: t[0], reverse=True)
-        result.koinly_report = koinly_candidates[0][1]
 
     return result

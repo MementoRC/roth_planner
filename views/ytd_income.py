@@ -17,6 +17,21 @@ from engine.headroom import compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.pdf_ledger import (
+    derive_brokerage_totals,
+    derive_koinly_totals,
+    load_ledger,
+    save_ledger,
+    write_brokerage_contribution,
+    write_koinly_contribution,
+)
+from engine.pdf_owner import (
+    OWNER_ROLES,
+    learn_owner,
+    load_owner_map,
+    resolve_owner,
+    save_owner_map,
+)
 from engine.portfolio_sync import save_ytd_snapshot
 from engine.tax import (
     LTCG_RATES_MFJ,
@@ -146,6 +161,10 @@ def render(hh: Household):
             key="statement_folder_path",
             help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
         )
+        # Loaded once per render (not only inside the button branch below) so the
+        # per-owner breakdown expander reflects on-disk ledger state even on
+        # renders where "Scan folder" was not clicked this run.
+        ledger = load_ledger()
         if st.button("Scan folder", key="scan_pdf_folder_btn"):
             # Local single-user desktop tool: path validation (under $HOME, no
             # '..') lives in validate_local_folder.
@@ -174,28 +193,98 @@ def render(hh: Household):
                 applied_bits: list[str] = []
                 _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
 
+                owner_map = load_owner_map()
+
                 stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
                     partition_by_account_type(by_account) if by_account else ({}, {}, {})
                 )
                 if stmt_taxable_now:
-                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+                    for account_number, rec in stmt_taxable_now.items():
+                        resolved = resolve_owner(rec.owner_key, owner_map)
+                        if resolved is None:
+                            st.warning(
+                                f"Account {account_number} ({rec.broker}) has no recognized "
+                                f"owner ({rec.owner_key!r}) — confirm whose it is:"
+                            )
+                            resolved = st.selectbox(
+                                f"Owner for account {account_number} ({rec.broker})",
+                                sorted(OWNER_ROLES),
+                                key=f"brokerage_owner_confirm_{account_number}",
+                            )
+                            if rec.owner_key is not None:
+                                owner_map = learn_owner(rec.owner_key, resolved, owner_map)
+                        elif rec.owner_key is not None:
+                            corrected = st.selectbox(
+                                f"Owner for account {account_number} (auto-resolved: {resolved})",
+                                sorted(OWNER_ROLES),
+                                index=sorted(OWNER_ROLES).index(resolved),
+                                key=f"brokerage_owner_correct_{account_number}",
+                            )
+                            if corrected != resolved:
+                                owner_map = learn_owner(rec.owner_key, corrected, owner_map)
+                                resolved = corrected
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
 
-                    _snap = apply_brokerage_statement_records(_snap, stmt_taxable_now)
-                    applied_bits.append(f"{len(stmt_taxable_now)} taxable brokerage account(s)")
+                    save_ledger(ledger)
+                    save_owner_map(owner_map)
 
-                if result.koinly_report is not None:
+                    brokerage_totals = derive_brokerage_totals(ledger)
+                    _snap.interest_ytd = brokerage_totals["interest_ytd"]
+                    _snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    _snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    _snap.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    _snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    applied_bits.append(
+                        f"{len(stmt_taxable_now)} taxable brokerage account(s) "
+                        f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
+                    )
+
+                if result.koinly_reports:
                     from engine.koinly_report_pdf import save_koinly_report
 
-                    st.session_state["koinly_report"] = result.koinly_report
-                    save_koinly_report(result.koinly_report)
-                    _snap.crypto_stcg_ytd = float(result.koinly_report.crypto_stcg)
-                    _snap.crypto_ltcg_ytd = float(result.koinly_report.crypto_ltcg)
-                    _snap.crypto_income_ytd = float(result.koinly_report.crypto_income)
-                    applied_bits.append(f"Koinly {result.koinly_report.tax_year} crypto")
+                    for report in result.koinly_reports:
+                        resolved = resolve_owner(report.owner_key, owner_map)
+                        if resolved is None:
+                            st.warning(
+                                f"Koinly report {report.tax_year} has no recognized owner "
+                                f"({report.owner_key!r}) — confirm whose it is:"
+                            )
+                            resolved = st.selectbox(
+                                f"Owner for Koinly report ({report.owner_key or 'unknown'})",
+                                sorted(OWNER_ROLES),
+                                key=f"koinly_owner_confirm_{report.captured_at}",
+                            )
+                            if report.owner_key is not None:
+                                owner_map = learn_owner(report.owner_key, resolved, owner_map)
+                        elif report.owner_key is not None:
+                            # Auto-resolved -- still show a correction control.
+                            corrected = st.selectbox(
+                                f"Owner (auto-resolved: {resolved})",
+                                sorted(OWNER_ROLES),
+                                index=sorted(OWNER_ROLES).index(resolved),
+                                key=f"koinly_owner_correct_{report.captured_at}",
+                            )
+                            if corrected != resolved:
+                                owner_map = learn_owner(report.owner_key, corrected, owner_map)
+                                resolved = corrected
+                        ledger = write_koinly_contribution(ledger, resolved, report)
+
+                    save_ledger(ledger)
+                    save_owner_map(owner_map)
+                    save_koinly_report(result.koinly_reports[-1])
+
+                    koinly_totals = derive_koinly_totals(ledger)
+                    _snap.crypto_stcg_ytd = koinly_totals["stcg"]
+                    _snap.crypto_ltcg_ytd = koinly_totals["ltcg"]
+                    _snap.crypto_income_ytd = koinly_totals["income"]
+                    applied_bits.append(
+                        f"Koinly crypto ({len(result.koinly_reports)} report(s), "
+                        f"{len(ledger['koinly'])} owner(s))"
+                    )
 
                 if applied_bits:
                     _snap.with_snapshot_date()
-                    st.session_state["ytd_snapshot"] = _snap
+                    st.session_state.ytd_snapshot = _snap
                     st.session_state["ytd_manual_entry"] = False
                     save_ytd_snapshot(_snap)
 
@@ -216,8 +305,8 @@ def render(hh: Household):
                 parsed_bits: list[str] = []
                 if by_account:
                     parsed_bits.append(f"{len(by_account)} brokerage account(s)")
-                if result.koinly_report is not None:
-                    parsed_bits.append(f"Koinly {result.koinly_report.tax_year}")
+                if result.koinly_reports:
+                    parsed_bits.append(f"Koinly ({len(result.koinly_reports)} report(s))")
                 if result.form_1040_records:
                     parsed_bits.append(
                         "Form 1040 " + ", ".join(str(y) for y in sorted(result.form_1040_records))
@@ -284,14 +373,23 @@ def render(hh: Household):
             if stmt_taxable:
                 st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
                 if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
-                    from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+                    owner_map = load_owner_map()
+                    for rec in stmt_taxable.values():
+                        resolved = resolve_owner(rec.owner_key, owner_map) or "household"
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+                    save_ledger(ledger)
 
+                    brokerage_totals = derive_brokerage_totals(ledger)
                     prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-                    updated_ytd = apply_brokerage_statement_records(prev_ytd, stmt_taxable)
-                    updated_ytd.with_snapshot_date()
-                    st.session_state.ytd_snapshot = updated_ytd
+                    prev_ytd.interest_ytd = brokerage_totals["interest_ytd"]
+                    prev_ytd.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+                    prev_ytd.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+                    prev_ytd.stcg_ytd = brokerage_totals["stcg_ytd"]
+                    prev_ytd.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    prev_ytd.with_snapshot_date()
+                    st.session_state.ytd_snapshot = prev_ytd
                     st.session_state["ytd_manual_entry"] = False
-                    save_ytd_snapshot(updated_ytd)
+                    save_ytd_snapshot(prev_ytd)
                     st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
                     st.rerun()
 
@@ -305,7 +403,12 @@ def render(hh: Household):
 
             koinly_report = st.session_state.get("koinly_report")
             if koinly_report is not None:
-                st.write(f"**Parsed Koinly report (tax year {koinly_report.tax_year}):**")
+                # Read-only display of the most recently scanned Koinly report.
+                # No "Apply" button: the ledger derive-sum (below) is now the sole
+                # source of crypto_*_ytd, applied automatically during scan --  a
+                # separate manual apply here would risk double-counting against
+                # newer scans already folded into the ledger.
+                st.write(f"**Last scanned Koinly report (tax year {koinly_report.tax_year}):**")
                 kc1, kc2, kc3 = st.columns(3)
                 kc1.metric("Short-term gains", fmt_dollars(koinly_report.crypto_stcg))
                 kc2.metric("Long-term gains", fmt_dollars(koinly_report.crypto_ltcg))
@@ -313,17 +416,27 @@ def render(hh: Household):
                 _mismatch = koinly_report.provenance.get("income_total_mismatch")
                 if _mismatch:
                     st.warning(_mismatch)
-                if st.button("Apply to crypto fields below", key="apply_koinly_btn"):
-                    _snap = st.session_state.get("ytd_snapshot")
-                    if _snap is None:
-                        _snap = YTDSnapshot(tax_year=hh.base_year)
-                    _snap.crypto_stcg_ytd = float(koinly_report.crypto_stcg)
-                    _snap.crypto_ltcg_ytd = float(koinly_report.crypto_ltcg)
-                    _snap.crypto_income_ytd = float(koinly_report.crypto_income)
-                    st.session_state["ytd_snapshot"] = _snap
-                    save_ytd_snapshot(_snap)
-                    st.success("Applied Koinly figures to the crypto fields.")
-                    st.rerun()
+
+            if ledger.get("koinly"):
+                with st.expander("Per-owner crypto breakdown"):
+                    for owner, figures in sorted(ledger["koinly"].items()):
+                        st.caption(
+                            f"{owner.title()}: STCG {fmt_dollars(figures['stcg'])}, "
+                            f"LTCG {fmt_dollars(figures['ltcg'])}, "
+                            f"Income {fmt_dollars(figures['income'])}"
+                        )
+
+            if ledger.get("brokerage"):
+                with st.expander("Per-owner brokerage breakdown"):
+                    for owner, accounts in sorted(ledger["brokerage"].items()):
+                        totals = derive_brokerage_totals({"koinly": {}, "brokerage": {owner: accounts}})
+                        st.caption(
+                            f"{owner.title()} ({len(accounts)} account(s)): "
+                            f"Interest {fmt_dollars(totals['interest_ytd'])}, "
+                            f"Dividends {fmt_dollars(totals['ordinary_dividends_ytd'])}, "
+                            f"STCG {fmt_dollars(totals['stcg_ytd'])}, "
+                            f"LTCG {fmt_dollars(totals['ltcg_ytd'])}"
+                        )
 
     manual = st.checkbox(
         "Manual entry",
