@@ -26,7 +26,7 @@ from models.household import Household
 
 def _single_household(**overrides: object) -> Household:
     """Single-from-the-start household: filing Single, spouse inputs zeroed
-    (mirrors views.setup spouse_single_overrides)."""
+    (mirrors views.setup.apply_single_filer)."""
     base: dict[str, object] = {
         "filing_status": "Single",
         "spouse_ira": 0,

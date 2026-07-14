@@ -231,16 +231,6 @@ class TestFilingStatusGate:
         assert filing_status_from_label("Single") == "Single"
         assert filing_status_from_label("Single") not in _FILING_STATUS_OPTIONS
 
-    def test_spouse_single_overrides_zeroes_spouse(self):
-        from views.setup import spouse_single_overrides
-
-        ov = spouse_single_overrides()
-        assert ov["spouse_ira"] == 0
-        assert ov["spouse_roth"] == 0
-        assert ov["spouse_age"] == 0
-        assert ov["spouse_ss_fra"] == 0
-        assert ov["spouse_aca"] is False
-
     def test_widget_renders_before_subtabs(self):
         import inspect
 
