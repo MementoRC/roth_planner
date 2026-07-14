@@ -135,6 +135,7 @@ page = st.sidebar.radio(
         "📊 Dashboard",
         "📋 Conversion Planner",
         "💰 YTD Income",
+        "📝 Option Exercise Planner",
         "🎯 Sweet Spot Finder",
         "📉 RMD Squeeze",
         "⚖️ Comparator",
@@ -325,6 +326,10 @@ def get_household() -> Household:
         if merged_grants:
             hh.grants = merged_grants
 
+    from engine.exercise_schedule_store import load_exercise_schedule
+
+    hh.exercise_schedule = load_exercise_schedule()
+
     return apply_single_filer(hh)
 
 
@@ -343,6 +348,10 @@ elif page == "📋 Conversion Planner":
     render(get_household())
 elif page == "💰 YTD Income":
     from views.ytd_income import render
+
+    render(get_household())
+elif page == "📝 Option Exercise Planner":
+    from views.option_exercise import render
 
     render(get_household())
 elif page == "🎯 Sweet Spot Finder":

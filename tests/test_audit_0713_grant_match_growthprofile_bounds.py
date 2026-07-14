@@ -38,9 +38,9 @@ class TestOptionIncomeGrantMatchAfterCompaction:
     def test_baseline_three_grants_map_sequentially(self) -> None:
         """Before any compaction: 2026->grant0(2019), 2027->grant1(2020), 2028->grant2(2021)."""
         hh = self._three_grant_household()
-        assert hh.option_income(2026, True) == pytest.approx(hh.grants[0].spread(200.0))
-        assert hh.option_income(2027, True) == pytest.approx(hh.grants[1].spread(200.0))
-        assert hh.option_income(2028, True) == pytest.approx(hh.grants[2].spread(200.0))
+        assert hh.option_income(2026) == pytest.approx(hh.grants[0].spread(200.0))
+        assert hh.option_income(2027) == pytest.approx(hh.grants[1].spread(200.0))
+        assert hh.option_income(2028) == pytest.approx(hh.grants[2].spread(200.0))
 
     def test_compacted_grant_list_reflows_from_base_year(self) -> None:
         """Simulate portfolio-sync compact-skip: the fully-exercised 2019 grant
@@ -58,13 +58,13 @@ class TestOptionIncomeGrantMatchAfterCompaction:
         remaining = [hh.grants[1], hh.grants[2]]
         hh.grants = remaining  # simulate app.py's `hh.grants = merged_grants`
 
-        assert hh.option_income(2026, True) == pytest.approx(
+        assert hh.option_income(2026) == pytest.approx(
             remaining[0].spread(hh.txn_price_now)
         ), "oldest surviving grant (2020) must be exercised first, in base_year"
-        assert hh.option_income(2027, True) == pytest.approx(
+        assert hh.option_income(2027) == pytest.approx(
             remaining[1].spread(hh.txn_price_now)
         ), "second surviving grant (2021) must be exercised next"
-        assert hh.option_income(2028, True) == 0.0, "only 2 grants remain -- nothing left to exercise"
+        assert hh.option_income(2028) == 0.0, "only 2 grants remain -- nothing left to exercise"
 
     def test_order_independent_matching(self) -> None:
         """household-grant-match-1 core regression: the old code indexed
@@ -82,8 +82,8 @@ class TestOptionIncomeGrantMatchAfterCompaction:
         oldest = grants_reversed[2]  # 2019 grant, listed LAST
         # Old positional bug would return grants_reversed[0] (the 2021 grant)
         # for year 2026. The fix must return the 2019 grant instead.
-        assert hh.option_income(2026, True) == pytest.approx(oldest.spread(200.0))
-        assert hh.option_income(2026, True) != pytest.approx(grants_reversed[0].spread(200.0))
+        assert hh.option_income(2026) == pytest.approx(oldest.spread(200.0))
+        assert hh.option_income(2026) != pytest.approx(grants_reversed[0].spread(200.0))
 
     def test_fresh_two_grant_household_anchors_to_its_own_oldest_grant(self) -> None:
         """A Household constructed FROM SCRATCH with only 2 grants (no prior
@@ -95,9 +95,9 @@ class TestOptionIncomeGrantMatchAfterCompaction:
             StockGrant(year=2021, strike=169.0, shares=100, expiry_year=2031),
         ]
         hh = Household(grants=grants, base_year=2026, txn_price_now=200.0)
-        assert hh.option_income(2026, True) == pytest.approx(grants[0].spread(200.0))
-        assert hh.option_income(2027, True) == pytest.approx(grants[1].spread(200.0))
-        assert hh.option_income(2028, True) == 0.0
+        assert hh.option_income(2026) == pytest.approx(grants[0].spread(200.0))
+        assert hh.option_income(2027) == pytest.approx(grants[1].spread(200.0))
+        assert hh.option_income(2028) == 0.0
 
 
 class TestGrowthProfileBounds:

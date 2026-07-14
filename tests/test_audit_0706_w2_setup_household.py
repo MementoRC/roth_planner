@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
 from models.household import Household
 
@@ -72,8 +73,14 @@ class TestRmdStartAgeGuard:
 
 
 class TestOptionIncomeMultiGrant:
-    """models-config-3 (low): option_income early=False must accumulate ALL grants
-    sharing an expiry_year, not short-circuit after the first match.
+    """models-config-3 (low): a late-exercise ExerciseSchedule (all grants' full
+    shares placed in their shared expiry_year) must accumulate ALL grants, not
+    short-circuit after the first match.
+
+    Pre-2026-07-14 this was `option_income(year, early=False)`; the early/late
+    boolean is deleted (option-exercise-model design) and the late-exercise
+    path is now expressed as an explicit ExerciseSchedule -- proving it is
+    faithfully representable as a schedule while keeping the same numbers.
     """
 
     def _two_same_expiry_grants(self) -> list[StockGrant]:
@@ -82,26 +89,39 @@ class TestOptionIncomeMultiGrant:
             StockGrant(year=2020, strike=120.0, shares=200, expiry_year=2029),
         ]
 
+    @staticmethod
+    def _late_schedule(
+        grants: list[StockGrant], expiry_year: int, price_late: float
+    ) -> ExerciseSchedule:
+        schedule = ExerciseSchedule()
+        for g in grants:
+            schedule.set_shares(g.key(), expiry_year, g.shares)
+        schedule.set_price(expiry_year, price_late)
+        return schedule
+
     def test_single_grant_late_exercise_unchanged(self) -> None:
-        """Baseline: single grant late exercise still works."""
+        """Baseline: single grant late exercise still works as an explicit schedule."""
         grants = [StockGrant(year=2019, strike=100.0, shares=100, expiry_year=2029)]
-        hh = Household(grants=grants, txn_price_late=200.0)
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
         expected = (200.0 - 100.0) * 100  # 10_000
-        assert hh.option_income(2029, early=False) == pytest.approx(expected)
+        assert hh.option_income(2029) == pytest.approx(expected)
 
     def test_two_grants_same_expiry_returns_sum(self) -> None:
         """Two grants sharing expiry_year=2029 must both be included in late income."""
         grants = self._two_same_expiry_grants()
-        hh = Household(grants=grants, txn_price_late=200.0)
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
         # grant0: (200-100)*100 = 10_000; grant1: (200-120)*200 = 16_000; total = 26_000
         expected = (200.0 - 100.0) * 100 + (200.0 - 120.0) * 200
-        assert hh.option_income(2029, early=False) == pytest.approx(expected)
+        assert hh.option_income(2029) == pytest.approx(expected)
 
     def test_two_grants_same_expiry_first_grant_not_sole_result(self) -> None:
         """Verify the old early-return bug would have returned only 10_000, not 26_000."""
         grants = self._two_same_expiry_grants()
-        hh = Household(grants=grants, txn_price_late=200.0)
-        result = hh.option_income(2029, early=False)
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
+        result = hh.option_income(2029)
         # Old buggy result would be 10_000 (just grant0)
         assert result != pytest.approx(10_000.0), "Bug reproduced: only first grant returned"
         assert result == pytest.approx(26_000.0)
@@ -109,8 +129,9 @@ class TestOptionIncomeMultiGrant:
     def test_year_with_no_matching_grant_returns_zero(self) -> None:
         """Non-matching year still returns 0."""
         grants = self._two_same_expiry_grants()
-        hh = Household(grants=grants, txn_price_late=200.0)
-        assert hh.option_income(2030, early=False) == 0.0
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
+        assert hh.option_income(2030) == 0.0
 
     def test_three_grants_same_expiry_all_accumulated(self) -> None:
         """Three grants sharing expiry_year are all summed."""
@@ -119,9 +140,10 @@ class TestOptionIncomeMultiGrant:
             StockGrant(year=2020, strike=120.0, shares=200, expiry_year=2029),
             StockGrant(year=2021, strike=140.0, shares=150, expiry_year=2029),
         ]
-        hh = Household(grants=grants, txn_price_late=200.0)
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
         expected = (200 - 100) * 100 + (200 - 120) * 200 + (200 - 140) * 150
-        assert hh.option_income(2029, early=False) == pytest.approx(expected)
+        assert hh.option_income(2029) == pytest.approx(expected)
 
     def test_out_of_the_money_grant_contributes_zero(self) -> None:
         """A grant where price < strike contributes 0 (not negative)."""
@@ -129,6 +151,7 @@ class TestOptionIncomeMultiGrant:
             StockGrant(year=2019, strike=100.0, shares=100, expiry_year=2029),
             StockGrant(year=2020, strike=250.0, shares=200, expiry_year=2029),  # OTM
         ]
-        hh = Household(grants=grants, txn_price_late=200.0)
+        hh = Household(grants=grants)
+        hh.exercise_schedule = self._late_schedule(grants, 2029, 200.0)
         expected = (200.0 - 100.0) * 100 + 0  # OTM = max(200-250,0)*200 = 0
-        assert hh.option_income(2029, early=False) == pytest.approx(expected)
+        assert hh.option_income(2029) == pytest.approx(expected)

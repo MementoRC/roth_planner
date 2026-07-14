@@ -56,12 +56,13 @@ def _base_household() -> Household:
 
 
 def _household_with_nqo(nqo_income: float = 50_000.0) -> Household:
-    """Household where option_income(base_year, early=True) == nqo_income.
+    """Household where option_income(base_year) == nqo_income.
 
     StockGrant.spread(price) = shares * (price - strike).
     shares=1, strike=1.0, txn_price_now = nqo_income + 1.0
     → spread = 1 * ((nqo_income+1) - 1) = nqo_income.
-    Grant at index 0 is exercised in base_year under early=True.
+    The default (legacy-derived) exercise schedule places this grant's
+    shares in base_year.
     """
     hh = _base_household()
     grant = StockGrant(

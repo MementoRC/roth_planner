@@ -42,7 +42,6 @@ def run_scenario(
     plan: ConversionPlan,
     name: str = "Scenario",
     end_age: int = 95,
-    early_exercise: bool = True,
     ytd: YTDSnapshot | None = None,
 ) -> ScenarioResult:
     """
@@ -106,7 +105,7 @@ def run_scenario(
         yr.filing_status = current_filing_status
 
         # === Phase classification ===
-        yr.phase = compute_phase(ya, sa, year, hh, early_exercise)
+        yr.phase = compute_phase(ya, sa, year, hh)
 
         # === IRA balances ===
         yr.your_ira_begin = your_ira
@@ -115,7 +114,7 @@ def run_scenario(
         yr.spouse_roth_begin = spouse_roth
 
         # === Option income ===
-        yr.option_income = hh.option_income(year, early_exercise)
+        yr.option_income = hh.option_income(year)
 
         # === Brokerage dividend forecast ===
         # Skip in base year if YTD actuals are provided (they already carry real dividends).
@@ -790,8 +789,6 @@ def run_scenario(
     )
 
 
-def run_no_conversion(
-    hh: Household, end_age: int = 95, early_exercise: bool = True
-) -> ScenarioResult:
+def run_no_conversion(hh: Household, end_age: int = 95) -> ScenarioResult:
     """Baseline scenario: no conversions at all."""
-    return run_scenario(hh, ConversionPlan(), "No Conversion", end_age, early_exercise)
+    return run_scenario(hh, ConversionPlan(), "No Conversion", end_age)

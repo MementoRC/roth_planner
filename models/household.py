@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from config.loader import load_defaults
+from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
 
 _D = load_defaults()
@@ -173,6 +174,11 @@ class Household:
     txn_price_now: float = _D["stock_price_now"]  # current stock price
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
 
+    # Per-grant/per-year exercise decision. None (or empty) falls back to
+    # default_from_legacy(), which reproduces the old early-exercise output
+    # (see effective_schedule() / option_income() below).
+    exercise_schedule: ExerciseSchedule | None = None
+
     # FRA (Full Retirement Age for SS benefit calculation)
     your_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
     spouse_fra_age: int = 67  # 67 for 1960+ cohort; 66 or 66+N/12 for earlier cohorts
@@ -333,33 +339,23 @@ class Household:
             spouse_by = self.spouse_birth_year if self.spouse_birth_year is not None else (self.base_year - self.spouse_age)
             self.spouse_rmd_start_age = default_rmd_age(spouse_by)
 
-    def option_income(self, year: int, early: bool = True) -> float:
-        """Ordinary income from exercising the grant expiring ~this year."""
-        if early:
-            # Early exercise: one grant is assumed exercised per calendar
-            # year, in vintage order, starting at base_year. Match by each
-            # grant's own StockGrant.year field (audit 2026-07-13
-            # household-grant-match-1) rather than raw list position:
-            # portfolio-sync's compact-skip merge (app.py `hh.grants =
-            # merged_grants`) can drop an already-exercised / no-strike grant
-            # and may not preserve chronological order, so a position-based
-            # `self.grants[year - base_year]` lookup can silently read the
-            # wrong grant's spread, or run past the end of the list and
-            # return 0.0 even though income should still apply. Anchoring on
-            # the OLDEST grant currently present (recomputed fresh from
-            # self.grants on every call, never cached) keeps the match
-            # correct regardless of list order or which grants remain.
-            if not self.grants:
-                return 0.0
-            anchor_year = min(g.year for g in self.grants)
-            target_grant_year = anchor_year + (year - self.base_year)
-            for g in self.grants:
-                if g.year == target_grant_year:
-                    return g.spread(self.txn_price_now)
-            return 0.0
-        # Late exercise: at expiry — accumulate ALL grants sharing this expiry_year
-        total = 0.0
-        for g in self.grants:
-            if g.expiry_year == year:
-                total += g.spread(self.txn_price_late)
-        return total
+    def effective_schedule(self) -> ExerciseSchedule:
+        """The stored per-grant/per-year exercise schedule, or a synthesized
+        default that reproduces the historical early-exercise behavior when
+        none is stored (or the stored one has no entries).
+
+        default_from_legacy anchors on the OLDEST grant currently present
+        (recomputed fresh from self.grants on every call, never cached), so
+        it stays correct regardless of FinExtract list reordering/compaction
+        (audit 2026-07-13 household-grant-match-1 / PR #369).
+        """
+        if self.exercise_schedule is not None and not self.exercise_schedule.is_empty():
+            return self.exercise_schedule
+        return ExerciseSchedule.default_from_legacy(self.grants, self.base_year, self.txn_price_now)
+
+    def option_income(self, year: int) -> float:
+        """Ordinary income from option exercises scheduled in ``year``.
+
+        Sourced solely from ``effective_schedule()`` — see models/exercise_schedule.py.
+        """
+        return self.effective_schedule().income_for(year, self.grants)

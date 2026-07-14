@@ -82,7 +82,6 @@ class HeadroomResult:
 def compute_headroom(
     hh: Household,
     ytd: YTDSnapshot,
-    early_exercise: bool = True,
     filing_status: str = "MFJ",
     *,
     year: int | None = None,
@@ -108,7 +107,7 @@ def compute_headroom(
     result.conversions_done = ytd.ira_conversions_ytd
 
     # --- Planned income (still a choice) ---
-    opt = hh.option_income(_year, early_exercise)
+    opt = hh.option_income(_year)
     # Total subtract: all NQO exercises hit the same income buckets (ordinary income, MAGI),
     # so total realized is the correct lever-reduction regardless of which grant was exercised.
     # Per-grant attribution is useful for the YTD display table but NOT for headroom math.

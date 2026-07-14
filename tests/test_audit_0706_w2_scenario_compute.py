@@ -21,7 +21,12 @@ from models.household import GrowthProfile, Household
 
 
 def _base_hh(**kwargs) -> Household:
-    """Minimal Household — all keyword overrides accepted."""
+    """Minimal Household — all keyword overrides accepted.
+
+    grants=[] (no NQO grants) so these RMD-phase tests are unaffected by
+    option income / the 'options' phase — that is orthogonal to what this
+    file characterizes (scenario-core-8: single-filer RMD phase labeling).
+    """
     defaults: dict = {
         "your_age": 62,
         "spouse_age": 56,
@@ -34,6 +39,7 @@ def _base_hh(**kwargs) -> Household:
         "spouse_ss_start_age": 70,
         "living_expenses": 60_000.0,
         "brokerage_start": 0.0,
+        "grants": [],
     }
     defaults.update(kwargs)
     return Household(**defaults)
@@ -71,7 +77,6 @@ class TestComputePhaseSingleFilerRmd:
             sa=0,
             year=hh.base_year,
             hh=hh,
-            early_exercise=False,
         )
         assert phase == "rmd", (
             f"Expected 'rmd' for single-filer (sa=0) in RMD year, got {phase!r}"
@@ -90,7 +95,6 @@ class TestComputePhaseSingleFilerRmd:
             sa=69,
             year=hh.base_year,
             hh=hh,
-            early_exercise=False,
         )
         assert phase == "squeeze", (
             f"Expected 'squeeze' for MFJ spouse pre-RMD year, got {phase!r}"
@@ -109,7 +113,6 @@ class TestComputePhaseSingleFilerRmd:
             sa=75,
             year=hh.base_year,
             hh=hh,
-            early_exercise=False,
         )
         assert phase == "rmd", (
             f"Expected 'rmd' for MFJ both-in-RMD year, got {phase!r}"
@@ -128,7 +131,6 @@ class TestComputePhaseSingleFilerRmd:
             sa=0,
             year=hh.base_year,
             hh=hh,
-            early_exercise=False,
         )
         assert phase == "rmd", (
             f"Expected 'rmd' for single-filer at exact RMD start, got {phase!r}"

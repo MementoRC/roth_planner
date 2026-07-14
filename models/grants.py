@@ -19,3 +19,15 @@ class StockGrant:
 
     def spread(self, price: float) -> float:
         return max(price - self.strike, 0) * self.shares
+
+    def per_share_spread(self, price: float) -> float:
+        """Per-share intrinsic value at ``price`` (unclamped by share count)."""
+        return max(price - self.strike, 0.0)
+
+    def key(self) -> str:
+        """Stable, position-independent identity for this grant.
+
+        Content-based (grant_id, else year+strike) so it survives FinExtract
+        list compaction/reordering — see PR #369.
+        """
+        return self.grant_id or f"{self.year}:{self.strike:g}"

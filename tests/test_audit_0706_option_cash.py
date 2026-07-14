@@ -48,12 +48,12 @@ class TestOptionCashBrokerageCarryForward:
     def test_option_income_nonzero_in_base_year(self) -> None:
         """Confirm the household produces option income in the base year."""
         hh = _make_option_hh()
-        assert hh.option_income(hh.base_year, early=True) == 100_000.0
+        assert hh.option_income(hh.base_year) == 100_000.0
 
     def test_option_income_zero_in_non_option_year(self) -> None:
         """Confirm option income is 0 the year after the grant expires."""
         hh = _make_option_hh()
-        assert hh.option_income(hh.base_year + 1, early=True) == 0.0
+        assert hh.option_income(hh.base_year + 1) == 0.0
 
     def test_available_income_includes_option_proceeds(self) -> None:
         """available_income in the option year must reflect after-tax option cash.
@@ -64,7 +64,7 @@ class TestOptionCashBrokerageCarryForward:
         because the cash is present.
         """
         hh = _make_option_hh()
-        option_gross = hh.option_income(hh.base_year, early=True)
+        option_gross = hh.option_income(hh.base_year)
         assert option_gross == 100_000.0, "test pre-condition: option spread must be $100K"
 
         plan = ConversionPlan()  # no conversions — isolate option effect

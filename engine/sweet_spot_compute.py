@@ -257,7 +257,7 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     sa = hh.spouse_age_in(year)
     cpi = hh.cpi_assumption
 
-    opt = hh.option_income(year, early=True)
+    opt = hh.option_income(year)
 
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
     spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)

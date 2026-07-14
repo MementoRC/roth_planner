@@ -46,14 +46,14 @@ def compute_phase(
     sa: int,
     year: int,
     hh: Household,
-    early_exercise: bool,
 ) -> str:
     """Return the phase label for the current year/age combination.
 
     Phases: "options", "clean", "ss_conv", "squeeze", "rmd".
     """
-    # Option income models the 2026–2028 TXN NQO grant window.
-    if year <= hh.base_year + 2 and hh.option_income(year, early_exercise) > 0:
+    # 'options' = any year with scheduled option income > 0. No hardcoded
+    # window: ExerciseSchedule.income_for() already caps at expiry_year.
+    if hh.option_income(year) > 0:
         return "options"
     rmd_yours = hh.your_rmd_start_age
     rmd_spouse = hh.spouse_rmd_start_age

@@ -345,7 +345,7 @@ class TestHeadroomOptionIncomeSubtract:
         # planned option income = (200 - 104) * 2000 = 192_000; realized total = 80_000
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
         ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
-        result = compute_headroom(hh, ytd, early_exercise=True)
+        result = compute_headroom(hh, ytd)
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
@@ -364,7 +364,7 @@ class TestHeadroomOptionIncomeSubtract:
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
         # by_grant has a different id — with total subtract, headroom only sees nqo_exercise_ytd
         ytd._option_exercises_by_grant = {"GR-OTHER": 80_000}  # noqa: SLF001
-        result = compute_headroom(hh, ytd, early_exercise=True)
+        result = compute_headroom(hh, ytd)
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)
 
