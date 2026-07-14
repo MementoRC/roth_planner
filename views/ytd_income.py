@@ -368,6 +368,14 @@ def render(hh: Household):
                     )
                     if choice != "-- confirm --":
                         save_account_type_override(account_number, choice)
+                        # Refresh the cached statement_by_account in-place so the
+                        # confirmed classification sticks across the rerun below --
+                        # otherwise the stale session_state dict is reused on the
+                        # next run and the account is re-classified as unknown
+                        # until a fresh "Scan folder" click.
+                        st.session_state["statement_by_account"] = apply_account_type_overrides(
+                            statement_by_account, load_account_type_overrides()
+                        )
                         st.rerun()
 
             if stmt_taxable:
@@ -465,7 +473,7 @@ def render(hh: Household):
             )
             ltcg = st.number_input(
                 "Long-Term Capital Gains YTD",
-                value=int(ytd.ltcg_ytd) if ytd.ltcg_ytd > 0 else 0,
+                value=int(ytd.ltcg_ytd),
                 step=10_000,
                 format="%d",
                 help="From stop-loss triggers, mutual fund distributions, etc.",
