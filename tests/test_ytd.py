@@ -233,6 +233,55 @@ class TestAboveTheLineAdjustments:
         assert ytd_with_adj.total_investment_income == approx(ytd_no_adj.total_investment_income)
 
 
+class TestNonNegativeContributionClamp:
+    """Audit 2026-07-13 (R1+R2): hsa/deductible-ira contributions must clamp to >= 0.
+
+    These fields are SUBTRACTED in above_the_line_adjustments_ytd; a negative
+    entry (e.g. a widget lacking min_value) would flip from reducing income to
+    inflating it. The clamp lives at the model level (__post_init__) so the
+    invariant holds regardless of widget config.
+    """
+
+    def test_negative_hsa_contribution_clamped_to_zero(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(hsa_contribution_ytd=-2_000.0)
+        assert ytd.hsa_contribution_ytd == 0.0
+
+    def test_negative_deductible_ira_contribution_clamped_to_zero(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(deductible_ira_contribution_ytd=-16_000.0)
+        assert ytd.deductible_ira_contribution_ytd == 0.0
+
+    def test_negative_hsa_contribution_does_not_inflate_ordinary_income(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=100_000.0, hsa_contribution_ytd=-2_000.0)
+        assert ytd.total_ordinary_income == approx(100_000.0)
+
+    def test_negative_deductible_ira_contribution_does_not_inflate_magi(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(wages_ytd=100_000.0, deductible_ira_contribution_ytd=-16_000.0)
+        assert ytd.magi_ytd == approx(100_000.0)
+
+    def test_positive_contributions_pass_through_unchanged(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(hsa_contribution_ytd=5_150.0, deductible_ira_contribution_ytd=16_000.0)
+        assert ytd.hsa_contribution_ytd == 5_150.0
+        assert ytd.deductible_ira_contribution_ytd == 16_000.0
+
+    def test_negative_ltcg_and_stcg_still_allowed_not_clamped(self):
+        """Regression guard: the new clamp must NOT extend to loss fields (PR #368)."""
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(ltcg_ytd=-5_000.0, stcg_ytd=-1_000.0)
+        assert ytd.ltcg_ytd == -5_000.0
+        assert ytd.stcg_ytd == -1_000.0
+
+
 class TestCryptoFields:
     """Koinly-aligned crypto YTD fields: STCG, LTCG, and staking/DeFi/airdrop income.
 
