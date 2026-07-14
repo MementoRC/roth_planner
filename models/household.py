@@ -95,6 +95,16 @@ class GrowthProfile:
     qualified_fraction: float = 1.0
     yield_overrides: dict[int, float] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Defensive bounds (audit 2026-07-13 growthprofile-bounds-1): an
+        # out-of-range qualified_fraction (e.g. 1.5 from a bad dividend-forecast
+        # blend) silently drives ordinary_div_for/qualified_div_for negative.
+        # Clamp rather than raise, matching this module's existing convention
+        # of silently correcting invalid inputs (see Household.__post_init__'s
+        # RMD start-age correction below).
+        self.qualified_fraction = max(0.0, min(1.0, self.qualified_fraction))
+        self.yield_rate = max(0.0, self.yield_rate)
+
     def rate_for(self, year: int) -> float:
         return self.yearly_overrides.get(year, self.default_rate)
 
@@ -326,15 +336,30 @@ class Household:
     def option_income(self, year: int, early: bool = True) -> float:
         """Ordinary income from exercising the grant expiring ~this year."""
         if early:
-            # Early exercise: 2026=grant0, 2027=grant1, 2028=grant2
-            idx = year - self.base_year
-            if 0 <= idx < len(self.grants):
-                return self.grants[idx].spread(self.txn_price_now)
-        else:
-            # Late exercise: at expiry — accumulate ALL grants sharing this expiry_year
-            total = 0.0
+            # Early exercise: one grant is assumed exercised per calendar
+            # year, in vintage order, starting at base_year. Match by each
+            # grant's own StockGrant.year field (audit 2026-07-13
+            # household-grant-match-1) rather than raw list position:
+            # portfolio-sync's compact-skip merge (app.py `hh.grants =
+            # merged_grants`) can drop an already-exercised / no-strike grant
+            # and may not preserve chronological order, so a position-based
+            # `self.grants[year - base_year]` lookup can silently read the
+            # wrong grant's spread, or run past the end of the list and
+            # return 0.0 even though income should still apply. Anchoring on
+            # the OLDEST grant currently present (recomputed fresh from
+            # self.grants on every call, never cached) keeps the match
+            # correct regardless of list order or which grants remain.
+            if not self.grants:
+                return 0.0
+            anchor_year = min(g.year for g in self.grants)
+            target_grant_year = anchor_year + (year - self.base_year)
             for g in self.grants:
-                if g.expiry_year == year:
-                    total += g.spread(self.txn_price_late)
-            return total
-        return 0.0
+                if g.year == target_grant_year:
+                    return g.spread(self.txn_price_now)
+            return 0.0
+        # Late exercise: at expiry — accumulate ALL grants sharing this expiry_year
+        total = 0.0
+        for g in self.grants:
+            if g.expiry_year == year:
+                total += g.spread(self.txn_price_late)
+        return total
