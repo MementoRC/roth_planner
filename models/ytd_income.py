@@ -102,6 +102,17 @@ class YTDSnapshot:
     # Metadata
     manually_entered: bool = True
 
+    def __post_init__(self) -> None:
+        # Non-negative guard (audit 2026-07-13, R1+R2): these two fields are
+        # SUBTRACTED in above_the_line_adjustments_ytd. Without a floor, a
+        # negative entry (e.g. from a widget lacking min_value) flips from
+        # reducing income to inflating total_ordinary_income/magi_ytd. Clamp
+        # at the model level so the invariant holds regardless of widget
+        # config. ltcg_ytd/stcg_ytd are intentionally NOT clamped — they can
+        # legitimately be negative (losses; see PR #368).
+        self.hsa_contribution_ytd = max(0.0, self.hsa_contribution_ytd)
+        self.deductible_ira_contribution_ytd = max(0.0, self.deductible_ira_contribution_ytd)
+
     @property
     def dividends_ytd(self) -> float:
         """Total YTD dividends (qualified + ordinary). Backward-compat."""
