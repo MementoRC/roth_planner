@@ -7,6 +7,7 @@ the old single-valued direct-assignment bug (crypto_stcg_ytd = report.stcg).
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,9 @@ from engine.koinly_report_pdf import KoinlyReport
 from engine.pdf_ledger import (
     derive_brokerage_totals,
     derive_koinly_totals,
+    extract_owner,
     load_ledger,
+    replace_owner,
     save_ledger,
     write_brokerage_contribution,
     write_koinly_contribution,
@@ -152,3 +155,56 @@ class TestLedgerCache:
         monkeypatch.setattr(mod, "_LEDGER_PATH", partial)
         loaded = load_ledger()
         assert loaded == {"koinly": {}, "brokerage": {}}
+
+
+class TestOwnerSlice:
+    def _ledger(self):
+        return {
+            "koinly": {
+                "you": {"stcg": 10.0, "ltcg": 5.0, "income": 1.0, "captured_at": "t", "source": "k"},
+                "spouse": {"stcg": 99.0, "ltcg": 0.0, "income": 0.0, "captured_at": "t", "source": "k"},
+            },
+            "brokerage": {
+                "you": {"A1": {"interest": 3.0}},
+                "spouse": {"B2": {"interest": 7.0}},
+            },
+        }
+
+    def test_extract_owner_returns_only_that_owner_inner_values(self):
+        slice_ = extract_owner(self._ledger(), "you")
+        assert slice_ == {
+            "koinly": {"stcg": 10.0, "ltcg": 5.0, "income": 1.0, "captured_at": "t", "source": "k"},
+            "brokerage": {"A1": {"interest": 3.0}},
+        }
+
+    def test_extract_owner_missing_owner_yields_empty_sections(self):
+        assert extract_owner({"koinly": {}, "brokerage": {}}, "you") == {"koinly": {}, "brokerage": {}}
+
+    def test_extract_owner_does_not_mutate_input(self):
+        led = self._ledger()
+        snapshot = copy.deepcopy(led)
+        extract_owner(led, "you")
+        assert led == snapshot
+
+    def test_replace_owner_drops_old_and_inserts_new_under_target(self):
+        led = self._ledger()
+        new_slice = {"koinly": {"stcg": 1.0, "ltcg": 2.0, "income": 0.0, "captured_at": "t2", "source": "k"},
+                     "brokerage": {"Z9": {"interest": 4.0}}}
+        out = replace_owner(led, "spouse", new_slice)
+        assert out["koinly"]["spouse"] == new_slice["koinly"]
+        assert out["brokerage"]["spouse"] == {"Z9": {"interest": 4.0}}
+        assert out["koinly"]["you"] == led["koinly"]["you"]
+        assert out["brokerage"]["you"] == led["brokerage"]["you"]
+
+    def test_replace_owner_with_empty_slice_clears_that_owner(self):
+        led = self._ledger()
+        out = replace_owner(led, "spouse", {"koinly": {}, "brokerage": {}})
+        assert "spouse" not in out["koinly"]
+        assert "spouse" not in out["brokerage"]
+        assert "you" in out["koinly"]
+
+    def test_replace_owner_does_not_mutate_input(self):
+        led = self._ledger()
+        snapshot = copy.deepcopy(led)
+        replace_owner(led, "spouse", {"koinly": {}, "brokerage": {}})
+        assert led == snapshot

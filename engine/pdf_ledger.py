@@ -20,6 +20,7 @@ Pure functions + a small JSON cache. No Streamlit import (engine/ purity rule).
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,28 @@ def derive_brokerage_totals(ledger: PdfLedger) -> dict[str, float]:
             totals["stcg_ytd"] += float(rec_dict.get("stcg_net_ytd", 0.0))
             totals["ltcg_ytd"] += float(rec_dict.get("ltcg_net_ytd", 0.0))
     return totals
+
+
+def extract_owner(ledger: PdfLedger, owner: str) -> dict:
+    """Return the exporter's owner-agnostic ledger slice: the inner values under `owner`."""
+    koinly = copy.deepcopy(ledger.get("koinly", {}).get(owner, {}))
+    brokerage = copy.deepcopy(ledger.get("brokerage", {}).get(owner, {}))
+    return {"koinly": koinly, "brokerage": brokerage}
+
+
+def replace_owner(ledger: PdfLedger, owner: str, slice_: dict) -> PdfLedger:
+    """Return a new ledger with `owner`'s koinly/brokerage entries replaced by `slice_`.
+    An empty section in `slice_` removes that owner from that section (full reset)."""
+    out = copy.deepcopy(ledger)
+    out.setdefault("koinly", {})
+    out.setdefault("brokerage", {})
+    for section in ("koinly", "brokerage"):
+        payload = slice_.get(section) or {}
+        if payload:
+            out[section][owner] = copy.deepcopy(payload)
+        else:
+            out[section].pop(owner, None)
+    return out
 
 
 # ---------------------------------------------------------------------------

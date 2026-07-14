@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
 
 import streamlit as st
 
+from engine.bridge_bundle import apply_bundle, read_format_version
 from engine.data_bridge_browser import (
     is_pyodide,
 )
@@ -16,11 +16,13 @@ from engine.data_bridge_keys import (
     load_privkey,
     load_pubkey,
 )
-from engine.secure_io import read_pii_bytes
+from engine.pdf_ledger import load_ledger as _load_pdf_ledger
+from engine.pdf_ledger import save_ledger as _save_pdf_ledger
+from engine.portfolio_sync import PortfolioSnapshot, save_ytd_snapshot
+from engine.portfolio_sync.portfolio import load_snapshot, save_snapshot
 from models.household import Household
 
 from ._state import (
-    _apply_portfolio_snapshot,
     _apply_user_defaults_to_session,
     _clear_personal_session_state,
     _portfolio_snapshot_from_dict,
@@ -194,22 +196,21 @@ def _handle_v2_privkey() -> None:
 
 
 def _handle_personal_uploads() -> None:
-    """Widget to inject personal defaults + portfolio snapshot from JSON uploads.
+    """Widget to full-replace one owner's slot from a sealed ``roth_bridge.enc`` bundle.
 
     For use in the deployed (stlite) demo where the visitor cannot put files
-    next to the app. Local users can ignore this and just keep
-    .user_defaults.json + .portfolio_cache.json in cwd.
+    next to the app. Local users can ignore this and just keep the on-disk
+    caches in cwd.
 
-    Accepts both V1 plaintext ``.json`` and V2 sealed ``.json.enc`` files.
-    Encrypted uploads require the V2 private key configured in the
-    "\U0001f511 V2 private key" expander (or available on disk).
+    Accepts a V2 sealed ``.enc`` consolidated bundle (see ``engine.bridge_bundle``).
+    Decryption requires the V2 private key configured in the "\U0001f511 V2
+    private key" expander (or available on disk).
 
-    Each uploader has a per-file "Whose data?" toggle. "Me" applies the
-    payload to the receiver's own slots (current behavior). "Spouse" treats
-    the payload as the spouse's planner export from their own perspective,
-    cross-maps ``your_*`` fields to the receiver's ``spouse_*`` slots, and
-    merges portfolio accounts with ``owner="spouse"`` while preserving the
-    receiver's own accounts, grants, and TXN holdings.
+    The "Whose data?" toggle selects which owner slot ("you" or "spouse")
+    the bundle full-replaces: setup scalars are cross-mapped/applied for that
+    owner, portfolio accounts for that owner are replaced (other owner's
+    accounts and all grants/TXN holdings are preserved), and the PDF ledger
+    slice for that owner is replaced.
     """
     # Deferred: nacl unavailable in Pyodide
     from engine.data_bridge_crypto import (
@@ -219,85 +220,112 @@ def _handle_personal_uploads() -> None:
 
     with st.expander("\U0001f513 Use my real data (this session)"):
         st.caption(
-            "Upload your local files for a personalized session. "
+            "Upload your encrypted bundle for a personalized session. "
             "Values stay in this browser only; refresh = back to demo. "
-            "V2 `.json.enc` files require the private key configured above. "
+            "`.enc` files require the private key configured above. "
             'Use the "Whose data?" toggle when uploading your spouse\'s planner export.'
         )
-        ud_role = st.radio(
-            "Whose .user_defaults.json?",
-            ["Me", "Spouse"],
-            horizontal=True,
-            key="ud_role",
-        )
-        ud_file = st.file_uploader(
-            ".user_defaults.json[.enc] (ages, SS, grant strikes)",
-            type=["json", "enc"],
-            key="ud_upload",
-        )
         pc_role = st.radio(
-            "Whose .portfolio_cache.json?",
+            "Whose data?",
             ["Me", "Spouse"],
             horizontal=True,
             key="pc_role",
         )
-        pc_file = st.file_uploader(
-            ".portfolio_cache.json[.enc] (FinExtract holdings + grants)",
-            type=["json", "enc"],
-            key="pc_upload",
+        bundle_file = st.file_uploader(
+            "roth_bridge.enc (setup scalars + portfolio + PDF ledger)",
+            type=["enc"],
+            key="bundle_upload",
         )
         col_a, col_b = st.columns(2)
-        if col_a.button("Apply", key="apply_uploads", use_container_width=True):
-            applied: list[str] = []
+        if col_a.button("Apply", key="apply_uploads", use_container_width=True) and bundle_file is not None:
             privkey = _resolve_privkey_bytes()
-            if ud_file is not None:
-                try:
-                    raw = ud_file.read()
-                    plaintext = open_uploaded_payload(raw, privkey)
-                    data = json.loads(plaintext.decode("utf-8"))
-                    _apply_user_defaults_to_session(data, as_spouse=(ud_role == "Spouse"))
-                    applied.append(f"{ud_file.name} ({ud_role.lower()})")
-                except (
-                    json.JSONDecodeError,
-                    ValueError,
-                    TypeError,
-                    KeyError,
-                    AttributeError,
-                    DataBridgeCryptoError,
-                ) as e:
-                    st.error(f"Invalid {ud_file.name}: {e}")
-            if pc_file is not None:
-                try:
-                    raw = pc_file.read()
-                    plaintext = open_uploaded_payload(raw, privkey)
-                    data = json.loads(plaintext.decode("utf-8"))
-                    snap = _portfolio_snapshot_from_dict(data)
-                    _apply_portfolio_snapshot(snap, as_spouse=(pc_role == "Spouse"))
-                    applied.append(f"{pc_file.name} ({pc_role.lower()})")
-                except (
-                    json.JSONDecodeError,
-                    ValueError,
-                    TypeError,
-                    KeyError,
-                    AttributeError,
-                    DataBridgeCryptoError,
-                ) as e:
-                    st.error(f"Invalid {pc_file.name}: {e}")
-            if applied:
-                st.success(f"Applied: {', '.join(applied)}. Rerunning…")
-                st.rerun()
+            try:
+                raw = bundle_file.read()
+                plaintext = open_uploaded_payload(raw, privkey)
+                data = json.loads(plaintext.decode("utf-8"))
+                if read_format_version(data) is None:
+                    st.warning(
+                        "This looks like an older export. Please re-export from the "
+                        "sender using the current version and upload the new "
+                        "roth_bridge.enc."
+                    )
+                else:
+                    target_owner = "spouse" if pc_role == "Spouse" else "you"
+                    incoming_snap = _portfolio_snapshot_from_dict(
+                        {"accounts": data["sections"]["portfolio"]["accounts"]}
+                    )
+                    data["sections"]["portfolio"]["accounts"] = incoming_snap.accounts
+                    existing_snapshot = load_snapshot() or PortfolioSnapshot()
+                    new_snapshot, new_ledger = apply_bundle(
+                        target_owner,
+                        data,
+                        existing_snapshot=existing_snapshot,
+                        existing_ledger=_load_pdf_ledger(),
+                    )
+                    save_snapshot(new_snapshot)
+                    _save_pdf_ledger(new_ledger)
+                    _apply_user_defaults_to_session(
+                        data["sections"]["setup_scalars"], as_spouse=(target_owner == "spouse")
+                    )
+                    st.session_state["portfolio_snapshot"] = new_snapshot
+                    st.session_state.pop("_suppress_snapshot_autoload", None)
+                    _rederive_ytd_from_ledger(new_ledger)
+                    st.success(f"Applied: {bundle_file.name} ({pc_role.lower()}). Rerunning…")
+                    st.rerun()
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                DataBridgeCryptoError,
+            ) as e:
+                st.error(f"Invalid {bundle_file.name}: {e}")
         if col_b.button("Reset to demo", key="reset_demo", use_container_width=True):
             _clear_personal_session_state()
             st.success("Reset to demo defaults.")
             st.rerun()
 
 
-def _handle_personal_exports() -> None:
-    """Widget to download local data files for use on the public site.
+def _rederive_ytd_from_ledger(ledger: object) -> None:
+    """Re-derive brokerage + Koinly YTD fields onto the session snapshot after an import.
 
-    When a V2 data-bridge public key is configured (see ``deploy/README.md``),
-    exports are sealed with ``crypto_box_seal`` and emitted as ``.json.enc``.
-    Otherwise the V1 plaintext export is shown with a deprecation warning.
+    Mirrors the exact field assignments in ``views/ytd_income.py`` (scan-folder
+    handler): fresh overwrite (``=``, not ``+=``) so the re-derive is idempotent
+    across repeated bundle imports. No-op if no YTD snapshot exists yet this
+    session (nothing to overwrite onto).
+    """
+    from engine.pdf_ledger import derive_brokerage_totals, derive_koinly_totals
+
+    snap = st.session_state.get("ytd_snapshot")
+    if snap is None:
+        return
+
+    brokerage_totals = derive_brokerage_totals(ledger)  # type: ignore[arg-type]
+    snap.interest_ytd = brokerage_totals["interest_ytd"]
+    snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
+    snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
+    snap.stcg_ytd = brokerage_totals["stcg_ytd"]
+    snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+
+    koinly_totals = derive_koinly_totals(ledger)  # type: ignore[arg-type]
+    snap.crypto_stcg_ytd = koinly_totals["stcg"]
+    snap.crypto_ltcg_ytd = koinly_totals["ltcg"]
+    snap.crypto_income_ytd = koinly_totals["income"]
+
+    snap.with_snapshot_date()
+    st.session_state["ytd_snapshot"] = snap
+    st.session_state["ytd_manual_entry"] = False
+    save_ytd_snapshot(snap)
+
+
+def _handle_personal_exports() -> None:
+    """Widget to download a single sealed data-bridge bundle (``roth_bridge.enc``).
+
+    Requires a V2 data-bridge public key (see ``deploy/README.md``) — either
+    your own (env/dotfile/session-derived) or a pasted third-party recipient
+    key. There is no plaintext fallback: the consolidated bundle only ever
+    leaves the browser sealed.
 
     A "Recipient public key" field lets you instead seal the export for a
     third party: paste their data-bridge PUBLIC key and the download is sealed
@@ -306,12 +334,10 @@ def _handle_personal_exports() -> None:
     another planner (e.g. via encrypted email).
     """
     # Deferred: nacl unavailable in Pyodide
+    from engine.bridge_bundle import build_bundle
     from engine.data_bridge_crypto import seal
 
     with st.expander("📦 Export my data", expanded=False):
-        defaults = _user_defaults_from_session()
-        cache_path = Path(__file__).resolve().parent.parent.parent / ".portfolio_cache.json"
-
         # Optional: seal for a third-party recipient instead of yourself.
         recipient_raw = st.text_input(
             "Recipient public key (base64/hex) — optional",
@@ -333,80 +359,30 @@ def _handle_personal_exports() -> None:
             if sealing_for_third_party:
                 st.caption(
                     "🔐 Sealing for the recipient's public key — only their private "
-                    "key can open these files."
+                    "key can open this file."
                 )
             else:
-                st.caption("🔐 V2 encrypted export active — files are sealed for your private key.")
-            if defaults:
-                payload = json.dumps(defaults, indent=2, default=str).encode("utf-8")
-                st.download_button(
-                    label="⬇️ .user_defaults.json.enc",
-                    data=seal(payload, pubkey),
-                    file_name=".user_defaults.json.enc",
-                    mime="application/octet-stream",
-                    key="export_user_defaults_enc",
-                )
-            else:
-                st.caption("(Enter your numbers first to enable export.)")
-            if cache_path.exists():
-                try:
-                    _cache_bytes = read_pii_bytes(cache_path)
-                except OSError:
-                    st.caption("(Portfolio cache could not be read safely — possible symlink; skipping.)")
-                else:
-                    st.download_button(
-                        label="⬇️ .portfolio_cache.json.enc",
-                        data=seal(_cache_bytes, pubkey),
-                        file_name=".portfolio_cache.json.enc",
-                        mime="application/octet-stream",
-                        key="export_portfolio_cache_enc",
-                    )
-            else:
-                st.caption("(Run Portfolio Sync first to enable cache export.)")
-            return
-
-        # No V2 key. Public site → BLOCK V1 entirely (no plaintext leaves browser).
-        if is_pyodide():
-            st.caption(
-                "\U0001f512 No plaintext export available on the public site. "
-                "Paste your private key in the '\U0001f511 V2 private key' widget above "
-                "to enable encrypted export."
-            )
-            return
-
-        # V1 plaintext fallback — local host only, deprecated.
-        st.caption(
-            "Saves to your browser's default downloads folder. Share with the public site for third-party analysis."
-        )
-        st.warning(
-            "⚠️ Plaintext export is deprecated and will be removed in a future release. "
-            "Run `pixi run gen-data-bridge-keypair` to enable encrypted export."
-        )
-        if defaults:
+                st.caption("🔐 V2 encrypted export active — file is sealed for your private key.")
+            scalars = _user_defaults_from_session()
+            snapshot = load_snapshot()
+            ledger = _load_pdf_ledger()
+            bundle = build_bundle(scalars, snapshot, ledger, owner="you")
+            payload = json.dumps(bundle).encode("utf-8")
             st.download_button(
-                label="⬇️ .user_defaults.json",
-                data=json.dumps(defaults, indent=2, default=str),
-                file_name=".user_defaults.json",
-                mime="application/json",
-                key="export_user_defaults",
+                label="⬇️ Download my encrypted data (.enc)",
+                data=seal(payload, pubkey),
+                file_name="roth_bridge.enc",
+                mime="application/octet-stream",
+                key="export_bundle",
             )
-        else:
-            st.caption("(Enter your numbers first to enable export.)")
-        if cache_path.exists():
-            try:
-                _cache_bytes = read_pii_bytes(cache_path)
-            except OSError:
-                st.caption("(Portfolio cache could not be read safely — possible symlink; skipping.)")
-            else:
-                st.download_button(
-                    label="⬇️ .portfolio_cache.json",
-                    data=_cache_bytes,
-                    file_name=".portfolio_cache.json",
-                    mime="application/json",
-                    key="export_portfolio_cache",
-                )
-        else:
-            st.caption("(Run Portfolio Sync first to enable cache export.)")
+            return
+
+        # No V2 key. No plaintext ever leaves the browser for the consolidated bundle.
+        st.caption(
+            "\U0001f512 No encrypted export available yet. "
+            "Paste your private key in the '\U0001f511 V2 private key' widget above, "
+            "or generate a keypair above, to enable encrypted export."
+        )
 
 
 def render_data_bridge_tab(hh: Household) -> None:
