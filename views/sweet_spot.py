@@ -88,7 +88,9 @@ def render(hh: Household) -> None:
     c2.metric("Combined SS", fmt_dollars(base.combined_ss))
     c3.metric("Deductions", fmt_dollars(base.total_ded))
 
-    _ltcg_eligible = estimate_ltcg_eligible(hh, selected_year)
+    _ltcg_eligible = estimate_ltcg_eligible(
+        hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
+    )
     base_result = all_in_at_conversion(hh, base, 0, net_inv_income, ltcg_eligible=_ltcg_eligible)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
 

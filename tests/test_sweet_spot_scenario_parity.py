@@ -1,0 +1,271 @@
+"""Differential parity tests: engine.sweet_spot_compute vs engine.scenario (oracle).
+
+Audit 2026-07-13 (R1+R2 confirmed) found 5 defects where sweet_spot_compute had
+drifted from scenario.py's canonical formulas:
+  1. all_in_at_conversion's magi omitted forecast qual/ord dividends + realized LTCG
+  2. NIIT's net-investment-income omitted realized_gains/qual_div/ord_div
+  3. base_income_for_year never added RMD / inherited-IRA income
+  4. the ordinary-income base omitted the forecast ordinary-dividend term
+  5. estimate_ltcg_eligible never suppressed the forecast in the base year with YTD
+
+These tests build a Household + inputs where YTD ordinary income, forecast
+qualified/ordinary dividends, and realized LTCG are all present, and a sweep
+window that includes RMD years -- then assert sweet_spot_compute's magi,
+niit_magi, and base income agree with engine.scenario's values for the same
+year/conversion, using run_scenario as the oracle.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from engine.niit import niit
+from engine.scenario import ConversionPlan, run_scenario
+from engine.scenario_types import YearResult
+from engine.sweet_spot_compute import (
+    all_in_at_conversion,
+    base_income_for_year,
+    estimate_brokerage_income,
+    estimate_ltcg_eligible,
+)
+from models.household import GrowthProfile, Household
+from models.ytd_income import YTDSnapshot
+
+
+def _oracle_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> YearResult:
+    """Run engine.scenario for `hh` through `year` and return that year's YearResult."""
+    end_age = hh.your_age + (year - hh.base_year)
+    result = run_scenario(hh, ConversionPlan(), "oracle", end_age=end_age, ytd=ytd)
+    for yr in result.years:
+        if yr.year == year:
+            return yr
+    raise AssertionError(f"year {year} not found in scenario result")  # pragma: no cover
+
+
+def _no_ss_no_option_household(**overrides: object) -> Household:
+    """Household with SS and option income zeroed out so combined_gross/magi
+    comparisons are not muddied by SS-taxability or option-income mechanics
+    (those are exercised by other regression suites)."""
+    defaults: dict[str, object] = {
+        "your_age": 61,
+        "spouse_age": 55,
+        "base_year": 2026,
+        "grants": [],
+        "txn_price_now": 0.0,
+        "txn_price_late": 0.0,
+        "your_ss_fra": 0.0,
+        "spouse_ss_fra": 0.0,
+        "your_ss_start_age": 70,
+        "spouse_ss_start_age": 70,
+        "cpi_assumption": 0.0,
+        "ss_cola": 0.0,
+        "growth_rate": 0.0,
+        "filing_status": "MFJ",
+    }
+    defaults.update(overrides)
+    return Household(**defaults)  # type: ignore[arg-type]
+
+
+class TestBaseYearYtdMagiNiitParity:
+    """Defects 1/2 (base-year YTD path, regression guard): with YTD ordinary
+    income + qualified/ordinary dividends + LTCG present, sweet_spot's magi,
+    niit_magi, and base gross must match engine.scenario's at conv=0."""
+
+    def test_magi_niit_magi_gross_match_oracle(self) -> None:
+        hh = _no_ss_no_option_household()
+        year = hh.base_year
+        ytd = YTDSnapshot(
+            tax_year=year,
+            wages_ytd=80_000.0,
+            qualified_dividends_ytd=5_000.0,
+            ordinary_dividends_ytd=3_000.0,
+            ltcg_ytd=20_000.0,
+        )
+        oracle = _oracle_year(hh, year, ytd=ytd)
+
+        base = base_income_for_year(hh, year, ytd=ytd)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0)
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0)
+        assert base.base_gross == pytest.approx(oracle.combined_gross, abs=1.0)
+
+
+class TestForecastDividendsAndGainsMagiNiitParity:
+    """Defects 1/2/4: forecast qualified/ordinary dividends + realized LTCG (no
+    YTD) must fold into sweet_spot's magi, niit_magi, and NIIT cost identically
+    to engine.scenario. Tested at the base year (offset 0) so the brokerage
+    balance used by both engines is identical (hh.brokerage_start) -- scenario.py
+    projects/compounds the balance in later years, which sweet_spot's per-year
+    snapshot deliberately does not model (see estimate_brokerage_income docstring)."""
+
+    def _hh(self) -> Household:
+        return _no_ss_no_option_household(
+            brokerage_start=500_000.0,
+            brok_turnover=0.30,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07, yield_rate=0.02, qualified_fraction=0.6
+            ),
+        )
+
+    def test_magi_matches_oracle(self) -> None:
+        hh = self._hh()
+        year = hh.base_year
+        oracle = _oracle_year(hh, year, ytd=None)
+
+        base = base_income_for_year(hh, year, ytd=None)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        assert base.forecast_qual_div > 0
+        assert base.forecast_ord_div > 0
+        assert base.forecast_realized_gains > 0
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0)
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0)
+
+    def test_niit_cost_matches_oracle(self) -> None:
+        """R2: net investment income = realized_gains + qual_div + ord_div (+ ytd
+        investment income, 0 here). End-to-end NIIT cost must match the oracle."""
+        hh = self._hh()
+        year = hh.base_year
+        oracle = _oracle_year(hh, year, ytd=None)
+
+        # Independently replicate scenario.py's net_investment_income for this
+        # year (not via the module under test) as the parity anchor.
+        brokerage = hh.brokerage_start
+        appr = hh.brokerage_growth.appreciation_for(year)  # type: ignore[union-attr]
+        qual_div = hh.brokerage_growth.qualified_div_for(year, brokerage)  # type: ignore[union-attr]
+        ord_div = hh.brokerage_growth.ordinary_div_for(year, brokerage)  # type: ignore[union-attr]
+        realized_gains = brokerage * appr * hh.brok_turnover
+        expected_nii = realized_gains + qual_div + ord_div
+
+        # Sanity anchor: the oracle's own niit_cost must be reproducible from its
+        # exposed niit_magi plus our independently-derived NII.
+        assert oracle.niit_cost == pytest.approx(
+            niit(oracle.niit_magi, expected_nii, filing_status=hh.filing_status), abs=1.0
+        )
+
+        base = base_income_for_year(hh, year, ytd=None)
+        result = all_in_at_conversion(hh, base, 0.0, net_inv_income=0.0)
+
+        # R2: sweet_spot's year-level NII addition must equal the same formula.
+        assert base.net_investment_income_addl == pytest.approx(expected_nii, abs=1.0)
+
+        sweet_spot_niit_cost = niit(
+            result.niit_magi, base.net_investment_income_addl, filing_status=hh.filing_status
+        )
+        assert sweet_spot_niit_cost == pytest.approx(oracle.niit_cost, abs=1.0)
+
+
+class TestRmdYearBaseIncomeParity:
+    """Defect 3: base_income_for_year must fold taxable RMD income into base_gross
+    and base_magi for years where the primary owes RMDs, matching engine.scenario.
+    growth_rate=0.0 keeps the IRA balance static (no conversions/withdrawals occur
+    before the RMD year in either engine), so both engines compute RMD off the
+    identical undiminished balance."""
+
+    def test_rmd_year_matches_oracle(self) -> None:
+        hh = _no_ss_no_option_household(your_ira=1_700_000.0, spouse_ira=1_700_000.0)
+        assert hh.your_rmd_start_age == 75  # sanity: post-1959 cohort default
+
+        rmd_year = hh.base_year + (hh.your_rmd_start_age - hh.your_age)  # first RMD year
+        oracle = _oracle_year(hh, rmd_year, ytd=None)
+
+        assert oracle.taxable_rmd > 0, "precondition: oracle must show a taxable RMD this year"
+
+        base = base_income_for_year(hh, rmd_year, ytd=None)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        assert base.rmd_income > 0, "sweet_spot must recognize RMD income in this year"
+        assert base.rmd_income == pytest.approx(oracle.taxable_rmd, abs=1.0)
+        assert base.base_gross == pytest.approx(oracle.combined_gross, abs=1.0)
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0)
+
+
+class TestEstimateLtcgEligibleBaseYearSuppression:
+    """Defect 5: estimate_ltcg_eligible must suppress the forecast in the base
+    year when ytd actuals are supplied, replacing it with realized YTD LTCG +
+    qualified dividends -- mirroring scenario.py's base-year suppression."""
+
+    def test_forecast_suppressed_and_replaced_with_ytd(self) -> None:
+        hh = _no_ss_no_option_household(
+            brokerage_start=500_000.0,
+            brok_turnover=0.30,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07, yield_rate=0.02, qualified_fraction=0.6
+            ),
+        )
+        year = hh.base_year
+
+        forecast_only = estimate_ltcg_eligible(hh, year, ytd=None)
+        assert forecast_only > 0, "precondition: forecast must be nonzero"
+
+        ytd = YTDSnapshot(tax_year=year, ltcg_ytd=15_000.0, qualified_dividends_ytd=2_000.0)
+        with_ytd = estimate_ltcg_eligible(hh, year, ytd=ytd)
+
+        assert with_ytd == pytest.approx(17_000.0, abs=0.01)
+        assert with_ytd != pytest.approx(forecast_only), (
+            "ytd-suppressed value must differ from the (unsuppressed) forecast"
+        )
+
+        # Cross-check against the underlying suppression helper directly.
+        qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, ytd)
+        assert qual_div == 0.0
+        assert realized_gains == 0.0
+
+
+class TestMU8F1LtcgStackRegression:
+    """Regression lock for the already-shipped MU8-F1 fix: base_income_for_year
+    must fold ytd_ordinary (= ytd.total_ordinary_income, net of nqo_exercise_ytd)
+    into the LTCG-stack start, not just into MAGI. A conversion that keeps
+    taxable_inc below the 0%->15% LTCG threshold WITHOUT ytd wages, but pushes it
+    above the threshold WITH ytd wages, must show ltcg_delta > 0 only in the
+    with-ytd case."""
+
+    def _hh(self) -> Household:
+        # Deliberately keeps default option income + SS (unlike the other test
+        # classes' zeroed-out household): the default option income is what lifts
+        # taxable_inc close enough to the LTCG threshold for a modest conversion
+        # to be the deciding factor, mirroring test_audit_0707_batch_a.py's
+        # TestSweetSpotYtdOrdinaryBase.test_ytd_ordinary_shifts_ltcg_stack_base.
+        return Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            filing_status="MFJ",
+        )
+
+    def test_ytd_ordinary_income_shifts_ltcg_stack_start(self) -> None:
+        from engine.tax import LTCG_THRESHOLDS_MFJ, STD_DEDUCTION_MFJ
+
+        hh = self._hh()
+        year = hh.base_year
+        threshold_0_15 = LTCG_THRESHOLDS_MFJ[0]
+
+        conv = threshold_0_15 - STD_DEDUCTION_MFJ - 5_000.0  # below threshold w/o ytd
+        wages = 15_000.0  # pushes taxable_inc above threshold w/ ytd
+        ltcg_eligible = 20_000.0
+
+        ytd = YTDSnapshot(tax_year=year, wages_ytd=wages)
+        b_no_ytd = base_income_for_year(hh, year, ytd=None)
+        b_with_ytd = base_income_for_year(hh, year, ytd=ytd)
+
+        assert b_with_ytd.ytd_ordinary == pytest.approx(wages)
+
+        res_no_ytd = all_in_at_conversion(
+            hh, b_no_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible
+        )
+        res_with_ytd = all_in_at_conversion(
+            hh, b_with_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible
+        )
+
+        assert res_no_ytd.ltcg_delta == pytest.approx(0.0, abs=0.01), (
+            "without ytd_ordinary, taxable_inc stays below the LTCG 0%->15% threshold"
+        )
+        assert res_with_ytd.ltcg_delta > 0.0, (
+            "ytd_ordinary must shift the LTCG-stack start above the threshold, "
+            f"got ltcg_delta={res_with_ytd.ltcg_delta}"
+        )
