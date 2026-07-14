@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.aca import aca_applies, aca_subsidy_loss, effective_benchmark_premium
-from engine.ira import ss_benefit_at_age, ss_with_cola
+from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
 from engine.tax import (
@@ -51,6 +51,48 @@ class BaseIncome:
     ytd_magi: float = 0.0
     ytd_niit_magi: float = 0.0
     ytd_ordinary: float = 0.0  # ordinary-income portion of YTD: wages+NEC+STCG+ord-divs+interest+distributions (NOT LTCG, NOT qual-divs, NOT muni)
+    # R1-R4 (audit 2026-07-13): forecast brokerage income + RMD/inherited-IRA income,
+    # mirroring engine.scenario's per-year assembly. All are year-level (conversion-
+    # independent) so they are computed once here and reused by all_in_at_conversion.
+    forecast_qual_div: float = 0.0  # forecast qualified dividends (MAGI + LTCG-stack only; suppressed to 0 in base year when ytd is supplied)
+    forecast_ord_div: float = 0.0  # forecast ordinary dividends (ordinary bracket + MAGI; suppressed to 0 in base year when ytd is supplied)
+    forecast_realized_gains: float = 0.0  # forecast realized LTCG from brokerage turnover (MAGI + LTCG-stack only; suppressed to 0 in base year when ytd is supplied)
+    rmd_income: float = 0.0  # taxable RMD (both spouses) + inherited-IRA distributions (ordinary bracket + MAGI + SS provisional income)
+    ytd_investment_income: float = 0.0  # ytd.total_investment_income (NIIT net-investment-income parity; 0 outside the base year)
+
+    @property
+    def magi_addl(self) -> float:
+        """Year-level MAGI additions independent of the swept conversion amount:
+        YTD MAGI + forecast qual/ord dividends + forecast realized gains + RMD/
+        inherited-IRA income. Mirrors engine.scenario's magi assembly (compute_magi
+        + the realized_gains fold)."""
+        return (
+            self.ytd_magi
+            + self.forecast_qual_div
+            + self.forecast_ord_div
+            + self.forecast_realized_gains
+            + self.rmd_income
+        )
+
+    @property
+    def ordinary_addl(self) -> float:
+        """Year-level ordinary-bracket additions independent of the swept conversion
+        amount: YTD ordinary income + forecast ordinary dividends + RMD/inherited-IRA
+        income. Mirrors engine.scenario's combined_gross assembly."""
+        return self.ytd_ordinary + self.forecast_ord_div + self.rmd_income
+
+    @property
+    def net_investment_income_addl(self) -> float:
+        """Year-level net-investment-income additions for NIIT: forecast realized
+        gains + forecast qual/ord dividends + YTD investment income. Mirrors
+        engine.scenario's net_investment_income assembly (scenario.py:612-615).
+        Excludes rmd_income (RMDs are not investment income)."""
+        return (
+            self.forecast_realized_gains
+            + self.forecast_qual_div
+            + self.forecast_ord_div
+            + self.ytd_investment_income
+        )
 
 
 @dataclass
@@ -65,9 +107,10 @@ class ConversionResult:
     ltcg_delta: float
     all_in: float
     magi: float
-    taxable_inc: float
-    room_12: float
-    room_22: float
+    niit_magi: float = 0.0  # NIIT MAGI per IRC §1411(d)(3): magi minus tax-exempt muni interest
+    taxable_inc: float = 0.0
+    room_12: float = 0.0
+    room_22: float = 0.0
 
 
 @dataclass
@@ -128,18 +171,84 @@ def _ltcg_stack_tax(start: float, eligible: float, thresholds: tuple[float, floa
     return at_15 * LTCG_RATES_MFJ[1] + at_20 * LTCG_RATES_MFJ[2]
 
 
-def estimate_ltcg_eligible(hh: Household, year: int) -> float:
-    """Estimate realized LTCG + qualified dividends for `year` from the begin
-    brokerage balance, mirroring engine.scenario's ltcg_eligible. Returns 0.0 when
-    no brokerage data is available."""
+def estimate_brokerage_income(
+    hh: Household, year: int, ytd: YTDSnapshot | None = None
+) -> tuple[float, float, float]:
+    """Estimate forecast (qualified_div, ordinary_div, realized_gains) for `year`,
+    mirroring engine.scenario's compute_brokerage_dividends + realized_gains
+    suppression (scenario.py:123-127, 281-291). Uses hh.brokerage_start as a static
+    balance -- Sweet Spot Finder is a per-year snapshot, not a multi-year balance
+    projection (see estimate_ltcg_eligible for the same simplification).
+
+    R1/R5 (audit 2026-07-13): in the base year, when `ytd` actuals are supplied,
+    the forecast is suppressed to 0.0 -- the YTD snapshot is the source of truth
+    for that year's realized dividends/gains, avoiding double-counting."""
+    if ytd is not None:
+        return 0.0, 0.0, 0.0
     brokerage = hh.brokerage_start
     if hh.brokerage_growth is not None:
-        appr = hh.brokerage_growth.appreciation_for(year)
         qual_div = hh.brokerage_growth.qualified_div_for(year, brokerage)
+        ord_div = hh.brokerage_growth.ordinary_div_for(year, brokerage)
+        appr = hh.brokerage_growth.appreciation_for(year)
     else:
-        appr = hh.brokerage_rate(year)
         qual_div = 0.0
-    return brokerage * appr * hh.brok_turnover + qual_div
+        ord_div = 0.0
+        appr = hh.brokerage_rate(year)
+    realized_gains = brokerage * appr * hh.brok_turnover
+    return qual_div, ord_div, realized_gains
+
+
+def estimate_rmd_income(hh: Household, year: int) -> float:
+    """Estimate combined taxable RMD (both spouses) + inherited-IRA distributions
+    for `year`, mirroring engine.scenario's compute_rmds + inherited_ira_drain.
+
+    R3 (audit 2026-07-13): uses the CURRENT (undiminished) IRA balances
+    (hh.your_ira / hh.spouse_ira) as a static proxy -- Sweet Spot Finder is a
+    per-year snapshot, not a multi-year balance projection, so year-over-year
+    RMD/growth compounding is not modeled (same simplification pattern as
+    estimate_ltcg_eligible / estimate_brokerage_income). QCDs are not modeled
+    here (no ConversionPlan is available in this module)."""
+    ya = hh.your_age_in(year)
+    sa = hh.spouse_age_in(year)
+    your_rmd = calc_rmd(
+        hh.your_ira,
+        ya,
+        hh.your_rmd_start_age,
+        first_year_deferred=hh.your_defer_first_rmd,
+        prior_year_balance=hh.your_ira if hh.your_defer_first_rmd else 0.0,
+    )
+    spouse_rmd = calc_rmd(
+        hh.spouse_ira,
+        sa,
+        hh.spouse_rmd_start_age,
+        first_year_deferred=hh.spouse_defer_first_rmd,
+        prior_year_balance=hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0,
+    )
+    inherited = 0.0
+    for iira in hh.inherited_iras:
+        if year < iira.inherited_year:
+            continue
+        years_remaining = 10 - (year - iira.inherited_year)
+        if years_remaining <= 0:
+            continue
+        inherited += inherited_ira_drain(iira.balance, years_remaining)
+    return your_rmd + spouse_rmd + inherited
+
+
+def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> float:
+    """Estimate realized LTCG + qualified dividends eligible for the preferential-
+    rate stack for `year`, mirroring engine.scenario's ltcg_eligible (realized_gains
+    + qual_div_this_year). Returns 0.0 when no brokerage data is available.
+
+    R5 (audit 2026-07-13): when `ytd` actuals are supplied (base year), the forecast
+    is suppressed and replaced with the YTD LTCG + qualified dividends actually
+    realized so far this year -- mirroring scenario.py's base-year YTD LTCG
+    stack-walk input (_ytd_ltcg_total = ytd.ltcg_ytd + ytd.qualified_dividends_ytd,
+    scenario.py:577-579)."""
+    if ytd is not None:
+        return ytd.ltcg_ytd + ytd.qualified_dividends_ytd
+    qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, None)
+    return realized_gains + qual_div
 
 
 def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> BaseIncome:
@@ -183,22 +292,45 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     ytd_ordinary = (
         (ytd.total_ordinary_income - ytd.nqo_exercise_ytd) if ytd is not None else 0.0
     )
+    ytd_investment_income = ytd.total_investment_income if ytd is not None else 0.0
+
+    # R1/R3-R5 (audit 2026-07-13): forecast brokerage dividends/gains (suppressed in
+    # the base year when ytd is supplied) + RMD/inherited-IRA income, mirroring
+    # engine.scenario's compute_brokerage_dividends/realized_gains + compute_rmds.
+    forecast_qual_div, forecast_ord_div, forecast_realized_gains = estimate_brokerage_income(
+        hh, year, ytd
+    )
+    rmd_income = estimate_rmd_income(hh, year)
+    magi_addl = ytd_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income
+    ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income
 
     # Base taxable SS (without conversion).
-    # F9: other_inc must include ytd_magi so that realized YTD ordinary income
-    # raises provisional income per IRC §86(b)(2), matching scenario_compute.py.
-    tss = taxable_ss(combined_ss, opt + ytd_magi, filing_status=hh.filing_status)
+    # F9/R1/R3: other_inc must include ytd_magi, forecast div/gains, and RMD/
+    # inherited income -- all non-SS AGI items raise provisional income per
+    # IRC §86(b)(2), matching scenario_compute.compute_social_security.
+    tss = taxable_ss(combined_ss, opt + magi_addl, filing_status=hh.filing_status)
 
-    # Base gross (without conversion)
-    base_gross = opt + tss
+    # Base gross (without conversion) -- ordinary income only.
+    # R3/R4: rmd_income and forecast_ord_div are ordinary income; qualified
+    # dividends and realized gains are preferential-rate (MAGI-only), excluded here.
+    base_gross = opt + tss + ordinary_addl
 
     # MAGI base (without conversion)
-    base_magi = opt + tss + ytd_magi
+    # R1/R3: forecast qual/ord dividends, realized gains, and RMD/inherited income
+    # are all MAGI items, mirroring engine.scenario's compute_magi + realized_gains fold.
+    base_magi = opt + tss + magi_addl
 
     # Senior bonus deduction — phaseout uses NIIT-MAGI (excludes tax-exempt muni
-    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5.
+    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5. R1/R3: also
+    # includes the forecast/RMD MAGI additions (muni-exclusive, so ytd_niit_magi
+    # is used in place of ytd_magi).
     senior_bonus = senior_bonus_deduction(
-        ya, sa, opt + tss + ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya,
+        sa,
+        opt + tss + ytd_niit_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income,
+        year=year,
+        cpi=cpi,
+        filing_status=hh.filing_status,
     )
     total_ded = ded + senior_bonus
 
@@ -216,17 +348,26 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
         ytd_magi=ytd_magi,
         ytd_niit_magi=ytd_niit_magi,
         ytd_ordinary=ytd_ordinary,
+        forecast_qual_div=forecast_qual_div,
+        forecast_ord_div=forecast_ord_div,
+        forecast_realized_gains=forecast_realized_gains,
+        rmd_income=rmd_income,
+        ytd_investment_income=ytd_investment_income,
     )
 
 
 def bracket_boundary_conversion(base: BaseIncome, bracket_ceiling: float) -> float:
     """Conversion amount that lifts taxable income to the given bracket ceiling."""
-    # all_in_at_conversion uses taxable_inc = (opt + conv + tss + ytd_ordinary) - total_ded,
-    # and base.base_gross == opt + tss, so solving taxable_inc == ceiling gives
-    #   conv = ceiling + total_ded - opt - tss - ytd_ordinary
-    #        = ceiling + total_ded - base_gross - ytd_ordinary.
-    # MU8-F1: ytd_ordinary shifts the base up, narrowing the remaining conversion room.
-    return max(base.total_ded + bracket_ceiling - base.base_gross - base.ytd_ordinary, 0.0)
+    # all_in_at_conversion uses taxable_inc = (opt + conv + tss + ordinary_addl) - total_ded,
+    # and base.base_gross == opt + tss + ordinary_addl (R3/R4: ordinary_addl already
+    # folds ytd_ordinary + forecast_ord_div + rmd_income into base_gross -- do NOT
+    # subtract ytd_ordinary again here, or it is double-counted), so solving
+    # taxable_inc == ceiling gives
+    #   conv = ceiling + total_ded - opt - tss - ordinary_addl
+    #        = ceiling + total_ded - base_gross.
+    # MU8-F1: ytd_ordinary (folded into base_gross via ordinary_addl) shifts the
+    # base up, narrowing the remaining conversion room.
+    return max(base.total_ded + bracket_ceiling - base.base_gross, 0.0)
 
 
 def all_in_at_conversion(
@@ -242,22 +383,34 @@ def all_in_at_conversion(
     cpi: float = base.cpi
 
     single = hh.filing_status == "Single"
+    magi_addl = base.magi_addl
+    ordinary_addl = base.ordinary_addl
 
     # Recalculate taxable SS with conversion income.
-    # F9: other_inc must include ytd_magi (all non-SS ordinary income per IRC §86(b)(2))
-    # so that realized YTD income raises provisional income just as in scenario_compute.py.
-    other_inc = base.opt + conv + base.ytd_magi
+    # F9/R1/R3: other_inc must include ytd_magi, forecast div/gains, and RMD/
+    # inherited income (all non-SS AGI items per IRC §86(b)(2)) so that realized/
+    # forecast income raises provisional income just as in scenario_compute.py.
+    other_inc = base.opt + conv + magi_addl
     tss = taxable_ss(base.combined_ss, other_inc, filing_status=hh.filing_status)
 
-    # MU8-F1: include ytd_ordinary in the ordinary bracket base, mirroring scenario.py
-    # combined_gross. ytd_magi (which includes LTCG + qual-divs + muni) stays in magi only.
-    gross = base.opt + conv + tss + base.ytd_ordinary
-    magi = base.opt + conv + tss + base.ytd_magi
+    # MU8-F1/R3/R4: include ordinary_addl (YTD ordinary + forecast ordinary
+    # dividends + RMD/inherited income) in the ordinary bracket base, mirroring
+    # scenario.py combined_gross. magi_addl (which additionally includes LTCG +
+    # qual-divs + muni + forecast qual-div/realized-gains) stays in magi only.
+    gross = base.opt + conv + tss + ordinary_addl
+    magi = base.opt + conv + tss + magi_addl
 
     # Recalculate senior bonus deduction at new NIIT-MAGI (excludes tax-exempt muni
-    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5.
+    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5. R1/R3: also
+    # includes the forecast/RMD MAGI additions.
     senior_bonus = senior_bonus_deduction(
-        ya, sa, base.opt + conv + tss + base.ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya,
+        sa,
+        base.opt + conv + tss + base.ytd_niit_magi
+        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income,
+        year=year,
+        cpi=cpi,
+        filing_status=hh.filing_status,
     )
     total_ded = base.ded_base + senior_bonus
 
@@ -265,12 +418,19 @@ def all_in_at_conversion(
     tax = (federal_tax_single if single else federal_tax)(taxable_inc, year=year, cpi=cpi)
 
     # Base tax (no conversion).
-    # F9: include ytd_magi in provisional income base, consistent with the with-conversion path.
-    base_tss = taxable_ss(base.combined_ss, base.opt + base.ytd_magi, filing_status=hh.filing_status)
-    # MU8-F1: include ytd_ordinary in the no-conversion ordinary base.
-    base_gross = base.opt + base_tss + base.ytd_ordinary
+    # F9/R1/R3: include magi_addl in provisional income base, consistent with the
+    # with-conversion path.
+    base_tss = taxable_ss(base.combined_ss, base.opt + magi_addl, filing_status=hh.filing_status)
+    # MU8-F1/R3/R4: include ordinary_addl in the no-conversion ordinary base.
+    base_gross = base.opt + base_tss + ordinary_addl
     base_senior = senior_bonus_deduction(
-        ya, sa, base.opt + base_tss + base.ytd_niit_magi, year=year, cpi=cpi, filing_status=hh.filing_status
+        ya,
+        sa,
+        base.opt + base_tss + base.ytd_niit_magi
+        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income,
+        year=year,
+        cpi=cpi,
+        filing_status=hh.filing_status,
     )
     base_total_ded = base.ded_base + base_senior
     base_taxable = max(base_gross - base_total_ded, 0)
@@ -321,11 +481,25 @@ def all_in_at_conversion(
         else 0.0
     )
 
-    # NIIT — use NIIT-MAGI which excludes tax-exempt interest (IRC §1411(d)(3))
-    niit_magi = base.opt + conv + tss + base.ytd_niit_magi
-    niit_base_magi = base.opt + base_tss + base.ytd_niit_magi
-    niit_with = niit(niit_magi, net_inv_income, filing_status=hh.filing_status)
-    niit_without = niit(niit_base_magi, net_inv_income, filing_status=hh.filing_status)
+    # NIIT — use NIIT-MAGI which excludes tax-exempt interest (IRC §1411(d)(3)).
+    # R1/R3: niit_magi mirrors `magi` but with ytd_niit_magi in place of ytd_magi
+    # (muni-exclusive); forecast div/gains and RMD/inherited income are the same
+    # in both since neither is muni interest.
+    niit_magi = (
+        base.opt + conv + tss + base.ytd_niit_magi
+        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
+    )
+    niit_base_magi = (
+        base.opt + base_tss + base.ytd_niit_magi
+        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
+    )
+    # R2: net investment income = realized gains + qual/ord dividends + YTD investment
+    # income, mirroring scenario.py's net_investment_income (scenario.py:612-615).
+    # Added to the caller-supplied net_inv_income, a manual estimate/override for NII
+    # not otherwise modeled by this module (e.g. non-brokerage taxable accounts).
+    total_net_inv_income = net_inv_income + base.net_investment_income_addl
+    niit_with = niit(niit_magi, total_net_inv_income, filing_status=hh.filing_status)
+    niit_without = niit(niit_base_magi, total_net_inv_income, filing_status=hh.filing_status)
     niit_delta = niit_with - niit_without
 
     # LTCG bracket-stacking (C1): a conversion lifts ordinary taxable income, raising
@@ -352,6 +526,7 @@ def all_in_at_conversion(
         ltcg_delta=ltcg_delta,
         all_in=all_in,
         magi=magi,
+        niit_magi=niit_magi,
         taxable_inc=taxable_inc,
         room_12=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi, round50=True))
         if single
@@ -498,8 +673,9 @@ def compute_multi_year_summary(
         # IRMAA 2-year lookback: threshold that applies is for the PAYMENT year (income_year+2).
         irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr + 2, cpi)
 
-        b = base_income_for_year(hh, yr, ytd=ytd if yr == hh.base_year else None)
-        _le = estimate_ltcg_eligible(hh, yr) if include_ltcg_stacking else 0.0
+        _yr_ytd = ytd if yr == hh.base_year else None
+        b = base_income_for_year(hh, yr, ytd=_yr_ytd)
+        _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
         b_result = all_in_at_conversion(hh, b, 0, net_inv_income, ltcg_eligible=_le)
         r12 = b_result.room_12
         r22 = b_result.room_22
