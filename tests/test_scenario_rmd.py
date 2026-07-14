@@ -175,8 +175,9 @@ class TestAuditF7ComputePhaseRmdStartAge:
             spouse_age=73,
             your_rmd_start_age=73,
             spouse_rmd_start_age=73,
+            grants=[],  # isolate RMD-phase logic from option income / 'options' phase
         )
-        phase = compute_phase(ya=73, sa=73, year=hh.base_year, hh=hh, early_exercise=False)
+        phase = compute_phase(ya=73, sa=73, year=hh.base_year, hh=hh)
         assert phase in ("rmd", "squeeze"), (
             f"Expected 'rmd' or 'squeeze' at age 73 with rmd_start_age=73, got '{phase}'"
         )
@@ -190,8 +191,9 @@ class TestAuditF7ComputePhaseRmdStartAge:
             spouse_age=67,
             your_rmd_start_age=73,
             spouse_rmd_start_age=73,
+            grants=[],  # isolate RMD-phase logic from option income / 'options' phase
         )
-        phase = compute_phase(ya=72, sa=67, year=hh.base_year, hh=hh, early_exercise=False)
+        phase = compute_phase(ya=72, sa=67, year=hh.base_year, hh=hh)
         assert phase == "ss_conv", (
             f"Expected 'ss_conv' at age 72 with rmd_start_age=73, got '{phase}'"
         )
@@ -205,8 +207,9 @@ class TestAuditF7ComputePhaseRmdStartAge:
             spouse_age=67,
             your_rmd_start_age=73,
             spouse_rmd_start_age=75,
+            grants=[],  # isolate RMD-phase logic from option income / 'options' phase
         )
-        phase = compute_phase(ya=73, sa=67, year=hh.base_year, hh=hh, early_exercise=False)
+        phase = compute_phase(ya=73, sa=67, year=hh.base_year, hh=hh)
         assert phase == "squeeze", (
             f"Expected 'squeeze' when your_age==rmd_start_age but spouse below theirs, got '{phase}'"
         )
@@ -223,10 +226,11 @@ class TestAuditF7ComputePhaseRmdStartAge:
         hh = Household(
             your_age=66,
             spouse_age=66,
+            grants=[],  # isolate RMD-phase logic from option income / 'options' phase
         )
         assert hh.your_rmd_start_age == 75, "setup: born-1960 cohort must get rmd_start=75"
-        phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year + 8, hh=hh, early_exercise=False)
-        phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 9, hh=hh, early_exercise=False)
+        phase_74 = compute_phase(ya=74, sa=74, year=hh.base_year + 8, hh=hh)
+        phase_75 = compute_phase(ya=75, sa=75, year=hh.base_year + 9, hh=hh)
         assert phase_74 == "ss_conv", (
             f"Age 74 with rmd_start=75 should be ss_conv, got '{phase_74}'"
         )

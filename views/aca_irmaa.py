@@ -67,7 +67,7 @@ def render(hh: Household):
     with col_info:
         base_magi = st.number_input(
             "Your base MAGI (no conversion)",
-            value=int(hh.option_income(hh.base_year, True)),
+            value=int(hh.option_income(hh.base_year)),
             step=5_000,
             format="%d",
             help="Income before any Roth conversion (options, SS, RMD, etc.)",

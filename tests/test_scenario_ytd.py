@@ -68,8 +68,8 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
         ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
         ytd_with_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000, ltcg_ytd=30_000)
 
-        plan_no_ltcg = auto_fill_12(hh, early_exercise=False, ytd=ytd_no_ltcg)
-        plan_with_ltcg = auto_fill_12(hh, early_exercise=False, ytd=ytd_with_ltcg)
+        plan_no_ltcg = auto_fill_12(hh, ytd=ytd_no_ltcg)
+        plan_with_ltcg = auto_fill_12(hh, ytd=ytd_with_ltcg)
 
         base_year = hh.base_year
         conv_no_ltcg = plan_no_ltcg.your_conversions.get(base_year, 0.0)
@@ -106,8 +106,8 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
         ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
         ytd_with_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000, qualified_dividends_ytd=30_000)
 
-        plan_no_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_no_qd)
-        plan_with_qd = auto_fill_12(hh, early_exercise=False, ytd=ytd_with_qd)
+        plan_no_qd = auto_fill_12(hh, ytd=ytd_no_qd)
+        plan_with_qd = auto_fill_12(hh, ytd=ytd_with_qd)
 
         base_year = hh.base_year
         conv_no_qd = plan_no_qd.your_conversions.get(base_year, 0.0)
@@ -231,7 +231,7 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         )
         ytd = YTDSnapshot(tax_year=2026, nqo_exercise_ytd=80_000)
         ytd._option_exercises_by_grant = {"GR-2019": 80_000}  # noqa: SLF001
-        result = compute_headroom(hh, ytd, early_exercise=True)
+        result = compute_headroom(hh, ytd)
         # Total subtract: realized = ytd.nqo_exercise_ytd regardless of grant_id
         assert result.realized_option_income_ytd == approx(80_000)
         assert result.planned_option_income == approx(192_000 - 80_000)

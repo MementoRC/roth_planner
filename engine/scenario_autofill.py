@@ -30,7 +30,6 @@ from models.ytd_income import YTDSnapshot
 
 def _auto_fill_core(
     hh: Household,
-    early_exercise: bool,
     ytd: YTDSnapshot | None,
     room_fn: Callable[[float, float, float, int, float, str], float],
 ) -> ConversionPlan:
@@ -100,7 +99,7 @@ def _auto_fill_core(
         ytd_year: YTDSnapshot | None = ytd if year == hh.base_year else None
 
         # Option income
-        opt = hh.option_income(year, early_exercise)
+        opt = hh.option_income(year)
 
         # SS
         your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
@@ -348,7 +347,6 @@ def _auto_fill_core(
 
 def auto_fill_12(
     hh: Household,
-    early_exercise: bool = True,
     ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
     """
@@ -357,7 +355,6 @@ def auto_fill_12(
     """
     return _auto_fill_core(
         hh,
-        early_exercise,
         ytd,
         room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_12(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
@@ -367,7 +364,6 @@ def auto_fill_12(
 
 def auto_fill_22(
     hh: Household,
-    early_exercise: bool = True,
     ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
     """
@@ -376,7 +372,6 @@ def auto_fill_22(
     """
     return _auto_fill_core(
         hh,
-        early_exercise,
         ytd,
         room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_22(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
@@ -386,7 +381,6 @@ def auto_fill_22(
 
 def auto_fill_irmaa_safe(
     hh: Household,
-    early_exercise: bool = True,
     ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
     """
@@ -411,14 +405,13 @@ def auto_fill_irmaa_safe(
             room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
         )
 
-    return _auto_fill_core(hh, early_exercise, ytd, room_fn=_irmaa_room)
+    return _auto_fill_core(hh, ytd, room_fn=_irmaa_room)
 
 
 def add_bracket_fill_withdrawals(
     hh: Household,
     base_plan: ConversionPlan,
     target_bracket: float = 0.22,
-    early_exercise: bool = True,
 ) -> ConversionPlan:
     """
     Add voluntary excess withdrawals post-RMD to fill the target bracket.
@@ -436,7 +429,7 @@ def add_bracket_fill_withdrawals(
     # Run the base scenario first to get IRA balances and bracket room
     from engine.scenario import run_scenario
 
-    result = run_scenario(hh, base_plan, "temp", end_age=95, early_exercise=early_exercise)
+    result = run_scenario(hh, base_plan, "temp", end_age=95)
     _cpi_fill = hh.cpi_assumption
 
     # Base (unindexed) bracket ceiling for the target rate, resolved PER YEAR from that
