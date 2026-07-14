@@ -746,7 +746,12 @@ def run_scenario(
         cum_irmaa += yr.irmaa_cost
         cum_aca += yr.aca_loss
         cum_niit += yr.niit_cost
-        if ya >= hh.your_rmd_start_age or sa >= hh.spouse_rmd_start_age:
+        if (
+            ya >= hh.your_rmd_start_age
+            or sa >= hh.spouse_rmd_start_age
+            or yr.extra_withdrawal > 0
+            or yr.spouse_extra_withdrawal > 0
+        ):
             # Exclude conversion_tax from the RMD-phase accumulator so total_rmd_tax
             # reflects only the pure RMD burden.  In overlap years (RMD fires while
             # a spouse is still converting), federal_tax_amt already absorbs
@@ -757,6 +762,13 @@ def run_scenario(
             # bracket-fill withdrawals); this is intentional grouping — the total
             # lifetime tax is unaffected.  extra_withdrawal_tax is NOT separately
             # tracked, so it lands in cum_rmd_tax rather than cum_conv_tax.
+            # audit-2026-07-13 defect A: extra_withdrawal has no age gate in the
+            # engine (it can fire pre-RMD), but this accumulator originally only
+            # fired on the RMD-age gate — a PRE-RMD extra_withdrawal's tax impact
+            # (correctly present in yr.federal_tax_amt) was silently dropped from
+            # the lifetime total. The OR-clauses above ensure any year with a
+            # non-zero extra_withdrawal is also swept in, without double-adding
+            # RMD-phase years (single `if`/single addition per year either way).
             cum_rmd_tax += yr.federal_tax_amt - yr.conversion_tax
         cum_brok_tax += yr.brokerage_gain_tax
 

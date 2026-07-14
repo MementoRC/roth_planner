@@ -347,6 +347,87 @@ class TestCumRmdTaxDocumented:
 
 
 # ===========================================================================
+# Audit 2026-07-13 defect A: pre-RMD extra_withdrawal dropped from lifetime tax
+# ===========================================================================
+
+
+class TestPreRmdExtraWithdrawalCapturedInLifetimeTax:
+    """extra_withdrawal has no age gate in the engine, but the cum_rmd_tax
+    accumulator originally only fired when ya >= rmd_start_age or
+    sa >= rmd_start_age. A PRE-RMD extra_withdrawal's tax impact was therefore
+    correctly present in yr.federal_tax_amt but silently dropped from the
+    lifetime accumulator (total_rmd_tax), undercounting lifetime tax.
+    """
+
+    def test_pre_rmd_extra_withdrawal_tax_captured_in_lifetime_total(self) -> None:
+        """Ages 61/55 (both pre-RMD, default rmd_start_age=75): a $100k extra
+        withdrawal raises federal_tax_amt materially; the lifetime accumulator
+        (total_rmd_tax + total_conv_tax) must reflect that same delta.
+        """
+        hh = _base_hh(your_age=61, spouse_age=55)
+        plan_with = ConversionPlan(extra_withdrawals={2026: 100_000.0})
+        plan_without = ConversionPlan()
+
+        r_with = run_scenario(hh, plan_with, "with", end_age=61)
+        r_without = run_scenario(hh, plan_without, "without", end_age=61)
+
+        expected_delta = r_with.years[0].federal_tax_amt - r_without.years[0].federal_tax_amt
+        assert expected_delta > 10_000, (
+            "test precondition: extra withdrawal must raise federal tax materially"
+        )
+
+        # Before the fix, cum_rmd_tax never fired in this pre-RMD year (neither age
+        # gate condition is true), so total_rmd_tax was exactly 0.0 even though
+        # federal_tax_amt correctly reflects the extra_withdrawal tax — the
+        # regression this test guards against.
+        assert r_with.total_rmd_tax > 0, (
+            "total_rmd_tax must be > 0 for a pre-RMD year with an extra_withdrawal "
+            "(previously dropped entirely because neither RMD-age gate fired)"
+        )
+        # The full year's non-conversion federal tax (which includes the
+        # extra_withdrawal tax impact) must now be captured in the lifetime total.
+        assert r_with.total_rmd_tax == pytest.approx(
+            r_with.years[0].federal_tax_amt - r_with.years[0].conversion_tax, abs=1.0
+        ), "total_rmd_tax must capture this year's full non-conversion federal tax"
+        # It must capture AT LEAST the incremental tax the extra_withdrawal caused
+        # (the "without" baseline's own non-extra-withdrawal tax is never itself
+        # accumulated pre-RMD — a separate, out-of-scope gap — so total_rmd_tax can
+        # legitimately exceed expected_delta, but never fall short of it).
+        assert r_with.total_rmd_tax >= expected_delta - 1.0, (
+            f"total_rmd_tax ({r_with.total_rmd_tax:,.0f}) must be >= the extra_withdrawal "
+            f"tax impact ({expected_delta:,.0f})"
+        )
+
+    def test_rmd_year_extra_withdrawal_not_double_counted(self) -> None:
+        """An extra_withdrawal fired during an RMD-phase year must be counted
+        exactly once in the lifetime accumulator (age-gate OR extra-withdrawal
+        gate is a single `if`/single addition — must not double-add).
+        """
+        hh = _base_hh(
+            your_age=76,
+            spouse_age=70,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        plan_with = ConversionPlan(extra_withdrawals={2026: 100_000.0})
+        plan_without = ConversionPlan()
+
+        r_with = run_scenario(hh, plan_with, "with", end_age=76)
+        r_without = run_scenario(hh, plan_without, "without", end_age=76)
+
+        expected_delta = r_with.years[0].federal_tax_amt - r_without.years[0].federal_tax_amt
+
+        lifetime_delta = (r_with.total_rmd_tax + r_with.total_conv_tax) - (
+            r_without.total_rmd_tax + r_without.total_conv_tax
+        )
+        assert lifetime_delta == pytest.approx(expected_delta, abs=1.0), (
+            "RMD-year extra_withdrawal tax must be counted exactly once in the "
+            f"lifetime accumulator; got delta {lifetime_delta:,.0f} vs expected "
+            f"{expected_delta:,.0f} (a double-count would show ~2x)"
+        )
+
+
+# ===========================================================================
 # Finding scenario-core-5: conversion clamped to available IRA balance
 # ===========================================================================
 

@@ -12,7 +12,6 @@ from .parameters import (
     _render_pdf_1040_import,
     filing_status_from_label,
     render_parameters_tab,
-    spouse_single_overrides,
 )
 from .portfolio import render_portfolio_tab
 
@@ -40,5 +39,4 @@ __all__ = [
     "render_data_bridge_tab",
     "render_parameters_tab",
     "render_portfolio_tab",
-    "spouse_single_overrides",
 ]

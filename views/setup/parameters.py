@@ -53,32 +53,13 @@ def filing_status_from_label(label: str) -> str:
     return _HH_FILING_LABEL_SINGLE if label == _HH_FILING_LABEL_SINGLE else "MFJ"
 
 
-def spouse_single_overrides() -> dict[str, object]:
-    """session_state overrides applied when the household files Single.
-
-    Single models a single-from-the-start household (no spouse). Zeroing the
-    spouse financial/age inputs and clearing the spouse ACA flag lets the
-    (otherwise MFJ-shaped) engine non-survivor path produce single-filer income;
-    ``filing_status="Single"`` separately selects the single brackets, standard
-    deduction, IRMAA/NIIT thresholds, and ACA FPL.
-    """
-    return {
-        "spouse_ira": 0,
-        "spouse_roth": 0,
-        "spouse_age": 0,
-        "spouse_ss_fra": 0,
-        "spouse_aca": False,
-    }
-
-
 def apply_single_filer(hh: Household) -> Household:
     """Return a copy of ``hh`` with spouse inputs zeroed when filing Single.
 
     Single models a single-from-the-start household. The zeroing is applied to the
     DERIVED Household (never to session_state) so toggling back to MFJ restores the
-    user's real spouse balances (audit C9 / ui-streamlit-4). Mirrors the fields in
-    ``spouse_single_overrides`` (session-state key ``spouse_aca`` maps to the Household
-    field ``spouse_aca_enrolled``).
+    user's real spouse balances (audit C9 / ui-streamlit-4). Session-state key
+    ``spouse_aca`` maps to the Household field ``spouse_aca_enrolled``.
     """
     if hh.filing_status != "Single":
         return hh
