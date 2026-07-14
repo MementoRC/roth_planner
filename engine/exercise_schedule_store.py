@@ -46,3 +46,13 @@ def load_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> Exerci
     if not isinstance(data, dict) or data.get("version") != _SCHEDULE_VERSION:
         return None
     return ExerciseSchedule.from_dict(data)
+
+
+def clear_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> None:
+    """Delete the cached schedule file, if present.
+
+    No-op (no error) when the file is already absent, so callers can invoke
+    this unconditionally on a "Reset to default" action. After clearing,
+    ``Household.effective_schedule()`` falls back to ``default_from_legacy``.
+    """
+    path.unlink(missing_ok=True)
