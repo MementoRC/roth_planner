@@ -622,6 +622,32 @@ class TestManualEntryFieldCoverage:
         saved = mock_st.session_state.ytd_snapshot
         assert saved.nec_income_ytd == 5_000.0
 
+    def test_manual_entry_preserves_negative_ltcg_loss(self):
+        """Stored ltcg_ytd=-3000 (a real net realized capital LOSS) must not be
+        clamped to 0 by the manual-entry LTCG widget -- unlike the sibling STCG
+        field, the LTCG widget used to force its displayed/default value to 0
+        whenever ltcg_ytd <= 0, silently discarding a legitimate loss that the
+        unconditional save_ytd_snapshot() call would then persist as 0.0."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(ltcg_ytd=-3_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        # Echo back whatever `value=` kwarg each number_input was pre-filled with,
+        # simulating a user who hasn't touched a given widget yet.
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.ltcg_ytd == -3_000.0, (
+            f"Expected the stored -3000 LTCG loss to survive manual-entry render "
+            f"unclamped; got {saved.ltcg_ytd}"
+        )
+
 
 class TestIncomeEventLog:
     """Tests for the income event log UI (replaces flat conversion/distribution inputs)."""
@@ -1173,6 +1199,77 @@ class TestBrokerageStatementSync:
         ]
         assert setitem_calls, "Expected statement_by_account to be hydrated into session_state"
         assert setitem_calls[-1][0][1] == cached_by_account
+
+    def test_confirm_account_override_refreshes_statement_cache(self, tmp_path, monkeypatch):
+        """Confirming an account's tax status must refresh
+        session_state['statement_by_account'] within the same render pass, so the
+        confirmed classification survives st.rerun() instead of the stale cached
+        'unknown' classification being reused (regression: previously only
+        save_account_type_override() persisted to disk, and the in-memory cache
+        was never re-hydrated until a fresh 'Scan folder' click)."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False  # "Scan folder" not clicked this run
+        mock_st.selectbox.return_value = "taxable"  # user confirms the unknown account
+
+        unknown_rec = BrokerageStatementRecord(
+            account_number="XXXX5555",
+            broker="schwab",
+            account_type="unknown",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=0.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        by_account = {"XXXX5555": unknown_rec}
+
+        # statement_by_account already present in session_state this run (skip
+        # the hydration branch, matching a rerun-after-scan scenario).
+        mock_st.session_state.__contains__ = MagicMock(return_value=True)
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "statement_by_account": by_account,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_account_type_override") as mock_save_override,
+            patch(
+                "engine.brokerage_statement_pdf.load_account_type_overrides",
+                return_value={"XXXX5555": "taxable"},
+            ),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            ytd_income_mod.render(hh)
+
+        mock_save_override.assert_called_once_with("XXXX5555", "taxable")
+        setitem_calls = [
+            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, (
+            "Expected statement_by_account to be refreshed in session_state after "
+            "confirming an account override"
+        )
+        refreshed = setitem_calls[-1][0][1]
+        assert refreshed["XXXX5555"].account_type == "taxable", (
+            "Confirmed account must be reclassified as 'taxable' in the refreshed "
+            f"cache, not left stale as 'unknown'; got {refreshed['XXXX5555'].account_type!r}"
+        )
 
 
 def _koinly_report(owner_key: str | None, stcg: float, ltcg: float, income: float) -> KoinlyReport:
