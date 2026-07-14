@@ -325,6 +325,10 @@ def get_household() -> Household:
         if merged_grants:
             hh.grants = merged_grants
 
+    from engine.exercise_schedule_store import load_exercise_schedule
+
+    hh.exercise_schedule = load_exercise_schedule()
+
     return apply_single_filer(hh)
 
 
