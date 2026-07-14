@@ -11,7 +11,7 @@ from engine.portfolio_sync import (
     PortfolioSnapshot,
     merge_snapshots,
 )
-from engine.upload_merge import build_user_defaults_session_updates
+from engine.upload_merge import SCALAR_KEYS, build_user_defaults_session_updates
 
 
 def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
@@ -41,38 +41,8 @@ def _apply_user_defaults_to_session(data: dict, *, as_spouse: bool = False) -> N
 
 def _user_defaults_from_session() -> dict:
     """Inverse of _apply_user_defaults_to_session: read session_state → JSON dict."""
-    # Mirror of _apply_user_defaults_to_session scalar_keys
-    scalar_keys = [
-        "your_age",
-        "spouse_age",
-        "your_ira",
-        "spouse_ira",
-        "your_roth",
-        "spouse_roth",
-        "your_ss_fra",
-        "spouse_ss_fra",
-        "your_ss_start_age",
-        "spouse_ss_start_age",
-        "your_rmd_start_age",
-        "spouse_rmd_start_age",
-        "your_fra_age",
-        "spouse_fra_age",
-        "living_expenses",
-        "stock_price_now",
-        "aca_benchmark_premium_annual",
-        "aca_enhanced_subsidies_active",
-        "advance_aptc_annual",
-        "medicare_part_b_base_monthly",
-        "cpi_assumption",
-        "filing_status",
-        "your_aca",
-        "spouse_aca",
-        "your_defer_first_rmd",
-        "spouse_defer_first_rmd",
-        "growth_rate",
-    ]
     payload: dict = {}
-    for k in scalar_keys:
+    for k in SCALAR_KEYS:
         # Reverse the alias: session stores txn_price, JSON schema expects stock_price_now
         sess_key = "txn_price" if k == "stock_price_now" else k
         if sess_key in st.session_state:

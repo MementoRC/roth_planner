@@ -13,6 +13,7 @@ st.set_page_config(
 from config.loader import load_defaults  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import load_pdf_tax_records, merge_pdf_magi  # noqa: E402
+from engine.upload_merge import SCALAR_KEYS  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -20,23 +21,20 @@ def _seed_session_state() -> None:
     if st.session_state.get("_seeded"):
         return
     defaults = load_defaults()
-    # Map config keys to session_state keys (most are 1:1)
-    session_keys = {
-        "your_age": "your_age",
-        "spouse_age": "spouse_age",
-        "your_ira": "your_ira",
-        "spouse_ira": "spouse_ira",
-        "your_roth": "your_roth",
-        "spouse_roth": "spouse_roth",
-        "your_ss_fra": "your_ss_fra",
-        "spouse_ss_fra": "spouse_ss_fra",
-        "living_expenses": "living_expenses",
-        "stock_price_now": "txn_price",  # session uses 'txn_price' even after gate
-    }
+    # Map config keys to session_state keys (most are 1:1; stock_price_now is
+    # aliased to txn_price because session_state uses that name even after
+    # the gate). Driven by engine.upload_merge.SCALAR_KEYS — the canonical
+    # list of persisted scalar setup fields — so seeding stays in sync with
+    # what export/import round-trips. (Audit 2026-07-13: this used to be a
+    # hand-list covering only ~10 of the 27 scalars; filing_status,
+    # growth_rate, and 15 others were hardcoded below and silently discarded
+    # any persisted value on every fresh session.)
+    session_keys = {k: ("txn_price" if k == "stock_price_now" else k) for k in SCALAR_KEYS}
     for cfg_key, sess_key in session_keys.items():
         if cfg_key in defaults:
             st.session_state.setdefault(sess_key, defaults[cfg_key])
-    # Non-config keys: set fixed defaults
+    # Fallback defaults for scalars with no persisted value (first-run demo).
+    # setdefault() below is a no-op for any key already seeded from `defaults` above.
     st.session_state.setdefault("growth_rate", 7.0)
     st.session_state.setdefault("your_aca", False)
     st.session_state.setdefault("spouse_aca", False)
