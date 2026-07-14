@@ -449,7 +449,9 @@ def estimate_ytd_federal_tax(
 
     # Step 6: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
-    net_investment_income = ytd.ltcg_ytd + ytd.stcg_ytd + ytd.dividends_ytd + ytd.interest_ytd
+    # Use the YTDSnapshot property (not a hand-summed subset) so crypto STCG/LTCG
+    # are included in the NII base per §1411(c)(1) — audit 2026-07-13 R1/R2.
+    net_investment_income = ytd.total_investment_income
     magi = niit_magi_with_ss
     niit_amount = niit(magi, net_investment_income, filing_status=hh.filing_status)
 

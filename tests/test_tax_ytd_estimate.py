@@ -210,6 +210,43 @@ class TestF20TaxableSocialSecurity:
         assert result.marginal_bracket_pct >= result_no_ss.marginal_bracket_pct
 
 
+class TestNIITIncludesCryptoGains:
+    """Audit 2026-07-13 (R1+R2) — NIIT NII base must include crypto STCG/LTCG.
+
+    Pre-fix: net_investment_income was hand-summed from ltcg+stcg+dividends+interest,
+    omitting crypto_stcg_ytd/crypto_ltcg_ytd that YTDSnapshot.total_investment_income
+    already includes. This silently zeroed NIIT for crypto-heavy households.
+    """
+
+    def test_crypto_only_gains_trigger_niit(self) -> None:
+        """MFJ, $0 traditional investment income, $80K crypto LTCG, MAGI $30K over
+        the $250K NIIT threshold ($280K total) -> NIIT = 3.8% * min(30K, 80K) = $1,140.
+        """
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=200_000,
+            crypto_ltcg_ytd=80_000,
+        )
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        # MAGI = 200K wages + 80K crypto LTCG = 280K; 30K over the 250K MFJ threshold.
+        assert result.niit == approx(1_140.0)
+
+    def test_niit_matches_total_investment_income_property(self) -> None:
+        """NIIT NII base must equal ytd.total_investment_income exactly (incl. crypto)."""
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=260_000,
+            ltcg_ytd=5_000,
+            crypto_stcg_ytd=10_000,
+            crypto_ltcg_ytd=15_000,
+        )
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        # magi over 250K threshold with this wages level; NII = 30K < excess MAGI
+        assert ytd.total_investment_income == approx(30_000.0)
+        expected_niit = 0.038 * ytd.total_investment_income
+        assert result.niit == approx(expected_niit)
+
+
 class TestA1SS86ProvisionalIncomeMagi:
     """A1 — §86 provisional income must include LTCG, qualified dividends, and tax-exempt interest.
 
