@@ -10,6 +10,44 @@ from engine.portfolio_sync.classify import _resolve_override
 
 ALLOWED_ACCOUNT_TYPES = frozenset({"trad_ira", "roth_ira", "brokerage", "hsa", "403b"})
 
+# Canonical list of persisted scalar setup fields (.user_defaults.json <->
+# session_state). This is the single source of truth for "which scalar
+# fields does the app persist" — consumed by build_user_defaults_session_updates
+# below, by views/setup/_state.py's _user_defaults_from_session (export), and
+# by app.py's _seed_session_state (import on session start) so all three stay
+# in sync. See audit 2026-07-13: app.py used to hand-list only ~10 of these,
+# hardcoding the rest (e.g. filing_status, growth_rate) and silently
+# discarding persisted values on every fresh session.
+SCALAR_KEYS: list[str] = [
+    "your_age",
+    "spouse_age",
+    "your_ira",
+    "spouse_ira",
+    "your_roth",
+    "spouse_roth",
+    "your_ss_fra",
+    "spouse_ss_fra",
+    "your_ss_start_age",
+    "spouse_ss_start_age",
+    "your_rmd_start_age",
+    "spouse_rmd_start_age",
+    "your_fra_age",
+    "spouse_fra_age",
+    "living_expenses",
+    "stock_price_now",
+    "aca_benchmark_premium_annual",
+    "aca_enhanced_subsidies_active",
+    "advance_aptc_annual",
+    "medicare_part_b_base_monthly",
+    "cpi_assumption",
+    "filing_status",
+    "your_aca",
+    "spouse_aca",
+    "your_defer_first_rmd",
+    "spouse_defer_first_rmd",
+    "growth_rate",
+]
+
 
 def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     """Compute session_state updates from a .user_defaults.json payload.
@@ -44,36 +82,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             if file_k in data:
                 updates[sess_k] = data[file_k]
         return updates
-    scalar_keys = [
-        "your_age",
-        "spouse_age",
-        "your_ira",
-        "spouse_ira",
-        "your_roth",
-        "spouse_roth",
-        "your_ss_fra",
-        "spouse_ss_fra",
-        "your_ss_start_age",
-        "spouse_ss_start_age",
-        "your_rmd_start_age",
-        "spouse_rmd_start_age",
-        "your_fra_age",
-        "spouse_fra_age",
-        "living_expenses",
-        "stock_price_now",
-        "aca_benchmark_premium_annual",
-        "aca_enhanced_subsidies_active",
-        "advance_aptc_annual",
-        "medicare_part_b_base_monthly",
-        "cpi_assumption",
-        "filing_status",
-        "your_aca",
-        "spouse_aca",
-        "your_defer_first_rmd",
-        "spouse_defer_first_rmd",
-        "growth_rate",
-    ]
-    for k in scalar_keys:
+    for k in SCALAR_KEYS:
         if k in data:
             sess_key = "txn_price" if k == "stock_price_now" else k
             updates[sess_key] = data[k]
