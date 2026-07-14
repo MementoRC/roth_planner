@@ -74,43 +74,44 @@ class TestAca1EnhancedFPLBoundary:
 
 
 class TestAca2SingleSurvivorBenchmark:
-    """ACA-2: effective_benchmark_premium returns full couple-rate for Single survivor.
+    """ACA-2 superseded by audit 2026-07-13: Single gets the FULL benchmark, unblended.
 
-    A Single survivor uses a couple_benchmark (two-person rate). Their correct
-    individual rate is their age-weighted share: couple_benchmark * factor(your_age)
-    / (factor(your_age) + factor(spouse_age)).
+    A Single filer has exactly one household adult, so couple_benchmark IS that
+    individual's own benchmark premium -- there is no second adult to blend
+    against. The earlier aca-2 "fix" (age-weighted share vs a spouse_age) was
+    itself wrong for a genuine single household: it understated the benchmark by
+    ~31% ($12,000 -> ~$8,305), contradicting effective_benchmark_premium's own
+    docstring ("a Single filer ... gets the full individual benchmark rather
+    than a halved couple rate").
     """
 
     COUPLE = 21_600.0
 
-    def test_single_enrolled_returns_age_ratio_share(self) -> None:
-        """Single enrolled at age 62, spouse_age 58 -- must return age-ratio share.
+    def test_single_enrolled_returns_full_benchmark(self) -> None:
+        """Single enrolled at age 62, spouse_age 58 -- must return the FULL benchmark.
 
-        factor(62)=2.873, factor(58)=2.548
-        share = 21600 * 2.873 / (2.873 + 2.548)
+        Was: age-ratio share (21600 * 2.873 / (2.873 + 2.548) =~ 11,437.90).
+        Now (audit 2026-07-13): full benchmark, no blending -- spouse_age is not
+        a real household member for a Single filer.
         """
-        your_age = 62
-        spouse_age = 58
-        f_you = aca_age_factor(your_age)   # 2.873
-        f_sp = aca_age_factor(spouse_age)  # 2.548
-        expected = self.COUPLE * f_you / (f_you + f_sp)
-
         result = effective_benchmark_premium(
             self.COUPLE,
-            your_age=your_age,
+            your_age=62,
             your_on_aca=True,
-            spouse_age=spouse_age,
+            spouse_age=58,
             spouse_on_aca=False,
             filing_status="Single",
         )
-        assert result == pytest.approx(expected, rel=1e-6), (
-            f"Single enrolled: expected age-ratio share {expected:.2f}, got {result:.2f}"
+        assert result == pytest.approx(self.COUPLE), (
+            f"Single enrolled: expected full benchmark {self.COUPLE:.2f}, got {result:.2f}"
         )
-        # Must be less than full couple rate (single person's share < two-person rate)
-        assert result < self.COUPLE
 
-    def test_single_enrolled_returns_less_than_full_couple_rate(self) -> None:
-        """Single survivor's age-ratio share must be strictly less than the couple rate."""
+    def test_single_enrolled_returns_full_couple_rate(self) -> None:
+        """Was: 'age-ratio share must be strictly less than the couple rate'.
+
+        Now (audit 2026-07-13): the passed-in benchmark IS the individual's own
+        rate for a Single filer, so the result must equal it exactly.
+        """
         result = effective_benchmark_premium(
             self.COUPLE,
             your_age=61,
@@ -119,9 +120,8 @@ class TestAca2SingleSurvivorBenchmark:
             spouse_on_aca=False,
             filing_status="Single",
         )
-        # After fix: Single gets age-ratio share, NOT the full couple_benchmark
-        assert result < self.COUPLE, (
-            f"Single filer should get age-ratio share < couple rate, got {result} == {self.COUPLE}"
+        assert result == pytest.approx(self.COUPLE), (
+            f"Single filer should get the full benchmark, got {result} != {self.COUPLE}"
         )
 
     def test_single_not_enrolled_is_zero(self) -> None:

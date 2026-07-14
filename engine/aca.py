@@ -111,15 +111,15 @@ def effective_benchmark_premium(
     rather than a halved couple rate.
     """
     if filing_status == "Single":
-        # A Single survivor was previously part of a couple; couple_benchmark is a
-        # two-adult rate. Return the enrolled individual's age-rated share rather than
-        # the full two-person rate (audit aca-2: overstated subsidy for Single survivor).
+        # A Single filer has exactly one household adult, so couple_benchmark is
+        # already that individual's own benchmark premium -- there is no second
+        # adult to blend against. Return it directly, unblended (audit 2026-07-13:
+        # blending via a spouse_age age-factor -- even a placeholder spouse_age=0 --
+        # understated the benchmark by ~31%, contradicting this function's own
+        # docstring).
         if not your_on_aca:
             return 0.0
-        total_factor = aca_age_factor(your_age) + aca_age_factor(spouse_age)
-        if total_factor <= 0:
-            return couple_benchmark / 2
-        return couple_benchmark * aca_age_factor(your_age) / total_factor
+        return couple_benchmark
     adults = [(your_age, your_on_aca), (spouse_age, spouse_on_aca)]
     enrolled_ages = [age for age, on in adults if on]
     if not enrolled_ages:
