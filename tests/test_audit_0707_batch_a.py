@@ -24,9 +24,10 @@ class TestSweetSpotYtdOrdinaryBase:
     """
 
     def _make_household(self):
+        from models.exercise_schedule import ExerciseSchedule
         from models.household import Household
 
-        return Household(
+        hh = Household(
             your_age=66,
             spouse_age=64,
             base_year=2026,
@@ -38,6 +39,16 @@ class TestSweetSpotYtdOrdinaryBase:
             your_aca_enrolled=False,
             spouse_aca_enrolled=False,
         )
+        # Deliberately keeps default option income in base_year: these tests
+        # were calibrated (conv chosen just below/above the LTCG threshold)
+        # against the pre-#373 stagger default, which landed the first TXN
+        # grant's full spread in base_year. The hold-to-expiration default
+        # (PR #373 follow-up) now lands it in the grant's own expiry_year
+        # instead, so it's pinned explicitly here to preserve the calibration.
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
+        return hh
 
     def test_ytd_ordinary_shifts_taxable_income_up(self) -> None:
         """With YTD wages > 0, taxable_inc at the same conversion must be higher

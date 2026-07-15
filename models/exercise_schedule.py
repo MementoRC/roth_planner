@@ -112,28 +112,27 @@ class ExerciseSchedule:
     def is_empty(self) -> bool:
         return not any(years for years in self.shares_by_grant_year.values())
 
-    # -- legacy default (regression pin) ---------------------------------
+    # -- hold-to-expiration default ---------------------------------------
 
     @classmethod
-    def default_from_legacy(
+    def default_at_expiry(
         cls, grants: list[StockGrant], base_year: int, price_now: float
     ) -> ExerciseSchedule:
-        """Reproduce today's early-exercise output: each grant's full shares
-        land in ``base_year + (grant.year - anchor_year)``, priced at
-        ``price_now``.
+        """Default schedule: exercise each grant's full outstanding shares in
+        its ``expiry_year`` (hold-to-expiration), priced at ``price_now``.
 
-        Duplicate ``grant.year`` values are an unsupported edge (real TXN
-        grants are distinct years 2019/2020/2021) — they would collide on the
-        same target year and their shares would simply sum under that year.
+        This is both the pre-fill the Option Exercise Planner shows before the
+        user tunes anything and the projection default for households with no
+        stored schedule. Grants already expired at ``base_year`` are skipped
+        (nothing left to exercise). Grants that share an expiry year sum under
+        that year.
         """
         schedule = cls()
-        if not grants:
-            return schedule
-        anchor = min(g.year for g in grants)
         for grant in grants:
-            target = base_year + (grant.year - anchor)
-            schedule.set_shares(grant.key(), target, grant.shares)
-            schedule.set_price(target, price_now)
+            if grant.expiry_year < base_year:
+                continue
+            schedule.set_shares(grant.key(), grant.expiry_year, grant.shares)
+            schedule.set_price(grant.expiry_year, price_now)
         return schedule
 
     # -- persistence -------------------------------------------------------

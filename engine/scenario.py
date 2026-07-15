@@ -645,6 +645,12 @@ def run_scenario(
             + yr.spouse_extra_withdrawal
             + yr.combined_ss
             + yr.option_income
+            # Inherited-IRA distributions are spendable, taxable cash (already in
+            # combined_gross/MAGI, so already in federal_tax_amt). Omitting them here
+            # subtracted their tax with no offsetting inflow, overstating income_needed
+            # (audit: unmasked when the hold-to-expiry default removed early option income).
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution
             - yr.federal_tax_amt
         )
         yr.income_needed = max(yr.living_expenses - available_income, 0)

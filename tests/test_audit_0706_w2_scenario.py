@@ -174,6 +174,14 @@ class TestInheritedDistributionCashFlow:
             spouse_ira=0.0,
             inherited_iras=[iira],
             living_expenses=30_000.0,
+            # No equity comp: this class tests inherited-IRA cash flow, not
+            # option-exercise scheduling. The default TXN grants now
+            # default-exercise at their own expiry_year (hold-to-expiration)
+            # instead of staggered into base_year, which was an unrelated
+            # confound feeding option income into this test's available_income
+            # math (see docstrings below, which reason about the inherited
+            # distribution alone, not equity comp).
+            grants=[],
         )
 
     def test_inherited_distribution_attribute_exists_on_year_result(self) -> None:
@@ -364,7 +372,19 @@ class TestPreRmdExtraWithdrawalCapturedInLifetimeTax:
         withdrawal raises federal_tax_amt materially; the lifetime accumulator
         (total_rmd_tax + total_conv_tax) must reflect that same delta.
         """
+        from models.exercise_schedule import ExerciseSchedule
+
         hh = _base_hh(your_age=61, spouse_age=55)
+        # Pin the default TXN grant's spread into base_year explicitly: the
+        # precondition below (>$10K tax delta from a $100K withdrawal) needs
+        # some baseline ordinary income to push the withdrawal into higher
+        # marginal brackets. Pre-#373 this came for free from the
+        # base_year-anchored stagger default; the hold-to-expiration default
+        # now lands it in the grant's own expiry_year instead, so it's pinned
+        # here to preserve the calibration.
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
         plan_with = ConversionPlan(extra_withdrawals={2026: 100_000.0})
         plan_without = ConversionPlan()
 

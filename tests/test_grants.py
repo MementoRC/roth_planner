@@ -28,10 +28,17 @@ class TestGrants:
 
     def test_option_income_by_year(self):
         hh = Household()
-        assert hh.option_income(2026) == approx(hh.grants[0].spread(hh.txn_price_now))
-        assert hh.option_income(2027) == approx(hh.grants[1].spread(hh.txn_price_now))
-        assert hh.option_income(2028) == approx(hh.grants[2].spread(hh.txn_price_now))
-        assert hh.option_income(2029) == 0
+        assert hh.option_income(2026) == 0
+        assert hh.option_income(hh.grants[0].expiry_year) == approx(
+            hh.grants[0].spread(hh.txn_price_now)
+        )
+        assert hh.option_income(hh.grants[1].expiry_year) == approx(
+            hh.grants[1].spread(hh.txn_price_now)
+        )
+        assert hh.option_income(hh.grants[2].expiry_year) == approx(
+            hh.grants[2].spread(hh.txn_price_now)
+        )
+        assert hh.option_income(hh.grants[2].expiry_year + 1) == 0
 
 
 class TestComputePhaseOptionsWindow:

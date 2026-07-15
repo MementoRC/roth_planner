@@ -60,7 +60,9 @@ class TestAcaMagiSsAddback:
         # Ages 63/57 in base_year 2026 — both pre-65, ACA window.
         # SS already claimed at 62 (your_ss_start_age=62) so combined_ss > 0.
         # your_ss_fra=2_000 $/mo → annual base ~$24K; spouse not yet claiming (age 57 < 62).
-        return Household(
+        from models.exercise_schedule import ExerciseSchedule
+
+        hh = Household(
             your_age=63,
             spouse_age=57,
             base_year=2026,
@@ -78,6 +80,16 @@ class TestAcaMagiSsAddback:
             cpi_assumption=0.0,
             ss_cola=0.0,
         )
+        # Deliberately keeps default option income in base_year: this test's
+        # MAGI/ACA-loss calibration was set against the pre-#373 stagger
+        # default, which landed the first TXN grant's full spread in
+        # base_year. The hold-to-expiration default (PR #373 follow-up) now
+        # lands it in the grant's own expiry_year instead, so it's pinned
+        # explicitly here to preserve the calibration.
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
+        return hh
 
     def test_aca_loss_includes_nontaxable_ss_addback(self) -> None:
         hh = self._make_household()

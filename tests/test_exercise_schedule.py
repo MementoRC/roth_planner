@@ -266,21 +266,22 @@ class TestContentKeyStability:
         assert original == approx(after)
 
 
-class TestDefaultFromLegacy:
-    def test_distinct_year_grants_map_to_base_year_offsets(self):
+class TestDefaultAtExpiry:
+    def test_distinct_year_grants_map_to_their_expiry_years(self):
         grants = make_grants()
         price_now = 200.0
-        sched = ExerciseSchedule.default_from_legacy(grants, base_year=2026, price_now=price_now)
+        sched = ExerciseSchedule.default_at_expiry(grants, base_year=2026, price_now=price_now)
 
-        assert sched.income_for(2026, grants) == approx(grants[0].spread(price_now))
-        assert sched.income_for(2027, grants) == approx(grants[1].spread(price_now))
-        assert sched.income_for(2028, grants) == approx(grants[2].spread(price_now))
+        assert sched.income_for(2026, grants) == approx(0.0)
+        assert sched.income_for(2029, grants) == approx(grants[0].spread(price_now))
+        assert sched.income_for(2030, grants) == approx(grants[1].spread(price_now))
+        assert sched.income_for(2031, grants) == approx(grants[2].spread(price_now))
 
     def test_off_target_years_yield_zero(self):
         grants = make_grants()
-        sched = ExerciseSchedule.default_from_legacy(grants, base_year=2026, price_now=200.0)
-        assert sched.income_for(2029, grants) == approx(0.0)
+        sched = ExerciseSchedule.default_at_expiry(grants, base_year=2026, price_now=200.0)
+        assert sched.income_for(2028, grants) == approx(0.0)
 
     def test_empty_grants_yields_empty_schedule(self):
-        sched = ExerciseSchedule.default_from_legacy([], base_year=2026, price_now=200.0)
+        sched = ExerciseSchedule.default_at_expiry([], base_year=2026, price_now=200.0)
         assert sched.is_empty() is True
