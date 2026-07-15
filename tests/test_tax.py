@@ -294,6 +294,14 @@ class TestSafeHarborPayment:
         mfj_22_ceiling = BRACKETS_MFJ[2][0]  # 211_400
         assert room_to_22(0, 0) == pytest.approx(mfj_22_ceiling)
 
+    def test_room_to_24_uses_brackets_constant(self):
+        """room_to_24 must derive its ceiling from BRACKETS_MFJ, not a hardcoded literal."""
+        from engine.tax import BRACKETS_MFJ, room_to_24
+
+        bracket_24_ceiling = BRACKETS_MFJ[3][0]
+        assert room_to_24(0, 0) == pytest.approx(bracket_24_ceiling)
+        assert room_to_24(0, 32_200) == pytest.approx(bracket_24_ceiling + 32_200)
+
     # --- M3: senior_bonus_deduction survivor (who_dies=="you") ---
 
     def test_senior_bonus_survivor_who_dies_you(self):
