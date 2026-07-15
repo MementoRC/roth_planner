@@ -25,7 +25,8 @@ from engine.tax import room_to_22
 from engine.tax_indexing import index_value
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
-from models.household import Household
+from models.household import Household, SurvivorScenario
+from models.ytd_income import YTDSnapshot
 
 
 def _make_schedule() -> ExerciseSchedule:
@@ -414,3 +415,92 @@ def test_optimize_exercises_beats_status_quo_when_spreading_helps() -> None:
     assert result.best.ceiling_label != "current"
     # Universal guarantee: the optimizer never selects a worse plan than status quo.
     assert result.best.lifetime_all_in <= result.baseline_cost
+
+
+def test_build_candidate_schedule_empty_grants_returns_empty_schedule() -> None:
+    """No grants at all: the early-return branch produces an empty schedule
+    and no over-ceiling years."""
+    schedule, over_ceiling_years = _build_candidate_schedule([], 2026, {}, {}, 100.0)
+
+    assert schedule.is_empty()
+    assert over_ceiling_years == []
+
+
+def test_build_candidate_schedule_all_expired_grant_schedules_nothing() -> None:
+    """A grant whose expiry_year is already before base_year is, intentionally,
+    never scheduled — this mirrors ExerciseSchedule.default_at_expiry, which
+    likewise skips grants already expired at base_year."""
+    old = StockGrant(year=2015, strike=100.0, shares=1000, expiry_year=2020, grant_id="old")
+
+    schedule, over_ceiling_years = _build_candidate_schedule([old], 2026, {}, {}, 200.0)
+
+    assert schedule.total_exercised(old.key()) == 0
+    assert over_ceiling_years == []
+
+
+def test_optimize_exercises_handles_household_with_no_grants() -> None:
+    """No grants: optimize_exercises must not crash and must still return a
+    valid OptimizerResult (baseline candidate is always appended)."""
+    hh = Household(your_age=61, spouse_age=55, base_year=2026, your_ira=500_000, spouse_ira=500_000, grants=[])
+
+    result = optimize_exercises(hh)
+
+    assert result.candidates
+    assert result.best in result.candidates
+    assert result.best.lifetime_all_in <= result.baseline_cost
+
+
+def test_optimize_exercises_ytd_threads_into_baseline_cost() -> None:
+    """baseline_cost is conversion_tax + irmaa_cost + aca_loss + niit_cost — with an
+    empty baseline conversion plan and no IRMAA/ACA at these young ages, conversion_tax/
+    irmaa_cost/aca_loss are all 0 regardless of YTD. NIIT is the one component a
+    conversion-free baseline can still pick up: a nonzero base-year YTD wages + LTCG
+    figure pushes MAGI over the $250K MFJ NIIT threshold with real net investment
+    income (the LTCG), producing a nonzero niit_cost and moving baseline_cost.
+    """
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+    )
+    ytd = YTDSnapshot(tax_year=2026, wages_ytd=200_000.0, ltcg_ytd=100_000.0)
+
+    result_with_ytd = optimize_exercises(hh, ytd=ytd)
+    result_without_ytd = optimize_exercises(hh, ytd=None)
+
+    assert result_with_ytd.candidates
+    assert result_without_ytd.candidates
+    assert result_with_ytd.baseline_cost != result_without_ytd.baseline_cost
+
+
+def test_optimize_exercises_survives_filing_status_transition() -> None:
+    """A household with a survivor/death event flips filing_status to Single
+    partway through; the optimizer must not crash and _base_projection must
+    capture the MFJ -> Single transition."""
+    death_year = 2028
+    hh = Household(
+        your_age=60,
+        spouse_age=58,
+        base_year=2026,
+        your_ira=500_000.0,
+        spouse_ira=500_000.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        growth_rate=0.05,
+        grants=[],
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        survivor=SurvivorScenario(who_dies="spouse", death_year=death_year),
+    )
+
+    result = optimize_exercises(hh)
+
+    assert result.candidates
+    assert result.best in result.candidates
+
+    _base_ordinary, _magi_wedge, _total_deductions, filing_status = _base_projection(hh)
+    assert filing_status[death_year] == "MFJ"
+    assert filing_status[death_year + 1] == "Single"
