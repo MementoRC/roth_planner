@@ -144,6 +144,11 @@ def _fpl(filing_status: str, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI)
     return index_value(base, year, cpi)
 
 
+def aca_ceiling_magi(filing_status: str, year: int, cpi: float) -> float:
+    """400%-FPL MAGI cliff — the ceiling above which no ACA subsidy is available."""
+    return 4.0 * _fpl(filing_status, year=year, cpi=cpi)
+
+
 def aca_premium_cap_rate(
     magi: float,
     enhanced_subsidies_active: bool = ENHANCED_SUBSIDIES_ACTIVE,
@@ -231,7 +236,7 @@ def aca_subsidy(
     When using pre-ARP schedule, no subsidies above 400% FPL.
     """
     # Check 400% FPL cliff for pre-ARP schedule
-    if not enhanced_subsidies_active and magi > 4.0 * _fpl(filing_status, year=year, cpi=cpi):
+    if not enhanced_subsidies_active and magi > aca_ceiling_magi(filing_status, year, cpi):
         return 0.0
 
     # Symmetric 100% FPL floor (pre-ARP): below 100% FPL the household is
