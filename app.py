@@ -136,6 +136,7 @@ page = st.sidebar.radio(
         "📋 Conversion Planner",
         "💰 YTD Income",
         "📝 Option Exercise Planner",
+        "🧮 Exercise Auto-Optimizer",
         "🎯 Sweet Spot Finder",
         "📉 RMD Squeeze",
         "⚖️ Comparator",
@@ -369,6 +370,10 @@ elif page == "💰 YTD Income":
     render(get_household())
 elif page == "📝 Option Exercise Planner":
     from views.option_exercise import render
+
+    render(get_household())
+elif page == "🧮 Exercise Auto-Optimizer":
+    from views.auto_optimizer import render
 
     render(get_household())
 elif page == "🎯 Sweet Spot Finder":
