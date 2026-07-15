@@ -13,6 +13,7 @@ owns Streamlit only.
 import pandas as pd
 import streamlit as st
 
+from engine.exercise_grid import normalize_grid_edits
 from engine.exercise_schedule_store import clear_exercise_schedule, save_exercise_schedule
 from models.exercise_schedule import ExerciseSchedule
 from models.household import Household
@@ -68,6 +69,11 @@ def render(hh: Household) -> None:
 
     # --- 2. Editable exercise grid ---
     st.markdown("### Exercise Schedule (shares)")
+    st.caption(
+        "Each grant can only be exercised on or before its expiry year "
+        "(grant year + 10). Cells past a grant's expiry are blank and any shares "
+        "entered there are rejected."
+    )
     prior_shares: dict[str, dict[str, int]] | None = st.session_state.get(_SHARES_STATE_KEY)
 
     def _seed_shares(gkey: str, year: int) -> int:
@@ -78,12 +84,8 @@ def render(hh: Household) -> None:
     rows = []
     for g in hh.grants:
         row: dict[str, object] = {"Grant": f"{g.year} · ${g.strike:g} · {g.shares:,} sh"}
-        exercised = 0
         for year in years:
-            n = _seed_shares(g.key(), year)
-            row[str(year)] = n
-            exercised += n
-        row["Remaining"] = g.shares - exercised
+            row[str(year)] = None if year > g.expiry_year else _seed_shares(g.key(), year)
         rows.append(row)
     grid_df = pd.DataFrame(rows)
 
@@ -92,46 +94,74 @@ def render(hh: Household) -> None:
         key=_GRID_EDITOR_KEY,
         hide_index=True,
         width="stretch",
-        disabled=["Grant", "Remaining"],
+        disabled=["Grant"],
         column_config={
             str(year): st.column_config.NumberColumn(str(year), min_value=0, step=1)
             for year in years
         },
     )
 
-    # Persist edited shares (excluding Grant/Remaining) so the next rerun's
-    # Remaining column and price defaults reflect unsaved edits.
-    new_shares_state: dict[str, dict[str, int]] = {}
+    # Normalize edits through the pure helper: enforce each grant's expiry bound,
+    # drop non-positive, compute live remaining (all from the CURRENT edited_df, so
+    # the readouts below update in the same rerun as the edit).
+    raw_by_key: dict[str, dict[int, int]] = {}
     for i, g in enumerate(hh.grants):
-        new_shares_state[g.key()] = {
-            str(year): int(edited_df.iloc[i][str(year)] or 0) for year in years
-        }
-    st.session_state[_SHARES_STATE_KEY] = new_shares_state
+        cells: dict[int, int] = {}
+        for year in years:
+            val = edited_df.iloc[i][str(year)]
+            cells[year] = int(val) if pd.notna(val) else 0
+        raw_by_key[g.key()] = cells
+    norm = normalize_grid_edits(hh.grants, years, raw_by_key)
 
-    # --- 3. Read-only dollar mirror grid ---
+    # Persist (string-keyed years) so the next rerun's seed reflects unsaved edits.
+    st.session_state[_SHARES_STATE_KEY] = {
+        key: {str(y): n for y, n in cells.items()}
+        for key, cells in norm.shares_by_key.items()
+    }
+
+    for grant, year, n in norm.out_of_range:
+        st.error(
+            f"{grant.year} grant expires {grant.expiry_year}: "
+            f"{n:,} shares entered in {year} were ignored."
+        )
+
+    # --- 3. Live "Remaining" readout (same-rerun, from current edits) ---
+    st.markdown("### Remaining Unexercised")
+    remaining_rows = []
+    for g in hh.grants:
+        scheduled = sum(norm.shares_by_key[g.key()].values())
+        remaining_rows.append(
+            {
+                "Grant": f"{g.year} · ${g.strike:g}",
+                "Granted": f"{g.shares:,}",
+                "Scheduled": f"{scheduled:,}",
+                "Remaining": f"{g.shares - scheduled:,}",
+            }
+        )
+    st.dataframe(pd.DataFrame(remaining_rows), hide_index=True, width="stretch")
+
+    # --- 4. Read-only dollar mirror grid ---
     st.markdown("### Ordinary Income Produced (unsaved edits included)")
     dollar_rows = []
     year_totals = dict.fromkeys(years, 0.0)
     for g in hh.grants:
         row = {"Grant": f"{g.year} · ${g.strike:g} · {g.shares:,} sh"}
         for year in years:
-            shares = new_shares_state[g.key()].get(str(year), 0)
+            shares = norm.shares_by_key[g.key()].get(year, 0)
             dollars = g.per_share_spread(price_by_year[year]) * shares
-            row[str(year)] = fmt_dollars(dollars)
+            row[str(year)] = fmt_dollars(dollars) if year <= g.expiry_year else "—"
             year_totals[year] += dollars
         dollar_rows.append(row)
     total_row = {"Grant": "Total (ordinary income)"}
     for year in years:
         total_row[str(year)] = fmt_dollars(year_totals[year])
     dollar_rows.append(total_row)
-
     st.dataframe(pd.DataFrame(dollar_rows), hide_index=True, width="stretch")
 
-    # --- 4. Validation banner ---
+    # --- 5. Validation banner ---
     current_schedule = ExerciseSchedule(
         shares_by_grant_year={
-            key: {int(year): shares for year, shares in years_map.items() if shares > 0}
-            for key, years_map in new_shares_state.items()
+            key: dict(cells) for key, cells in norm.shares_by_key.items() if cells
         },
         price_by_year=dict(price_by_year),
     )
@@ -139,7 +169,7 @@ def render(hh: Household) -> None:
     for msg in messages:
         st.error(msg)
 
-    # --- 5. Save / Reset buttons ---
+    # --- 6. Save / Reset buttons ---
     st.markdown("---")
     b1, b2 = st.columns(2)
     with b1:
@@ -149,7 +179,7 @@ def render(hh: Household) -> None:
             st.success("Exercise schedule saved.")
             st.rerun()
     with b2:
-        if st.button("Reset to default (legacy)"):
+        if st.button("Reset to default (hold to expiry)"):
             clear_exercise_schedule()
             hh.exercise_schedule = None
             _clear_widget_state()

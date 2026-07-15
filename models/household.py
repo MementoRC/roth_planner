@@ -344,14 +344,14 @@ class Household:
         default that reproduces the historical early-exercise behavior when
         none is stored (or the stored one has no entries).
 
-        default_from_legacy anchors on the OLDEST grant currently present
+        default_at_expiry places each grant's full shares in its expiry_year
         (recomputed fresh from self.grants on every call, never cached), so
         it stays correct regardless of FinExtract list reordering/compaction
         (audit 2026-07-13 household-grant-match-1 / PR #369).
         """
         if self.exercise_schedule is not None and not self.exercise_schedule.is_empty():
             return self.exercise_schedule
-        return ExerciseSchedule.default_from_legacy(self.grants, self.base_year, self.txn_price_now)
+        return ExerciseSchedule.default_at_expiry(self.grants, self.base_year, self.txn_price_now)
 
     def option_income(self, year: int) -> float:
         """Ordinary income from option exercises scheduled in ``year``.

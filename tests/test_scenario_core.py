@@ -138,20 +138,24 @@ class TestAutoFillCharacterization:
             )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
-        # Captured against development @ ecbc49d (post-PR #41)
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # default option-exercise timing moved from a base_year-anchored stagger
+        # (2026-2028) to each grant's own expiry_year (2030/2031/2032 for the
+        # default TXN grants), which shifts where option income competes for
+        # 12% bracket room and therefore this whole per-year fill trajectory.
         expected: list[tuple[int, int, int]] = [
-            (2026, 83000, 0),
-            (2027, 113000, 0),
-            (2028, 120500, 0),
+            (2026, 133000, 0),
+            (2027, 133000, 0),
+            (2028, 133000, 0),
             (2029, 133000, 0),
-            (2030, 127902, 5098),
-            (2031, 0, 133000),
-            (2032, 0, 133000),
+            (2030, 23550, 59450),
+            (2031, 0, 113000),
+            (2032, 0, 120500),
             (2033, 0, 133000),
             (2034, 0, 133000),
             (2035, 0, 133000),
-            (2036, 0, 134650),
-            (2037, 0, 24489),
+            (2036, 0, 120405),
+            (2037, 0, 0),
             (2038, 0, 0),
             (2039, 0, 0),
             (2040, 0, 0),
@@ -176,14 +180,15 @@ class TestAutoFillCharacterization:
             )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
-        # Captured against development @ ecbc49d (post-PR #41)
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # see test_auto_fill_12_year_by_year_snapshot for why these numbers moved.
         expected: list[tuple[int, int, int]] = [
-            (2026, 193600, 0),
-            (2027, 223600, 0),
-            (2028, 111545, 119555),
+            (2026, 243600, 0),
+            (2027, 243600, 0),
+            (2028, 32900, 210700),
             (2029, 0, 243600),
-            (2030, 0, 243600),
-            (2031, 0, 15267),
+            (2030, 0, 153516),
+            (2031, 0, 0),
             (2032, 0, 0),
             (2033, 0, 0),
             (2034, 0, 0),
@@ -214,16 +219,17 @@ class TestAutoFillCharacterization:
             )
             for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
         ]
-        # Captured against development @ ecbc49d (post-PR #41)
         # IRMAA-safe diverges from fill_12/fill_22 in base_magi computation:
         # uses full combined_ss (not taxable_ss) — these per-year rows capture that.
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # see test_auto_fill_12_year_by_year_snapshot for why these numbers moved.
         expected: list[tuple[int, int, int]] = [
-            (2026, 168000, 0),
-            (2027, 198000, 0),
-            (2028, 168247, 37253),
+            (2026, 218000, 0),
+            (2027, 218000, 0),
+            (2028, 89602, 128398),
             (2029, 0, 218000),
-            (2030, 0, 218000),
-            (2031, 0, 172791),
+            (2030, 0, 168000),
+            (2031, 0, 114634),
             (2032, 0, 0),
             (2033, 0, 0),
             (2034, 0, 0),

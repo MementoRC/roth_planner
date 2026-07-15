@@ -307,11 +307,18 @@ def get_household() -> Household:
             "grant_strikes", {}
         )
         merged_grants = []
+        dropped_missing_strike: list[tuple[int, int]] = []
         for g in snap.equity_grants:
             year = int(g.grant_date.split("-")[0]) if g.grant_date else 0
+            if g.outstanding <= 0:
+                continue  # fully exercised — nothing left to plan
             strike = float(strikes.get(str(year), 0.0))
-            if strike <= 0 or g.outstanding <= 0:
-                continue  # skip grants without a known strike or fully exercised
+            if strike <= 0:
+                # A grant with outstanding shares but no configured strike is a
+                # real position we must NOT silently drop (it hid the user's 2019
+                # grant). Record it and warn below instead of skipping quietly.
+                dropped_missing_strike.append((year, g.outstanding))
+                continue
             # NQO typically expires 10 years from grant date
             expires = year + 10
             merged_grants.append(
@@ -322,6 +329,16 @@ def get_household() -> Household:
                     expiry_year=expires,
                     grant_id=g.grant_id,
                 )
+            )
+        if dropped_missing_strike:
+            detail = ", ".join(
+                f"{yr} ({sh:,} sh)" for yr, sh in sorted(dropped_missing_strike)
+            )
+            st.warning(
+                f"Ignored {len(dropped_missing_strike)} option grant(s) with "
+                f"outstanding shares but no configured strike price: {detail}. Add a "
+                "strike for these grant years (grant_strikes in your data-bridge "
+                "upload or .user_defaults.json) so they appear in the planner."
             )
         if merged_grants:
             hh.grants = merged_grants

@@ -61,15 +61,16 @@ def _household_with_nqo(nqo_income: float = 50_000.0) -> Household:
     StockGrant.spread(price) = shares * (price - strike).
     shares=1, strike=1.0, txn_price_now = nqo_income + 1.0
     → spread = 1 * ((nqo_income+1) - 1) = nqo_income.
-    The default (legacy-derived) exercise schedule places this grant's
-    shares in base_year.
+    The default hold-to-expiration exercise schedule places a grant's full
+    shares in its expiry_year, so expiry_year is set to base_year itself to
+    land the income there.
     """
     hh = _base_household()
     grant = StockGrant(
         year=hh.base_year - 4,
         strike=1.0,
         shares=1,
-        expiry_year=hh.base_year + 2,
+        expiry_year=hh.base_year,
     )
     return replace(hh, grants=[grant], txn_price_now=nqo_income + 1.0)
 

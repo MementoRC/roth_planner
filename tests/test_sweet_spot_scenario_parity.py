@@ -227,7 +227,14 @@ class TestMU8F1LtcgStackRegression:
         # taxable_inc close enough to the LTCG threshold for a modest conversion
         # to be the deciding factor, mirroring test_audit_0707_batch_a.py's
         # TestSweetSpotYtdOrdinaryBase.test_ytd_ordinary_shifts_ltcg_stack_base.
-        return Household(
+        #
+        # The hold-to-expiration exercise-schedule default (PR #373 follow-up)
+        # no longer lands the first TXN grant's spread in base_year on its own
+        # (it now lands in the grant's own expiry_year), so it's pinned
+        # explicitly here to preserve this test's calibration.
+        from models.exercise_schedule import ExerciseSchedule
+
+        hh = Household(
             your_age=66,
             spouse_age=64,
             base_year=2026,
@@ -237,6 +244,10 @@ class TestMU8F1LtcgStackRegression:
             spouse_ss_start_age=70,
             filing_status="MFJ",
         )
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
+        return hh
 
     def test_ytd_ordinary_income_shifts_ltcg_stack_start(self) -> None:
         from engine.tax import LTCG_THRESHOLDS_MFJ, STD_DEDUCTION_MFJ

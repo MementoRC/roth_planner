@@ -125,8 +125,21 @@ def save_user_defaults(data: dict) -> None:
     writer this time and can proactively enforce safe permissions.
     """
     path = Path(".user_defaults.json")
+    # Preserve manually-added override keys the app doesn't manage (e.g.
+    # grant_strikes): merge the incoming managed data ON TOP of whatever is
+    # already on disk rather than overwriting the whole file. Without this the
+    # autosave silently wiped hand-edited keys — which dropped the user's 2019
+    # option grant after every FinExtract sync (strikes fell back to demo
+    # defaults, so the 2019 grant had no strike and was skipped).
+    existing: dict = {}
+    if path.exists():
+        with contextlib.suppress(OSError, json.JSONDecodeError):
+            loaded = json.loads(path.read_text())
+            if isinstance(loaded, dict):
+                existing = loaded
+    merged = {**existing, **data}
     try:
-        path.write_text(json.dumps(data, indent=2, default=str))
+        path.write_text(json.dumps(merged, indent=2, default=str))
     except OSError:
         _log.warning("Failed to save user defaults to %s", path)
         return

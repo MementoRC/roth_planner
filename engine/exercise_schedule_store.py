@@ -34,8 +34,8 @@ def load_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> Exerci
     Returns ``None`` when the file is missing, contains malformed JSON, or
     carries an unrecognized/missing ``version`` — never raises. Callers rely
     on ``Household.effective_schedule()`` to fall back to
-    ``default_from_legacy`` in all of those cases, so a bad/absent cache
-    degrades gracefully to legacy behavior.
+    ``default_at_expiry`` in all of those cases, so a bad/absent cache
+    degrades gracefully to the hold-to-expiration default.
     """
     if not path.exists():
         return None
@@ -53,6 +53,6 @@ def clear_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> None:
 
     No-op (no error) when the file is already absent, so callers can invoke
     this unconditionally on a "Reset to default" action. After clearing,
-    ``Household.effective_schedule()`` falls back to ``default_from_legacy``.
+    ``Household.effective_schedule()`` falls back to ``default_at_expiry``.
     """
     path.unlink(missing_ok=True)

@@ -323,7 +323,10 @@ class TestYRMAGIRegion:
     def test_nqo_ytd_not_double_counted_in_magi(self):
         """C-7: NQO exercise income must not appear twice in base-year MAGI.
 
-        Default Household() has TXN grants that produce option_income > 0 in 2026.
+        Default Household() grants now default-exercise at their own
+        expiry_year (2030/2031/2032), not in base_year 2026, so an explicit
+        schedule is wired in here to exercise the first grant in base_year
+        and produce option_income > 0 in 2026.
         Add nqo_exercise_ytd=$11K to YTD (meaning $11K of the planned spread was
         already exercised and is captured in magi_ytd).
 
@@ -333,11 +336,15 @@ class TestYRMAGIRegion:
         Verify: MAGI with nqo_exercise_ytd=$11K == MAGI with nqo_exercise_ytd=$0 + $11K
         i.e., the nqo_ytd shifts income from projected to YTD without inflating the total.
         """
+        from models.exercise_schedule import ExerciseSchedule
         from models.ytd_income import YTDSnapshot
 
         nqo_ytd = 11_000.0
 
-        hh = Household()  # has TXN grants → option_income > 0 in base year
+        hh = Household()  # has TXN grants
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
         plan = ConversionPlan()
 
         # Baseline: no YTD NQO exercised
