@@ -7,12 +7,23 @@ import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from engine.scenario import run_scenario
+from engine.aca import aca_ceiling_magi
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
+from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_types import ConversionPlan
+from engine.tax import room_to_12, room_to_22, room_to_24
+from engine.tax_indexing import index_value
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+
+_BRACKET_ROOM_FNS = {
+    "top-of-12": room_to_12,
+    "top-of-22": room_to_22,
+    "top-of-24": room_to_24,
+}
+_MAGI_STRATEGIES = ("irmaa-safe", "aca-safe")
 
 
 @dataclass
@@ -29,6 +40,65 @@ class OptimizerResult:
     best: OptimizedPlan
     candidates: list[OptimizedPlan]
     baseline_cost: float
+
+
+def _base_projection(
+    hh: Household, end_age: int = 95
+) -> tuple[dict[int, float], dict[int, float], dict[int, float], dict[int, str]]:
+    """Conversion-free base projection. Returns per-year dicts:
+    (base_ordinary, magi_wedge, total_deductions, filing_status).
+    base_ordinary nets option income out of ordinary gross (schedule-independent
+    baseline); magi_wedge = magi - combined_gross (LTCG/dividends/muni/taxable-SS
+    delta above ordinary gross), used to put MAGI ceilings on the ordinary basis.
+    """
+    result = run_no_conversion(copy.deepcopy(hh), end_age=end_age)
+    base_ordinary: dict[int, float] = {}
+    magi_wedge: dict[int, float] = {}
+    total_deductions: dict[int, float] = {}
+    filing_status: dict[int, str] = {}
+    for yr in result.years:
+        base_ordinary[yr.year] = yr.combined_gross - yr.option_income
+        magi_wedge[yr.year] = yr.magi - yr.combined_gross
+        total_deductions[yr.year] = yr.total_deductions
+        filing_status[yr.year] = yr.filing_status or hh.filing_status
+    return base_ordinary, magi_wedge, total_deductions, filing_status
+
+
+def _ceiling_income_by_year(
+    hh: Household,
+    strategy: str,
+    total_deductions: dict[int, float],
+    magi_wedge: dict[int, float],
+    filing_status: dict[int, str],
+) -> dict[int, float]:
+    """Per-year ORDINARY-income ceiling for a strategy. Bracket strategies:
+    deductions + indexed bracket top (== room_to_X at gross 0). MAGI strategies:
+    the MAGI ceiling converted to the ordinary basis by subtracting magi_wedge."""
+    cpi = hh.cpi_assumption
+    ceilings: dict[int, float] = {}
+    if strategy in _BRACKET_ROOM_FNS:
+        room_fn = _BRACKET_ROOM_FNS[strategy]
+        for year, ded in total_deductions.items():
+            ceilings[year] = room_fn(
+                0.0, ded, year=year, cpi=cpi, filing_status=filing_status[year]
+            )
+        return ceilings
+    if strategy not in _MAGI_STRATEGIES:
+        raise ValueError(f"unknown strategy: {strategy}")
+    for year, wedge in magi_wedge.items():
+        fs = filing_status[year]
+        if strategy == "irmaa-safe":
+            tiers = IRMAA_TIERS_SINGLE if fs == "Single" else IRMAA_TIERS_MFJ
+            magi_ceiling = index_value(tiers[0][0], year + 2, cpi)  # +2yr IRMAA lookback
+            ordinary_ceiling = magi_ceiling - wedge
+            # Mirror auto_fill_irmaa_safe: also cap at the 22% bracket ordinary ceiling.
+            bracket_cap = room_to_22(
+                0.0, total_deductions[year], year=year, cpi=cpi, filing_status=fs
+            )
+            ceilings[year] = min(ordinary_ceiling, bracket_cap)
+        else:  # aca-safe
+            ceilings[year] = aca_ceiling_magi(fs, year, cpi) - wedge
+    return ceilings
 
 
 def _build_candidate_schedule(

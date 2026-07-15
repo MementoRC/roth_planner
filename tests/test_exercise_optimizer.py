@@ -7,15 +7,21 @@ from pathlib import Path
 
 import pytest
 
+from engine.aca import aca_ceiling_magi
 from engine.exercise_optimizer import (
     OptimizedPlan,
     OptimizerResult,
+    _base_projection,
     _build_candidate_schedule,
+    _ceiling_income_by_year,
     _score_candidate,
 )
-from engine.scenario import run_scenario
+from engine.irmaa import IRMAA_TIERS_MFJ
+from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_22
 from engine.scenario_types import ConversionPlan
+from engine.tax import room_to_22
+from engine.tax_indexing import index_value
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
 from models.household import Household
@@ -214,3 +220,111 @@ def test_score_candidate_scores_schedule_without_mutating_caller_household() -> 
 
     # Isolation assert: caller's hh must be untouched.
     assert hh.exercise_schedule is sentinel_schedule
+
+
+def _make_hh_with_expiry_option_income() -> Household:
+    """No explicit schedule -> effective_schedule() falls back to
+    default_at_expiry, landing the whole in-the-money grant's spread in 2030."""
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    return Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+    )
+
+
+def test_base_projection_nets_option_income_and_nonnegative_magi_wedge() -> None:
+    """base_ordinary must exclude option income (schedule-independent baseline)
+    and magi_wedge must be non-negative in every projected year."""
+    hh = _make_hh_with_expiry_option_income()
+
+    base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    result = run_no_conversion(copy.deepcopy(hh))
+    yr = next(y for y in result.years if y.year == 2030)
+    assert yr.option_income > 0
+    assert base_ordinary[2030] == pytest.approx(yr.combined_gross - yr.option_income)
+    assert base_ordinary[2030] < yr.combined_gross
+    for year in magi_wedge:
+        assert magi_wedge[year] >= 0
+    assert set(total_deductions) == set(base_ordinary) == set(filing_status)
+
+
+def test_ceiling_income_by_year_top_of_22_matches_room_to_22() -> None:
+    hh = _make_hh_with_expiry_option_income()
+    _base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    ceiling = _ceiling_income_by_year(hh, "top-of-22", total_deductions, magi_wedge, filing_status)
+
+    for year, ded in total_deductions.items():
+        fs = filing_status[year]
+        expected = room_to_22(0.0, ded, year=year, cpi=hh.cpi_assumption, filing_status=fs)
+        assert ceiling[year] == pytest.approx(expected)
+
+
+def test_ceiling_income_by_year_aca_safe_subtracts_magi_wedge() -> None:
+    hh = _make_hh_with_expiry_option_income()
+    _base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    ceiling = _ceiling_income_by_year(hh, "aca-safe", total_deductions, magi_wedge, filing_status)
+
+    for year, wedge in magi_wedge.items():
+        fs = filing_status[year]
+        expected = aca_ceiling_magi(fs, year, hh.cpi_assumption) - wedge
+        assert ceiling[year] == pytest.approx(expected)
+
+
+def test_ceiling_income_by_year_irmaa_safe_capped_at_22_bracket() -> None:
+    """irmaa-safe must mirror auto_fill_irmaa_safe: min(irmaa_room, room_to_22),
+    with the IRMAA term using the +2yr lookback index."""
+    hh = _make_hh_with_expiry_option_income()
+    _base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    ceiling = _ceiling_income_by_year(hh, "irmaa-safe", total_deductions, magi_wedge, filing_status)
+
+    for year, wedge in magi_wedge.items():
+        fs = filing_status[year]
+        cpi = hh.cpi_assumption
+        irmaa_term = index_value(IRMAA_TIERS_MFJ[0][0], year + 2, cpi) - wedge
+        bracket_term = room_to_22(0.0, total_deductions[year], year=year, cpi=cpi, filing_status=fs)
+        assert ceiling[year] == pytest.approx(min(irmaa_term, bracket_term))
+
+
+def test_ceiling_income_by_year_irmaa_safe_uses_two_year_lookback() -> None:
+    """With a nonzero CPI assumption, indexing the IRMAA tier-1 threshold at
+    year+2 must differ from indexing it at year, proving the lookback is real
+    (not accidentally a no-op year+0 index)."""
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+        cpi_assumption=0.03,
+    )
+    _base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    ceiling = _ceiling_income_by_year(hh, "irmaa-safe", total_deductions, magi_wedge, filing_status)
+
+    cpi = hh.cpi_assumption
+    found_binding_irmaa_year = False
+    for year, wedge in magi_wedge.items():
+        fs = filing_status[year]
+        irmaa_term_plus2 = index_value(IRMAA_TIERS_MFJ[0][0], year + 2, cpi) - wedge
+        bracket_term = room_to_22(0.0, total_deductions[year], year=year, cpi=cpi, filing_status=fs)
+        if irmaa_term_plus2 <= bracket_term:  # IRMAA term is the binding min
+            found_binding_irmaa_year = True
+            irmaa_term_plus0 = index_value(IRMAA_TIERS_MFJ[0][0], year, cpi) - wedge
+            assert ceiling[year] != pytest.approx(irmaa_term_plus0)
+    assert found_binding_irmaa_year
+
+
+def test_ceiling_income_by_year_unknown_strategy_raises() -> None:
+    hh = _make_hh_with_expiry_option_income()
+    _base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(hh)
+
+    with pytest.raises(ValueError, match="unknown strategy"):
+        _ceiling_income_by_year(hh, "bogus", total_deductions, magi_wedge, filing_status)
