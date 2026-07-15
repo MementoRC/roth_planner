@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from engine.aca import aca_ceiling_magi
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario_compute import compute_brokerage_dividends
@@ -20,6 +21,7 @@ from engine.tax import (
     deductions,
     room_to_12,
     room_to_22,
+    room_to_24,
     senior_bonus_deduction,
     taxable_ss,
 )
@@ -406,6 +408,36 @@ def auto_fill_irmaa_safe(
         )
 
     return _auto_fill_core(hh, ytd, room_fn=_irmaa_room)
+
+
+def auto_fill_24(
+    hh: Household,
+    ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
+    """Fill to the 24% bracket ceiling each year."""
+    return _auto_fill_core(
+        hh,
+        ytd,
+        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_24(
+            fg, ded, year=yr, cpi=cpi, filing_status=fs
+        ),
+    )
+
+
+def auto_fill_aca(
+    hh: Household,
+    ytd: YTDSnapshot | None = None,
+) -> ConversionPlan:
+    """Fill only up to the ACA 400%-FPL MAGI cliff each year (conversions stop
+    at that MAGI). Mirrors auto_fill_irmaa_safe's MAGI-ceiling-minus-base_magi
+    room, but with the ACA ceiling and no lookback (ACA uses same-year MAGI)."""
+    def _aca_room(
+        fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float, filing_status: str
+    ) -> float:
+        ceiling = aca_ceiling_magi(filing_status, yr, cpi)
+        return max(ceiling - base_magi, 0.0)
+
+    return _auto_fill_core(hh, ytd, room_fn=_aca_room)
 
 
 def add_bracket_fill_withdrawals(
