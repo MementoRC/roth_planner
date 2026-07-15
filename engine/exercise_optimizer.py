@@ -10,6 +10,13 @@ from dataclasses import dataclass, field
 from engine.aca import aca_ceiling_magi
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario_autofill import (
+    auto_fill_12,
+    auto_fill_22,
+    auto_fill_24,
+    auto_fill_aca,
+    auto_fill_irmaa_safe,
+)
 from engine.scenario_types import ConversionPlan
 from engine.tax import room_to_12, room_to_22, room_to_24
 from engine.tax_indexing import index_value
@@ -176,13 +183,103 @@ def _score_candidate(
     over_ceiling_years: list[int],
     ytd: YTDSnapshot | None,
     end_age: int,
+    *,
+    magi_ceiling_fn: Callable[[int, str], float] | None = None,
 ) -> OptimizedPlan:
     """Score a candidate schedule on a DEEPCOPY of hh (caller's hh untouched):
     set the schedule, auto-fill conversions around it, run the scenario, and
-    sum lifetime all-in cost."""
+    sum lifetime all-in cost.
+
+    When ``magi_ceiling_fn`` is provided, ``over_ceiling_years`` is recomputed
+    from the SCORED result's true per-year MAGI (rather than trusting the
+    caller-supplied list), so MAGI-strategy candidates report over-ceiling
+    years that reflect the actual auto-filled/scenario-run MAGI.
+    """
     hh_copy = copy.deepcopy(hh)
     hh_copy.exercise_schedule = schedule
     plan = autofill_fn(hh_copy, ytd)
     result = run_scenario(hh_copy, plan, end_age=end_age, ytd=ytd)
     lifetime = sum(yr.all_in_cost for yr in result.years)
+    if magi_ceiling_fn is not None:
+        over_ceiling_years = [
+            yr.year
+            for yr in result.years
+            if yr.magi > magi_ceiling_fn(yr.year, yr.filing_status or hh.filing_status)
+        ]
     return OptimizedPlan(ceiling_label, schedule, plan, lifetime, over_ceiling_years)
+
+
+def _magi_ceiling_for(strategy: str, year: int, filing_status: str, cpi: float) -> float:
+    """True-MAGI ceiling for a MAGI strategy (for over-ceiling flagging)."""
+    if strategy == "irmaa-safe":
+        tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+        return index_value(tiers[0][0], year + 2, cpi)  # +2yr IRMAA lookback
+    return aca_ceiling_magi(filing_status, year, cpi)  # aca-safe
+
+
+_AutofillFn = Callable[[Household, YTDSnapshot | None], ConversionPlan]
+
+# (label, strategy-key, autofill_fn)
+DEFAULT_CEILINGS: list[tuple[str, str, _AutofillFn]] = [
+    ("top-of-12", "top-of-12", auto_fill_12),
+    ("top-of-22", "top-of-22", auto_fill_22),
+    ("top-of-24", "top-of-24", auto_fill_24),
+    ("irmaa-safe", "irmaa-safe", auto_fill_irmaa_safe),
+    ("aca-safe", "aca-safe", auto_fill_aca),
+]
+
+
+def optimize_exercises(
+    hh: Household,
+    current_plan: ConversionPlan | None = None,
+    ytd: YTDSnapshot | None = None,
+    end_age: int = 95,
+    ceilings: list[tuple[str, str, _AutofillFn]] | None = None,
+) -> OptimizerResult:
+    """Solve for the exercise schedule minimizing modeled lifetime all-in cost.
+
+    Sweeps each ceiling strategy, scores option-schedule + auto-filled
+    conversions with ``run_scenario``, includes the current plan as a
+    baseline candidate, and returns the argmin (never worse than status quo,
+    since the baseline is itself a candidate).
+    """
+    if ceilings is None:
+        ceilings = DEFAULT_CEILINGS
+    base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(
+        hh, end_age=end_age
+    )
+    price = hh.txn_price_now
+    cpi = hh.cpi_assumption
+
+    candidates: list[OptimizedPlan] = []
+    for label, strategy, autofill_fn in ceilings:
+        ceiling_by_year = _ceiling_income_by_year(
+            hh, strategy, total_deductions, magi_wedge, filing_status
+        )
+        schedule, over = _build_candidate_schedule(
+            hh.grants, hh.base_year, ceiling_by_year, base_ordinary, price
+        )
+        magi_fn = None
+        if strategy in _MAGI_STRATEGIES:
+
+            def magi_fn(year: int, fs: str, _s: str = strategy) -> float:
+                return _magi_ceiling_for(_s, year, fs, cpi)
+
+        plan = _score_candidate(
+            hh, schedule, label, autofill_fn, over, ytd, end_age, magi_ceiling_fn=magi_fn
+        )
+        candidates.append(plan)
+
+    # Baseline candidate: the household's CURRENT schedule + current conversions
+    # (not auto-filled), so the winner is never worse than status quo.
+    baseline_schedule = hh.effective_schedule()
+    baseline_conv = current_plan if current_plan is not None else ConversionPlan()
+    hh_copy = copy.deepcopy(hh)
+    hh_copy.exercise_schedule = baseline_schedule
+    baseline_result = run_scenario(hh_copy, baseline_conv, end_age=end_age, ytd=ytd)
+    baseline_cost = sum(yr.all_in_cost for yr in baseline_result.years)
+    baseline_plan = OptimizedPlan("current", baseline_schedule, baseline_conv, baseline_cost, [])
+    candidates.append(baseline_plan)
+
+    best = min(candidates, key=lambda c: c.lifetime_all_in)
+    return OptimizerResult(best=best, candidates=candidates, baseline_cost=baseline_cost)

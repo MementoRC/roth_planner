@@ -15,6 +15,7 @@ from engine.exercise_optimizer import (
     _build_candidate_schedule,
     _ceiling_income_by_year,
     _score_candidate,
+    optimize_exercises,
 )
 from engine.irmaa import IRMAA_TIERS_MFJ
 from engine.scenario import run_no_conversion, run_scenario
@@ -328,3 +329,88 @@ def test_ceiling_income_by_year_unknown_strategy_raises() -> None:
 
     with pytest.raises(ValueError, match="unknown strategy"):
         _ceiling_income_by_year(hh, "bogus", total_deductions, magi_wedge, filing_status)
+
+
+def test_optimize_exercises_does_not_mutate_household() -> None:
+    """optimize_exercises must operate on deepcopies; the caller's hh (schedule,
+    grants, base_year) must be bit-for-bit unchanged afterward."""
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    sentinel_schedule = ExerciseSchedule()
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+        exercise_schedule=sentinel_schedule,
+    )
+    original_grants = list(hh.grants)
+    original_base_year = hh.base_year
+
+    optimize_exercises(hh)
+
+    assert hh.exercise_schedule is sentinel_schedule
+    assert hh.grants == original_grants
+    assert hh.base_year == original_base_year
+
+
+def test_optimize_exercises_is_deterministic() -> None:
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+    )
+
+    result1 = optimize_exercises(hh)
+    result2 = optimize_exercises(hh)
+
+    costs1 = [c.lifetime_all_in for c in result1.candidates]
+    costs2 = [c.lifetime_all_in for c in result2.candidates]
+    assert costs1 == costs2
+
+
+def test_optimize_exercises_selects_argmin_with_current_baseline() -> None:
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+    )
+
+    result = optimize_exercises(hh)
+
+    assert result.best.lifetime_all_in == min(c.lifetime_all_in for c in result.candidates)
+    assert result.best in result.candidates
+    assert len(result.candidates) == 6
+    current_candidates = [c for c in result.candidates if c.ceiling_label == "current"]
+    assert len(current_candidates) == 1
+    assert current_candidates[0].lifetime_all_in == result.baseline_cost
+
+
+def test_optimize_exercises_beats_status_quo_when_spreading_helps() -> None:
+    """A single deeply-in-the-money grant with a large share count expiring a
+    few years out: hold-to-expiry dumps the whole spread into one year (costly
+    bracket-stacking), but spreading it across [base_year, expiry] fits under
+    brackets/MAGI ceilings and should genuinely beat the status quo."""
+    grant = StockGrant(year=2019, strike=100.0, shares=5000, expiry_year=2030, grant_id="big")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        your_ira=1_000_000,
+        spouse_ira=1_000_000,
+        txn_price_now=200.0,
+        grants=[grant],
+    )
+
+    result = optimize_exercises(hh)
+
+    assert result.best.lifetime_all_in < result.baseline_cost
+    assert result.best.ceiling_label != "current"
+    # Universal guarantee: the optimizer never selects a worse plan than status quo.
+    assert result.best.lifetime_all_in <= result.baseline_cost
