@@ -299,6 +299,19 @@ def room_to_22(
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
+def room_to_24(
+    current_gross: float,
+    total_deductions: float,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+    filing_status: str = "MFJ",
+) -> float:
+    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+    ceiling = index_value(brackets[3][0], year, cpi, round50=True)
+    return room_to_bracket(current_gross, total_deductions, ceiling)
+
+
 def federal_tax_single(
     taxable_income: float, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI
 ) -> float:

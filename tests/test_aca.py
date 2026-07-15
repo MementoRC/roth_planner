@@ -455,6 +455,17 @@ class TestACA2026:
         rate = aca_premium_cap_rate(200_000, enhanced_subsidies_active=False, filing_status="MFJ")
         assert rate == 0.0
 
+    def test_aca_ceiling_magi_matches_fpl_cliff(self):
+        """aca_ceiling_magi exposes the 400%-FPL cliff used internally by aca_subsidy.
+
+        Reuses the private _fpl indexing helper — no duplicated FPL constants.
+        """
+        from engine.aca import _fpl, aca_ceiling_magi
+
+        assert aca_ceiling_magi("MFJ", 2026, 0.0) == 4.0 * _fpl("MFJ", year=2026, cpi=0.0)
+        # Also verify CPI indexing threads through for a future year.
+        assert aca_ceiling_magi("Single", 2028, 0.03) == 4.0 * _fpl("Single", year=2028, cpi=0.03)
+
 
 class TestAcaAgeFactor:
     def test_anchor_values(self):
