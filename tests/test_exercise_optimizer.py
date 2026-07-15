@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
-from engine.exercise_optimizer import OptimizedPlan, OptimizerResult, _build_candidate_schedule
+import pytest
+
+from engine.exercise_optimizer import (
+    OptimizedPlan,
+    OptimizerResult,
+    _build_candidate_schedule,
+    _score_candidate,
+)
+from engine.scenario import run_scenario
+from engine.scenario_autofill import auto_fill_22
 from engine.scenario_types import ConversionPlan
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
+from models.household import Household
 
 
 def _make_schedule() -> ExerciseSchedule:
@@ -160,3 +171,46 @@ def test_build_candidate_schedule_underwater_grant_schedules_zero_income() -> No
     assert sum(schedule.shares_by_grant_year[grant.key()].values()) == grant.shares
     assert schedule.income_for(2027, [grant]) == 0.0
     assert over_ceiling_years == []
+
+
+def test_score_candidate_scores_schedule_without_mutating_caller_household() -> None:
+    """_score_candidate must (a) run the scenario with the candidate schedule
+    applied and (b) leave the caller's hh untouched (deepcopy isolation)."""
+    grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+    sentinel_schedule = ExerciseSchedule()
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        grants=[grant],
+        txn_price_now=150.0,
+        exercise_schedule=sentinel_schedule,
+    )
+
+    candidate = ExerciseSchedule.default_at_expiry(hh.grants, hh.base_year, hh.txn_price_now)
+
+    plan = _score_candidate(
+        hh,
+        candidate,
+        "top-of-22",
+        auto_fill_22,
+        [2030],
+        ytd=None,
+        end_age=95,
+    )
+
+    assert plan.ceiling_label == "top-of-22"
+    assert plan.schedule is candidate
+    assert plan.over_ceiling_years == [2030]
+    assert plan.lifetime_all_in > 0
+
+    # Recompute the expected lifetime cost independently on a fresh deepcopy.
+    hh_check = copy.deepcopy(hh)
+    hh_check.exercise_schedule = candidate
+    expected_conversions = auto_fill_22(hh_check, None)
+    expected_result = run_scenario(hh_check, expected_conversions, end_age=95, ytd=None)
+    expected_lifetime = sum(yr.all_in_cost for yr in expected_result.years)
+    assert plan.lifetime_all_in == pytest.approx(expected_lifetime)
+
+    # Isolation assert: caller's hh must be untouched.
+    assert hh.exercise_schedule is sentinel_schedule

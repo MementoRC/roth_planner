@@ -3,11 +3,16 @@ minimizes modeled lifetime all-in cost. NO Streamlit imports (engine purity)."""
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
+from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 
 @dataclass
@@ -91,3 +96,23 @@ def _build_candidate_schedule(
                 remaining[grant.key()] -= n
 
     return schedule, over_ceiling_years
+
+
+def _score_candidate(
+    hh: Household,
+    schedule: ExerciseSchedule,
+    ceiling_label: str,
+    autofill_fn: Callable[[Household, YTDSnapshot | None], ConversionPlan],
+    over_ceiling_years: list[int],
+    ytd: YTDSnapshot | None,
+    end_age: int,
+) -> OptimizedPlan:
+    """Score a candidate schedule on a DEEPCOPY of hh (caller's hh untouched):
+    set the schedule, auto-fill conversions around it, run the scenario, and
+    sum lifetime all-in cost."""
+    hh_copy = copy.deepcopy(hh)
+    hh_copy.exercise_schedule = schedule
+    plan = autofill_fn(hh_copy, ytd)
+    result = run_scenario(hh_copy, plan, end_age=end_age, ytd=ytd)
+    lifetime = sum(yr.all_in_cost for yr in result.years)
+    return OptimizedPlan(ceiling_label, schedule, plan, lifetime, over_ceiling_years)
