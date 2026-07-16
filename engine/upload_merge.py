@@ -95,11 +95,11 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             if acct_type in ALLOWED_ACCOUNT_TYPES:
                 valid[acct] = entry
         updates["account_type_overrides"] = valid
-    if "prior_year_magi" in data:
-        # Keys arrive as strings from JSON; cast to int at load time
-        updates["prior_year_magi"] = {
-            int(k): float(v) for k, v in data["prior_year_magi"].items() if v is not None and v != ""
-        }
+    # prior_year_magi is deliberately NOT included here: bundle MAGI is
+    # routed through CandidateStore candidates (Source.BUNDLE) via
+    # extract_bundle_magi() + record_magi_candidates(), called by the Data
+    # Bridge view — never a full session_state["prior_year_magi"] replace
+    # (audit defect #2, "contradictory MAGI policy").
     # survivor is a joint field (not spouse-specific); pass through as-is when not as_spouse
     if "survivor" in data and not as_spouse:
         updates["survivor"] = data["survivor"]
@@ -110,6 +110,23 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     if "inherited_iras" in data and not as_spouse:
         updates["inherited_iras"] = data["inherited_iras"]
     return updates
+
+
+def extract_bundle_magi(data: dict) -> dict[int, float]:
+    """Return a Data Bridge bundle's ``prior_year_magi`` dict as ``{int: float}``.
+
+    Pure extraction only — does not write to ``Household`` or session state.
+    Keys arrive as strings from JSON; ``None``/empty-string values are
+    dropped, but a genuine ``0.0`` MAGI year is kept (audit UU5-UI-04).
+    Callers (the Data Bridge view) route the result through
+    ``engine.data_sources.record.record_magi_candidates`` as ``Source.BUNDLE``
+    candidates for Command Center review, instead of the old full
+    session_state replace (audit defect #2).
+    """
+    raw = data.get("prior_year_magi")
+    if not raw:
+        return {}
+    return {int(k): float(v) for k, v in raw.items() if v is not None and v != ""}
 
 
 def derive_ira_balances(snap: PortfolioSnapshot) -> tuple[float, float]:

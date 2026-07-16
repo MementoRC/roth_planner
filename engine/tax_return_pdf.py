@@ -450,26 +450,6 @@ def load_pdf_tax_records() -> dict[int, Form1040Record]:
     return result
 
 
-def merge_pdf_magi(
-    existing: dict[int, float],
-    records: dict[int, Form1040Record],
-) -> dict[int, float]:
-    """Gap-fill ``existing`` MAGI dict with PDF-sourced values.
-
-    Only fills years that are absent or falsy in ``existing`` — FinExtract
-    values already in place take precedence; PDF fills historical gaps.
-    PDFs carry Schedule 1 detail for any historical year, while FinExtract
-    only covers the current + prior year from the TurboTax dashboard.
-
-    Returns a *new* dict; does not mutate ``existing``.
-    """
-    result = dict(existing)
-    for year, rec in records.items():
-        if not result.get(year):
-            result[year] = rec.magi
-    return result
-
-
 def scan_1040_folder(folder: Path) -> tuple[dict[int, Form1040Record], list[str]]:
     """Parse every Form 1040 PDF in *folder*, keyed by tax year, identifying them
     by *content* rather than filename (site-exported PDFs have unreliable names).

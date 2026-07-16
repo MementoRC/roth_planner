@@ -10,10 +10,14 @@ st.set_page_config(
 )
 
 
+from datetime import datetime  # noqa: E402
+
 from config.loader import load_defaults  # noqa: E402
+from engine.data_sources.record import record_magi_candidates  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
-from engine.tax_return_pdf import load_pdf_tax_records, merge_pdf_magi  # noqa: E402
+from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
+from models.sourced import Source  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -115,14 +119,17 @@ if "ssa_snapshot_spouse" not in st.session_state:
             if _spouse_fra_match is not None:
                 st.session_state.spouse_ss_fra = int(round(_spouse_fra_match.monthly_amount))
 
-# Hydrate prior_year_magi from PDF cache (FinExtract wins; PDF fills historical gaps).
-# merge_pdf_magi only fills absent/zero years so manual edits are preserved.
-
+# Record the on-disk 1040 PDF cache as Source.PDF candidates for Command
+# Center review (Wave 5 — replaces the old merge_pdf_magi gap-fill directly
+# into session_state["prior_year_magi"], which the reconcile step would have
+# wrongly promoted to a MANUAL entry; audit defect #2).
 _pdf_records = load_pdf_tax_records()
 if _pdf_records:
-    st.session_state["prior_year_magi"] = merge_pdf_magi(
-        st.session_state.get("prior_year_magi") or {},
-        _pdf_records,
+    record_magi_candidates(
+        {yr: rec.magi for yr, rec in _pdf_records.items()},
+        Source.PDF,
+        "1040 PDF cache",
+        datetime.now(),
     )
 
 st.sidebar.title("🎯 Roth Planner")
@@ -168,8 +175,6 @@ if page != "⚙️ Setup":
     st.session_state.pop("_generated_priv_b64", None)
 
 # Build household from session state
-from datetime import datetime  # noqa: E402
-
 from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap  # noqa: E402
 from engine.data_sources.committed import load_committed, save_committed  # noqa: E402

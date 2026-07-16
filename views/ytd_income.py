@@ -8,11 +8,13 @@ Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
 from datetime import date as _date
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
+from engine.data_sources.record import record_magi_candidates
 from engine.headroom import compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
@@ -42,6 +44,7 @@ from engine.tax import (
     safe_harbor_payment,
 )
 from models.household import Household
+from models.sourced import Source
 from models.ytd_income import IncomeEvent, YTDSnapshot, sum_income_events
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 
@@ -299,7 +302,19 @@ def render(hh: Household):
                     merged_1040 = load_pdf_tax_records()
                     merged_1040.update(result.form_1040_records)
                     save_pdf_tax_records(merged_1040)
+                    # _pdf_1040_scanned only feeds the Parameters-tab confirm
+                    # preview (filing status picker) below; MAGI itself is
+                    # recorded as a candidate (Source.PDF) for Command Center
+                    # review, not written to prior_year_magi directly
+                    # (audit defect #3 — unifies the dual MAGI writer with
+                    # setup/parameters.py's scan handler).
                     st.session_state["_pdf_1040_scanned"] = merged_1040
+                    record_magi_candidates(
+                        {yr: rec.magi for yr, rec in result.form_1040_records.items()},
+                        Source.PDF,
+                        "Form 1040 PDF",
+                        datetime.now(),
+                    )
 
                 # Summary: what was parsed, what was applied, what still needs action.
                 parsed_bits: list[str] = []

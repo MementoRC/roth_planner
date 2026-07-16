@@ -21,7 +21,7 @@ from engine.niit import (
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan
 from engine.tax import LTCG_RATES_MFJ, LTCG_RATES_SINGLE
-from engine.upload_merge import build_user_defaults_session_updates
+from engine.upload_merge import extract_bundle_magi
 from models.household import Household
 
 # ── FIX 1: MU4-F1 — NIIT thresholds for all 4 filing statuses ───────────────
@@ -114,20 +114,27 @@ def test_run_scenario_single_filer_brokerage_gain_tax() -> None:
 
 
 def test_upload_merge_keeps_zero_magi_year() -> None:
-    """A 0.0 MAGI year must NOT be dropped (prior bug: `if v` filtered falsy 0.0)."""
+    """A 0.0 MAGI year must NOT be dropped (prior bug: `if v` filtered falsy 0.0).
+
+    Wave 5 (Setup / Command Center): bundle MAGI extraction moved out of
+    build_user_defaults_session_updates (which no longer touches
+    prior_year_magi at all — defect #2) into the pure
+    engine.upload_merge.extract_bundle_magi, called by the Data Bridge view
+    ahead of record_magi_candidates(Source.BUNDLE, ...). This test now
+    exercises that function directly; the 0.0-preservation behavior is
+    unchanged.
+    """
     data = {"prior_year_magi": {"2023": 0.0, "2024": 150_000.0}}
-    updates = build_user_defaults_session_updates(data, as_spouse=False)
-    pym = updates["prior_year_magi"]
+    pym = extract_bundle_magi(data)
     assert 2023 in pym, "Year 2023 with 0.0 MAGI was incorrectly dropped"
     assert pym[2023] == 0.0
     assert pym[2024] == 150_000.0
 
 
 def test_upload_merge_drops_none_and_empty_string() -> None:
-    """None and empty-string values are still excluded."""
+    """None and empty-string values are still excluded (see extract_bundle_magi)."""
     data = {"prior_year_magi": {"2023": None, "2024": "", "2025": 50_000.0}}
-    updates = build_user_defaults_session_updates(data, as_spouse=False)
-    pym = updates["prior_year_magi"]
+    pym = extract_bundle_magi(data)
     assert 2023 not in pym
     assert 2024 not in pym
     assert 2025 in pym

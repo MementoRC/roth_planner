@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
 
 import streamlit as st
 
@@ -16,11 +17,14 @@ from engine.data_bridge_keys import (
     load_privkey,
     load_pubkey,
 )
+from engine.data_sources.record import record_magi_candidates
 from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
 from engine.portfolio_sync import PortfolioSnapshot, save_ytd_snapshot
 from engine.portfolio_sync.portfolio import load_snapshot, save_snapshot
+from engine.upload_merge import extract_bundle_magi
 from models.household import Household
+from models.sourced import Source
 
 from ._state import (
     _apply_user_defaults_to_session,
@@ -267,6 +271,17 @@ def _handle_personal_uploads() -> None:
                     _apply_user_defaults_to_session(
                         data["sections"]["setup_scalars"], as_spouse=(target_owner == "spouse")
                     )
+                    if target_owner != "spouse":
+                        # Bundle MAGI becomes Source.BUNDLE candidates for
+                        # Command Center review, never a full session_state
+                        # replace (audit defect #2). Mirrors
+                        # build_user_defaults_session_updates: the spouse
+                        # cross-map never touches prior_year_magi either.
+                        bundle_magi = extract_bundle_magi(data["sections"]["setup_scalars"])
+                        if bundle_magi:
+                            record_magi_candidates(
+                                bundle_magi, Source.BUNDLE, "Data bridge import", datetime.now()
+                            )
                     st.session_state["portfolio_snapshot"] = new_snapshot
                     st.session_state.pop("_suppress_snapshot_autoload", None)
                     _rederive_ytd_from_ledger(new_ledger)

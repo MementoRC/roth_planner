@@ -29,6 +29,7 @@ from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.record import record_magi_candidates
 from engine.data_sources.resolver import (
     GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
@@ -1055,3 +1056,111 @@ class TestConfirmField:
     def test_unknown_field_key_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown or unsupported field"):
             confirm_field({}, ChoiceMap(), "not_a_real_field", 1.0, Source.MANUAL, FIXED_DT)
+
+
+class TestRecordMagiCandidates:
+    """engine.data_sources.record.record_magi_candidates — Wave 5.
+
+    Reusable helper each external MAGI producer (FinExtract sync, PDF 1040
+    scan, Data Bridge bundle import) calls instead of gap-filling / full-
+    replacing st.session_state["prior_year_magi"] directly (audit defect #2).
+    """
+
+    def test_records_one_candidate_per_year(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        count = record_magi_candidates(
+            {2023: 270_000.0, 2024: 288_000.0},
+            Source.PDF,
+            "Form 1040 PDF",
+            FIXED_DT,
+            store_path=store_path,
+        )
+
+        assert count == 2
+        store = CandidateStore.load(store_path)
+        c2023 = store.candidates_for(magi_field_key(2023))
+        c2024 = store.candidates_for(magi_field_key(2024))
+        assert len(c2023) == 1
+        assert c2023[0].value == 270_000.0
+        assert c2023[0].prov.source == Source.PDF
+        assert c2023[0].prov.detail == "Form 1040 PDF"
+        assert c2023[0].prov.recorded_at == FIXED_DT
+        assert len(c2024) == 1
+        assert c2024[0].value == 288_000.0
+
+    def test_skips_falsy_and_none_values(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        count = record_magi_candidates(
+            {2022: 0.0, 2023: None, 2024: 150_000.0},
+            Source.FINEXTRACT_LIVE,
+            "FinExtract tax return",
+            FIXED_DT,
+            store_path=store_path,
+        )
+
+        assert count == 1
+        store = CandidateStore.load(store_path)
+        assert store.candidates_for(magi_field_key(2022)) == []
+        assert store.candidates_for(magi_field_key(2023)) == []
+        assert len(store.candidates_for(magi_field_key(2024))) == 1
+
+    def test_round_trips_through_store_file(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+        record_magi_candidates(
+            {2025: 300_000.0}, Source.BUNDLE, "Data bridge import", FIXED_DT, store_path=store_path
+        )
+
+        # Fresh load (simulating a later app run) sees the persisted candidate.
+        reloaded = CandidateStore.load(store_path)
+        candidates = reloaded.candidates_for(magi_field_key(2025))
+        assert len(candidates) == 1
+        assert candidates[0].value == 300_000.0
+        assert candidates[0].prov.source == Source.BUNDLE
+
+    def test_coerces_string_year_and_int_value(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        count = record_magi_candidates(
+            {"2024": 275_000}, Source.PDF, "Form 1040 PDF", FIXED_DT, store_path=store_path
+        )
+
+        assert count == 1
+        store = CandidateStore.load(store_path)
+        candidates = store.candidates_for(magi_field_key(2024))
+        assert candidates[0].value == 275_000.0
+        assert isinstance(candidates[0].value, float)
+
+    def test_store_path_param_is_isolated_from_real_candidate_store(self, tmp_path: Path) -> None:
+        """Explicit store_path writes to the tmp file, never the real CANDIDATE_STORE_PATH."""
+        store_path = tmp_path / "isolated_candidate_store.json"
+        assert store_path != CANDIDATE_STORE_PATH
+
+        record_magi_candidates(
+            {2024: 200_000.0}, Source.PDF, "Form 1040 PDF", FIXED_DT, store_path=store_path
+        )
+
+        assert store_path.exists()
+
+
+class TestMagiLadderFlip:
+    """PDF supersedes FinExtract for an uncommitted MAGI year (default ladder)."""
+
+    def test_pdf_beats_finextract_for_uncommitted_year(self) -> None:
+        committed = Household()  # prior_year_magi empty -> year is uncommitted
+        store = CandidateStore()
+        store.record_candidate(
+            magi_field_key(2024), 290_000.0, Provenance(Source.PDF, FIXED_DT, detail="1040 pdf")
+        )
+        store.record_candidate(
+            magi_field_key(2024),
+            285_000.0,
+            Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, detail="live"),
+        )
+
+        result = resolve(committed, store, ChoiceMap())
+
+        assert result.household.prior_year_magi[2024] == 290_000.0
+        assert result.household.prior_year_magi.prov[2024].source == Source.PDF
+        assert magi_field_key(2024) in result.pending_review

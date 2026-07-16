@@ -113,67 +113,6 @@ class TestPdf1040ImportHelper:
         )
 
 
-class TestMergePdfMagi:
-    """Unit tests for engine.tax_return_pdf.merge_pdf_magi."""
-
-    def _make_record(self, year: int, magi: float) -> object:
-        from engine.tax_return_pdf import Form1040Record
-
-        return Form1040Record(
-            tax_year=year,
-            agi=magi - 500.0,
-            tax_exempt_interest=300.0,
-            taxable_ss=0.0,
-            qualified_dividends=0.0,
-            ordinary_dividends=0.0,
-            feie=200.0,
-            magi=magi,
-            filing_status="married_filing_jointly",
-            captured_at="2026-01-01T00:00:00+00:00",
-        )
-
-    def test_absent_year_is_filled(self):
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        records = {2023: self._make_record(2023, 162_000.0)}
-        result = merge_pdf_magi({}, records)
-        assert result[2023] == pytest.approx(162_000.0)
-
-    def test_zero_year_is_filled(self):
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        records = {2023: self._make_record(2023, 162_000.0)}
-        result = merge_pdf_magi({2023: 0.0}, records)
-        assert result[2023] == pytest.approx(162_000.0)
-
-    def test_nonzero_existing_is_preserved(self):
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        records = {2023: self._make_record(2023, 162_000.0)}
-        result = merge_pdf_magi({2023: 175_000.0}, records)
-        assert result[2023] == pytest.approx(175_000.0)
-
-    def test_empty_records_returns_copy_of_existing(self):
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        existing = {2023: 100_000.0, 2024: 120_000.0}
-        result = merge_pdf_magi(existing, {})
-        assert result == existing
-        assert result is not existing  # must be a new dict
-
-    def test_multiple_years_gap_fill(self):
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        records = {
-            2022: self._make_record(2022, 140_000.0),
-            2023: self._make_record(2023, 162_000.0),
-        }
-        existing = {2023: 0.0}
-        result = merge_pdf_magi(existing, records)
-        assert result[2022] == pytest.approx(140_000.0)
-        assert result[2023] == pytest.approx(162_000.0)
-
-
 class TestPdfRecordRoundTrip:
     """Confirm save/load round-trip preserves filing_status and magi."""
 

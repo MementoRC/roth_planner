@@ -1,13 +1,19 @@
 """Regression tests for audit-0706 wave-2: tax_return_pdf + upload_merge findings.
 
-import-merge-0 / import-merge-4: merge_pdf_magi docstring accuracy (gap-fill semantics).
 import-merge-3: compute_magi IRMAA-scope note in docstring.
 ui-setup-router-10: as_spouse cross-map missing your_defer_first_rmd → spouse_defer_first_rmd.
+
+Wave 5 (Setup / Command Center, 2026-07-16): the former
+``TestMergePdfMagiGapFill`` class tested ``engine.tax_return_pdf.merge_pdf_magi``,
+which is now removed — its FinExtract-wins/PDF-fills-gaps policy was the
+"contradictory MAGI policy" (audit defect #2). PDF-sourced MAGI now records
+``prior_year_magi.<year>`` candidates (Source.PDF) via
+``engine.data_sources.record.record_magi_candidates``, arbitrated by
+``engine.data_sources.resolver`` against the default ladder (which ranks PDF
+over FinExtract) — covered by ``tests/test_data_sources.py``.
 """
 
 from __future__ import annotations
-
-from engine.tax_return_pdf import Form1040Record
 
 # ---------------------------------------------------------------------------
 # ui-setup-router-10: spouse cross-map must preserve RMD-deferral preference
@@ -99,83 +105,3 @@ class TestComputeMagiDocstring:
         from engine.tax_return_pdf import compute_magi
 
         assert compute_magi(100_000.0, 500.0, 1_000.0) == 101_500.0
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_CAPTURED_AT = "2026-01-01T00:00:00"
-
-
-def _make_record(tax_year: int, magi: float) -> Form1040Record:
-    """Build a minimal Form1040Record for gap-fill tests."""
-    return Form1040Record(
-        tax_year=tax_year,
-        agi=magi,
-        tax_exempt_interest=0.0,
-        taxable_ss=0.0,
-        qualified_dividends=0.0,
-        ordinary_dividends=0.0,
-        feie=0.0,
-        magi=magi,
-        filing_status=None,
-        captured_at=_CAPTURED_AT,
-    )
-
-
-# ---------------------------------------------------------------------------
-# import-merge-0 / import-merge-4: merge_pdf_magi gap-fill semantics
-# ---------------------------------------------------------------------------
-
-
-class TestMergePdfMagiGapFill:
-    """import-merge-0/4: FinExtract wins; PDF only fills absent/zero gaps."""
-
-    def test_existing_value_not_overwritten(self):
-        """A year already in existing must not be replaced by the PDF record."""
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        existing = {2022: 120_000.0}
-        result = merge_pdf_magi(existing, {2022: _make_record(2022, 95_000.0)})
-
-        assert result[2022] == 120_000.0, (
-            "FinExtract value must not be overwritten by PDF — FinExtract wins"
-        )
-
-    def test_absent_year_filled_from_pdf(self):
-        """A year absent from existing is filled from the PDF record."""
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        existing: dict[int, float] = {}
-        result = merge_pdf_magi(existing, {2021: _make_record(2021, 80_000.0)})
-
-        assert result[2021] == 80_000.0
-
-    def test_zero_year_filled_from_pdf(self):
-        """A falsy (zero) year in existing is replaced by PDF value."""
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        existing = {2020: 0.0}
-        result = merge_pdf_magi(existing, {2020: _make_record(2020, 70_000.0)})
-
-        assert result[2020] == 70_000.0
-
-    def test_existing_not_mutated(self):
-        """merge_pdf_magi must return a new dict, never mutate the input."""
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        existing = {2019: 55_000.0}
-        result = merge_pdf_magi(existing, {2019: _make_record(2019, 60_000.0)})
-
-        assert existing[2019] == 55_000.0, "original dict must not be mutated"
-        assert result is not existing
-
-    def test_merge_pdf_magi_docstring_corrected(self):
-        """Docstring must state FinExtract wins, not that PDF takes precedence."""
-        from engine.tax_return_pdf import merge_pdf_magi
-
-        doc = merge_pdf_magi.__doc__ or ""
-        assert "FinExtract" in doc and "wins" in doc.lower() or "take precedence" in doc.lower(), (
-            "merge_pdf_magi docstring must clarify that FinExtract values take precedence"
-        )

@@ -13,7 +13,11 @@ from engine.portfolio_sync import (
     positions_for_forecast,
     positions_for_forecast_multi,
 )
-from engine.upload_merge import build_user_defaults_session_updates, derive_ira_balances
+from engine.upload_merge import (
+    build_user_defaults_session_updates,
+    derive_ira_balances,
+    extract_bundle_magi,
+)
 
 
 def _make_account(
@@ -735,9 +739,15 @@ class TestMalformedUploadRaisesAttributeError:
     """
 
     def test_prior_year_magi_list_raises_attribute_error(self):
-        # prior_year_magi must be a dict; passing a list -> list.items() fails
+        # prior_year_magi must be a dict; passing a list -> list.items() fails.
+        # Wave 5 (Setup / Command Center): build_user_defaults_session_updates
+        # no longer touches prior_year_magi at all (defect #2 — bundle MAGI is
+        # now extracted by the pure engine.upload_merge.extract_bundle_magi
+        # and routed through record_magi_candidates(Source.BUNDLE, ...) by the
+        # Data Bridge view instead of a full session_state replace). The
+        # malformed-shape behavior this test guards now lives there.
         with pytest.raises(AttributeError):
-            build_user_defaults_session_updates({"prior_year_magi": [1, 2, 3]}, as_spouse=False)
+            extract_bundle_magi({"prior_year_magi": [1, 2, 3]})
 
     def test_list_as_data_is_silently_empty(self):
         # A JSON list as the top-level payload: "key" in [] returns False for
