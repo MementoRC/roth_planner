@@ -10,6 +10,7 @@ import streamlit as st
 from engine.data_bridge_browser import (
     is_pyodide,
 )
+from engine.data_sources.record import record_magi_candidates
 from engine.portfolio_sync import (
     AccountSummary,
     EquityGrant,
@@ -26,8 +27,8 @@ from engine.portfolio_sync import (
     save_snapshot,
     save_ytd_snapshot,
 )
-from engine.upload_merge import derive_ira_balances, derive_roth_balances
 from models.household import Household
+from models.sourced import Source
 
 
 def _no_data_msg(noun: str) -> str:
@@ -259,24 +260,20 @@ def render_portfolio_tab(hh: Household) -> None:
                 account_type_overrides=st.session_state.get("account_type_overrides") or None,
             )
             if snap.server_available:
-                # Push synced balances into session state
-                _your_ira, _spouse_ira = derive_ira_balances(snap)
-                if _your_ira > 0:
-                    st.session_state.your_ira = int(_your_ira)
-                if _spouse_ira > 0:
-                    st.session_state.spouse_ira = int(_spouse_ira)
-                _your_roth, _spouse_roth = derive_roth_balances(snap)
-                if _your_roth > 0:
-                    st.session_state.your_roth = int(_your_roth)
-                if _spouse_roth > 0:
-                    st.session_state.spouse_roth = int(_spouse_roth)
+                # NOTE: synced balances (your_ira/spouse_ira/your_roth/spouse_roth)
+                # are deliberately NOT written to session_state here. get_household()
+                # records this snapshot as FINEXTRACT_LIVE candidates and arbitrates
+                # them through the freeze-until-confirm gate (Setup ▸ Command
+                # Center) — a direct write here bypassed that gate (audit defect).
                 # Merge dividend history into holdings before saving snapshot
                 div_rollup = fetch_dividends_rollup()
                 if div_rollup.server_available:
                     snap = apply_dividends_rollup(snap, div_rollup)
                 save_snapshot(snap)
                 st.session_state.portfolio_snapshot = snap
-                # A3: MAGI 2-year history from FinExtract (IRMAA lookback anchor)
+                # A3: MAGI 2-year history from FinExtract (IRMAA lookback anchor).
+                # Records candidates for Command Center review instead of
+                # gap-filling session_state directly (audit defect #2).
                 try:
                     plan_year = datetime.now(UTC).year
                     magi_snap = MagiSnapshot(fetched_at=datetime.now(UTC))
@@ -286,12 +283,12 @@ def render_portfolio_tab(hh: Household) -> None:
                     ):  # batchTaxYear-1 and batchTaxYear-2 (2-year coverage shipped)
                         apply_magi(magi_snap, fetch_magi(plan_year - offset))
                     if magi_snap.prior_year_magi:
-                        existing = dict(st.session_state.get("prior_year_magi") or {})
-                        # Gap-fill only: do NOT override manual entries
-                        for yr, val in magi_snap.prior_year_magi.items():
-                            if yr not in existing or not existing[yr]:
-                                existing[yr] = val
-                        st.session_state["prior_year_magi"] = existing
+                        record_magi_candidates(
+                            magi_snap.prior_year_magi,
+                            Source.FINEXTRACT_LIVE,
+                            "FinExtract tax return",
+                            datetime.now(),
+                        )
                 except Exception:  # noqa: BLE001 — sync is best-effort, never block on MAGI failure
                     pass
                 # Also sync YTD income data

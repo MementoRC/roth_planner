@@ -10,10 +10,14 @@ st.set_page_config(
 )
 
 
+from datetime import datetime  # noqa: E402
+
 from config.loader import load_defaults  # noqa: E402
+from engine.data_sources.record import record_magi_candidates  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
-from engine.tax_return_pdf import load_pdf_tax_records, merge_pdf_magi  # noqa: E402
+from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
+from models.sourced import Source  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -69,20 +73,14 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_s
 
     _cached = load_snapshot()
     if _cached is not None:
+        # NOTE: sourced balance fields (your_ira/spouse_ira/your_roth/spouse_roth)
+        # are deliberately NOT written to session_state here. get_household()
+        # records this same snapshot as FINEXTRACT_LIVE candidates (Wave 3.1b)
+        # and arbitrates them through the freeze-until-confirm gate; a direct
+        # write here made reconcile_manual_edits see a "manual edit" diff
+        # against the committed baseline and silently bypass the gate (audit
+        # defect: FinExtract sync/autoload bypassed the candidate gate).
         st.session_state.portfolio_snapshot = _cached
-        from engine.upload_merge import derive_ira_balances as _derive_ira
-        from engine.upload_merge import derive_roth_balances as _derive_roth
-
-        _your_ira, _spouse_ira = _derive_ira(_cached)
-        if _your_ira > 0:
-            st.session_state.your_ira = int(_your_ira)
-        if _spouse_ira > 0:
-            st.session_state.spouse_ira = int(_spouse_ira)
-        _your_roth, _spouse_roth = _derive_roth(_cached)
-        if _your_roth > 0:
-            st.session_state.your_roth = int(_your_roth)
-        if _spouse_roth > 0:
-            st.session_state.spouse_roth = int(_spouse_roth)
 
 if "ytd_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_ytd_snapshot
@@ -115,14 +113,17 @@ if "ssa_snapshot_spouse" not in st.session_state:
             if _spouse_fra_match is not None:
                 st.session_state.spouse_ss_fra = int(round(_spouse_fra_match.monthly_amount))
 
-# Hydrate prior_year_magi from PDF cache (FinExtract wins; PDF fills historical gaps).
-# merge_pdf_magi only fills absent/zero years so manual edits are preserved.
-
+# Record the on-disk 1040 PDF cache as Source.PDF candidates for Command
+# Center review (Wave 5 — replaces the old merge_pdf_magi gap-fill directly
+# into session_state["prior_year_magi"], which the reconcile step would have
+# wrongly promoted to a MANUAL entry; audit defect #2).
 _pdf_records = load_pdf_tax_records()
 if _pdf_records:
-    st.session_state["prior_year_magi"] = merge_pdf_magi(
-        st.session_state.get("prior_year_magi") or {},
-        _pdf_records,
+    record_magi_candidates(
+        {yr: rec.magi for yr, rec in _pdf_records.items()},
+        Source.PDF,
+        "1040 PDF cache",
+        datetime.now(),
     )
 
 st.sidebar.title("🎯 Roth Planner")
@@ -148,6 +149,17 @@ page = st.sidebar.radio(
     label_visibility="collapsed",
 )
 
+# Wave 4: pending-review badge for the Setup / Command Center gate. Reads
+# whatever get_household() last populated into "_pending_review" — one
+# render lag versus the current page (the sidebar renders before
+# get_household() runs for this render), which is acceptable: the count
+# simply catches up to the latest resolve() on the following rerun.
+_pending_count = len(st.session_state.get("_pending_review") or ())
+if _pending_count:
+    st.sidebar.warning(
+        f"⚠️ {_pending_count} data field(s) awaiting review — see Setup ▸ Command Center"
+    )
+
 # L6 (audit 0702): the generated V2 keypair is displayed only on the Setup page
 # and must not linger in session_state after the user navigates away. data_bridge.py
 # cannot self-clear at render-end — Streamlit reruns top-to-bottom and needs the key
@@ -157,9 +169,25 @@ if page != "⚙️ Setup":
     st.session_state.pop("_generated_priv_b64", None)
 
 # Build household from session state
-from engine.dividend_forecast import forecast_portfolio  # noqa: E402
-from engine.portfolio_sync import positions_for_forecast_multi  # noqa: E402
-from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario  # noqa: E402
+from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
+from engine.data_sources.choices import ChoiceMap  # noqa: E402
+from engine.data_sources.committed import load_committed, save_committed  # noqa: E402
+from engine.data_sources.orchestrator import (  # noqa: E402
+    resolve_for_app,
+    session_keys_for_writeback,
+)
+
+# Setup / Command Center cache paths (Wave 4: centralized in
+# engine/data_sources/paths.py so views/setup/command_center.py can share
+# them without importing from app.py).
+from engine.data_sources.paths import (  # noqa: E402
+    CANDIDATE_STORE_PATH,
+    COMMITTED_PATH,
+    TRUST_CHOICES_PATH,
+)
+from engine.data_sources.snapshot_ingest import derive_snapshot_growth  # noqa: E402
+from engine.exercise_schedule_store import load_exercise_schedule  # noqa: E402
+from models.household import Household, InheritedIRA, SurvivorScenario  # noqa: E402
 from views.setup.parameters import apply_single_filer  # noqa: E402
 
 
@@ -178,7 +206,7 @@ def _build_survivor_scenario() -> SurvivorScenario | None:
 
 
 def get_household() -> Household:
-    hh = Household(
+    session_hh = Household(
         your_age=st.session_state.your_age,
         spouse_age=st.session_state.spouse_age,
         your_ira=st.session_state.your_ira,
@@ -236,115 +264,67 @@ def get_household() -> Household:
         ],
     )
 
-    # If portfolio was synced, derive per-account growth and balances
+    # Setup / Command Center: resolve sourced fields (your_ira, spouse_ira,
+    # your_roth, spouse_roth, txn_price_now, grants) against a frozen
+    # committed baseline instead of clobbering them from the FinExtract
+    # snapshot on every render (Wave 3.1b — see engine/data_sources/orchestrator.py).
     snap = st.session_state.get("portfolio_snapshot")
-    if snap and snap.server_available:
-        # Your pre-tax accounts (Rollover IRA + 403b) → your_ira balance & growth
-        from engine.upload_merge import derive_ira_balances as _derive_ira
-        from engine.upload_merge import derive_roth_balances as _derive_roth
+    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get("grant_strikes", {})
 
-        _your_pretax, _spouse_pretax = _derive_ira(snap)
-        if _your_pretax > 0:
-            hh.your_ira = _your_pretax
-            hh.your_ira_growth = GrowthProfile(
-                default_rate=snap.pretax_weighted_return_for("you"),
-            )
-        if _spouse_pretax > 0:
-            hh.spouse_ira = _spouse_pretax
-            hh.spouse_ira_growth = GrowthProfile(
-                default_rate=snap.pretax_weighted_return_for("spouse"),
-            )
+    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    committed_json = load_committed(COMMITTED_PATH)
 
-        # Roth IRA accounts → your_roth / spouse_roth balance & growth.
-        # PortfolioSnapshot has no roth_weighted_return property (only pretax_ and brokerage_),
-        # so we compute the weighted return inline from filtered account lists.
-        # If no Roth accounts exist in the snapshot, balances stay as session_state values.
-        _your_roth_bal, _spouse_roth_bal = _derive_roth(snap)
-        if _your_roth_bal > 0:
-            hh.your_roth = _your_roth_bal
-            _your_roth_accounts = [a for a in snap.accounts if a.owner == "you" and a.is_roth]
-            _your_roth_return = (
-                sum(a.total_value * a.weighted_return for a in _your_roth_accounts) / _your_roth_bal
-                if _your_roth_accounts
-                else hh.growth_rate
-            )
-            hh.your_roth_growth = GrowthProfile(default_rate=_your_roth_return)
-        if _spouse_roth_bal > 0:
-            hh.spouse_roth = _spouse_roth_bal
-            _spouse_roth_accounts = [a for a in snap.accounts if a.owner == "spouse" and a.is_roth]
-            _spouse_roth_return = (
-                sum(a.total_value * a.weighted_return for a in _spouse_roth_accounts)
-                / _spouse_roth_bal
-                if _spouse_roth_accounts
-                else hh.growth_rate
-            )
-            hh.spouse_roth_growth = GrowthProfile(default_rate=_spouse_roth_return)
+    app_res = resolve_for_app(
+        session_hh, snap, strikes, store, choices, committed_json, recorded_at=datetime.now()
+    )
+    hh = app_res.result.household
 
-        # Brokerage weighted return + dividend forecast (aggregate across all owners)
-        brokerage_accounts = snap.brokerage_accounts
-        brokerage_total = snap.brokerage_total
-        if brokerage_accounts and brokerage_total > 0:
-            _fcst = forecast_portfolio(
-                positions_for_forecast_multi(brokerage_accounts),
-                total_balance=brokerage_total,
-            )
-            hh.brokerage_growth = GrowthProfile(
-                default_rate=snap.brokerage_weighted_return,
-                yield_rate=_fcst.yield_rate,
-                qualified_fraction=_fcst.qualified_fraction,
-            )
+    # Growth profiles are NOT a sourced field — still derive them live from
+    # the snapshot every load, exactly as before.
+    if snap is not None and getattr(snap, "server_available", False):
+        derive_snapshot_growth(hh, snap)
 
-        # Auto-derive current stock price from TXN shares value/count
-        if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
-            hh.txn_price_now = snap.txn_shares_value / snap.txn_shares_held
+    # Mirror the resolved/committed sourced values back into session_state so
+    # reconcile_manual_edits only ever fires on a genuine user edit (not a
+    # stale snapshot-derived value), confirms from the Command Center stick,
+    # and freshly-synced-but-not-yet-confirmed values sit pending correctly
+    # rather than looking like a manual edit on the next render.
+    for _attr, _session_key in session_keys_for_writeback().items():
+        _value = getattr(hh, _attr, None)
+        if _value is None:
+            continue
+        if _attr == "prior_year_magi":
+            st.session_state[_session_key] = {int(_y): float(_v) for _y, _v in dict(_value).items()}
+        else:
+            # int, not float: every Setup number_input bound to these keys uses
+            # format="%d"/int min_value/step (whole-dollar balances and stock
+            # price), and Streamlit's number_input raises
+            # StreamlitMixedNumericTypesError if `value` doesn't match those
+            # types exactly — matches the int() cast the old direct-write code
+            # already used for these same fields.
+            st.session_state[_session_key] = int(round(_value))
 
-    # Merge FinExtract equity grants with user-supplied strike prices.
-    # FinExtract is the source of truth for which grants exist + outstanding
-    # shares; the user JSON only supplies strike per grant year.
-    if snap and snap.server_available and snap.equity_grants:
-        from models.grants import StockGrant
+    # Persist: write the migrated committed baseline only on first migration
+    # (or when none existed), and always persist the candidate/choice stores.
+    if app_res.committed_changed:
+        save_committed(COMMITTED_PATH, app_res.committed_json)
+    store.save(CANDIDATE_STORE_PATH)
+    choices.save(TRUST_CHOICES_PATH)
 
-        strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
-            "grant_strikes", {}
+    # Expose the review gate to the sidebar/Command Center.
+    st.session_state["_pending_review"] = app_res.result.pending_review
+
+    # Preserve the existing dropped-strike warning (grant with outstanding
+    # shares but no configured strike — must not be silently hidden).
+    if app_res.dropped_missing_strike:
+        detail = ", ".join(f"{yr} ({sh:,} sh)" for yr, sh in sorted(app_res.dropped_missing_strike))
+        st.warning(
+            f"Ignored {len(app_res.dropped_missing_strike)} option grant(s) with "
+            f"outstanding shares but no configured strike price: {detail}. Add a "
+            "strike for these grant years (grant_strikes in your data-bridge "
+            "upload or .user_defaults.json) so they appear in the planner."
         )
-        merged_grants = []
-        dropped_missing_strike: list[tuple[int, int]] = []
-        for g in snap.equity_grants:
-            year = int(g.grant_date.split("-")[0]) if g.grant_date else 0
-            if g.outstanding <= 0:
-                continue  # fully exercised — nothing left to plan
-            strike = float(strikes.get(str(year), 0.0))
-            if strike <= 0:
-                # A grant with outstanding shares but no configured strike is a
-                # real position we must NOT silently drop (it hid the user's 2019
-                # grant). Record it and warn below instead of skipping quietly.
-                dropped_missing_strike.append((year, g.outstanding))
-                continue
-            # NQO typically expires 10 years from grant date
-            expires = year + 10
-            merged_grants.append(
-                StockGrant(
-                    year=year,
-                    strike=strike,
-                    shares=g.outstanding,
-                    expiry_year=expires,
-                    grant_id=g.grant_id,
-                )
-            )
-        if dropped_missing_strike:
-            detail = ", ".join(
-                f"{yr} ({sh:,} sh)" for yr, sh in sorted(dropped_missing_strike)
-            )
-            st.warning(
-                f"Ignored {len(dropped_missing_strike)} option grant(s) with "
-                f"outstanding shares but no configured strike price: {detail}. Add a "
-                "strike for these grant years (grant_strikes in your data-bridge "
-                "upload or .user_defaults.json) so they appear in the planner."
-            )
-        if merged_grants:
-            hh.grants = merged_grants
-
-    from engine.exercise_schedule_store import load_exercise_schedule
 
     hh.exercise_schedule = load_exercise_schedule()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TypeVar
 
 import streamlit as st
@@ -11,6 +12,7 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
+from engine.data_sources.record import record_magi_candidates
 from engine.irmaa import BASE_PART_B
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
@@ -19,6 +21,7 @@ from engine.tax_return_pdf import (
     save_pdf_tax_records,
 )
 from models.household import Household
+from models.sourced import Source
 from views._format import fmt_dollars
 from views.setup._state import _user_defaults_from_session
 
@@ -234,9 +237,12 @@ def _render_pdf_1040_import() -> None:
     """Widget to import MAGI from a TurboTax-exported 1040 PDF.
 
     Gated behind ``is_pyodide()`` — pdfplumber is not available in the web build.
-    Parses the PDF, shows a confirmation preview with the filing-status selectbox
-    (parser leaves it None), then on confirm persists the record and writes MAGI
-    into session_state["prior_year_magi"].
+    On scan, records a ``prior_year_magi.<year>`` candidate (Source.PDF) for
+    review in the Setup / Command Center rather than writing session_state
+    directly. Shows a confirmation preview with the filing-status selectbox
+    (parser leaves it None); on confirm, persists the Form1040Record (with the
+    chosen filing status) but does not touch ``prior_year_magi`` again — the
+    candidate already recorded at scan time is the single source of truth.
     """
     with st.expander("📄 Import 1040 PDF (TurboTax export)", expanded=False):
         if is_pyodide():
@@ -272,7 +278,14 @@ def _render_pdf_1040_import() -> None:
                 if scan_errors:
                     st.warning(f"{len(scan_errors)} file(s) could not be parsed: " + "; ".join(scan_errors))
                 st.session_state["_pdf_1040_scanned"] = scanned
-                if not scanned:
+                if scanned:
+                    record_magi_candidates(
+                        {yr: rec.magi for yr, rec in scanned.items()},
+                        Source.PDF,
+                        "Form 1040 PDF",
+                        datetime.now(),
+                    )
+                else:
                     st.info("No Form 1040 PDFs found in that folder.")
 
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
@@ -307,10 +320,10 @@ def _render_pdf_1040_import() -> None:
                 records[rec.tax_year] = rec
                 with st.spinner("Saving…"):
                     save_pdf_tax_records(records)
-                # Direct write — user just confirmed; overrides any existing value
-                prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
-                prior_magi[rec.tax_year] = rec.magi
-                st.session_state["prior_year_magi"] = prior_magi
+                st.info(
+                    "1 prior-year MAGI value detected — review & confirm it in the "
+                    "🎛️ Command Center tab."
+                )
                 # Drop the confirmed year so it doesn't re-prompt on rerun
                 scanned_records.pop(_year, None)
                 st.session_state["_pdf_1040_scanned"] = scanned_records
