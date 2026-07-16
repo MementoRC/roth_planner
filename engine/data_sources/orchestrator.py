@@ -28,6 +28,27 @@ from models.sourced import Provenance, Source
 
 _MAGI_ATTR = "prior_year_magi"
 
+# Single source of truth for Household sourced-field attr -> session_state key.
+# Almost all are 1:1; txn_price_now is aliased to "txn_price" because the
+# Setup number_input widget (views/setup/parameters.py) predates this field
+# being a Household attribute name. Shared by app.py's post-resolve session
+# writeback and views/setup/command_center.py's confirm handler so both stay
+# in sync on the same key (a prior mismatch here reverted Command Center
+# confirms of txn_price_now on the very next render).
+SOURCED_SESSION_KEYS: dict[str, str] = {
+    "your_ira": "your_ira",
+    "spouse_ira": "spouse_ira",
+    "your_roth": "your_roth",
+    "spouse_roth": "spouse_roth",
+    "txn_price_now": "txn_price",
+    _MAGI_ATTR: _MAGI_ATTR,
+}
+
+
+def session_keys_for_writeback() -> dict[str, str]:
+    """Return the Household sourced-field attr -> session_state key map."""
+    return dict(SOURCED_SESSION_KEYS)
+
 
 @dataclass
 class AppResolveResult:

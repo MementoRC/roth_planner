@@ -18,6 +18,7 @@ from engine.data_sources.candidate_store import Candidate, CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed, save_committed
 from engine.data_sources.confirm import confirm_field
+from engine.data_sources.orchestrator import session_keys_for_writeback
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
 from models.household import Household
@@ -97,9 +98,19 @@ def _resolve_confirm_choice(
 
 
 def _apply_confirm_to_session(field_key: str, value: Any) -> None:
-    """Keep session_state in sync so reconcile_manual_edits doesn't revert the confirm."""
+    """Keep session_state in sync so reconcile_manual_edits doesn't revert the confirm.
+
+    Uses the shared field->session_key alias map (txn_price_now is aliased to
+    "txn_price") — writing under the raw field_key here previously left
+    session_state["txn_price"] stale, so the next reconcile saw a diff and
+    reverted the confirm. Session-mirror values are int, not float: every
+    Setup number_input bound to these keys uses format="%d"/int
+    min_value/step, so a float here would raise
+    StreamlitMixedNumericTypesError on the next Setup render.
+    """
     if field_key in HOUSEHOLD_SCALAR_FIELDS:
-        st.session_state[field_key] = float(value)
+        session_key = session_keys_for_writeback().get(field_key, field_key)
+        st.session_state[session_key] = int(round(value))
     elif field_key.startswith(_MAGI_PREFIX):
         year = int(field_key[len(_MAGI_PREFIX) :])
         magi = dict(st.session_state.get("prior_year_magi") or {})

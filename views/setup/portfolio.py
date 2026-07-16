@@ -27,7 +27,6 @@ from engine.portfolio_sync import (
     save_snapshot,
     save_ytd_snapshot,
 )
-from engine.upload_merge import derive_ira_balances, derive_roth_balances
 from models.household import Household
 from models.sourced import Source
 
@@ -261,17 +260,11 @@ def render_portfolio_tab(hh: Household) -> None:
                 account_type_overrides=st.session_state.get("account_type_overrides") or None,
             )
             if snap.server_available:
-                # Push synced balances into session state
-                _your_ira, _spouse_ira = derive_ira_balances(snap)
-                if _your_ira > 0:
-                    st.session_state.your_ira = int(_your_ira)
-                if _spouse_ira > 0:
-                    st.session_state.spouse_ira = int(_spouse_ira)
-                _your_roth, _spouse_roth = derive_roth_balances(snap)
-                if _your_roth > 0:
-                    st.session_state.your_roth = int(_your_roth)
-                if _spouse_roth > 0:
-                    st.session_state.spouse_roth = int(_spouse_roth)
+                # NOTE: synced balances (your_ira/spouse_ira/your_roth/spouse_roth)
+                # are deliberately NOT written to session_state here. get_household()
+                # records this snapshot as FINEXTRACT_LIVE candidates and arbitrates
+                # them through the freeze-until-confirm gate (Setup ▸ Command
+                # Center) — a direct write here bypassed that gate (audit defect).
                 # Merge dividend history into holdings before saving snapshot
                 div_rollup = fetch_dividends_rollup()
                 if div_rollup.server_available:

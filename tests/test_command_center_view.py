@@ -36,6 +36,58 @@ def clean_command_center_caches():
         p.unlink(missing_ok=True)
 
 
+def _seed_pending_txn_price_now() -> None:
+    """Committed txn_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
+    committed_json = {
+        "txn_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
+    }
+    COMMITTED_PATH.write_text(json.dumps(committed_json))
+
+    store = CandidateStore()
+    store.record_candidate(
+        "txn_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
+    )
+    store.save(CANDIDATE_STORE_PATH)
+    ChoiceMap().save(TRUST_CHOICES_PATH)
+
+
+def _render_with_pending_txn_price_now() -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup.command_center import render_command_center
+
+    st.session_state["_pending_review"] = {"txn_price_now"}
+    render_command_center(Household())
+
+
+def test_confirm_txn_price_now_syncs_the_aliased_session_key(
+    clean_command_center_caches,
+) -> None:
+    """Bug 2 regression: the Household attr is txn_price_now, but the Setup
+    number_input widget reads/writes session_state["txn_price"] (alias). The
+    confirm handler must write the SAME aliased key, or the next
+    reconcile_manual_edits sees session_state.txn_price still stale and
+    reverts the confirm.
+    """
+    _seed_pending_txn_price_now()
+
+    at = AppTest.from_function(_render_with_pending_txn_price_now)
+    at.run()
+    assert not at.exception
+
+    at.button(key="confirm_txn_price_now").click().run()
+
+    assert not at.exception
+    assert at.session_state["txn_price"] == 250.0
+    assert "txn_price_now" not in at.session_state
+
+    committed_json = load_committed(COMMITTED_PATH)
+    assert committed_json is not None
+    assert committed_json["txn_price_now"]["value"] == 250.0
+    assert committed_json["txn_price_now"]["source"] == "FINEXTRACT_LIVE"
+
+
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.7M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
     committed_json = {

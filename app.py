@@ -73,20 +73,14 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_s
 
     _cached = load_snapshot()
     if _cached is not None:
+        # NOTE: sourced balance fields (your_ira/spouse_ira/your_roth/spouse_roth)
+        # are deliberately NOT written to session_state here. get_household()
+        # records this same snapshot as FINEXTRACT_LIVE candidates (Wave 3.1b)
+        # and arbitrates them through the freeze-until-confirm gate; a direct
+        # write here made reconcile_manual_edits see a "manual edit" diff
+        # against the committed baseline and silently bypass the gate (audit
+        # defect: FinExtract sync/autoload bypassed the candidate gate).
         st.session_state.portfolio_snapshot = _cached
-        from engine.upload_merge import derive_ira_balances as _derive_ira
-        from engine.upload_merge import derive_roth_balances as _derive_roth
-
-        _your_ira, _spouse_ira = _derive_ira(_cached)
-        if _your_ira > 0:
-            st.session_state.your_ira = int(_your_ira)
-        if _spouse_ira > 0:
-            st.session_state.spouse_ira = int(_spouse_ira)
-        _your_roth, _spouse_roth = _derive_roth(_cached)
-        if _your_roth > 0:
-            st.session_state.your_roth = int(_your_roth)
-        if _spouse_roth > 0:
-            st.session_state.spouse_roth = int(_spouse_roth)
 
 if "ytd_snapshot" not in st.session_state:
     from engine.portfolio_sync import load_ytd_snapshot
@@ -178,7 +172,10 @@ if page != "⚙️ Setup":
 from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap  # noqa: E402
 from engine.data_sources.committed import load_committed, save_committed  # noqa: E402
-from engine.data_sources.orchestrator import resolve_for_app  # noqa: E402
+from engine.data_sources.orchestrator import (  # noqa: E402
+    resolve_for_app,
+    session_keys_for_writeback,
+)
 
 # Setup / Command Center cache paths (Wave 4: centralized in
 # engine/data_sources/paths.py so views/setup/command_center.py can share
@@ -287,6 +284,26 @@ def get_household() -> Household:
     # the snapshot every load, exactly as before.
     if snap is not None and getattr(snap, "server_available", False):
         derive_snapshot_growth(hh, snap)
+
+    # Mirror the resolved/committed sourced values back into session_state so
+    # reconcile_manual_edits only ever fires on a genuine user edit (not a
+    # stale snapshot-derived value), confirms from the Command Center stick,
+    # and freshly-synced-but-not-yet-confirmed values sit pending correctly
+    # rather than looking like a manual edit on the next render.
+    for _attr, _session_key in session_keys_for_writeback().items():
+        _value = getattr(hh, _attr, None)
+        if _value is None:
+            continue
+        if _attr == "prior_year_magi":
+            st.session_state[_session_key] = {int(_y): float(_v) for _y, _v in dict(_value).items()}
+        else:
+            # int, not float: every Setup number_input bound to these keys uses
+            # format="%d"/int min_value/step (whole-dollar balances and stock
+            # price), and Streamlit's number_input raises
+            # StreamlitMixedNumericTypesError if `value` doesn't match those
+            # types exactly — matches the int() cast the old direct-write code
+            # already used for these same fields.
+            st.session_state[_session_key] = int(round(_value))
 
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
