@@ -53,6 +53,10 @@ Thumbs.db
 .koinly_cache.json
 .statement_folder_config.json
 .statement_account_overrides.json
+.exercise_schedule_cache.json
+.candidate_store.json
+.trust_choices.json
+.committed_household.json
 .claude/
 .mcp.json
 .locks/
