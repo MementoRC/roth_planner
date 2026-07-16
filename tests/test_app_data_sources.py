@@ -100,3 +100,37 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
     committed_json = load_committed(committed_path)
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
+
+
+def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
+    clean_command_center_caches,
+) -> None:
+    """Regression (Wave 3.1b): apply_committed froze sourced fields onto the
+    committed baseline on every render, so a Setup-form edit to your_ira was
+    silently reverted on the very next rerun (the FinExtract snapshot no
+    longer writes st.session_state.your_ira directly, so the number_input is
+    the only writer left — its edits must stick, not get clobbered back to
+    the frozen committed value).
+    """
+    for p in _NEW_CACHE_FILES:
+        p.unlink(missing_ok=True)
+
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["_suppress_snapshot_autoload"] = True
+    at.run()
+    assert not at.exception
+
+    committed_path = REPO_ROOT / ".committed_household.json"
+    committed_json = load_committed(committed_path)
+    assert committed_json is not None
+    assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
+
+    edited_value = DEFAULTS["your_ira"] + 500_000
+    at.session_state["your_ira"] = edited_value
+    at.run()
+    assert not at.exception
+
+    committed_json = load_committed(committed_path)
+    assert committed_json is not None
+    assert committed_json["your_ira"]["value"] == edited_value
+    assert committed_json["your_ira"]["source"] == "MANUAL"

@@ -21,9 +21,12 @@ from typing import Any
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import apply_committed, migrate_committed
-from engine.data_sources.resolver import ResolveResult, resolve
+from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS, ResolveResult, resolve
 from engine.data_sources.snapshot_ingest import apply_snapshot_overwrite, record_snapshot_candidates
 from models.household import Household
+from models.sourced import Provenance, Source
+
+_MAGI_ATTR = "prior_year_magi"
 
 
 @dataclass
@@ -31,7 +34,61 @@ class AppResolveResult:
     result: ResolveResult
     committed_json: dict
     migrated: bool
+    committed_changed: bool
     dropped_missing_strike: list[tuple[int, int]]
+
+
+def reconcile_manual_edits(
+    session_hh: Household, committed_json: dict, recorded_at: datetime
+) -> tuple[dict, bool]:
+    """Promote Setup-form edits (raw ``session_hh`` values) to committed
+    MANUAL entries, mutating and returning ``committed_json`` in place.
+
+    Must run BEFORE ``apply_committed`` mutates ``session_hh`` — it compares
+    the raw session value (whatever the Setup number_input currently holds)
+    against the frozen committed numeric value. A genuine difference means
+    the user edited the field since it was last committed, so it is promoted
+    to a fresh ``Source.MANUAL`` entry; an unchanged field is left untouched
+    (provenance is not disturbed just because reconcile ran).
+
+    Limitation: for ``prior_year_magi`` this only adds/updates years present
+    in ``session_hh.prior_year_magi`` — it never deletes a committed year
+    that is absent from the session dict.
+    """
+    changed = False
+    prov_json = Provenance(Source.MANUAL, recorded_at, "manual entry").to_json()
+
+    for attr in HOUSEHOLD_SCALAR_FIELDS:
+        payload = committed_json.get(attr)
+        if payload is None:
+            continue
+        session_value = getattr(session_hh, attr, None)
+        if session_value is None:
+            continue
+        if float(session_value) != float(payload["value"]):
+            new_payload = dict(prov_json)
+            new_payload["value"] = float(session_value)
+            committed_json[attr] = new_payload
+            changed = True
+
+    magi_payload = committed_json.get(_MAGI_ATTR)
+    session_magi = getattr(session_hh, _MAGI_ATTR, None) or {}
+    if magi_payload is not None and session_magi:
+        data = dict(magi_payload.get("data", {}))
+        prov = dict(magi_payload.get("prov", {}))
+        magi_changed = False
+        for year, value in session_magi.items():
+            year_key = str(year)
+            existing = data.get(year_key)
+            if existing is None or float(existing) != float(value):
+                data[year_key] = float(value)
+                prov[year_key] = prov_json
+                magi_changed = True
+        if magi_changed:
+            committed_json[_MAGI_ATTR] = {"data": data, "prov": prov}
+            changed = True
+
+    return committed_json, changed
 
 
 def resolve_for_app(
@@ -55,6 +112,8 @@ def resolve_for_app(
         committed_json = migrate_committed(base, recorded_at)
         migrated = True
 
+    committed_json, reconciled = reconcile_manual_edits(session_hh, committed_json, recorded_at)
+
     apply_committed(session_hh, committed_json)
 
     dropped: list[tuple[int, int]] = []
@@ -66,5 +125,6 @@ def resolve_for_app(
         result=result,
         committed_json=committed_json,
         migrated=migrated,
+        committed_changed=migrated or reconciled,
         dropped_missing_strike=dropped,
     )

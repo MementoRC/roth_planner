@@ -272,7 +272,7 @@ def get_household() -> Household:
 
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
-    if app_res.migrated or committed_json is None:
+    if app_res.committed_changed:
         save_committed(COMMITTED_PATH, app_res.committed_json)
     store.save(CANDIDATE_STORE_PATH)
     choices.save(TRUST_CHOICES_PATH)

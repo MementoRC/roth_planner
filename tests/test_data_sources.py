@@ -26,7 +26,7 @@ from engine.data_sources.committed import (
 )
 from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
-from engine.data_sources.orchestrator import resolve_for_app
+from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
 from engine.data_sources.resolver import (
     GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
@@ -901,3 +901,55 @@ class TestOrchestrator:
         assert second.migrated is False
         assert second.result.household.your_ira == 1_700_000.0
         assert "your_ira" in second.result.pending_review
+
+
+class TestReconcileManualEdits:
+    def test_session_edit_promotes_committed_field_to_manual(self) -> None:
+        session_hh = Household()
+        session_hh.your_ira = 2_000_000.0
+        committed_json = {
+            "your_ira": SourcedValue(
+                1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)
+            ).to_json()
+        }
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is True
+        assert result_json["your_ira"]["value"] == 2_000_000.0
+        assert result_json["your_ira"]["source"] == "MANUAL"
+
+        committed_hh = Household()
+        apply_committed(committed_hh, result_json)
+        resolved = resolve(committed_hh, CandidateStore(), ChoiceMap())
+
+        assert resolved.household.your_ira == 2_000_000.0
+        assert "your_ira" not in resolved.pending_review
+
+    def test_session_matching_committed_leaves_provenance_untouched(self) -> None:
+        session_hh = Household()
+        session_hh.your_ira = 1_700_000.0
+        original_payload = SourcedValue(
+            1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)
+        ).to_json()
+        committed_json = {"your_ira": dict(original_payload)}
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is False
+        assert result_json["your_ira"] == original_payload
+
+    def test_magi_year_edit_promotes_that_year_to_manual(self) -> None:
+        session_hh = Household()
+        session_hh.prior_year_magi = {2024: 290_000.0}
+        committed_json = {
+            "prior_year_magi": SourcedDict(
+                {2024: 285_000.0}, {2024: Provenance(Source.UNKNOWN, FIXED_DT)}
+            ).to_json()
+        }
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is True
+        assert result_json["prior_year_magi"]["data"]["2024"] == 290_000.0
+        assert result_json["prior_year_magi"]["prov"]["2024"]["source"] == "MANUAL"
