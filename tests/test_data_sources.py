@@ -6,7 +6,9 @@ external services. All datetimes are fixed literals (never datetime.now()).
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+import pickle
 from datetime import datetime
 from pathlib import Path
 
@@ -163,6 +165,103 @@ class TestSourcedModel:
         assert restored.prov[1].source == Source.UNKNOWN
         assert restored.prov[1].detail == "fallback"
         assert restored.prov[2].source == Source.UNKNOWN
+
+
+class TestSourcedDeepcopy:
+    """Regression: __new__/__init__ require ``prov``, which the default
+    reduction protocol omits, crashing copy.deepcopy/pickle on any Household
+    carrying a committed sourced field (optimizer/scenario-compare deepcopy
+    households)."""
+
+    def test_sourced_value_deepcopy_preserves_value_and_prov(self) -> None:
+        prov = Provenance(source=Source.MANUAL, recorded_at=FIXED_DT, detail="entered")
+        sv = SourcedValue(100.0, prov)
+
+        copied = copy.deepcopy(sv)
+
+        assert copied == 100.0
+        assert isinstance(copied, SourcedValue)
+        assert copied.prov.source == Source.MANUAL
+        assert copied.prov.detail == "entered"
+        assert copied.prov.recorded_at == FIXED_DT
+
+    def test_sourced_dict_deepcopy_preserves_data_and_per_key_prov(self) -> None:
+        prov_2024 = Provenance(source=Source.PDF, recorded_at=FIXED_DT, detail="1040 2024")
+        prov_2025 = Provenance(source=Source.MANUAL, recorded_at=FIXED_DT_2, detail="est 2025")
+        sd = SourcedDict(
+            {2024: 285000.0, 2025: 290000.0},
+            {2024: prov_2024, 2025: prov_2025},
+        )
+
+        copied = copy.deepcopy(sd)
+
+        assert isinstance(copied, SourcedDict)
+        assert dict(copied) == {2024: 285000.0, 2025: 290000.0}
+        assert copied.prov[2024].source == Source.PDF
+        assert copied.prov[2025].source == Source.MANUAL
+        assert copied.prov[2024].detail == "1040 2024"
+
+    def test_sourced_list_deepcopy_preserves_data_and_per_element_prov(self) -> None:
+        prov_a = Provenance(source=Source.MANUAL, recorded_at=FIXED_DT, detail="first")
+        prov_b = Provenance(source=Source.ESTIMATE, recorded_at=FIXED_DT_2, detail="second")
+        sl = SourcedList([100.0, 200.0], [prov_a, prov_b])
+
+        copied = copy.deepcopy(sl)
+
+        assert isinstance(copied, SourcedList)
+        assert list(copied) == [100.0, 200.0]
+        assert copied.prov[0].source == Source.MANUAL
+        assert copied.prov[1].source == Source.ESTIMATE
+        assert copied.prov[1].detail == "second"
+
+    def test_sourced_value_pickle_round_trip(self) -> None:
+        prov = Provenance(source=Source.BUNDLE, recorded_at=FIXED_DT, detail="imported")
+        sv = SourcedValue(42.5, prov)
+
+        restored = pickle.loads(pickle.dumps(sv))
+
+        assert restored == 42.5
+        assert isinstance(restored, SourcedValue)
+        assert restored.prov.source == Source.BUNDLE
+        assert restored.prov.detail == "imported"
+        assert restored.prov.recorded_at == FIXED_DT
+
+    def test_sourced_dict_pickle_round_trip(self) -> None:
+        prov_2024 = Provenance(source=Source.PDF, recorded_at=FIXED_DT, detail="1040 2024")
+        sd = SourcedDict({2024: 285000.0}, {2024: prov_2024})
+
+        restored = pickle.loads(pickle.dumps(sd))
+
+        assert isinstance(restored, SourcedDict)
+        assert dict(restored) == {2024: 285000.0}
+        assert restored.prov[2024].source == Source.PDF
+        assert restored.prov[2024].detail == "1040 2024"
+
+    def test_sourced_list_pickle_round_trip(self) -> None:
+        prov_a = Provenance(source=Source.DEFAULT, recorded_at=FIXED_DT)
+        sl = SourcedList([1.5, 2.5], [prov_a, prov_a])
+
+        restored = pickle.loads(pickle.dumps(sl))
+
+        assert isinstance(restored, SourcedList)
+        assert list(restored) == [1.5, 2.5]
+        assert restored.prov[0].source == Source.DEFAULT
+
+    def test_household_with_committed_sourced_value_deepcopies_clean(self) -> None:
+        """Exact scenario that would crash engine/exercise_optimizer.py and
+        engine/scenario_compare.py, both of which deepcopy Household."""
+        hh = Household()
+        hh.your_ira = SourcedValue(
+            1_700_000.0,
+            Provenance(Source.UNKNOWN, datetime(2026, 7, 16, 12, 0, 0), "pre-migration"),
+        )
+
+        hh2 = copy.deepcopy(hh)
+
+        assert hh2.your_ira == 1_700_000.0
+        assert isinstance(hh2.your_ira, SourcedValue)
+        assert hh2.your_ira.prov.source == Source.UNKNOWN
+        assert hh2.your_ira.prov.detail == "pre-migration"
 
 
 class TestCandidateStore:

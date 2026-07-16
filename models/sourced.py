@@ -92,6 +92,9 @@ class SourcedValue(float):
         prov = Provenance.from_json(d)
         return cls(d["value"], prov)
 
+    def __reduce__(self) -> tuple[type[SourcedValue], tuple[float, Provenance]]:
+        return (SourcedValue, (float(self), self.prov))
+
 
 class SourcedDict(dict):
     """Dict subclass with a parallel per-key ``Provenance`` map."""
@@ -113,6 +116,9 @@ class SourcedDict(dict):
         data = {key_type(k): v for k, v in d["data"].items()}
         prov = {key_type(k): Provenance.from_json(p) for k, p in d["prov"].items()}
         return cls(data, prov)
+
+    def __reduce__(self) -> tuple[type[SourcedDict], tuple[dict, dict[Any, Provenance]]]:
+        return (SourcedDict, (dict(self), self.prov))
 
 
 class SourcedList(list):
@@ -138,3 +144,6 @@ class SourcedList(list):
     def from_json(cls, d: dict) -> SourcedList:
         prov = [Provenance.from_json(p) for p in d["prov"]]
         return cls(list(d["data"]), prov)
+
+    def __reduce__(self) -> tuple[type[SourcedList], tuple[list, list[Provenance]]]:
+        return (SourcedList, (list(self), self.prov))
