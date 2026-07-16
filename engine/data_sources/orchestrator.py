@@ -59,6 +59,22 @@ class AppResolveResult:
     dropped_missing_strike: list[tuple[int, int]]
 
 
+def _rounded_differs(session_value: float, committed_value: float) -> bool:
+    """True when a session value is a genuine edit vs. the committed value.
+
+    Setup balance/price ``number_input`` widgets are integer (``format="%d"``),
+    and the resolved-writeback mirror likewise stores ``int(round(value))``.
+    Committed values, however, may be fractional (e.g. a FinExtract snapshot's
+    summed account balances with cents, or a PDF-parsed MAGI). Comparing the
+    raw values exactly would treat the whole-dollar rounding delta as a
+    "manual edit" and relabel a FINEXTRACT_LIVE/PDF/confirmed provenance as
+    Source.MANUAL on every render, silently dropping cents. Compare at the
+    widget's whole-unit granularity instead: only a difference of a full
+    dollar or more is a genuine edit.
+    """
+    return round(float(session_value)) != round(float(committed_value))
+
+
 def reconcile_manual_edits(
     session_hh: Household, committed_json: dict, recorded_at: datetime
 ) -> tuple[dict, bool]:
@@ -86,7 +102,7 @@ def reconcile_manual_edits(
         session_value = getattr(session_hh, attr, None)
         if session_value is None:
             continue
-        if float(session_value) != float(payload["value"]):
+        if _rounded_differs(session_value, payload["value"]):
             new_payload = dict(prov_json)
             new_payload["value"] = float(session_value)
             committed_json[attr] = new_payload
@@ -101,7 +117,7 @@ def reconcile_manual_edits(
         for year, value in session_magi.items():
             year_key = str(year)
             existing = data.get(year_key)
-            if existing is None or float(existing) != float(value):
+            if existing is None or _rounded_differs(value, existing):
                 data[year_key] = float(value)
                 prov[year_key] = prov_json
                 magi_changed = True

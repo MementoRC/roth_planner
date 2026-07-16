@@ -957,6 +957,58 @@ class TestReconcileManualEdits:
         assert result_json["prior_year_magi"]["data"]["2024"] == 290_000.0
         assert result_json["prior_year_magi"]["prov"]["2024"]["source"] == "MANUAL"
 
+    def test_int_widget_rounding_drift_does_not_promote_fractional_committed_value(
+        self,
+    ) -> None:
+        # Setup balance widgets are integer (format=%d): session_hh holds the
+        # rounded int mirror while a FinExtract-derived committed value keeps
+        # fractional cents. Rounding drift alone must not relabel MANUAL.
+        session_hh = Household()
+        session_hh.your_ira = 1_700_001  # int, rounded widget/writeback value
+        committed_json = {
+            "your_ira": SourcedValue(
+                1_700_000.53, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT)
+            ).to_json()
+        }
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is False
+        assert result_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
+        assert result_json["your_ira"]["value"] == 1_700_000.53
+
+    def test_magi_int_widget_rounding_drift_does_not_promote_fractional_committed_value(
+        self,
+    ) -> None:
+        session_hh = Household()
+        session_hh.prior_year_magi = {2024: 285_000}  # int rounding of 285_000.40
+        committed_json = {
+            "prior_year_magi": SourcedDict(
+                {2024: 285_000.40}, {2024: Provenance(Source.PDF, FIXED_DT)}
+            ).to_json()
+        }
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is False
+        assert result_json["prior_year_magi"]["data"]["2024"] == 285_000.40
+        assert result_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
+
+    def test_genuine_edit_still_detected_despite_rounding_tolerance(self) -> None:
+        session_hh = Household()
+        session_hh.your_ira = 1_800_000  # differs from committed by far more than $1
+        committed_json = {
+            "your_ira": SourcedValue(
+                1_700_000.53, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT)
+            ).to_json()
+        }
+
+        result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
+
+        assert changed is True
+        assert result_json["your_ira"]["source"] == "MANUAL"
+        assert result_json["your_ira"]["value"] == 1_800_000.0
+
 
 class TestPaths:
     def test_cache_path_constants_match_app_py_expected_locations(self) -> None:
