@@ -15,6 +15,7 @@ import streamlit as st
 from engine.tax_indexing import DEFAULT_CPI, index_tuple, index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
+from views._shared import render_canonical_field
 
 # Per-year IRA contribution limits.
 # 2025 source: IRS Notice 2024-80.
@@ -276,9 +277,8 @@ def render(hh: Household):
             [2025, 2026],
             index=[2025, 2026].index(hh.base_year) if hh.base_year in [2025, 2026] else 1,
         )
-        filing = st.selectbox(
-            "Filing Status", ["MFJ", "Single"], index=0 if hh.filing_status == "MFJ" else 1
-        )
+        render_canonical_field("Filing status", hh.filing_status, key="filing")
+        filing = hh.filing_status
     with col2:
         magi = st.number_input(
             "Modified AGI" + (f" (from {most_recent_year} 1040)" if most_recent_year else ""),
@@ -309,11 +309,13 @@ def render(hh: Household):
     default_spouse = 0
 
     with col1:
-        your_age = st.number_input("Your Age (end of tax year)", value=hh.your_age, step=1)
+        render_canonical_field("Your Age (end of tax year)", hh.your_age, key="your_age")
+        your_age = hh.your_age
         if filing != "Single":
-            spouse_age = st.number_input(
-                "Spouse Age (end of tax year)", value=hh.spouse_age, step=1
+            render_canonical_field(
+                "Spouse Age (end of tax year)", hh.spouse_age, key="spouse_age"
             )
+            spouse_age = hh.spouse_age
         else:
             spouse_age = 0
     with col2:
@@ -345,21 +347,19 @@ def render(hh: Household):
     )
     col1, col2 = st.columns(2)
     with col1:
-        your_trad_balance = st.number_input(
-            "Your Total Trad IRA Balance",
-            value=int(hh.your_ira),
-            step=50_000,
-            format="%d",
-            help="All Traditional IRA accounts combined (Dec 31 of tax year)",
+        render_canonical_field(
+            "Your Total Trad IRA Balance", hh.your_ira, key="your_trad_balance", fmt=fmt_dollars
         )
+        your_trad_balance = float(hh.your_ira)
     with col2:
         if filing != "Single":
-            spouse_trad_balance = st.number_input(
+            render_canonical_field(
                 "Spouse Total Trad IRA Balance",
-                value=int(hh.spouse_ira),
-                step=50_000,
-                format="%d",
+                hh.spouse_ira,
+                key="spouse_trad_balance",
+                fmt=fmt_dollars,
             )
+            spouse_trad_balance = float(hh.spouse_ira)
         else:
             spouse_trad_balance = 0
 

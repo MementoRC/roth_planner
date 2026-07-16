@@ -147,6 +147,7 @@ page = st.sidebar.radio(
         "🔗 Portfolio",
     ],
     label_visibility="collapsed",
+    key="nav_page",
 )
 
 # Wave 4: pending-review badge for the Setup / Command Center gate. Reads
