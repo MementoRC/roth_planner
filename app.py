@@ -148,6 +148,17 @@ page = st.sidebar.radio(
     label_visibility="collapsed",
 )
 
+# Wave 4: pending-review badge for the Setup / Command Center gate. Reads
+# whatever get_household() last populated into "_pending_review" — one
+# render lag versus the current page (the sidebar renders before
+# get_household() runs for this render), which is acceptable: the count
+# simply catches up to the latest resolve() on the following rerun.
+_pending_count = len(st.session_state.get("_pending_review") or ())
+if _pending_count:
+    st.sidebar.warning(
+        f"⚠️ {_pending_count} data field(s) awaiting review — see Setup ▸ Command Center"
+    )
+
 # L6 (audit 0702): the generated V2 keypair is displayed only on the Setup page
 # and must not linger in session_state after the user navigates away. data_bridge.py
 # cannot self-clear at render-end — Streamlit reruns top-to-bottom and needs the key
@@ -158,22 +169,24 @@ if page != "⚙️ Setup":
 
 # Build household from session state
 from datetime import datetime  # noqa: E402
-from pathlib import Path  # noqa: E402
 
 from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap  # noqa: E402
 from engine.data_sources.committed import load_committed, save_committed  # noqa: E402
 from engine.data_sources.orchestrator import resolve_for_app  # noqa: E402
+
+# Setup / Command Center cache paths (Wave 4: centralized in
+# engine/data_sources/paths.py so views/setup/command_center.py can share
+# them without importing from app.py).
+from engine.data_sources.paths import (  # noqa: E402
+    CANDIDATE_STORE_PATH,
+    COMMITTED_PATH,
+    TRUST_CHOICES_PATH,
+)
 from engine.data_sources.snapshot_ingest import derive_snapshot_growth  # noqa: E402
 from engine.exercise_schedule_store import load_exercise_schedule  # noqa: E402
 from models.household import Household, InheritedIRA, SurvivorScenario  # noqa: E402
 from views.setup.parameters import apply_single_filer  # noqa: E402
-
-# Setup / Command Center cache paths (Wave 3.1b) — repo-root convention,
-# mirroring engine/exercise_schedule_store.py's _EXERCISE_SCHEDULE_CACHE_PATH.
-CANDIDATE_STORE_PATH = Path(__file__).resolve().parent / ".candidate_store.json"
-TRUST_CHOICES_PATH = Path(__file__).resolve().parent / ".trust_choices.json"
-COMMITTED_PATH = Path(__file__).resolve().parent / ".committed_household.json"
 
 
 def _build_survivor_scenario() -> SurvivorScenario | None:

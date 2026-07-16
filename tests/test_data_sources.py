@@ -24,9 +24,11 @@ from engine.data_sources.committed import (
     migrate_committed,
     save_committed,
 )
+from engine.data_sources.confirm import confirm_field
 from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
+from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.resolver import (
     GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
@@ -953,3 +955,103 @@ class TestReconcileManualEdits:
         assert changed is True
         assert result_json["prior_year_magi"]["data"]["2024"] == 290_000.0
         assert result_json["prior_year_magi"]["prov"]["2024"]["source"] == "MANUAL"
+
+
+class TestPaths:
+    def test_cache_path_constants_match_app_py_expected_locations(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        assert repo_root / ".candidate_store.json" == CANDIDATE_STORE_PATH
+        assert repo_root / ".trust_choices.json" == TRUST_CHOICES_PATH
+        assert repo_root / ".committed_household.json" == COMMITTED_PATH
+
+
+class TestConfirmField:
+    def test_scalar_confirm_updates_committed_and_choice(self) -> None:
+        committed_json: dict = {}
+        choices = ChoiceMap()
+
+        result = confirm_field(
+            committed_json,
+            choices,
+            "your_ira",
+            2_000_000.0,
+            Source.FINEXTRACT_LIVE,
+            FIXED_DT,
+            detail="live sync",
+        )
+
+        assert result is committed_json
+        assert committed_json["your_ira"]["value"] == 2_000_000.0
+        assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
+        assert committed_json["your_ira"]["detail"] == "live sync"
+        assert choices.get("your_ira") == TrustChoice(Source.FINEXTRACT_LIVE, FIXED_DT)
+
+        hh = Household()
+        apply_committed(hh, committed_json)
+        assert hh.your_ira == 2_000_000.0
+        assert isinstance(hh.your_ira, SourcedValue)
+
+    def test_magi_year_confirm_updates_only_that_year(self) -> None:
+        committed_json = {
+            "prior_year_magi": SourcedDict(
+                {2023: 270_000.0}, {2023: Provenance(Source.UNKNOWN, FIXED_DT)}
+            ).to_json()
+        }
+        choices = ChoiceMap()
+
+        confirm_field(
+            committed_json,
+            choices,
+            magi_field_key(2024),
+            288_000.0,
+            Source.PDF,
+            FIXED_DT_2,
+            detail="1040 pdf",
+        )
+
+        assert committed_json["prior_year_magi"]["data"]["2023"] == 270_000.0
+        assert committed_json["prior_year_magi"]["data"]["2024"] == 288_000.0
+        assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
+        assert choices.get(magi_field_key(2024)) == TrustChoice(Source.PDF, FIXED_DT_2)
+
+        hh = Household()
+        apply_committed(hh, committed_json)
+        assert hh.prior_year_magi[2023] == 270_000.0
+        assert hh.prior_year_magi[2024] == 288_000.0
+
+    def test_grants_confirm_serializes_grant_list(self) -> None:
+        committed_json: dict = {}
+        choices = ChoiceMap()
+        grants = [StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="G1")]
+
+        confirm_field(
+            committed_json, choices, GRANTS_KEY, grants, Source.FINEXTRACT_LIVE, FIXED_DT
+        )
+
+        hh = Household()
+        apply_committed(hh, committed_json)
+        assert list(hh.grants) == grants
+        assert hh.grants.prov[0].source == Source.FINEXTRACT_LIVE
+
+    def test_confirm_field_then_resolve_shows_committed_not_pending(self) -> None:
+        committed_json: dict = {}
+        choices = ChoiceMap()
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT)
+        )
+
+        confirm_field(
+            committed_json, choices, "your_ira", 2_000_000.0, Source.FINEXTRACT_LIVE, FIXED_DT_2
+        )
+
+        hh = Household()
+        apply_committed(hh, committed_json)
+        result = resolve(hh, store, choices)
+
+        assert result.household.your_ira == 2_000_000.0
+        assert "your_ira" not in result.pending_review
+
+    def test_unknown_field_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown or unsupported field"):
+            confirm_field({}, ChoiceMap(), "not_a_real_field", 1.0, Source.MANUAL, FIXED_DT)
