@@ -8,12 +8,24 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
+from engine.data_sources.candidate_store import CandidateStore
+from engine.data_sources.choices import ChoiceMap, TrustChoice
+from engine.data_sources.resolver import (
+    HOUSEHOLD_SCALAR_FIELDS,
+    confirm,
+    magi_field_key,
+    resolve,
+)
+from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
 
 FIXED_DT = datetime(2026, 7, 16, 12, 30, 45, 123456)
+FIXED_DT_2 = datetime(2026, 7, 16, 13, 0, 0)
+FIXED_DT_3 = datetime(2026, 7, 16, 14, 0, 0)
 
 
 class TestSourcedModel:
@@ -151,3 +163,333 @@ class TestSourcedModel:
         assert restored.prov[1].source == Source.UNKNOWN
         assert restored.prov[1].detail == "fallback"
         assert restored.prov[2].source == Source.UNKNOWN
+
+
+class TestCandidateStore:
+    def test_record_candidate_and_candidates_for(self) -> None:
+        store = CandidateStore()
+        prov = Provenance(source=Source.MANUAL, recorded_at=FIXED_DT)
+        store.record_candidate("your_ira", 1_700_000.0, prov)
+
+        candidates = store.candidates_for("your_ira")
+        assert len(candidates) == 1
+        assert candidates[0].value == 1_700_000.0
+        assert candidates[0].prov.source == Source.MANUAL
+
+    def test_record_candidate_keeps_latest_per_source(self) -> None:
+        store = CandidateStore()
+        prov1 = Provenance(source=Source.PDF, recorded_at=FIXED_DT, detail="first")
+        prov2 = Provenance(source=Source.PDF, recorded_at=FIXED_DT_2, detail="second")
+        store.record_candidate("your_ira", 100.0, prov1)
+        store.record_candidate("your_ira", 200.0, prov2)
+
+        candidates = store.candidates_for("your_ira")
+        assert len(candidates) == 1
+        assert candidates[0].value == 200.0
+        assert candidates[0].prov.detail == "second"
+
+    def test_record_candidate_keeps_one_per_distinct_source(self) -> None:
+        store = CandidateStore()
+        prov_pdf = Provenance(source=Source.PDF, recorded_at=FIXED_DT)
+        prov_live = Provenance(source=Source.FINEXTRACT_LIVE, recorded_at=FIXED_DT)
+        store.record_candidate("your_ira", 100.0, prov_pdf)
+        store.record_candidate("your_ira", 200.0, prov_live)
+
+        candidates = store.candidates_for("your_ira")
+        assert len(candidates) == 2
+        sources = {c.prov.source for c in candidates}
+        assert sources == {Source.PDF, Source.FINEXTRACT_LIVE}
+
+    def test_has_candidates_and_field_keys(self) -> None:
+        store = CandidateStore()
+        assert store.has_candidates("your_ira") is False
+        assert store.field_keys() == []
+
+        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+        assert store.has_candidates("your_ira") is True
+        assert store.field_keys() == ["your_ira"]
+        assert store.has_candidates("spouse_ira") is False
+
+    def test_to_json_from_json_round_trip(self) -> None:
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ira", 1_700_000.0, Provenance(Source.MANUAL, FIXED_DT, detail="entered")
+        )
+        store.record_candidate(
+            "spouse_ira", 900_000.0, Provenance(Source.PDF, FIXED_DT_2, detail="1040")
+        )
+
+        payload = store.to_json()
+        restored = CandidateStore.from_json(payload)
+
+        assert restored.field_keys() == store.field_keys()
+        your_ira_candidates = restored.candidates_for("your_ira")
+        assert len(your_ira_candidates) == 1
+        assert your_ira_candidates[0].value == 1_700_000.0
+        assert your_ira_candidates[0].prov.source == Source.MANUAL
+        assert your_ira_candidates[0].prov.detail == "entered"
+
+    def test_save_load_round_trip(self, tmp_path: Path) -> None:
+        store = CandidateStore()
+        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+        path = tmp_path / "candidates.json"
+        store.save(path)
+
+        restored = CandidateStore.load(path)
+        assert restored.candidates_for("your_ira")[0].value == 100.0
+
+    def test_load_missing_file_returns_empty_store_no_raise(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.json"
+        store = CandidateStore.load(missing)
+        assert store.field_keys() == []
+
+    def test_load_corrupt_file_returns_empty_store_no_raise(self, tmp_path: Path) -> None:
+        corrupt = tmp_path / "corrupt.json"
+        corrupt.write_text("{not valid json!!")
+        store = CandidateStore.load(corrupt)
+        assert store.field_keys() == []
+
+
+class TestChoiceMap:
+    def test_set_choice_and_get(self) -> None:
+        cm = ChoiceMap()
+        cm.set_choice("your_ira", Source.FINEXTRACT_LIVE, FIXED_DT)
+
+        choice = cm.get("your_ira")
+        assert choice is not None
+        assert choice.source == Source.FINEXTRACT_LIVE
+        assert choice.locked_at == FIXED_DT
+
+    def test_get_missing_returns_none(self) -> None:
+        cm = ChoiceMap()
+        assert cm.get("your_ira") is None
+
+    def test_clear_removes_choice(self) -> None:
+        cm = ChoiceMap()
+        cm.set_choice("your_ira", Source.MANUAL, FIXED_DT)
+        cm.clear("your_ira")
+        assert cm.get("your_ira") is None
+
+    def test_clear_missing_key_is_noop(self) -> None:
+        cm = ChoiceMap()
+        cm.clear("your_ira")  # must not raise
+        assert cm.get("your_ira") is None
+
+    def test_trust_choice_json_round_trip(self) -> None:
+        choice = TrustChoice(source=Source.PDF, locked_at=FIXED_DT)
+        payload = choice.to_json()
+        restored = TrustChoice.from_json(payload)
+        assert restored == choice
+
+    def test_to_json_from_json_round_trip(self) -> None:
+        cm = ChoiceMap()
+        cm.set_choice("your_ira", Source.MANUAL, FIXED_DT)
+        cm.set_choice("spouse_ira", Source.PDF, FIXED_DT_2)
+
+        payload = cm.to_json()
+        restored = ChoiceMap.from_json(payload)
+
+        assert restored.get("your_ira") == TrustChoice(Source.MANUAL, FIXED_DT)
+        assert restored.get("spouse_ira") == TrustChoice(Source.PDF, FIXED_DT_2)
+
+    def test_save_load_round_trip(self, tmp_path: Path) -> None:
+        cm = ChoiceMap()
+        cm.set_choice("your_ira", Source.FINEXTRACT_LIVE, FIXED_DT)
+        path = tmp_path / "choices.json"
+        cm.save(path)
+
+        restored = ChoiceMap.load(path)
+        assert restored.get("your_ira") == TrustChoice(Source.FINEXTRACT_LIVE, FIXED_DT)
+
+    def test_load_missing_file_returns_empty_map_no_raise(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.json"
+        cm = ChoiceMap.load(missing)
+        assert cm.get("your_ira") is None
+
+    def test_load_corrupt_file_returns_empty_map_no_raise(self, tmp_path: Path) -> None:
+        corrupt = tmp_path / "corrupt.json"
+        corrupt.write_text("not json at all {{{")
+        cm = ChoiceMap.load(corrupt)
+        assert cm.get("your_ira") is None
+
+
+class TestResolver:
+    def test_household_scalar_fields_constant_matches_expected(self) -> None:
+        assert set(HOUSEHOLD_SCALAR_FIELDS) == {
+            "your_ira",
+            "spouse_ira",
+            "your_roth",
+            "spouse_roth",
+            "txn_price_now",
+        }
+        for field_key in HOUSEHOLD_SCALAR_FIELDS:
+            assert hasattr(Household(), field_key)
+
+    def test_freeze_invariant_committed_value_survives_differing_candidate(self) -> None:
+        """Regression: loading a fresh candidate must never clobber a committed value."""
+        committed = Household()
+        committed.your_ira = SourcedValue(
+            1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT, detail="baseline")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ira", 1_750_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, detail="synced")
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ira == 1_700_000.0
+        assert "your_ira" in result.pending_review
+
+    def test_committed_value_with_no_differing_candidate_is_not_pending(self) -> None:
+        committed = Household()
+        committed.your_ira = SourcedValue(1_700_000.0, Provenance(Source.MANUAL, FIXED_DT))
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ira", 1_700_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2)
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ira == 1_700_000.0
+        assert "your_ira" not in result.pending_review
+
+    def test_choice_wins_over_ladder(self) -> None:
+        committed = Household()  # your_ira not yet committed (plain float default)
+        store = CandidateStore()
+        store.record_candidate("your_ira", 500_000.0, Provenance(Source.MANUAL, FIXED_DT))
+        store.record_candidate(
+            "your_ira", 600_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2)
+        )
+        choices = ChoiceMap()
+        choices.set_choice("your_ira", Source.FINEXTRACT_LIVE, FIXED_DT_3)
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ira == 600_000.0
+        assert isinstance(result.household.your_ira, SourcedValue)
+        assert result.household.your_ira.prov.source == Source.FINEXTRACT_LIVE
+        assert "your_ira" in result.pending_review
+
+    def test_ladder_fallback_live_beats_default(self) -> None:
+        committed = Household()
+        store = CandidateStore()
+        store.record_candidate("your_ira", 400_000.0, Provenance(Source.DEFAULT, FIXED_DT))
+        store.record_candidate(
+            "your_ira", 450_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2)
+        )
+        choices = ChoiceMap()  # no explicit choice -> ladder decides
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ira == 450_000.0
+        assert result.household.your_ira.prov.source == Source.FINEXTRACT_LIVE
+        assert "your_ira" in result.pending_review
+
+    def test_first_run_empty_leaves_plain_default_not_pending(self) -> None:
+        committed = Household()
+        store = CandidateStore()
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ira == committed.your_ira
+        assert not isinstance(result.household.your_ira, SourcedValue)
+        assert "your_ira" not in result.pending_review
+
+    def test_resolve_does_not_mutate_committed(self) -> None:
+        committed = Household()
+        original_value = committed.your_ira
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ira", 999_999.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT)
+        )
+        choices = ChoiceMap()
+
+        resolve(committed, store, choices)
+
+        assert committed.your_ira == original_value
+        assert not isinstance(committed.your_ira, SourcedValue)
+
+    def test_magi_flip_committed_year_survives_differing_pdf_candidate(self) -> None:
+        committed = Household()
+        committed.prior_year_magi = SourcedDict(
+            {2024: 285_000.0},
+            {2024: Provenance(Source.FINEXTRACT_LIVE, FIXED_DT, detail="live")},
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            magi_field_key(2024), 288_000.0, Provenance(Source.PDF, FIXED_DT_2, detail="1040 pdf")
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.prior_year_magi[2024] == 285_000.0
+        assert magi_field_key(2024) in result.pending_review
+
+    def test_magi_uncommitted_year_resolves_via_ladder_and_is_pending(self) -> None:
+        committed = Household()  # prior_year_magi empty
+        store = CandidateStore()
+        store.record_candidate(
+            magi_field_key(2025), 290_000.0, Provenance(Source.ESTIMATE, FIXED_DT)
+        )
+
+        result = resolve(committed, store, ChoiceMap())
+
+        assert result.household.prior_year_magi[2025] == 290_000.0
+        assert magi_field_key(2025) in result.pending_review
+
+    def test_confirm_locks_in_pdf_value_for_magi_year(self) -> None:
+        committed = Household()
+        store = CandidateStore()
+        store.record_candidate(
+            magi_field_key(2024), 288_000.0, Provenance(Source.PDF, FIXED_DT, detail="1040 pdf")
+        )
+        choices = ChoiceMap()
+
+        updated = confirm(
+            magi_field_key(2024), Source.PDF, committed, store, choices, now=FIXED_DT_2
+        )
+
+        assert updated.prior_year_magi[2024] == 288_000.0
+        assert updated.prior_year_magi.prov[2024].source == Source.PDF
+        assert choices.get(magi_field_key(2024)) == TrustChoice(Source.PDF, FIXED_DT_2)
+
+        # Re-resolving now shows the field committed & NOT pending, even
+        # though the same PDF candidate is still sitting in the store.
+        result = resolve(updated, store, choices)
+        assert result.household.prior_year_magi[2024] == 288_000.0
+        assert magi_field_key(2024) not in result.pending_review
+
+    def test_confirm_with_override_value_uses_manual_provenance(self) -> None:
+        committed = Household()
+        store = CandidateStore()
+        choices = ChoiceMap()
+
+        updated = confirm(
+            "your_ira",
+            Source.MANUAL,
+            committed,
+            store,
+            choices,
+            now=FIXED_DT,
+            override_value=1_234_567.0,
+        )
+
+        assert updated.your_ira == 1_234_567.0
+        assert isinstance(updated.your_ira, SourcedValue)
+        assert updated.your_ira.prov.source == Source.MANUAL
+        assert updated.your_ira.prov.detail == "manual entry"
+
+    def test_confirm_does_not_mutate_committed(self) -> None:
+        committed = Household()
+        store = CandidateStore()
+        store.record_candidate("your_ira", 111.0, Provenance(Source.MANUAL, FIXED_DT))
+        choices = ChoiceMap()
+
+        confirm("your_ira", Source.MANUAL, committed, store, choices, now=FIXED_DT_2)
+
+        assert not isinstance(committed.your_ira, SourcedValue)
