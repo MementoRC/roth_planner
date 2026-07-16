@@ -16,12 +16,31 @@ import pytest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap, TrustChoice
+from engine.data_sources.committed import (
+    COMMITTED_FIELD_ATTRS,
+    apply_committed,
+    extract_committed,
+    load_committed,
+    migrate_committed,
+    save_committed,
+)
+from engine.data_sources.ingest import is_valid_field_key
+from engine.data_sources.ingest import record_candidate as ingest_record_candidate
+from engine.data_sources.orchestrator import resolve_for_app
 from engine.data_sources.resolver import (
+    GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
     confirm,
     magi_field_key,
     resolve,
 )
+from engine.data_sources.snapshot_ingest import (
+    _merge_snapshot_grants,
+    apply_snapshot_overwrite,
+    record_snapshot_candidates,
+)
+from engine.portfolio_sync import AccountSummary, EquityGrant, PortfolioSnapshot
+from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
 
@@ -592,3 +611,293 @@ class TestResolver:
         confirm("your_ira", Source.MANUAL, committed, store, choices, now=FIXED_DT_2)
 
         assert not isinstance(committed.your_ira, SourcedValue)
+
+
+class TestIngest:
+    def test_is_valid_field_key_scalar(self) -> None:
+        assert is_valid_field_key("your_ira") is True
+
+    def test_is_valid_field_key_grants(self) -> None:
+        assert is_valid_field_key(GRANTS_KEY) is True
+
+    def test_is_valid_field_key_magi(self) -> None:
+        assert is_valid_field_key(magi_field_key(2024)) is True
+
+    def test_is_valid_field_key_bogus_is_false(self) -> None:
+        assert is_valid_field_key("bogus") is False
+
+    def test_record_candidate_valid_stores_and_returns_true(self) -> None:
+        store = CandidateStore()
+
+        ok = ingest_record_candidate(
+            store, "your_ira", 1_700_000.0, Source.MANUAL, "entered", FIXED_DT
+        )
+
+        assert ok is True
+        candidates = store.candidates_for("your_ira")
+        assert len(candidates) == 1
+        assert candidates[0].value == 1_700_000.0
+        assert candidates[0].prov.source == Source.MANUAL
+        assert candidates[0].prov.detail == "entered"
+        assert candidates[0].prov.recorded_at == FIXED_DT
+
+    def test_record_candidate_invalid_field_key_returns_false_no_raise(self) -> None:
+        store = CandidateStore()
+
+        ok = ingest_record_candidate(store, "bogus", 1.0, Source.MANUAL, "x", FIXED_DT)
+
+        assert ok is False
+        assert store.field_keys() == []
+
+
+class TestCommitted:
+    def test_extract_apply_round_trip_scalars(self) -> None:
+        hh = Household()
+        hh.your_ira = SourcedValue(1_700_000.0, Provenance(Source.MANUAL, FIXED_DT, "entered"))
+        hh.txn_price_now = SourcedValue(210.5, Provenance(Source.PDF, FIXED_DT_2, "1099"))
+
+        committed_json = extract_committed(hh)
+        assert set(committed_json.keys()) == {"your_ira", "txn_price_now"}
+
+        hh2 = Household()
+        apply_committed(hh2, committed_json)
+
+        assert hh2.your_ira == 1_700_000.0
+        assert isinstance(hh2.your_ira, SourcedValue)
+        assert hh2.your_ira.prov.source == Source.MANUAL
+        assert hh2.txn_price_now == 210.5
+        assert hh2.txn_price_now.prov.detail == "1099"
+
+    def test_extract_apply_round_trip_magi(self) -> None:
+        hh = Household()
+        hh.prior_year_magi = SourcedDict(
+            {2024: 285_000.0}, {2024: Provenance(Source.PDF, FIXED_DT, "1040")}
+        )
+
+        committed_json = extract_committed(hh)
+        hh2 = Household()
+        apply_committed(hh2, committed_json)
+
+        assert hh2.prior_year_magi[2024] == 285_000.0
+        assert hh2.prior_year_magi.prov[2024].source == Source.PDF
+
+    def test_extract_apply_round_trip_grants(self) -> None:
+        hh = Household()
+        grants = [StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="G1")]
+        hh.grants = SourcedList(grants, [Provenance(Source.FINEXTRACT_LIVE, FIXED_DT, "sync")])
+
+        committed_json = extract_committed(hh)
+        hh2 = Household()
+        apply_committed(hh2, committed_json)
+
+        assert len(hh2.grants) == 1
+        assert hh2.grants[0] == grants[0]
+        assert hh2.grants.prov[0].source == Source.FINEXTRACT_LIVE
+
+    def test_uncommitted_attrs_are_skipped_by_extract(self) -> None:
+        hh = Household()
+        assert extract_committed(hh) == {}
+
+    def test_apply_committed_missing_keys_left_as_is(self) -> None:
+        hh = Household()
+        original_ira = hh.your_ira
+
+        apply_committed(hh, {})
+
+        assert hh.your_ira == original_ira
+        assert not isinstance(hh.your_ira, SourcedValue)
+
+    def test_migrate_committed_wraps_plain_household_identical_values(self) -> None:
+        hh = Household()
+        original_your_ira = hh.your_ira
+        original_spouse_roth = hh.spouse_roth
+        original_magi = dict(hh.prior_year_magi)
+        original_grants = list(hh.grants)
+
+        committed_json = migrate_committed(hh, FIXED_DT)
+
+        assert set(committed_json.keys()) == set(COMMITTED_FIELD_ATTRS)
+        for attr in HOUSEHOLD_SCALAR_FIELDS:
+            value = getattr(hh, attr)
+            assert isinstance(value, SourcedValue)
+            assert value.prov.source == Source.UNKNOWN
+            assert value.prov.detail == "pre-migration"
+        assert hh.your_ira == original_your_ira
+        assert hh.spouse_roth == original_spouse_roth
+        assert isinstance(hh.prior_year_magi, SourcedDict)
+        assert dict(hh.prior_year_magi) == original_magi
+        assert isinstance(hh.grants, SourcedList)
+        assert list(hh.grants) == original_grants
+
+    def test_grants_round_trip_via_save_load(self, tmp_path: Path) -> None:
+        hh = Household()
+        grants = [
+            StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="G1"),
+            StockGrant(year=2020, strike=130.0, shares=400, expiry_year=2030, grant_id="G2"),
+        ]
+        hh.grants = SourcedList(
+            grants,
+            [
+                Provenance(Source.FINEXTRACT_LIVE, FIXED_DT, "sync"),
+                Provenance(Source.FINEXTRACT_LIVE, FIXED_DT, "sync"),
+            ],
+        )
+        committed_json = extract_committed(hh)
+        path = tmp_path / "committed.json"
+        save_committed(path, committed_json)
+
+        loaded = load_committed(path)
+        assert loaded is not None
+        hh2 = Household()
+        apply_committed(hh2, loaded)
+
+        assert list(hh2.grants) == grants
+        assert hh2.grants.prov[0].source == Source.FINEXTRACT_LIVE
+        assert hh2.grants.prov[1].detail == "sync"
+
+    def test_load_committed_missing_file_returns_none_no_raise(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.json"
+        assert load_committed(missing) is None
+
+    def test_load_committed_corrupt_file_returns_none_no_raise(self, tmp_path: Path) -> None:
+        corrupt = tmp_path / "corrupt.json"
+        corrupt.write_text("{not valid json")
+        assert load_committed(corrupt) is None
+
+
+class TestSnapshotIngest:
+    def _make_snap(self) -> PortfolioSnapshot:
+        accounts = [
+            AccountSummary(account_type="trad_ira", owner="you", total_value=500_000.0),
+            AccountSummary(account_type="trad_ira", owner="spouse", total_value=300_000.0),
+            AccountSummary(account_type="roth_ira", owner="you", total_value=100_000.0),
+        ]
+        equity_grants = [
+            EquityGrant(
+                grant_id="G1",
+                grant_type="NQO",
+                grant_date="2019-01-01",
+                shares_granted=1000,
+                outstanding=1000,
+                current_value=50_000.0,
+            ),
+            EquityGrant(
+                grant_id="G2",
+                grant_type="NQO",
+                grant_date="2020-01-01",
+                shares_granted=500,
+                outstanding=0,  # fully exercised -> dropped silently
+                current_value=0.0,
+            ),
+            EquityGrant(
+                grant_id="G3",
+                grant_type="NQO",
+                grant_date="2021-06-01",
+                shares_granted=200,
+                outstanding=200,  # no configured strike -> dropped + reported
+                current_value=30_000.0,
+            ),
+        ]
+        return PortfolioSnapshot(
+            accounts=accounts,
+            equity_grants=equity_grants,
+            txn_shares_held=1000,
+            txn_shares_value=150_000.0,
+            server_available=True,
+        )
+
+    def test_merge_snapshot_grants_drops_exhausted_and_missing_strike(self) -> None:
+        snap = self._make_snap()
+        strikes = {"2019": 104.0}
+
+        merged, dropped = _merge_snapshot_grants(snap, strikes)
+
+        assert merged == [
+            StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="G1")
+        ]
+        assert dropped == [(2021, 200)]
+
+    def test_apply_snapshot_overwrite_matches_derivations(self) -> None:
+        snap = self._make_snap()
+        strikes = {"2019": 104.0}
+        hh = Household()
+
+        apply_snapshot_overwrite(hh, snap, strikes)
+
+        assert hh.your_ira == 500_000.0
+        assert not isinstance(hh.your_ira, SourcedValue)
+        assert hh.spouse_ira == 300_000.0
+        assert hh.your_roth == 100_000.0
+        assert hh.txn_price_now == 150.0
+        assert hh.grants == [
+            StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="G1")
+        ]
+
+    def test_record_snapshot_candidates_records_finextract_live(self) -> None:
+        snap = self._make_snap()
+        strikes = {"2019": 104.0}
+        store = CandidateStore()
+
+        dropped = record_snapshot_candidates(store, snap, strikes, FIXED_DT)
+
+        assert dropped == [(2021, 200)]
+
+        your_ira_candidates = store.candidates_for("your_ira")
+        assert len(your_ira_candidates) == 1
+        assert your_ira_candidates[0].value == 500_000.0
+        assert your_ira_candidates[0].prov.source == Source.FINEXTRACT_LIVE
+        assert your_ira_candidates[0].prov.detail == "FinExtract live"
+
+        assert store.candidates_for("spouse_ira")[0].value == 300_000.0
+        assert store.candidates_for("your_roth")[0].value == 100_000.0
+        assert store.candidates_for("txn_price_now")[0].value == 150.0
+
+        grants_candidates = store.candidates_for("grants")
+        assert len(grants_candidates) == 1
+        assert grants_candidates[0].value == [
+            StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="G1")
+        ]
+        assert grants_candidates[0].prov.source == Source.FINEXTRACT_LIVE
+
+
+class TestOrchestrator:
+    def test_migration_identity_no_snap_no_candidates(self) -> None:
+        session_hh = Household()
+        session_hh.your_ira = 1_700_000.0
+        store = CandidateStore()
+        choices = ChoiceMap()
+
+        outcome = resolve_for_app(session_hh, None, {}, store, choices, None, FIXED_DT)
+
+        assert outcome.migrated is True
+        assert outcome.result.household.your_ira == 1_700_000.0
+        assert isinstance(outcome.result.household.your_ira, SourcedValue)
+        assert outcome.result.household.your_ira.prov.source == Source.UNKNOWN
+        assert outcome.result.pending_review == set()
+        assert outcome.dropped_missing_strike == []
+
+    def test_freeze_committed_baseline_survives_newer_finextract_candidate(self) -> None:
+        """Clobber-bug regression at the orchestrator level: a fresh
+        FinExtract sync (recorded as a candidate, never applied directly)
+        must never silently overwrite an already-committed value."""
+        session_hh1 = Household()
+        session_hh1.your_ira = 1_700_000.0
+        first = resolve_for_app(
+            session_hh1, None, {}, CandidateStore(), ChoiceMap(), None, FIXED_DT
+        )
+        committed_json = first.committed_json
+
+        session_hh2 = Household()
+        session_hh2.your_ira = 1_700_000.0
+        store2 = CandidateStore()
+        store2.record_candidate(
+            "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, "sync")
+        )
+
+        second = resolve_for_app(
+            session_hh2, None, {}, store2, ChoiceMap(), committed_json, FIXED_DT_2
+        )
+
+        assert second.migrated is False
+        assert second.result.household.your_ira == 1_700_000.0
+        assert "your_ira" in second.result.pending_review
