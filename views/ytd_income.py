@@ -8,13 +8,11 @@ Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
 from datetime import date as _date
-from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 from engine.data_bridge_browser import is_pyodide
-from engine.data_sources.record import record_magi_candidates
 from engine.headroom import compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
@@ -44,9 +42,9 @@ from engine.tax import (
     safe_harbor_payment,
 )
 from models.household import Household
-from models.sourced import Source
 from models.ytd_income import IncomeEvent, YTDSnapshot, sum_income_events
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
+from views._shared import run_folder_scan
 
 
 def _color_for_room(room: float) -> str:
@@ -155,8 +153,6 @@ def render(hh: Household):
             save_statement_records,
             validate_local_folder,
         )
-        from engine.pdf_import import scan_pdf_folder
-
         default_folder = load_statement_folder_path() or ""
         folder_input = st.text_input(
             "PDF folder",
@@ -176,7 +172,11 @@ def render(hh: Household):
                 st.error(folder_err)
             else:
                 save_statement_folder_path(str(folder_path))
-                result = scan_pdf_folder(folder_path)
+                # Single scan entry point + single _pdf_1040_scanned writer
+                # (W2 Part A) -- the actual scan_pdf_folder call, 1040-MAGI
+                # candidate recording, and pdf-tax-cache persist all live in
+                # run_folder_scan / scan_and_record now.
+                result = run_folder_scan(folder_path).raw
 
                 # Brokerage statements -> newest record per account.
                 by_account = pick_latest_per_account(result.brokerage_records)
@@ -291,30 +291,11 @@ def render(hh: Household):
                     st.session_state["ytd_manual_entry"] = False
                     save_ytd_snapshot(_snap)
 
-                # Prior-year 1040 exports -> MAGI cache (filing status is refined
-                # on the Setup -> Parameters page).
-                if result.form_1040_records:
-                    from engine.tax_return_pdf import (
-                        load_pdf_tax_records,
-                        save_pdf_tax_records,
-                    )
-
-                    merged_1040 = load_pdf_tax_records()
-                    merged_1040.update(result.form_1040_records)
-                    save_pdf_tax_records(merged_1040)
-                    # _pdf_1040_scanned only feeds the Parameters-tab confirm
-                    # preview (filing status picker) below; MAGI itself is
-                    # recorded as a candidate (Source.PDF) for Command Center
-                    # review, not written to prior_year_magi directly
-                    # (audit defect #3 — unifies the dual MAGI writer with
-                    # setup/parameters.py's scan handler).
-                    st.session_state["_pdf_1040_scanned"] = merged_1040
-                    record_magi_candidates(
-                        {yr: rec.magi for yr, rec in result.form_1040_records.items()},
-                        Source.PDF,
-                        "Form 1040 PDF",
-                        datetime.now(),
-                    )
+                # Prior-year 1040 exports: cache merge + candidate record + the
+                # single canonical _pdf_1040_scanned write already happened
+                # inside run_folder_scan() above (single scan entry point,
+                # single writer -- W2 Part A, audit defect #3). The
+                # Parameters-tab confirm preview reads that same session key.
 
                 # Summary: what was parsed, what was applied, what still needs action.
                 parsed_bits: list[str] = []

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
 from typing import TypeVar
 
 import streamlit as st
@@ -12,7 +11,6 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
-from engine.data_sources.record import record_magi_candidates
 from engine.irmaa import BASE_PART_B
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
@@ -21,7 +19,6 @@ from engine.tax_return_pdf import (
     save_pdf_tax_records,
 )
 from models.household import Household
-from models.sourced import Source
 from views._format import fmt_dollars
 from views.setup._state import _user_defaults_from_session
 
@@ -234,61 +231,32 @@ _FILING_STATUS_LABELS = {
 
 
 def _render_pdf_1040_import() -> None:
-    """Widget to import MAGI from a TurboTax-exported 1040 PDF.
+    """Confirm-and-save UI for Form 1040 records already scanned elsewhere.
 
-    Gated behind ``is_pyodide()`` — pdfplumber is not available in the web build.
-    On scan, records a ``prior_year_magi.<year>`` candidate (Source.PDF) for
-    review in the Setup / Command Center rather than writing session_state
-    directly. Shows a confirmation preview with the filing-status selectbox
-    (parser leaves it None); on confirm, persists the Form1040Record (with the
-    chosen filing status) but does not touch ``prior_year_magi`` again — the
-    candidate already recorded at scan time is the single source of truth.
+    Gated behind ``is_pyodide()`` — pdfplumber is not available in the web
+    build. The scan itself (folder input, "Scan folder" button, MAGI
+    candidate recording, pdf-tax-cache persist) lives on the YTD Income page
+    (``views/ytd_income.py``, via ``views._shared.run_folder_scan``) — this is
+    the single scan entry point (W2 Part A killed the duplicate folder/scan/
+    writer that used to live here, audit defect #3). This block only reads
+    the shared ``st.session_state["_pdf_1040_scanned"]`` result (single
+    canonical shape) and shows a confirmation preview with the filing-status
+    selectbox (parser leaves it None); on confirm, persists the
+    Form1040Record (with the chosen filing status). MAGI itself was already
+    recorded as a candidate by the scan — this loop never re-records it.
     """
     with st.expander("📄 Import 1040 PDF (TurboTax export)", expanded=False):
         if is_pyodide():
             st.caption("1040 PDF import requires a local install.")
             return
 
-        st.caption(
-            "Reads TurboTax-exported 1040 PDFs (filenames containing '1040' or "
-            "'taxreturn') from your shared statement folder to back-fill prior-year "
-            "MAGI. Supports tax years 2023 and 2024. Parsed values are shown for "
-            "confirmation before saving."
-        )
-        from engine.brokerage_statement_pdf import (
-            load_statement_folder_path,
-            save_statement_folder_path,
-            validate_local_folder,
-        )
-        from engine.tax_return_pdf import scan_1040_folder
-
-        folder_input = st.text_input(
-            "Statement folder",
-            value=load_statement_folder_path() or "",
-            key="tax_1040_folder_path",
-            help="Shared folder holding your TurboTax 1040 PDF exports (and brokerage/Koinly PDFs).",
-        )
-        if st.button("Scan for 1040 PDFs", key="scan_1040_btn"):
-            folder_path, folder_err = validate_local_folder(folder_input)
-            if folder_err:
-                st.error(folder_err)
-            else:
-                save_statement_folder_path(str(folder_path))
-                scanned, scan_errors = scan_1040_folder(folder_path)
-                if scan_errors:
-                    st.warning(f"{len(scan_errors)} file(s) could not be parsed: " + "; ".join(scan_errors))
-                st.session_state["_pdf_1040_scanned"] = scanned
-                if scanned:
-                    record_magi_candidates(
-                        {yr: rec.magi for yr, rec in scanned.items()},
-                        Source.PDF,
-                        "Form 1040 PDF",
-                        datetime.now(),
-                    )
-                else:
-                    st.info("No Form 1040 PDFs found in that folder.")
-
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
+        if not scanned_records:
+            st.caption(
+                "Scan your statement folder on the YTD Income page ('Scan folder') to "
+                "import a Form 1040 PDF — parsed years appear here for confirmation."
+            )
+            return
         for _year in sorted(scanned_records):
             rec = scanned_records[_year]
             st.write(f"**Parsed {rec.tax_year} 1040 — please confirm:**")

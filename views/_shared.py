@@ -1,6 +1,6 @@
 """Shared view primitives for the Command Center input-consolidation migration.
 
-Two reusable pieces every later wave depends on:
+Reusable pieces every later wave depends on:
 
 1. ``command_center_button`` — a button that navigates to the Setup / Command
    Center page on the next rerun by setting the sidebar radio's key. Uses
@@ -14,15 +14,24 @@ Two reusable pieces every later wave depends on:
    to edit it in the Command Center. Replaces the old "editable local copy that
    silently writes nowhere" widgets.
 
-Pure view helper: imports streamlit only.
+3. ``run_folder_scan`` — the SINGLE view-layer writer of
+   ``st.session_state["_pdf_1040_scanned"]``. Wraps
+   ``engine.data_sources.scan_ingest.scan_and_record`` (which does the actual
+   scan + candidate-record + cache-persist) and writes one canonical session
+   shape (W2 Part A — kills the ``_pdf_1040_scanned`` dual-writer between
+   ``views/ytd_income.py`` and ``views/setup/parameters.py``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 
 # The sidebar radio's key (added in app.py). Kept here so views never hardcode it.
 NAV_KEY = "nav_page"
@@ -69,3 +78,21 @@ def render_canonical_field(
             st.caption("entered in Setup")
     with right:
         command_center_button(key=f"nav_{key}")
+
+
+def run_folder_scan(
+    folder_path: Path, *, recorded_at: datetime | None = None
+) -> ScanIngestResult:
+    """Scan *folder_path* and write the single canonical ``_pdf_1040_scanned``.
+
+    Delegates the scan + 1040-candidate-record + cache-persist work entirely
+    to ``scan_and_record`` (no streamlit there) and only writes
+    ``st.session_state["_pdf_1040_scanned"]`` here — the one place that key is
+    ever written. Only writes it when the scan found at least one Form 1040
+    this pass, matching the prior per-view handlers' behavior (a scan with no
+    new 1040s leaves whatever was already in session state untouched).
+    """
+    result = scan_and_record(folder_path, recorded_at=recorded_at)
+    if result.form_1040_count:
+        st.session_state["_pdf_1040_scanned"] = result.pdf_cache
+    return result
