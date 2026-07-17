@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -22,7 +23,10 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.scan_ingest import ScanIngestResult
+from engine.pdf_import import PdfImportResult
 from models.sourced import Provenance, Source, SourcedValue
+from views._shared import PortfolioSyncSummary, ScanSyncSummary, SsSyncSummary, SyncEverythingResult
 
 _RECORDED_AT = datetime(2026, 7, 16, 12, 0, 0)
 _CACHE_FILES = [CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH, COMMITTED_PATH]
@@ -172,3 +176,62 @@ def test_confirm_button_commits_chosen_source_and_syncs_session(
     choice = choices.get("your_ira")
     assert choice is not None
     assert choice.source == Source.FINEXTRACT_LIVE
+
+
+def _canned_sync_everything_result() -> SyncEverythingResult:
+    """A canned SyncEverythingResult with a distinguishable count per source."""
+    scan_result = ScanIngestResult(
+        brokerage_count=1,
+        form_1040_count=1,
+        koinly_count=0,
+        skipped_count=0,
+        unrecognized_count=0,
+        magi_candidates_recorded=1,
+        errors=[("bad.pdf", "unreadable")],
+        raw=PdfImportResult(),
+        pdf_cache={},
+    )
+    return SyncEverythingResult(
+        portfolio=PortfolioSyncSummary(candidates_recorded=2, server_available=True, error=None),
+        ss=SsSyncSummary(candidates_recorded=1, warnings=[]),
+        scan=ScanSyncSummary(result=scan_result, error=None),
+    )
+
+
+def _render_sync_everything() -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup.command_center import render_command_center
+
+    # 3 pending fields, one contributed by each source (portfolio/SS/scan) --
+    # exercises the EXISTING review-gate metric, not a reimplementation of it.
+    st.session_state["_pending_review"] = {"your_ira", "your_ss_fra", "prior_year_magi.2023"}
+    render_command_center(Household())
+
+
+def test_sync_everything_button_invokes_handler_and_renders_summary(
+    clean_command_center_caches,
+) -> None:
+    import views.setup.command_center as command_center_mod
+
+    mock_sync = MagicMock(return_value=_canned_sync_everything_result())
+
+    at = AppTest.from_function(_render_sync_everything)
+    with patch.object(command_center_mod, "sync_everything", mock_sync):
+        at.run()
+        assert not at.exception
+
+        at.button(key="sync_everything_btn").click().run()
+        assert not at.exception
+
+    mock_sync.assert_called_once()
+
+    rendered = "\n".join(i.value for i in at.info)
+    assert "portfolio: 2 candidates" in rendered
+    assert "SS: 1 candidates" in rendered
+    assert "scan: 3 files, 1 errors" in rendered
+
+    # Pending count reflects contributions from all three sources (existing
+    # review-gate mechanism, untouched by this change).
+    assert at.metric[0].value == "3"

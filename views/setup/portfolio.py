@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pandas as pd
@@ -231,6 +232,96 @@ def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
             }
 
 
+@dataclass(frozen=True)
+class PortfolioSyncOutcome:
+    """Outcome of one FinExtract portfolio+MAGI+YTD sync pass.
+
+    Extracted from the "Sync from FinExtract" button handler (W2 Part B) so
+    ``views._shared.sync_everything`` can drive the identical fetch/save/
+    candidate-record sequence without duplicating it. Balances
+    (your_ira/spouse_ira/your_roth/spouse_roth/txn_price_now/grants) are
+    deliberately NOT written to session_state or recorded as candidates
+    here — ``app.get_household()`` records the saved snapshot as
+    FINEXTRACT_LIVE candidates via ``record_snapshot_candidates`` on the
+    next render (unchanged from prior behavior); ``sync_everything`` records
+    them immediately via the same helper so they land pending right away.
+    """
+
+    snap: PortfolioSnapshot
+    magi_candidates_recorded: int
+    ytd_synced: bool
+    dividend_history_synced: bool
+    option_exercises_synced: bool
+
+
+def sync_portfolio_from_finextract(hh: Household) -> PortfolioSyncOutcome:
+    """Fetch + save a FinExtract portfolio snapshot; record MAGI candidates; sync YTD.
+
+    Reproduces exactly what the "Sync from FinExtract" button used to do
+    inline. When the server is unavailable, returns immediately with an
+    all-false/zero outcome (the caller inspects ``outcome.snap.server_available``
+    / ``outcome.snap.error``).
+    """
+    snap = fetch_portfolio(
+        account_type_overrides=st.session_state.get("account_type_overrides") or None,
+    )
+    if not snap.server_available:
+        return PortfolioSyncOutcome(
+            snap=snap,
+            magi_candidates_recorded=0,
+            ytd_synced=False,
+            dividend_history_synced=False,
+            option_exercises_synced=False,
+        )
+
+    # Merge dividend history into holdings before saving snapshot
+    div_rollup = fetch_dividends_rollup()
+    if div_rollup.server_available:
+        snap = apply_dividends_rollup(snap, div_rollup)
+    save_snapshot(snap)
+    st.session_state.portfolio_snapshot = snap
+
+    # MAGI 2-year history from FinExtract (IRMAA lookback anchor). Records
+    # candidates for Command Center review instead of gap-filling
+    # session_state directly (audit defect #2).
+    magi_recorded = 0
+    try:
+        plan_year = datetime.now(UTC).year
+        magi_snap = MagiSnapshot(fetched_at=datetime.now(UTC))
+        for offset in (1, 2):  # batchTaxYear-1 and batchTaxYear-2 (2-year coverage shipped)
+            apply_magi(magi_snap, fetch_magi(plan_year - offset))
+        if magi_snap.prior_year_magi:
+            magi_recorded = record_magi_candidates(
+                magi_snap.prior_year_magi,
+                Source.FINEXTRACT_LIVE,
+                "FinExtract tax return",
+                datetime.now(),
+            )
+    except Exception:  # noqa: BLE001 — sync is best-effort, never block on MAGI failure
+        pass
+
+    # Also sync YTD income data
+    ytd_snap = fetch_ytd_snapshot()
+    # Phase: option exercises — prefer cache equity_sales, fall back to /query
+    exercises = fetch_option_exercises_with_cache(snap)
+    if exercises.server_available:
+        ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
+        if exercises.captured_at:
+            st.session_state["exercises_captured_at"] = exercises.captured_at
+    ytd_synced = bool(ytd_snap.snapshot_date)
+    if ytd_synced:
+        st.session_state.ytd_snapshot = ytd_snap
+        save_ytd_snapshot(ytd_snap)
+
+    return PortfolioSyncOutcome(
+        snap=snap,
+        magi_candidates_recorded=magi_recorded,
+        ytd_synced=ytd_synced,
+        dividend_history_synced=div_rollup.server_available,
+        option_exercises_synced=exercises.server_available,
+    )
+
+
 def render_portfolio_tab(hh: Household) -> None:
     """Extracted from setup.py render() — portfolio tab body."""
     snap: PortfolioSnapshot | None = st.session_state.get("portfolio_snapshot")
@@ -256,58 +347,20 @@ def render_portfolio_tab(hh: Household) -> None:
             st.caption(f"Loaded: {len(snap.accounts)} accounts, {len(snap.equity_grants)} grants")
 
         if _sync:
-            snap = fetch_portfolio(
-                account_type_overrides=st.session_state.get("account_type_overrides") or None,
-            )
+            # NOTE: synced balances (your_ira/spouse_ira/your_roth/spouse_roth)
+            # are deliberately NOT written to session_state here. get_household()
+            # records this snapshot as FINEXTRACT_LIVE candidates and arbitrates
+            # them through the freeze-until-confirm gate (Setup ▸ Command
+            # Center) — a direct write here bypassed that gate (audit defect).
+            outcome = sync_portfolio_from_finextract(hh)
+            snap = outcome.snap
             if snap.server_available:
-                # NOTE: synced balances (your_ira/spouse_ira/your_roth/spouse_roth)
-                # are deliberately NOT written to session_state here. get_household()
-                # records this snapshot as FINEXTRACT_LIVE candidates and arbitrates
-                # them through the freeze-until-confirm gate (Setup ▸ Command
-                # Center) — a direct write here bypassed that gate (audit defect).
-                # Merge dividend history into holdings before saving snapshot
-                div_rollup = fetch_dividends_rollup()
-                if div_rollup.server_available:
-                    snap = apply_dividends_rollup(snap, div_rollup)
-                save_snapshot(snap)
-                st.session_state.portfolio_snapshot = snap
-                # A3: MAGI 2-year history from FinExtract (IRMAA lookback anchor).
-                # Records candidates for Command Center review instead of
-                # gap-filling session_state directly (audit defect #2).
-                try:
-                    plan_year = datetime.now(UTC).year
-                    magi_snap = MagiSnapshot(fetched_at=datetime.now(UTC))
-                    for offset in (
-                        1,
-                        2,
-                    ):  # batchTaxYear-1 and batchTaxYear-2 (2-year coverage shipped)
-                        apply_magi(magi_snap, fetch_magi(plan_year - offset))
-                    if magi_snap.prior_year_magi:
-                        record_magi_candidates(
-                            magi_snap.prior_year_magi,
-                            Source.FINEXTRACT_LIVE,
-                            "FinExtract tax return",
-                            datetime.now(),
-                        )
-                except Exception:  # noqa: BLE001 — sync is best-effort, never block on MAGI failure
-                    pass
-                # Also sync YTD income data
-                ytd_snap = fetch_ytd_snapshot()
-                # Phase: option exercises — prefer cache equity_sales, fall back to /query
-                exercises = fetch_option_exercises_with_cache(snap)
-                if exercises.server_available:
-                    ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
-                    if exercises.captured_at:
-                        st.session_state["exercises_captured_at"] = exercises.captured_at
-                if ytd_snap.snapshot_date:
-                    st.session_state.ytd_snapshot = ytd_snap
-                    save_ytd_snapshot(ytd_snap)
                 st.success(
                     f"Synced: {len(snap.accounts)} accounts, "
                     f"{len(snap.equity_grants)} active grants"
-                    + (", YTD income" if ytd_snap.snapshot_date else "")
-                    + (", dividend history" if div_rollup.server_available else "")
-                    + (", option exercises" if exercises.server_available else "")
+                    + (", YTD income" if outcome.ytd_synced else "")
+                    + (", dividend history" if outcome.dividend_history_synced else "")
+                    + (", option exercises" if outcome.option_exercises_synced else "")
                 )
             else:
                 st.error(f"Server unavailable: {snap.error}")
