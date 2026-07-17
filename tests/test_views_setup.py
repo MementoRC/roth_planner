@@ -422,15 +422,21 @@ class TestRothEligibilitySpouseGating:
         return inspect.getsource(mod.render)
 
     def test_spouse_age_input_gated_on_not_single(self):
-        """Spouse Age number_input must be inside a `filing != 'Single'` guard."""
+        """Spouse Age read-only display must be inside a `filing != 'Single'` guard.
+
+        W1 (Command Center redirect) converted the Spouse Age input from an
+        editable ``st.number_input`` to a read-only ``render_canonical_field``
+        display; it must stay gated behind ``filing != "Single"`` so a Single
+        filer never sees a spouse row.
+        """
         source = self._roth_source()
-        # Find the guard and the spouse_age widget; guard must precede widget
+        # Find the guard and the spouse_age display; guard must precede display
         guard_pos = source.find('filing != "Single"')
         assert guard_pos != -1, 'No `filing != "Single"` guard found in roth_eligibility.render'
         spouse_age_pos = source.find('"Spouse Age (end of tax year)"')
-        assert spouse_age_pos != -1, "Spouse Age widget not found in roth_eligibility.render"
+        assert spouse_age_pos != -1, "Spouse Age display not found in roth_eligibility.render"
         assert guard_pos < spouse_age_pos, (
-            "Spouse Age widget appears before the `filing != 'Single'` guard"
+            "Spouse Age display appears before the `filing != 'Single'` guard"
         )
 
     def test_spouse_workplace_checkbox_gated_on_not_single(self):
