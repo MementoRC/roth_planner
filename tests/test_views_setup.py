@@ -37,25 +37,34 @@ class TestPyodideGating:
     """Verify the FinExtract sync block is gated behind is_pyodide()."""
 
     def test_fetch_portfolio_inside_pyodide_else_branch(self):
-        """fetch_portfolio must appear AFTER the is_pyodide() guard in setup.py source.
+        """fetch_portfolio must be unreachable BEFORE the is_pyodide() guard.
 
         Static assertion: confirms the guard is not accidentally removed and that
         fetch_portfolio cannot be reached on Pyodide even without executing Streamlit.
+
+        Post-W2-Part-B refactor: the actual ``fetch_portfolio(`` call now lives in
+        ``sync_portfolio_from_finextract`` (extracted so ``views._shared.
+        sync_everything`` can reuse it) — ``render_portfolio_tab`` only calls that
+        helper, still after the ``is_pyodide()`` guard.
         """
         import inspect
 
         from views import setup
+        from views.setup import portfolio as portfolio_mod
 
-        # Post-refactor: the sync block lives in render_portfolio_tab (extracted
-        # from the original render() Portfolio tab body in PR #145).
         source = inspect.getsource(setup.render_portfolio_tab)
         guard_pos = source.find("is_pyodide()")
-        fetch_pos = source.find("fetch_portfolio(")
+        sync_call_pos = source.find("sync_portfolio_from_finextract(")
         assert guard_pos != -1, "is_pyodide() guard not found in render()"
-        assert fetch_pos != -1, "fetch_portfolio( call not found in render()"
-        assert guard_pos < fetch_pos, (
-            "fetch_portfolio() appears before is_pyodide() guard — "
+        assert sync_call_pos != -1, "sync_portfolio_from_finextract( call not found in render()"
+        assert guard_pos < sync_call_pos, (
+            "sync_portfolio_from_finextract() appears before is_pyodide() guard — "
             "sync block is not properly gated on Pyodide"
+        )
+
+        helper_source = inspect.getsource(portfolio_mod.sync_portfolio_from_finextract)
+        assert "fetch_portfolio(" in helper_source, (
+            "fetch_portfolio( call not found in sync_portfolio_from_finextract()"
         )
 
 

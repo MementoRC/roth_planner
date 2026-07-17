@@ -23,6 +23,7 @@ from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUS
 from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
 from models.household import Household
 from models.sourced import Source
+from views._shared import SyncEverythingResult, sync_everything
 
 _MAGI_PREFIX = "prior_year_magi."
 
@@ -194,9 +195,35 @@ def _render_field_card(
         st.warning(f"⚠️ rejected: {field_key} — {exc}")
 
 
+def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
+    """Render a one-line "portfolio: N · SS: N · scan: N files, N errors" summary."""
+    portfolio = f"portfolio: {summary.portfolio.candidates_recorded} candidates"
+    if summary.portfolio.error:
+        portfolio += f" (unavailable: {summary.portfolio.error})"
+
+    ss = f"SS: {summary.ss.candidates_recorded} candidates"
+    if summary.ss.warnings:
+        ss += f" ({'; '.join(summary.ss.warnings)})"
+
+    if summary.scan.result is not None:
+        scan = (
+            f"scan: {summary.scan.result.files_scanned} files, "
+            f"{len(summary.scan.result.errors)} errors"
+        )
+    else:
+        scan = f"scan: skipped ({summary.scan.error})"
+
+    return " · ".join([portfolio, ss, scan])
+
+
 def render_command_center(hh: Household) -> None:
     """Render the Setup ▸ Command Center review/confirm gate."""
     st.header("🎛️ Command Center")
+
+    if st.button("⟳ Sync everything", key="sync_everything_btn"):
+        with st.spinner("Syncing all sources…"):
+            summary = sync_everything(hh)
+        st.info(_format_sync_everything_summary(summary))
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     choices = ChoiceMap.load(TRUST_CHOICES_PATH)
