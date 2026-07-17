@@ -32,6 +32,8 @@ _FIELD_LABELS: dict[str, str] = {
     "your_roth": "Your Roth balance",
     "spouse_roth": "Spouse Roth balance",
     "txn_price_now": "Stock price",
+    "your_ss_fra": "Your SS at FRA ($/mo)",
+    "spouse_ss_fra": "Spouse SS at FRA ($/mo)",
     GRANTS_KEY: "Option grants",
 }
 

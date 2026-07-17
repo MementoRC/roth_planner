@@ -41,6 +41,8 @@ SOURCED_SESSION_KEYS: dict[str, str] = {
     "your_roth": "your_roth",
     "spouse_roth": "spouse_roth",
     "txn_price_now": "txn_price",
+    "your_ss_fra": "your_ss_fra",
+    "spouse_ss_fra": "spouse_ss_fra",
     _MAGI_ATTR: _MAGI_ATTR,
 }
 

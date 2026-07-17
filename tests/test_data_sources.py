@@ -29,7 +29,7 @@ from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-from engine.data_sources.record import record_magi_candidates
+from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate
 from engine.data_sources.resolver import (
     GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
@@ -442,6 +442,8 @@ class TestResolver:
             "your_roth",
             "spouse_roth",
             "txn_price_now",
+            "your_ss_fra",
+            "spouse_ss_fra",
         }
         for field_key in HOUSEHOLD_SCALAR_FIELDS:
             assert hasattr(Household(), field_key)
@@ -1194,6 +1196,214 @@ class TestRecordMagiCandidates:
         )
 
         assert store_path.exists()
+
+
+class TestSsFraCharacterization:
+    """C0: pin current SS-FRA-consuming numbers before Part C sourced-field
+    wiring. SourcedValue is a transparent float subclass, so wrapping
+    your_ss_fra/spouse_ss_fra must never move these numbers."""
+
+    def test_your_ss_at_70_golden(self) -> None:
+        hh = Household(your_ss_fra=2_500.0, your_ss_start_age=70, your_fra_age=67)
+        assert hh.your_ss_at_70() == pytest.approx(37_200.0)
+
+    def test_spouse_ss_at_70_golden(self) -> None:
+        hh = Household(spouse_ss_fra=1_800.0, spouse_ss_start_age=62, spouse_fra_age=67)
+        assert hh.spouse_ss_at_70() == pytest.approx(15_120.0)
+
+    def test_migration_baseline_preserves_ss_fra_value(self) -> None:
+        """First-load migration: a plain session your_ss_fra/spouse_ss_fra
+        survives byte-identical as the committed baseline."""
+        session_hh = Household()
+        session_hh.your_ss_fra = 2_500.0
+        session_hh.spouse_ss_fra = 1_800.0
+
+        outcome = resolve_for_app(session_hh, None, {}, CandidateStore(), ChoiceMap(), None, FIXED_DT)
+
+        assert outcome.migrated is True
+        assert outcome.result.household.your_ss_fra == 2_500.0
+        assert outcome.result.household.spouse_ss_fra == 1_800.0
+        assert isinstance(outcome.result.household.your_ss_fra, SourcedValue)
+        assert outcome.result.household.your_ss_fra.prov.source == Source.UNKNOWN
+        assert outcome.result.household.your_ss_at_70() == pytest.approx(37_200.0)
+
+
+class TestSsFraSourcedField:
+    """C1: your_ss_fra/spouse_ss_fra are in the closed sourced-field set —
+    record_candidate -> resolver resolves it; round-trips through
+    store->load JSON with .prov preserved."""
+
+    def test_ss_fra_fields_in_household_scalar_fields(self) -> None:
+        assert "your_ss_fra" in HOUSEHOLD_SCALAR_FIELDS
+        assert "spouse_ss_fra" in HOUSEHOLD_SCALAR_FIELDS
+        for field_key in ("your_ss_fra", "spouse_ss_fra"):
+            assert hasattr(Household(), field_key)
+
+    def test_record_candidate_and_resolve(self) -> None:
+        committed = Household()  # your_ss_fra not yet committed (plain float default)
+        store = CandidateStore()
+        ingest_record_candidate(
+            store, "your_ss_fra", 2_600.0, Source.FINEXTRACT_LIVE, "SSA statement", FIXED_DT
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ss_fra == 2_600.0
+        assert isinstance(result.household.your_ss_fra, SourcedValue)
+        assert result.household.your_ss_fra.prov.source == Source.FINEXTRACT_LIVE
+        assert "your_ss_fra" in result.pending_review
+
+    def test_freeze_invariant_committed_value_survives_differing_candidate(self) -> None:
+        committed = Household()
+        committed.your_ss_fra = SourcedValue(2_500.0, Provenance(Source.MANUAL, FIXED_DT))
+        store = CandidateStore()
+        store.record_candidate(
+            "your_ss_fra", 2_700.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2)
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.your_ss_fra == 2_500.0
+        assert "your_ss_fra" in result.pending_review
+
+    def test_store_round_trips_through_json_with_provenance(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+        store = CandidateStore()
+        ingest_record_candidate(
+            store, "spouse_ss_fra", 1_900.0, Source.FINEXTRACT_LIVE, "SSA statement", FIXED_DT
+        )
+        store.save(store_path)
+
+        reloaded = CandidateStore.load(store_path)
+        candidates = reloaded.candidates_for("spouse_ss_fra")
+        assert len(candidates) == 1
+        assert candidates[0].value == 1_900.0
+        assert candidates[0].prov.source == Source.FINEXTRACT_LIVE
+        assert candidates[0].prov.recorded_at == FIXED_DT
+        assert candidates[0].prov.detail == "SSA statement"
+
+
+class TestRecordSsFraCandidate:
+    """engine.data_sources.record.record_ss_fra_candidate — Wave 2 Part C.
+
+    Replaces the SS sync button's direct st.session_state[...] write; the
+    synced value now sits pending in the CandidateStore until confirmed via
+    the Command Center review gate (mirrors record_magi_candidates).
+    """
+
+    def test_records_finextract_live_candidate(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        recorded = record_ss_fra_candidate(
+            "your_ss_fra",
+            2_500.6,
+            Source.FINEXTRACT_LIVE,
+            "SSA statement",
+            FIXED_DT,
+            store_path=store_path,
+        )
+
+        assert recorded is True
+        store = CandidateStore.load(store_path)
+        candidates = store.candidates_for("your_ss_fra")
+        assert len(candidates) == 1
+        assert candidates[0].value == 2_501.0  # rounded, matches int-typed widget
+        assert isinstance(candidates[0].value, float)
+        assert candidates[0].prov.source == Source.FINEXTRACT_LIVE
+        assert candidates[0].prov.detail == "SSA statement"
+        assert candidates[0].prov.recorded_at == FIXED_DT
+
+    def test_records_spouse_field(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        record_ss_fra_candidate(
+            "spouse_ss_fra",
+            1_800.0,
+            Source.FINEXTRACT_LIVE,
+            "SSA statement",
+            FIXED_DT,
+            store_path=store_path,
+        )
+
+        store = CandidateStore.load(store_path)
+        assert store.candidates_for("spouse_ss_fra")[0].value == 1_800.0
+
+    def test_rejects_unrecognized_field_key(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        recorded = record_ss_fra_candidate(
+            "not_a_real_field",
+            2_500.0,
+            Source.FINEXTRACT_LIVE,
+            "detail",
+            FIXED_DT,
+            store_path=store_path,
+        )
+
+        assert recorded is False
+        assert not store_path.exists()
+
+    def test_confirm_then_resolve_matches_c0_golden(self, tmp_path: Path) -> None:
+        """End-to-end: sync (candidate) -> confirm -> resolved number equals
+        the C0 golden — freeze-until-confirm changes the mechanism, not the
+        final number."""
+        store_path = tmp_path / "candidate_store.json"
+        record_ss_fra_candidate(
+            "your_ss_fra",
+            2_500.0,
+            Source.FINEXTRACT_LIVE,
+            "SSA statement",
+            FIXED_DT,
+            store_path=store_path,
+        )
+        store = CandidateStore.load(store_path)
+        choices = ChoiceMap()
+
+        committed = Household()  # not yet committed
+        confirmed = confirm(
+            "your_ss_fra", Source.FINEXTRACT_LIVE, committed, store, choices, FIXED_DT_2
+        )
+        confirmed.your_ss_start_age = 70
+        confirmed.your_fra_age = 67
+
+        assert confirmed.your_ss_fra == 2_500.0
+        assert confirmed.your_ss_fra.prov.source == Source.FINEXTRACT_LIVE
+        assert confirmed.your_ss_at_70() == pytest.approx(37_200.0)
+
+
+class TestSsFraMigration:
+    """C3: legacy session your_ss_fra/spouse_ss_fra migrate to the committed
+    baseline tagged Source.UNKNOWN 'pre-migration' — first-load numbers are
+    byte-identical to C0 (matches the your_ira precedent)."""
+
+    def test_migrate_committed_tags_ss_fra_pre_migration(self) -> None:
+        hh = Household()
+        hh.your_ss_fra = 2_500.0
+        hh.spouse_ss_fra = 1_800.0
+
+        committed_json = migrate_committed(hh, FIXED_DT)
+
+        assert committed_json["your_ss_fra"]["value"] == 2_500.0
+        assert committed_json["your_ss_fra"]["source"] == "UNKNOWN"
+        assert committed_json["your_ss_fra"]["detail"] == "pre-migration"
+        assert committed_json["spouse_ss_fra"]["value"] == 1_800.0
+        assert committed_json["spouse_ss_fra"]["source"] == "UNKNOWN"
+
+        assert hh.your_ss_fra == 2_500.0
+        assert isinstance(hh.your_ss_fra, SourcedValue)
+
+    def test_apply_committed_round_trip_matches_golden(self) -> None:
+        source_hh = Household()
+        source_hh.your_ss_fra = 2_500.0
+        committed_json = migrate_committed(source_hh, FIXED_DT)
+
+        fresh_hh = Household(your_ss_start_age=70, your_fra_age=67)
+        apply_committed(fresh_hh, committed_json)
+
+        assert fresh_hh.your_ss_fra == 2_500.0
+        assert fresh_hh.your_ss_at_70() == pytest.approx(37_200.0)
 
 
 class TestMagiLadderFlip:

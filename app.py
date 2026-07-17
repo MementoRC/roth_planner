@@ -13,7 +13,7 @@ st.set_page_config(
 from datetime import datetime  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
-from engine.data_sources.record import record_magi_candidates  # noqa: E402
+from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
@@ -99,7 +99,17 @@ if "ssa_snapshot_you" not in st.session_state:
         if _your_fra_age is not None:
             _your_fra_match = match_fra_estimate(_cached_ssa_you.estimates, _your_fra_age)
             if _your_fra_match is not None:
-                st.session_state.your_ss_fra = int(round(_your_fra_match.monthly_amount))
+                # Recorded as a FINEXTRACT_LIVE candidate, not a direct write —
+                # your_ss_fra is a sourced field (Wave 2 Part C); a direct write
+                # here would bypass the freeze-until-confirm gate exactly like
+                # the portfolio_snapshot autoload above.
+                record_ss_fra_candidate(
+                    "your_ss_fra",
+                    _your_fra_match.monthly_amount,
+                    Source.FINEXTRACT_LIVE,
+                    "SSA statement (cached)",
+                    datetime.now(),
+                )
 
 if "ssa_snapshot_spouse" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
@@ -111,7 +121,13 @@ if "ssa_snapshot_spouse" not in st.session_state:
         if _spouse_fra_age is not None:
             _spouse_fra_match = match_fra_estimate(_cached_ssa_spouse.estimates, _spouse_fra_age)
             if _spouse_fra_match is not None:
-                st.session_state.spouse_ss_fra = int(round(_spouse_fra_match.monthly_amount))
+                record_ss_fra_candidate(
+                    "spouse_ss_fra",
+                    _spouse_fra_match.monthly_amount,
+                    Source.FINEXTRACT_LIVE,
+                    "SSA statement (cached)",
+                    datetime.now(),
+                )
 
 # Record the on-disk 1040 PDF cache as Source.PDF candidates for Command
 # Center review (Wave 5 — replaces the old merge_pdf_magi gap-fill directly
@@ -266,9 +282,10 @@ def get_household() -> Household:
     )
 
     # Setup / Command Center: resolve sourced fields (your_ira, spouse_ira,
-    # your_roth, spouse_roth, txn_price_now, grants) against a frozen
-    # committed baseline instead of clobbering them from the FinExtract
-    # snapshot on every render (Wave 3.1b — see engine/data_sources/orchestrator.py).
+    # your_roth, spouse_roth, txn_price_now, your_ss_fra, spouse_ss_fra,
+    # grants) against a frozen committed baseline instead of clobbering them
+    # from the FinExtract snapshot on every render (Wave 3.1b — see
+    # engine/data_sources/orchestrator.py; SS added in Wave 2 Part C).
     snap = st.session_state.get("portfolio_snapshot")
     strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get("grant_strikes", {})
 

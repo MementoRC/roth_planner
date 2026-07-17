@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TypeVar
 
 import streamlit as st
@@ -11,6 +12,7 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
+from engine.data_sources.record import record_ss_fra_candidate
 from engine.irmaa import BASE_PART_B
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
@@ -19,6 +21,7 @@ from engine.tax_return_pdf import (
     save_pdf_tax_records,
 )
 from models.household import Household
+from models.sourced import Source
 from views._format import fmt_dollars
 from views.setup._state import _user_defaults_from_session
 
@@ -354,10 +357,14 @@ def _render_prior_year_magi_anchor(base_year: int) -> None:
 
 
 def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
-    """Fetch, match, and apply the FRA SSA benefit for *owner* ('you' or 'spouse').
+    """Fetch, match, and record the FRA SSA benefit for *owner* ('you' or 'spouse').
 
-    Writes the matched monthly benefit into session_state and caches the raw
-    snapshot. Returns a warning message on failure/no-match, or None on success.
+    Records the matched monthly benefit as a FINEXTRACT_LIVE candidate
+    (engine.data_sources.record.record_ss_fra_candidate) instead of writing
+    directly to session_state — the value sits pending until confirmed via
+    the Setup / Command Center review gate (same freeze-until-confirm seam
+    as your_ira/your_roth/txn_price_now). Also caches the raw snapshot.
+    Returns a warning message on failure/no-match, or None on success.
     """
     snap = fetch_ssa_snapshot()
     if snap.error:
@@ -365,8 +372,10 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     match = match_fra_estimate(snap.estimates, fra_age)
     if match is None:
         return "No SSA benefit estimate found near the configured FRA age; sync skipped."
-    session_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
-    st.session_state[session_key] = int(round(match.monthly_amount))
+    field_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
+    record_ss_fra_candidate(
+        field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
+    )
     st.session_state[f"ssa_snapshot_{owner}"] = snap
     save_ssa_snapshot(snap, owner=owner)
     return None

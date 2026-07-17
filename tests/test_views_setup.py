@@ -648,12 +648,16 @@ class TestApplySingleFiler:
         assert apply_single_filer(hh).spouse_ira == 1_700_000
 
 
-class TestSyncSsaForCoercesToInt:
-    """Regression: StreamlitMixedNumericTypesError when SSA sync overwrites the
-    int-typed your_ss_fra/spouse_ss_fra session value with a float monthly_amount.
-    _sync_ssa_for must coerce to int(round(...)) before writing to session_state."""
+class TestSyncSsaForRecordsCandidate:
+    """C2 (Command Center W2 Part C): _sync_ssa_for must record a
+    FINEXTRACT_LIVE candidate via record_ss_fra_candidate instead of writing
+    st.session_state["your_ss_fra"/"spouse_ss_fra"] directly — the synced
+    value sits pending until confirmed through the freeze-until-confirm gate,
+    same seam as your_ira/your_roth/txn_price_now. The int-coercion contract
+    (StreamlitMixedNumericTypesError regression) now lives inside
+    record_ss_fra_candidate itself (see TestRecordSsFraCandidate)."""
 
-    def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> dict:
+    def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> tuple[dict, list]:
         from types import SimpleNamespace
 
         import views.setup.parameters as parameters_mod
@@ -663,28 +667,41 @@ class TestSyncSsaForCoercesToInt:
             estimates=[SimpleNamespace(monthly_amount=2501.4)],
         )
         fake_state: dict = {}
+        calls: list = []
+
+        def _fake_record(field_key, monthly_amount, source, detail, recorded_at):  # noqa: ANN001
+            calls.append((field_key, monthly_amount, source, detail))
+
         monkeypatch.setattr(parameters_mod.st, "session_state", fake_state)
         monkeypatch.setattr(parameters_mod, "fetch_ssa_snapshot", lambda: fake_snap)
         monkeypatch.setattr(
             parameters_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
         )
         monkeypatch.setattr(parameters_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
+        monkeypatch.setattr(parameters_mod, "record_ss_fra_candidate", _fake_record)
         warning = parameters_mod._sync_ssa_for(owner, 67)
         assert warning is None
-        return fake_state
+        return fake_state, calls
 
-    def test_your_ss_fra_coerced_to_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        state = self._run_sync(monkeypatch, "you")
-        assert state["your_ss_fra"] == 2501
-        assert isinstance(state["your_ss_fra"], int), (
-            "your_ss_fra must be int after SSA sync to avoid "
-            "StreamlitMixedNumericTypesError against the int-typed number_input"
-        )
+    def test_your_ss_fra_records_candidate_not_direct_write(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from models.sourced import Source
 
-    def test_spouse_ss_fra_coerced_to_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        state = self._run_sync(monkeypatch, "spouse")
-        assert state["spouse_ss_fra"] == 2501
-        assert isinstance(state["spouse_ss_fra"], int), (
-            "spouse_ss_fra must be int after SSA sync to avoid "
-            "StreamlitMixedNumericTypesError against the int-typed number_input"
+        state, calls = self._run_sync(monkeypatch, "you")
+        assert calls == [("your_ss_fra", 2501.4, Source.FINEXTRACT_LIVE, "SSA statement")]
+        assert "your_ss_fra" not in state, (
+            "_sync_ssa_for must not write your_ss_fra to session_state directly "
+            "— it now records a candidate for the freeze-until-confirm gate"
         )
+        assert state["ssa_snapshot_you"] is not None
+
+    def test_spouse_ss_fra_records_candidate_not_direct_write(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from models.sourced import Source
+
+        state, calls = self._run_sync(monkeypatch, "spouse")
+        assert calls == [("spouse_ss_fra", 2501.4, Source.FINEXTRACT_LIVE, "SSA statement")]
+        assert "spouse_ss_fra" not in state
+        assert state["ssa_snapshot_spouse"] is not None

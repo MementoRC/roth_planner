@@ -55,3 +55,29 @@ def record_magi_candidates(
     if count:
         store.save(store_path)
     return count
+
+
+def record_ss_fra_candidate(
+    field_key: str,
+    monthly_amount: float,
+    source: Source,
+    detail: str,
+    recorded_at: datetime,
+    store_path: str | Path = CANDIDATE_STORE_PATH,
+) -> bool:
+    """Record a Social Security full-retirement-age monthly-benefit candidate.
+
+    ``field_key`` must be ``"your_ss_fra"`` or ``"spouse_ss_fra"``. Mirrors
+    ``record_magi_candidates``: loads the ``CandidateStore`` from
+    ``store_path``, records the candidate rounded to the nearest whole dollar
+    (matching the int-typed Setup number_input), saves the store back, and
+    never writes to ``Household`` or session state directly — callers rely on
+    the resolver / Command Center to surface and confirm this candidate.
+    """
+    store = CandidateStore.load(store_path)
+    recorded = ingest.record_candidate(
+        store, field_key, float(round(monthly_amount)), source, detail, recorded_at
+    )
+    if recorded:
+        store.save(store_path)
+    return recorded

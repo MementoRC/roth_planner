@@ -44,6 +44,8 @@ SOURCED_SCALAR_FIELDS: list[str] = [
     "your_roth",
     "spouse_roth",
     "txn_price_now",
+    "your_ss_fra",
+    "spouse_ss_fra",
     "interest_ytd",
     "tax_exempt_interest_ytd",
     "ordinary_dividends_ytd",
@@ -58,6 +60,8 @@ HOUSEHOLD_SCALAR_FIELDS: list[str] = [
     "your_roth",
     "spouse_roth",
     "txn_price_now",
+    "your_ss_fra",
+    "spouse_ss_fra",
 ]
 
 GRANTS_KEY = "grants"
