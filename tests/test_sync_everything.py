@@ -25,12 +25,14 @@ from engine.pdf_import import PdfImportResult
 from engine.portfolio_sync import (
     AccountSummary,
     DividendsRollupSnapshot,
+    EquityGrant,
     OptionExercisesSnapshot,
     PortfolioSnapshot,
     SSABenefitEstimate,
     SSASnapshot,
 )
 from engine.tax_return_pdf import Form1040Record
+from models.grants import StockGrant
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -104,7 +106,35 @@ def _mock_st(**session_overrides) -> MagicMock:
     return mock_st
 
 
-def _patch_portfolio_fetches(*, fetch_portfolio_side_effect=None):
+def _stub_portfolio_snapshot_with_grants() -> PortfolioSnapshot:
+    """A snapshot carrying one REAL outstanding equity grant.
+
+    ``_stub_portfolio_snapshot`` above deliberately uses ``equity_grants=[]``
+    and never exercises grant serialization (see the "Sync everything" crash
+    this regression test guards against) — this variant drives the real
+    ``EquityGrant`` -> ``StockGrant`` merge + candidate-store persist path.
+    """
+    return PortfolioSnapshot(
+        accounts=[
+            AccountSummary(
+                account_type="trad_ira", owner="you", account_name="IRA1", total_value=750_000.0
+            )
+        ],
+        equity_grants=[
+            EquityGrant(
+                grant_id="NQO-2020-A",
+                grant_type="NQO",
+                grant_date="2020-03-15",
+                shares_granted=1000,
+                outstanding=600,
+                current_value=45_000.0,
+            )
+        ],
+        server_available=True,
+    )
+
+
+def _patch_portfolio_fetches(*, fetch_portfolio_side_effect=None, snapshot=None):
     """Patches for every network-touching name imported into portfolio_mod."""
     patches = [
         patch.object(
@@ -128,7 +158,11 @@ def _patch_portfolio_fetches(*, fetch_portfolio_side_effect=None):
         )
     else:
         patches.append(
-            patch.object(portfolio_mod, "fetch_portfolio", return_value=_stub_portfolio_snapshot())
+            patch.object(
+                portfolio_mod,
+                "fetch_portfolio",
+                return_value=snapshot if snapshot is not None else _stub_portfolio_snapshot(),
+            )
         )
     return patches
 
@@ -238,6 +272,52 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
     assert store.has_candidates("your_ss_fra")
     assert store.has_candidates(magi_field_key(_SCAN_YEAR))
     assert load_committed(COMMITTED_PATH) is None
+
+
+def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
+    clean_candidate_caches, tmp_path, monkeypatch
+):
+    """Reproduces the production crash: a fetched snapshot with a REAL
+    outstanding ``EquityGrant`` (merged into a REAL ``StockGrant``) must
+    round-trip through an actual ``CandidateStore.save``/``.load`` at a real
+    temp-file path without raising
+    ``TypeError: Object of type StockGrant is not JSON serializable``, and
+    the grant candidate must be readable back as a live ``StockGrant``.
+    """
+    store_path = tmp_path / "candidate_store.json"
+    monkeypatch.setattr(shared_mod, "CANDIDATE_STORE_PATH", store_path)
+
+    hh = _stub_hh()
+    mock_st = _mock_st(_user_grant_strikes={"2020": 130.0})
+
+    patches = (
+        _patch_portfolio_fetches(snapshot=_stub_portfolio_snapshot_with_grants())
+        + _patch_ss_fetch()
+        + _patch_scan(tmp_path, monkeypatch)
+        + [
+            patch.object(portfolio_mod, "st", mock_st),
+            patch.object(parameters_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+        ]
+    )
+    with _ApplyAll(patches):
+        result = shared_mod.sync_everything(hh)
+
+    assert result.portfolio.server_available is True
+    assert result.portfolio.error is None
+
+    # The store must have actually hit disk (this is where the production
+    # crash occurred: json.dumps on a raw StockGrant).
+    assert store_path.exists()
+    store = CandidateStore.load(store_path)
+    candidates = store.candidates_for("grants")
+    assert len(candidates) == 1
+    grants = candidates[0].value
+    assert len(grants) == 1
+    assert isinstance(grants[0], StockGrant)
+    assert grants[0].year == 2020
+    assert grants[0].strike == 130.0
+    assert grants[0].shares == 600
 
 
 class _ApplyAll:

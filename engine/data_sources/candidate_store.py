@@ -7,19 +7,45 @@ sources (a manual entry, a parsed PDF, a live FinExtract sync, ...). The
 ``CandidateStore`` keeps the *latest* candidate seen per (field, source) pair
 so the resolver can later arbitrate between them without losing what each
 source most recently reported.
+
+Candidate values are almost always JSON-native scalars, but the ``grants``
+field's candidates are ``list[StockGrant]`` — kept as real ``StockGrant``
+instances (not dicts) because ``resolver._resolve_grants`` / ``resolve()``
+compare and re-emit them as live objects (``.spread()``, ``.key()``, ...).
+``Candidate.to_json``/``from_json`` therefore special-case ``StockGrant``
+lists so ``CandidateStore.save`` never chokes on a non-JSON-serializable
+dataclass (see the "Sync everything" crash this was fixed for).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from models.grants import StockGrant
 from models.sourced import Provenance
 
 logger = logging.getLogger(__name__)
+
+_GRANTS_TYPE_TAG = "__stock_grants__"
+
+
+def _value_to_json(value: Any) -> Any:
+    """Serialize a candidate value, special-casing ``list[StockGrant]``."""
+    if isinstance(value, list) and value and all(isinstance(v, StockGrant) for v in value):
+        return {_GRANTS_TYPE_TAG: True, "items": [dataclasses.asdict(v) for v in value]}
+    return value
+
+
+def _value_from_json(value: Any) -> Any:
+    """Inverse of ``_value_to_json``: reconstitute ``StockGrant`` instances."""
+    if isinstance(value, dict) and value.get(_GRANTS_TYPE_TAG):
+        return [StockGrant(**item) for item in value["items"]]
+    return value
 
 
 @dataclass
@@ -30,11 +56,11 @@ class Candidate:
     prov: Provenance
 
     def to_json(self) -> dict:
-        return {"value": self.value, "prov": self.prov.to_json()}
+        return {"value": _value_to_json(self.value), "prov": self.prov.to_json()}
 
     @classmethod
     def from_json(cls, d: dict) -> Candidate:
-        return cls(value=d["value"], prov=Provenance.from_json(d["prov"]))
+        return cls(value=_value_from_json(d["value"]), prov=Provenance.from_json(d["prov"]))
 
 
 class CandidateStore:
