@@ -28,6 +28,7 @@ DEFAULT_LADDER: list[Source] = [
     Source.MANUAL,
     Source.PDF,
     Source.FINEXTRACT_LIVE,
+    Source.MARKET_QUOTE,
     Source.ESTIMATE,
     Source.BUNDLE,
     Source.DEFAULT,
