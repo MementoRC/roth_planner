@@ -124,6 +124,52 @@ class TestPerAccountGrowth:
         assert yr_crash.your_ira_end < yr_flat.your_ira_end
 
 
+class TestProjectedTxnPrice:
+    """Tests for Household.projected_txn_price (TXN-quote growth projection)."""
+
+    def test_at_base_year_returns_current_price(self):
+        hh = Household(base_year=2026, txn_price_now=100.0)
+        assert hh.projected_txn_price(2026) == 100.0
+
+    def test_before_base_year_returns_current_price(self):
+        """Not expected in practice, but must not extrapolate backward."""
+        hh = Household(base_year=2026, txn_price_now=100.0)
+        assert hh.projected_txn_price(2020) == 100.0
+
+    def test_default_growth_is_seven_percent(self):
+        hh = Household(base_year=2026, txn_price_now=100.0)
+        assert hh.txn_price_growth.default_rate == pytest.approx(0.07)
+
+    def test_one_year_out_compounds_default_rate(self):
+        hh = Household(base_year=2026, txn_price_now=100.0)
+        assert hh.projected_txn_price(2027) == pytest.approx(107.0)
+
+    def test_two_years_out_compounds_geometrically(self):
+        hh = Household(base_year=2026, txn_price_now=100.0)
+        assert hh.projected_txn_price(2028) == pytest.approx(100.0 * 1.07 * 1.07)
+
+    def test_custom_default_rate(self):
+        hh = Household(
+            base_year=2026,
+            txn_price_now=100.0,
+            txn_price_growth=GrowthProfile(default_rate=0.10),
+        )
+        assert hh.projected_txn_price(2029) == pytest.approx(100.0 * 1.10**3)
+
+    def test_yearly_override_is_honored(self):
+        """A per-year override must be used for that year's compounding step
+        instead of the default_rate, mirroring GrowthProfile.rate_for."""
+        hh = Household(
+            base_year=2026,
+            txn_price_now=100.0,
+            txn_price_growth=GrowthProfile(
+                default_rate=0.07, yearly_overrides={2027: 0.20}
+            ),
+        )
+        # 2026 -> 2027 uses the 2027 override (20%), not the default 7%.
+        assert hh.projected_txn_price(2028) == pytest.approx(100.0 * 1.20 * 1.07)
+
+
 class TestGrowthProfileYield:
     """Tests for the yield/qualified split on GrowthProfile."""
 

@@ -56,7 +56,7 @@ def render(hh: Household) -> None:
     for col, year in zip(price_cols, years, strict=True):
         with col:
             is_assumed = year not in schedule.price_by_year
-            default_price = schedule.price(year, fallback=hh.txn_price_now)
+            default_price = schedule.price(year, fallback=hh.projected_txn_price(year))
             price_by_year[year] = st.number_input(
                 str(year),
                 value=float(default_price),

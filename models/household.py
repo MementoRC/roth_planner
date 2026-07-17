@@ -173,6 +173,13 @@ class Household:
     grants: list[StockGrant] = field(default_factory=lambda: list(_D["grants"]))
     txn_price_now: float = _D["stock_price_now"]  # current stock price
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
+    # Growth profile for projecting txn_price_now forward to future exercise
+    # years (default 7%, matching the other account growth defaults). Always
+    # present (not Optional) so legacy/loaded households get a real projection
+    # rather than a flat price by omission.
+    txn_price_growth: GrowthProfile = field(
+        default_factory=lambda: GrowthProfile(default_rate=0.07)
+    )
 
     # Per-grant/per-year exercise decision. None (or empty) falls back to
     # default_from_legacy(), which reproduces the old early-exercise output
@@ -320,6 +327,24 @@ class Household:
         if self.brokerage_growth is not None:
             return self.brokerage_growth.rate_for(year)
         return self.growth_rate
+
+    def projected_txn_price(self, year: int) -> float:
+        """TXN price projected forward from ``txn_price_now`` (as of
+        ``base_year``) to ``year`` using ``txn_price_growth``.
+
+        Mirrors the year-by-year balance-compounding convention used
+        elsewhere (e.g. ``yr.your_ira_end = balance * (1 + hh.your_ira_rate(year))``
+        in engine/scenario.py): each year's rate — looked up via
+        ``rate_for(y)`` so per-year overrides are honored — grows the price
+        from the start of year ``y`` to the start of year ``y + 1``. Years at
+        or before ``base_year`` return ``txn_price_now`` unchanged.
+        """
+        if year <= self.base_year:
+            return self.txn_price_now
+        price = self.txn_price_now
+        for y in range(self.base_year, year):
+            price *= 1 + self.txn_price_growth.rate_for(y)
+        return price
 
     def __post_init__(self) -> None:
         # Derive statutory RMD start age from birth year unless already set to the valid

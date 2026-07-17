@@ -113,14 +113,16 @@ def _build_candidate_schedule(
     base_year: int,
     ceiling_income_by_year: dict[int, float],
     base_ex_option_by_year: dict[int, float],
-    price: float,
+    price_for_year: Callable[[int], float],
 ) -> tuple[ExerciseSchedule, list[int]]:
     """Spread each grant's exercises across [base_year, expiry] filling to each
     year's ordinary-income room, then FORCE all remaining shares into the grant's
     expiry year (hold-to-expiration deadline). Returns the schedule and the list
     of years whose committed option income was pushed past the ceiling (only the
     forced expiry lumps can do this). ``committed`` is per-year; grants compete
-    soonest-expiry-first for each year's room.
+    soonest-expiry-first for each year's room. ``price_for_year(year)`` supplies
+    that year's TXN price (e.g. ``hh.projected_txn_price``), so later exercise
+    years are valued at their own grown price rather than a single flat price.
     """
     schedule = ExerciseSchedule()
     over_ceiling_years: list[int] = []
@@ -137,6 +139,7 @@ def _build_candidate_schedule(
             rem = remaining[grant.key()]
             if rem <= 0 or year < base_year or year > grant.expiry_year:
                 continue
+            price = price_for_year(year)
             per_share = grant.per_share_spread(price)
 
             if year == grant.expiry_year:
@@ -248,7 +251,6 @@ def optimize_exercises(
     base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(
         hh, end_age=end_age
     )
-    price = hh.txn_price_now
     cpi = hh.cpi_assumption
 
     candidates: list[OptimizedPlan] = []
@@ -257,7 +259,7 @@ def optimize_exercises(
             hh, strategy, total_deductions, magi_wedge, filing_status
         )
         schedule, over = _build_candidate_schedule(
-            hh.grants, hh.base_year, ceiling_by_year, base_ordinary, price
+            hh.grants, hh.base_year, ceiling_by_year, base_ordinary, hh.projected_txn_price
         )
         magi_fn = None
         if strategy in _MAGI_STRATEGIES:
