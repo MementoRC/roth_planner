@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from config.loader import load_defaults, save_user_defaults
 from engine.data_sources.candidate_store import CandidateStore
@@ -218,3 +219,144 @@ class TestTxnPriceGrowthRatePersistence:
         rate = float(defaults.get("txn_price_growth_rate", 7.0)) / 100
 
         assert rate == pytest.approx(0.07)
+
+
+class TestAssumedPriceProjectsFromFetchedBasis:
+    """The "Assumed TXN Price by Year" cell formula: a fetched-but-unconfirmed
+    quote (``_txn_quote_price``) must be the projection basis in preference to
+    the committed ``hh.txn_price_now`` -- this is the math the page's price
+    cells are supposed to use (regression for the "still shows 192" bug)."""
+
+    def test_fetched_price_outranks_committed_price_as_basis(self) -> None:
+        growth = GrowthProfile(default_rate=0.07)
+        base_year = 2026
+        fetched_price = 284.02
+
+        effective_base = fetched_price  # what st.session_state["_txn_quote_price"] holds
+        assert project_price(effective_base, base_year, growth, base_year) == pytest.approx(
+            284.02
+        )
+        assert project_price(
+            effective_base, base_year, growth, base_year + 2
+        ) == pytest.approx(284.02 * 1.07**2)
+
+
+def _render_household_with_one_grant() -> None:
+    from models.grants import StockGrant
+    from models.household import Household
+    from views.option_exercise import render
+
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        txn_price_now=192.0,
+        grants=[StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2028, grant_id="g1")],
+    )
+    render(hh)
+
+
+def _render_household_with_explicit_price_override() -> None:
+    from models.exercise_schedule import ExerciseSchedule
+    from models.grants import StockGrant
+    from models.household import Household
+    from views.option_exercise import render
+
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        txn_price_now=192.0,
+        grants=[StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2028, grant_id="g1")],
+    )
+    # A real saved schedule (non-empty shares) that ALSO carries an explicit
+    # price override for the base year -- must survive a later live fetch.
+    hh.exercise_schedule = ExerciseSchedule(
+        shares_by_grant_year={"g1": {2028: 300}},
+        price_by_year={2026: 500.0},
+    )
+    render(hh)
+
+
+def _stub_fetch_284() -> QuoteResult:
+    return QuoteResult(
+        ticker="TXN",
+        price=284.02,
+        currency="USD",
+        fetched_at=FIXED_DT,
+        detail="stub Yahoo Finance TXN",
+        error=None,
+    )
+
+
+class TestExercisePagePriceCellsReflectFetchedQuote:
+    """Drives the real page through AppTest to catch Streamlit's keyed-widget
+    retention: a keyed ``st.number_input`` ignores its ``value=`` default once
+    session_state already holds an entry for that key, so simply computing the
+    right default is not enough -- the fetch must also reset the stale widget
+    state for "assumed" (non-overridden) years."""
+
+    def test_price_cells_update_to_fetched_price_after_fetch_click(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import views.option_exercise as oe_module
+
+        # Stand in for the network fetcher + candidate store path, but exercise
+        # the REAL handle_txn_quote_fetch (session-state stash + candidate
+        # record) so this is a true end-to-end reproduction of the bug.
+        store_path = tmp_path / "candidate_store.json"
+        original_handler = oe_module.handle_txn_quote_fetch
+
+        def _patched_handler() -> QuoteResult:
+            return original_handler(store_path=store_path, fetcher=_stub_fetch_284)
+
+        monkeypatch.setattr(oe_module, "handle_txn_quote_fetch", _patched_handler)
+
+        at = AppTest.from_function(_render_household_with_one_grant)
+        at.run()
+        assert not at.exception
+
+        base_before = at.number_input(key="oe_price_2026").value
+        assert base_before == pytest.approx(192.0)
+
+        next(b for b in at.button if b.label == "Fetch TXN quote (Yahoo)").click()
+        at.run()
+        assert not at.exception
+
+        base_after = at.number_input(key="oe_price_2026").value
+        future_after = at.number_input(key="oe_price_2028").value
+
+        # Before the fix these stayed pinned at 192 / 192 * 1.07**2 due to
+        # keyed-widget retention (base_after used to equal base_before).
+        assert base_after == pytest.approx(284.02)
+        assert future_after == pytest.approx(284.02 * 1.07**2)
+
+    def test_explicit_saved_override_survives_a_fresh_fetch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A year the user explicitly saved a price for must NOT be clobbered
+        by a subsequent live-quote fetch."""
+        import views.option_exercise as oe_module
+
+        store_path = tmp_path / "candidate_store.json"
+        original_handler = oe_module.handle_txn_quote_fetch
+
+        def _patched_handler() -> QuoteResult:
+            return original_handler(store_path=store_path, fetcher=_stub_fetch_284)
+
+        monkeypatch.setattr(oe_module, "handle_txn_quote_fetch", _patched_handler)
+
+        at = AppTest.from_function(_render_household_with_explicit_price_override)
+        at.run()
+        assert not at.exception
+
+        assert at.number_input(key="oe_price_2026").value == pytest.approx(500.0)
+
+        next(b for b in at.button if b.label == "Fetch TXN quote (Yahoo)").click()
+        at.run()
+        assert not at.exception
+
+        # explicit override at 2026 untouched by the fetch ...
+        assert at.number_input(key="oe_price_2026").value == pytest.approx(500.0)
+        # ... while an assumed (non-overridden) year still tracks the quote.
+        assert at.number_input(key="oe_price_2028").value == pytest.approx(284.02 * 1.07**2)

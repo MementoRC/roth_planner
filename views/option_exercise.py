@@ -45,6 +45,23 @@ def _clear_widget_state() -> None:
         st.session_state.pop(k, None)
 
 
+def _clear_assumed_price_widgets(explicit_price_years: set[int]) -> None:
+    """Drop widget state for years WITHOUT an explicit saved price override.
+
+    Keyed ``st.number_input`` widgets ignore their ``value=`` default once
+    session_state already holds an entry for that key (Streamlit's keyed-
+    widget retention) — so after a fresh quote fetch changes the projection
+    basis, the "assumed" price cells would keep showing the stale price
+    unless their widget state is cleared here so they re-seed from the new
+    default on this same rerun. Years with an explicit saved override
+    (``explicit_price_years``) are left untouched.
+    """
+    for k in [k for k in st.session_state if k.startswith("oe_price_")]:
+        year_str = k[len("oe_price_") :]
+        if year_str.isdigit() and int(year_str) not in explicit_price_years:
+            st.session_state.pop(k, None)
+
+
 def handle_txn_quote_fetch(
     *,
     store_path: str | Path = CANDIDATE_STORE_PATH,
@@ -84,6 +101,18 @@ def render(hh: Household) -> None:
     schedule = hh.effective_schedule()
     years = list(range(hh.base_year, max(g.expiry_year for g in hh.grants) + 1))
 
+    # Only a genuinely persisted (saved) schedule carries EXPLICIT per-year
+    # price overrides. ``hh.effective_schedule()`` may instead be a synthesized
+    # default (default_at_expiry) that pre-fills price_by_year at every grant's
+    # expiry year from the COMMITTED hh.txn_price_now — those synthetic entries
+    # are not user overrides and must not shadow a freshly fetched quote.
+    explicit_schedule = (
+        hh.exercise_schedule
+        if hh.exercise_schedule is not None and not hh.exercise_schedule.is_empty()
+        else None
+    )
+    explicit_price_years = set(explicit_schedule.price_by_year) if explicit_schedule else set()
+
     # --- 0. Live TXN quote + growth-rate controls ---
     st.markdown("### TXN Price Basis")
     qc1, qc2 = st.columns([1, 2])
@@ -93,6 +122,7 @@ def render(hh: Household) -> None:
             if result.ok and result.price is not None:
                 st.success(f"Fetched TXN @ ${result.price:.2f}")
                 st.caption("source: Yahoo Finance · pending review in Command Center")
+                _clear_assumed_price_widgets(explicit_price_years)
             else:
                 st.warning(
                     f"Couldn't fetch a live quote ({result.error}); using last known price."
@@ -117,9 +147,11 @@ def render(hh: Household) -> None:
     price_cols = st.columns(len(years))
     for col, year in zip(price_cols, years, strict=True):
         with col:
-            is_assumed = year not in schedule.price_by_year
-            default_price = schedule.price(
-                year, fallback=project_price(effective_base, hh.base_year, effective_growth, year)
+            is_assumed = year not in explicit_price_years
+            default_price = (
+                explicit_schedule.price(year)
+                if explicit_schedule is not None and year in explicit_price_years
+                else project_price(effective_base, hh.base_year, effective_growth, year)
             )
             price_by_year[year] = st.number_input(
                 str(year),
