@@ -483,6 +483,63 @@ class TestResolver:
         assert result.household.your_ira == 1_700_000.0
         assert "your_ira" not in result.pending_review
 
+    def test_committed_with_choice_not_repending_from_non_trusted_source(self) -> None:
+        """Regression: confirming txn_price_now=284.02 trusting MARKET_QUOTE must
+        not re-pend when every FinExtract sync keeps recording a stale 192.84
+        candidate — only the trusted source's own candidates can re-open review."""
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 192.84, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, "sync")
+        )
+        choices = ChoiceMap()
+        choices.set_choice("txn_price_now", Source.MARKET_QUOTE, FIXED_DT)
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" not in result.pending_review
+        candidate_sources = {c.prov.source for c in store.candidates_for("txn_price_now")}
+        assert Source.FINEXTRACT_LIVE in candidate_sources
+
+    def test_committed_with_choice_repends_when_trusted_source_changes(self) -> None:
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 290.0, Provenance(Source.MARKET_QUOTE, FIXED_DT_2, "new quote")
+        )
+        choices = ChoiceMap()
+        choices.set_choice("txn_price_now", Source.MARKET_QUOTE, FIXED_DT)
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" in result.pending_review
+
+    def test_committed_no_choice_still_pends_on_any_differing_candidate(self) -> None:
+        """Unchanged behavior: with no trust choice yet, any differing
+        candidate (from any source) still nudges a committed field pending."""
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 192.84, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, "sync")
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" in result.pending_review
+
     def test_choice_wins_over_ladder(self) -> None:
         committed = Household()  # your_ira not yet committed (plain float default)
         store = CandidateStore()
