@@ -270,8 +270,19 @@ def render(hh: Household) -> None:
     b1, b2 = st.columns(2)
     with b1:
         if st.button("Save schedule", type="primary"):
-            save_exercise_schedule(current_schedule)
-            hh.exercise_schedule = current_schedule
+            # Only persist a year's price as an explicit override if the widget
+            # value actually diverges from the projected assumption -- untouched
+            # "assumed" cells must never freeze into fake overrides that shadow a
+            # later live-quote fetch (the "stuck at old price" bug).
+            persisted_prices = {
+                year: price
+                for year, price in price_by_year.items()
+                if abs(price - project_price(effective_base, hh.base_year, effective_growth, year))
+                > 0.005
+            }
+            schedule_to_save = replace(current_schedule, price_by_year=persisted_prices)
+            save_exercise_schedule(schedule_to_save)
+            hh.exercise_schedule = schedule_to_save
             st.success("Exercise schedule saved.")
             st.rerun()
     with b2:
