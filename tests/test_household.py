@@ -170,6 +170,68 @@ class TestProjectedTxnPrice:
         assert hh.projected_txn_price(2028) == pytest.approx(100.0 * 1.20 * 1.07)
 
 
+class TestBaselineOptionIncomeUsesProjectedPrice:
+    """P2b: the DEFAULT exercise schedule (effective_schedule() falling back to
+    default_at_expiry, no stored/edited schedule) must price each grant's
+    expiry-year exercise at hh.projected_txn_price(year), matching the
+    exercise page and optimizer -- not a flat hh.txn_price_now."""
+
+    def test_future_year_exercise_priced_at_projected_price(self):
+        from models.grants import StockGrant
+
+        grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+        hh = Household(base_year=2026, txn_price_now=200.0, grants=[grant])
+
+        projected = hh.projected_txn_price(2030)
+        assert projected == pytest.approx(200.0 * 1.07**4)
+        expected_income = grant.per_share_spread(projected) * 1000
+        assert hh.option_income(2030) == pytest.approx(expected_income)
+        # Sanity: must NOT equal the old flat-price value.
+        flat_income = grant.per_share_spread(200.0) * 1000
+        assert hh.option_income(2030) != pytest.approx(flat_income)
+
+    def test_base_year_exercise_unaffected(self):
+        from models.grants import StockGrant
+
+        grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2026, grant_id="g1")
+        hh = Household(base_year=2026, txn_price_now=200.0, grants=[grant])
+
+        assert hh.option_income(2026) == pytest.approx(grant.per_share_spread(200.0) * 1000)
+
+    def test_explicit_price_by_year_override_still_wins(self):
+        from models.exercise_schedule import ExerciseSchedule
+        from models.grants import StockGrant
+
+        grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+        hh = Household(base_year=2026, txn_price_now=200.0, grants=[grant])
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(grant.key(), 2030, 1000)
+        hh.exercise_schedule.set_price(2030, 250.0)  # explicit override
+
+        assert hh.option_income(2030) == pytest.approx(grant.per_share_spread(250.0) * 1000)
+
+    def test_scenario_baseline_option_income_matches_projected_price(self):
+        """End-to-end: engine.scenario.run_scenario's baseline (unedited
+        household) option_income for a future exercise year equals
+        shares * per_share_spread(projected_price), hand-computed."""
+        from models.grants import StockGrant
+
+        grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
+        hh = Household(
+            base_year=2026,
+            txn_price_now=200.0,
+            your_ira=0,
+            spouse_ira=0,
+            grants=[grant],
+        )
+        result = run_no_conversion(hh, end_age=hh.your_age + 5)
+        yr = next(y for y in result.years if y.year == 2030)
+
+        projected = hh.projected_txn_price(2030)
+        expected_income = grant.per_share_spread(projected) * 1000
+        assert yr.option_income == pytest.approx(expected_income)
+
+
 class TestGrowthProfileYield:
     """Tests for the yield/qualified split on GrowthProfile."""
 
@@ -320,7 +382,20 @@ class TestInheritedIRA:
         r_without = run_scenario(hh_without, plan)
 
         for yr_w, yr_wo in zip(r_with.years, r_without.years, strict=True):
-            if yr_w.your_inherited_distribution > 0:
+            # Restrict to years through the household's first "surplus" year
+            # (2030, when the default grants' hold-to-expiry exercise first
+            # produces income well past living expenses). From 2031 onward the
+            # extra $10K distribution -- once income exceeds spending -- adds
+            # to the brokerage balance as residual cash, whose subsequent
+            # realized_gains (engine/scenario.py's `brokerage * brok_appreciation_rate
+            # * hh.brok_turnover`) then compounds a small EXTRA amount into MAGI
+            # each year beyond the raw distribution (a genuine, growing
+            # second-order effect, not a bug): P2b's projected (grown, larger)
+            # option income is what pushes 2030 over the surplus threshold in
+            # the first place -- under the old flat price this never happened.
+            # Years through 2030 isolate the pure 1:1 distribution->MAGI
+            # relationship this test targets, unaffected by that feedback loop.
+            if yr_w.your_inherited_distribution > 0 and yr_w.year <= 2030:
                 magi_delta = yr_w.magi - yr_wo.magi
                 assert magi_delta == pytest.approx(yr_w.your_inherited_distribution, rel=1e-6)
 

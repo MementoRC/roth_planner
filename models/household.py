@@ -373,10 +373,17 @@ class Household:
         (recomputed fresh from self.grants on every call, never cached), so
         it stays correct regardless of FinExtract list reordering/compaction
         (audit 2026-07-13 household-grant-match-1 / PR #369).
+
+        Each expiry-year's price is ``self.projected_txn_price(year)`` (grown
+        forward from ``txn_price_now`` at ``txn_price_growth``), not a flat
+        current price, so the baseline plan (scenario.py) values future-year
+        exercises identically to the exercise page and optimizer.
         """
         if self.exercise_schedule is not None and not self.exercise_schedule.is_empty():
             return self.exercise_schedule
-        return ExerciseSchedule.default_at_expiry(self.grants, self.base_year, self.txn_price_now)
+        return ExerciseSchedule.default_at_expiry(
+            self.grants, self.base_year, self.txn_price_now, self.projected_txn_price
+        )
 
     def option_income(self, year: int) -> float:
         """Ordinary income from option exercises scheduled in ``year``.

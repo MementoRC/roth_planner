@@ -40,7 +40,9 @@ class TestSweetSpot:
         base_2026 = base_income_for_year(hh, 2026)
         assert base_2026.opt == 0.0
         base_expiry = base_income_for_year(hh, hh.grants[0].expiry_year)
-        assert base_expiry.opt == approx(hh.grants[0].spread(hh.txn_price_now))
+        assert base_expiry.opt == approx(
+            hh.grants[0].spread(hh.projected_txn_price(hh.grants[0].expiry_year))
+        )
 
     def test_all_in_zero_conversion(self):
         from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
