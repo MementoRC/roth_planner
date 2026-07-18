@@ -122,6 +122,24 @@ class GrowthProfile:
         return balance * self.yield_for(year) * (1.0 - self.qualified_fraction)
 
 
+def project_price(base: float, base_year: int, growth: GrowthProfile, year: int) -> float:
+    """Compound *base* forward from *base_year* to *year* using *growth*.
+
+    Pure module-level extraction of ``Household.projected_txn_price``'s
+    compounding loop so it can be reused with an overridable base (e.g. a
+    freshly fetched-but-not-yet-committed live TXN quote on the exercise
+    page) without a second, divergent implementation. Years at or before
+    ``base_year`` return ``base`` unchanged; each subsequent year's rate is
+    looked up via ``rate_for(y)`` so per-year overrides are honored.
+    """
+    if year <= base_year:
+        return base
+    price = base
+    for y in range(base_year, year):
+        price *= 1 + growth.rate_for(y)
+    return price
+
+
 @dataclass
 class Household:
     """All inputs for the Roth conversion model."""
@@ -339,12 +357,7 @@ class Household:
         from the start of year ``y`` to the start of year ``y + 1``. Years at
         or before ``base_year`` return ``txn_price_now`` unchanged.
         """
-        if year <= self.base_year:
-            return self.txn_price_now
-        price = self.txn_price_now
-        for y in range(self.base_year, year):
-            price *= 1 + self.txn_price_growth.rate_for(y)
-        return price
+        return project_price(self.txn_price_now, self.base_year, self.txn_price_growth, year)
 
     def __post_init__(self) -> None:
         # Derive statutory RMD start age from birth year unless already set to the valid

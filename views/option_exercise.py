@@ -10,17 +10,27 @@ All computation goes through ``ExerciseSchedule`` / the store — this module
 owns Streamlit only.
 """
 
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
+from config.loader import save_user_defaults
+from engine.data_sources.paths import CANDIDATE_STORE_PATH
+from engine.data_sources.record import record_txn_quote_candidate
 from engine.exercise_grid import normalize_grid_edits
 from engine.exercise_schedule_store import clear_exercise_schedule, save_exercise_schedule
+from engine.market_quote import QuoteResult, fetch_txn_quote
 from models.exercise_schedule import ExerciseSchedule
-from models.household import Household
+from models.household import Household, project_price
 from views._format import fmt_dollars
 
 _SHARES_STATE_KEY = "_oe_shares_state"
 _GRID_EDITOR_KEY = "oe_grid_editor"
+_QUOTE_PRICE_KEY = "_txn_quote_price"
+_GROWTH_RATE_KEY = "txn_price_growth_rate"
 
 
 def _price_key(year: int) -> str:
@@ -33,6 +43,31 @@ def _clear_widget_state() -> None:
     st.session_state.pop(_GRID_EDITOR_KEY, None)
     for k in [k for k in st.session_state if k.startswith("oe_price_")]:
         st.session_state.pop(k, None)
+
+
+def handle_txn_quote_fetch(
+    *,
+    store_path: str | Path = CANDIDATE_STORE_PATH,
+    fetcher: Callable[[], QuoteResult] = fetch_txn_quote,
+) -> QuoteResult:
+    """Fetch a live TXN quote, record it as a pending Command Center candidate,
+    and stash it in session_state so it immediately drives this page's price
+    projection basis.
+
+    The committed ``hh.txn_price_now`` is left untouched — the fetched price
+    only becomes authoritative once confirmed via the Command Center review
+    gate (``record_txn_quote_candidate``); until then it lives in
+    ``st.session_state[_QUOTE_PRICE_KEY]`` as the page's effective basis.
+
+    Never raises: ``fetcher`` (matching ``fetch_txn_quote``) always returns a
+    ``QuoteResult`` rather than raising, so this helper does too — callers
+    branch on ``result.ok`` to decide what to show.
+    """
+    result = fetcher()
+    if result.ok and result.price is not None:
+        record_txn_quote_candidate(result.price, store_path=store_path)
+        st.session_state[_QUOTE_PRICE_KEY] = result.price
+    return result
 
 
 def render(hh: Household) -> None:
@@ -49,6 +84,33 @@ def render(hh: Household) -> None:
     schedule = hh.effective_schedule()
     years = list(range(hh.base_year, max(g.expiry_year for g in hh.grants) + 1))
 
+    # --- 0. Live TXN quote + growth-rate controls ---
+    st.markdown("### TXN Price Basis")
+    qc1, qc2 = st.columns([1, 2])
+    with qc1:
+        if st.button("Fetch TXN quote (Yahoo)"):
+            result = handle_txn_quote_fetch()
+            if result.ok and result.price is not None:
+                st.success(f"Fetched TXN @ ${result.price:.2f}")
+                st.caption("source: Yahoo Finance · pending review in Command Center")
+            else:
+                st.warning(
+                    f"Couldn't fetch a live quote ({result.error}); using last known price."
+                )
+    with qc2:
+        growth_pct = st.number_input(
+            "Assumed TXN growth (%/yr)",
+            value=float(hh.txn_price_growth.default_rate * 100),
+            step=0.5,
+            format="%.2f",
+        )
+        st.session_state[_GROWTH_RATE_KEY] = growth_pct
+        if not st.session_state.get("_suppress_snapshot_autoload"):
+            save_user_defaults({"txn_price_growth_rate": float(growth_pct)})
+
+    effective_growth = replace(hh.txn_price_growth, default_rate=growth_pct / 100)
+    effective_base = st.session_state.get(_QUOTE_PRICE_KEY, hh.txn_price_now)
+
     # --- 1. Per-year TXN price row ---
     st.markdown("### Assumed TXN Price by Year")
     price_by_year: dict[int, float] = {}
@@ -56,7 +118,9 @@ def render(hh: Household) -> None:
     for col, year in zip(price_cols, years, strict=True):
         with col:
             is_assumed = year not in schedule.price_by_year
-            default_price = schedule.price(year, fallback=hh.projected_txn_price(year))
+            default_price = schedule.price(
+                year, fallback=project_price(effective_base, hh.base_year, effective_growth, year)
+            )
             price_by_year[year] = st.number_input(
                 str(year),
                 value=float(default_price),
