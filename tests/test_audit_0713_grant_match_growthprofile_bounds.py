@@ -41,9 +41,15 @@ class TestOptionIncomeGrantMatchAfterCompaction:
         grant-key match -- not a base_year-anchored stagger."""
         hh = self._three_grant_household()
         assert hh.option_income(2026) == 0.0
-        assert hh.option_income(2029) == pytest.approx(hh.grants[0].spread(200.0))
-        assert hh.option_income(2030) == pytest.approx(hh.grants[1].spread(200.0))
-        assert hh.option_income(2031) == pytest.approx(hh.grants[2].spread(200.0))
+        assert hh.option_income(2029) == pytest.approx(
+            hh.grants[0].spread(hh.projected_txn_price(2029))
+        )
+        assert hh.option_income(2030) == pytest.approx(
+            hh.grants[1].spread(hh.projected_txn_price(2030))
+        )
+        assert hh.option_income(2031) == pytest.approx(
+            hh.grants[2].spread(hh.projected_txn_price(2031))
+        )
 
     def test_compacted_grant_list_reflows_from_base_year(self) -> None:
         """Simulate portfolio-sync compact-skip: the fully-exercised 2019 grant
@@ -62,10 +68,10 @@ class TestOptionIncomeGrantMatchAfterCompaction:
 
         assert hh.option_income(2029) == 0.0, "dropped 2019 grant's old expiry year is now empty"
         assert hh.option_income(2030) == pytest.approx(
-            remaining[0].spread(hh.txn_price_now)
+            remaining[0].spread(hh.projected_txn_price(2030))
         ), "surviving 2020 grant still lands in its own expiry year"
         assert hh.option_income(2031) == pytest.approx(
-            remaining[1].spread(hh.txn_price_now)
+            remaining[1].spread(hh.projected_txn_price(2031))
         ), "surviving 2021 grant still lands in its own expiry year"
 
     def test_order_independent_matching(self) -> None:
@@ -84,9 +90,15 @@ class TestOptionIncomeGrantMatchAfterCompaction:
         # A positional bug would confuse list order for exercise-year order.
         # The fix must return each grant's OWN spread at its OWN expiry year
         # regardless of where it sits in the list.
-        assert hh.option_income(oldest.expiry_year) == pytest.approx(oldest.spread(200.0))
-        assert hh.option_income(newest.expiry_year) == pytest.approx(newest.spread(200.0))
-        assert hh.option_income(oldest.expiry_year) != pytest.approx(newest.spread(200.0))
+        assert hh.option_income(oldest.expiry_year) == pytest.approx(
+            oldest.spread(hh.projected_txn_price(oldest.expiry_year))
+        )
+        assert hh.option_income(newest.expiry_year) == pytest.approx(
+            newest.spread(hh.projected_txn_price(newest.expiry_year))
+        )
+        assert hh.option_income(oldest.expiry_year) != pytest.approx(
+            newest.spread(hh.projected_txn_price(newest.expiry_year))
+        )
 
     def test_fresh_two_grant_household_anchors_to_its_own_oldest_grant(self) -> None:
         """A Household constructed FROM SCRATCH with only 2 grants lands each
@@ -98,8 +110,12 @@ class TestOptionIncomeGrantMatchAfterCompaction:
         ]
         hh = Household(grants=grants, base_year=2026, txn_price_now=200.0)
         assert hh.option_income(2026) == 0.0
-        assert hh.option_income(2030) == pytest.approx(grants[0].spread(200.0))
-        assert hh.option_income(2031) == pytest.approx(grants[1].spread(200.0))
+        assert hh.option_income(2030) == pytest.approx(
+            grants[0].spread(hh.projected_txn_price(2030))
+        )
+        assert hh.option_income(2031) == pytest.approx(
+            grants[1].spread(hh.projected_txn_price(2031))
+        )
 
 
 class TestGrowthProfileBounds:

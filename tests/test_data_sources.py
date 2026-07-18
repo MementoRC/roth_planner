@@ -29,7 +29,11 @@ from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate
+from engine.data_sources.record import (
+    record_magi_candidates,
+    record_ss_fra_candidate,
+    record_txn_quote_candidate,
+)
 from engine.data_sources.resolver import (
     GRANTS_KEY,
     HOUSEHOLD_SCALAR_FIELDS,
@@ -478,6 +482,63 @@ class TestResolver:
 
         assert result.household.your_ira == 1_700_000.0
         assert "your_ira" not in result.pending_review
+
+    def test_committed_with_choice_not_repending_from_non_trusted_source(self) -> None:
+        """Regression: confirming txn_price_now=284.02 trusting MARKET_QUOTE must
+        not re-pend when every FinExtract sync keeps recording a stale 192.84
+        candidate — only the trusted source's own candidates can re-open review."""
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 192.84, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, "sync")
+        )
+        choices = ChoiceMap()
+        choices.set_choice("txn_price_now", Source.MARKET_QUOTE, FIXED_DT)
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" not in result.pending_review
+        candidate_sources = {c.prov.source for c in store.candidates_for("txn_price_now")}
+        assert Source.FINEXTRACT_LIVE in candidate_sources
+
+    def test_committed_with_choice_repends_when_trusted_source_changes(self) -> None:
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 290.0, Provenance(Source.MARKET_QUOTE, FIXED_DT_2, "new quote")
+        )
+        choices = ChoiceMap()
+        choices.set_choice("txn_price_now", Source.MARKET_QUOTE, FIXED_DT)
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" in result.pending_review
+
+    def test_committed_no_choice_still_pends_on_any_differing_candidate(self) -> None:
+        """Unchanged behavior: with no trust choice yet, any differing
+        candidate (from any source) still nudges a committed field pending."""
+        committed = Household()
+        committed.txn_price_now = SourcedValue(
+            284.02, Provenance(Source.MARKET_QUOTE, FIXED_DT, detail="confirmed")
+        )
+        store = CandidateStore()
+        store.record_candidate(
+            "txn_price_now", 192.84, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT_2, "sync")
+        )
+        choices = ChoiceMap()
+
+        result = resolve(committed, store, choices)
+
+        assert result.household.txn_price_now == 284.02
+        assert "txn_price_now" in result.pending_review
 
     def test_choice_wins_over_ladder(self) -> None:
         committed = Household()  # your_ira not yet committed (plain float default)
@@ -1371,6 +1432,64 @@ class TestRecordSsFraCandidate:
         assert confirmed.your_ss_fra == 2_500.0
         assert confirmed.your_ss_fra.prov.source == Source.FINEXTRACT_LIVE
         assert confirmed.your_ss_at_70() == pytest.approx(37_200.0)
+
+
+class TestRecordTxnQuoteCandidate:
+    """engine.data_sources.record.record_txn_quote_candidate — live-quote P1.
+
+    Mirrors record_ss_fra_candidate: a fetched TXN quote lands as a pending
+    txn_price_now candidate from Source.MARKET_QUOTE, never writing directly
+    to Household/session state.
+    """
+
+    def test_records_market_quote_candidate(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        recorded = record_txn_quote_candidate(
+            202.357, recorded_at=FIXED_DT, store_path=store_path
+        )
+
+        assert recorded is True
+        store = CandidateStore.load(store_path)
+        candidates = store.candidates_for("txn_price_now")
+        assert len(candidates) == 1
+        assert candidates[0].value == 202.36  # rounded to the nearest cent
+        assert candidates[0].prov.source == Source.MARKET_QUOTE
+        assert candidates[0].prov.detail == "Yahoo Finance quote"
+        assert candidates[0].prov.recorded_at == FIXED_DT
+
+    def test_custom_detail(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+
+        record_txn_quote_candidate(
+            150.0, detail="Yahoo Finance AAPL", recorded_at=FIXED_DT, store_path=store_path
+        )
+
+        store = CandidateStore.load(store_path)
+        assert store.candidates_for("txn_price_now")[0].prov.detail == "Yahoo Finance AAPL"
+
+    def test_makes_txn_price_now_pending(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+        record_txn_quote_candidate(210.0, recorded_at=FIXED_DT, store_path=store_path)
+        store = CandidateStore.load(store_path)
+        choices = ChoiceMap()
+
+        result = resolve(Household(), store, choices)
+
+        assert "txn_price_now" in result.pending_review
+        assert result.household.txn_price_now == 210.0
+        assert result.household.txn_price_now.prov.source == Source.MARKET_QUOTE
+
+    def test_round_trips_through_store_save_load(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "candidate_store.json"
+        record_txn_quote_candidate(199.99, recorded_at=FIXED_DT, store_path=store_path)
+
+        reloaded = CandidateStore.load(store_path)
+        candidate = reloaded.candidates_for("txn_price_now")[0]
+        assert candidate.value == 199.99
+        assert candidate.prov.source == Source.MARKET_QUOTE
+        assert candidate.prov.recorded_at == FIXED_DT
+        assert candidate.prov.to_json()["recorded_at"] == FIXED_DT.isoformat()
 
 
 class TestSsFraMigration:

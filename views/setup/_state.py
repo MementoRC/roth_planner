@@ -145,6 +145,7 @@ def _clear_personal_session_state() -> None:
         "your_defer_first_rmd",
         "spouse_defer_first_rmd",
         "growth_rate",
+        "txn_price_growth_rate",
         # TODO(audit ui-7/ui-8): dynamic PDF-cache-prefix and generated-keypair
         # keys are separate low-severity findings; not cleared here.
     ]

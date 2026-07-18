@@ -8,6 +8,7 @@ bug class PR #369 patched (positional ``grants[year-base_year]`` indexing).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -116,10 +117,21 @@ class ExerciseSchedule:
 
     @classmethod
     def default_at_expiry(
-        cls, grants: list[StockGrant], base_year: int, price_now: float
+        cls,
+        grants: list[StockGrant],
+        base_year: int,
+        price_now: float,
+        price_for_year: Callable[[int], float] | None = None,
     ) -> ExerciseSchedule:
         """Default schedule: exercise each grant's full outstanding shares in
-        its ``expiry_year`` (hold-to-expiration), priced at ``price_now``.
+        its ``expiry_year`` (hold-to-expiration).
+
+        Each grant's expiry-year price is ``price_for_year(expiry_year)`` when
+        supplied (e.g. ``hh.projected_txn_price``, growing the price forward
+        for future years), else the flat ``price_now`` -- matching the
+        ``price_for_year`` convention in ``engine/exercise_optimizer.py``'s
+        ``_build_candidate_schedule``, so the exercise page, optimizer, and
+        scenario baseline all price future exercises identically.
 
         This is both the pre-fill the Option Exercise Planner shows before the
         user tunes anything and the projection default for households with no
@@ -131,8 +143,9 @@ class ExerciseSchedule:
         for grant in grants:
             if grant.expiry_year < base_year:
                 continue
+            price = price_for_year(grant.expiry_year) if price_for_year is not None else price_now
             schedule.set_shares(grant.key(), grant.expiry_year, grant.shares)
-            schedule.set_price(grant.expiry_year, price_now)
+            schedule.set_price(grant.expiry_year, price)
         return schedule
 
     # -- persistence -------------------------------------------------------

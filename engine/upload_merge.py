@@ -46,6 +46,7 @@ SCALAR_KEYS: list[str] = [
     "your_defer_first_rmd",
     "spouse_defer_first_rmd",
     "growth_rate",
+    "txn_price_growth_rate",
 ]
 
 

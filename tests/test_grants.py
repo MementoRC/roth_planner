@@ -27,16 +27,19 @@ class TestGrants:
         assert total == approx(expected, tol=10)
 
     def test_option_income_by_year(self):
+        """Each grant's default (no stored schedule) expiry-year exercise is
+        priced at hh.projected_txn_price(expiry_year) -- the price grown
+        forward from txn_price_now, not the flat current price (P2b)."""
         hh = Household()
         assert hh.option_income(2026) == 0
         assert hh.option_income(hh.grants[0].expiry_year) == approx(
-            hh.grants[0].spread(hh.txn_price_now)
+            hh.grants[0].spread(hh.projected_txn_price(hh.grants[0].expiry_year))
         )
         assert hh.option_income(hh.grants[1].expiry_year) == approx(
-            hh.grants[1].spread(hh.txn_price_now)
+            hh.grants[1].spread(hh.projected_txn_price(hh.grants[1].expiry_year))
         )
         assert hh.option_income(hh.grants[2].expiry_year) == approx(
-            hh.grants[2].spread(hh.txn_price_now)
+            hh.grants[2].spread(hh.projected_txn_price(hh.grants[2].expiry_year))
         )
         assert hh.option_income(hh.grants[2].expiry_year + 1) == 0
 

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from engine.data_sources.candidate_store import Candidate, CandidateStore
-from engine.data_sources.choices import ChoiceMap
+from engine.data_sources.choices import ChoiceMap, TrustChoice
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
 
@@ -28,6 +29,7 @@ DEFAULT_LADDER: list[Source] = [
     Source.MANUAL,
     Source.PDF,
     Source.FINEXTRACT_LIVE,
+    Source.MARKET_QUOTE,
     Source.ESTIMATE,
     Source.BUNDLE,
     Source.DEFAULT,
@@ -117,6 +119,30 @@ def _best_candidate(candidates: list[Candidate], ladder: list[Source]) -> Candid
     return None
 
 
+def _trusted_source_differs(
+    candidates: list[Candidate],
+    choice: TrustChoice | None,
+    value_differs: Callable[[Candidate], bool],
+) -> bool:
+    """True if a candidate that should force ``pending_review`` exists.
+
+    Once a field has an explicit trust ``choice`` (set by ``confirm()``),
+    freeze-until-confirm means only THAT source's own candidates can
+    re-open review — other sources continuing to report differing values
+    (e.g. every FinExtract sync re-recording a stale number) must not nag.
+    With no choice recorded yet, any differing candidate from any source
+    still pends, preserving prior behavior.
+    """
+    if choice is not None:
+        return any(value_differs(c) for c in candidates if str(c.prov.source) == str(choice.source))
+    return any(value_differs(c) for c in candidates)
+
+
+def _scalar_differs(target: float) -> Callable[[Candidate], bool]:
+    """Bind ``target`` now so the returned predicate is safe in a loop body."""
+    return lambda c: float(c.value) != float(target)
+
+
 def _pick_candidate(
     field_key: str,
     candidates: list[Candidate],
@@ -142,7 +168,10 @@ def _resolve_scalar_field(
     candidates = store.candidates_for(field_key)
 
     if isinstance(baseline, SourcedValue):
-        is_pending = any(float(c.value) != float(baseline) for c in candidates)
+        choice = choices.get(field_key)
+        is_pending = _trusted_source_differs(
+            candidates, choice, lambda c: float(c.value) != float(baseline)
+        )
         return baseline, is_pending
 
     picked = _pick_candidate(field_key, candidates, choices, ladder)
@@ -182,7 +211,8 @@ def _resolve_magi(
 
         if year in baseline_prov:
             baseline_value = baseline_dict[year]
-            if any(float(c.value) != float(baseline_value) for c in candidates):
+            choice = choices.get(field_key)
+            if _trusted_source_differs(candidates, choice, _scalar_differs(baseline_value)):
                 pending.add(field_key)
             continue
 
@@ -207,7 +237,8 @@ def _resolve_grants(
     candidates = store.candidates_for(GRANTS_KEY)
 
     if isinstance(baseline, SourcedList):
-        if any(list(c.value) != list(baseline) for c in candidates):
+        choice = choices.get(GRANTS_KEY)
+        if _trusted_source_differs(candidates, choice, lambda c: list(c.value) != list(baseline)):
             pending.add(GRANTS_KEY)
         return
 

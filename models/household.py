@@ -122,6 +122,24 @@ class GrowthProfile:
         return balance * self.yield_for(year) * (1.0 - self.qualified_fraction)
 
 
+def project_price(base: float, base_year: int, growth: GrowthProfile, year: int) -> float:
+    """Compound *base* forward from *base_year* to *year* using *growth*.
+
+    Pure module-level extraction of ``Household.projected_txn_price``'s
+    compounding loop so it can be reused with an overridable base (e.g. a
+    freshly fetched-but-not-yet-committed live TXN quote on the exercise
+    page) without a second, divergent implementation. Years at or before
+    ``base_year`` return ``base`` unchanged; each subsequent year's rate is
+    looked up via ``rate_for(y)`` so per-year overrides are honored.
+    """
+    if year <= base_year:
+        return base
+    price = base
+    for y in range(base_year, year):
+        price *= 1 + growth.rate_for(y)
+    return price
+
+
 @dataclass
 class Household:
     """All inputs for the Roth conversion model."""
@@ -173,6 +191,13 @@ class Household:
     grants: list[StockGrant] = field(default_factory=lambda: list(_D["grants"]))
     txn_price_now: float = _D["stock_price_now"]  # current stock price
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
+    # Growth profile for projecting txn_price_now forward to future exercise
+    # years (default 7%, matching the other account growth defaults). Always
+    # present (not Optional) so legacy/loaded households get a real projection
+    # rather than a flat price by omission.
+    txn_price_growth: GrowthProfile = field(
+        default_factory=lambda: GrowthProfile(default_rate=0.07)
+    )
 
     # Per-grant/per-year exercise decision. None (or empty) falls back to
     # default_from_legacy(), which reproduces the old early-exercise output
@@ -321,6 +346,19 @@ class Household:
             return self.brokerage_growth.rate_for(year)
         return self.growth_rate
 
+    def projected_txn_price(self, year: int) -> float:
+        """TXN price projected forward from ``txn_price_now`` (as of
+        ``base_year``) to ``year`` using ``txn_price_growth``.
+
+        Mirrors the year-by-year balance-compounding convention used
+        elsewhere (e.g. ``yr.your_ira_end = balance * (1 + hh.your_ira_rate(year))``
+        in engine/scenario.py): each year's rate — looked up via
+        ``rate_for(y)`` so per-year overrides are honored — grows the price
+        from the start of year ``y`` to the start of year ``y + 1``. Years at
+        or before ``base_year`` return ``txn_price_now`` unchanged.
+        """
+        return project_price(self.txn_price_now, self.base_year, self.txn_price_growth, year)
+
     def __post_init__(self) -> None:
         # Derive statutory RMD start age from birth year unless already set to the valid
         # 1951-1959 cohort value (73). The default (75) acts as a sentinel that triggers
@@ -348,10 +386,17 @@ class Household:
         (recomputed fresh from self.grants on every call, never cached), so
         it stays correct regardless of FinExtract list reordering/compaction
         (audit 2026-07-13 household-grant-match-1 / PR #369).
+
+        Each expiry-year's price is ``self.projected_txn_price(year)`` (grown
+        forward from ``txn_price_now`` at ``txn_price_growth``), not a flat
+        current price, so the baseline plan (scenario.py) values future-year
+        exercises identically to the exercise page and optimizer.
         """
         if self.exercise_schedule is not None and not self.exercise_schedule.is_empty():
             return self.exercise_schedule
-        return ExerciseSchedule.default_at_expiry(self.grants, self.base_year, self.txn_price_now)
+        return ExerciseSchedule.default_at_expiry(
+            self.grants, self.base_year, self.txn_price_now, self.projected_txn_price
+        )
 
     def option_income(self, year: int) -> float:
         """Ordinary income from option exercises scheduled in ``year``.

@@ -40,6 +40,7 @@ def _seed_session_state() -> None:
     # Fallback defaults for scalars with no persisted value (first-run demo).
     # setdefault() below is a no-op for any key already seeded from `defaults` above.
     st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("txn_price_growth_rate", 7.0)
     st.session_state.setdefault("your_aca", False)
     st.session_state.setdefault("spouse_aca", False)
     st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
@@ -204,7 +205,7 @@ from engine.data_sources.paths import (  # noqa: E402
 )
 from engine.data_sources.snapshot_ingest import derive_snapshot_growth  # noqa: E402
 from engine.exercise_schedule_store import load_exercise_schedule  # noqa: E402
-from models.household import Household, InheritedIRA, SurvivorScenario  # noqa: E402
+from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario  # noqa: E402
 from views.setup.parameters import apply_single_filer  # noqa: E402
 
 
@@ -235,6 +236,9 @@ def get_household() -> Household:
         growth_rate=st.session_state.growth_rate / 100,
         living_expenses=st.session_state.living_expenses,
         txn_price_now=st.session_state.txn_price,
+        txn_price_growth=GrowthProfile(
+            default_rate=float(st.session_state.get("txn_price_growth_rate", 7.0)) / 100
+        ),
         your_aca_enrolled=st.session_state.your_aca,
         spouse_aca_enrolled=st.session_state.spouse_aca,
         aca_benchmark_premium_annual=st.session_state.get("aca_benchmark_premium_annual", 21_600.0),

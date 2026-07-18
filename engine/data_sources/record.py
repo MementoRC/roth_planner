@@ -81,3 +81,29 @@ def record_ss_fra_candidate(
     if recorded:
         store.save(store_path)
     return recorded
+
+
+def record_txn_quote_candidate(
+    price: float,
+    *,
+    detail: str = "Yahoo Finance quote",
+    recorded_at: datetime | None = None,
+    store_path: str | Path = CANDIDATE_STORE_PATH,
+) -> bool:
+    """Record a fetched TXN market-quote as a ``txn_price_now`` candidate.
+
+    Mirrors ``record_ss_fra_candidate``: loads the ``CandidateStore`` from
+    ``store_path``, records the candidate from ``Source.MARKET_QUOTE`` rounded
+    to the nearest cent (it's a share price, not a whole-dollar amount), saves
+    the store back, and never writes to ``Household`` or session state
+    directly — callers rely on the resolver / Command Center to surface and
+    confirm this candidate.
+    """
+    store = CandidateStore.load(store_path)
+    when = recorded_at or datetime.now()
+    recorded = ingest.record_candidate(
+        store, "txn_price_now", round(float(price), 2), Source.MARKET_QUOTE, detail, when
+    )
+    if recorded:
+        store.save(store_path)
+    return recorded

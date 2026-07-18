@@ -143,19 +143,24 @@ class TestAutoFillCharacterization:
         # (2026-2028) to each grant's own expiry_year (2030/2031/2032 for the
         # default TXN grants), which shifts where option income competes for
         # 12% bracket room and therefore this whole per-year fill trajectory.
+        # Re-captured again for P2b (baseline option income priced at
+        # hh.projected_txn_price(year) instead of a flat price): 2030-2032's
+        # option income is now larger (7%-compounded from txn_price_now),
+        # consuming more 12%-bracket room in those years and pushing more
+        # conversion volume into 2036/2037.
         expected: list[tuple[int, int, int]] = [
             (2026, 133000, 0),
             (2027, 133000, 0),
             (2028, 133000, 0),
             (2029, 133000, 0),
-            (2030, 23550, 59450),
-            (2031, 0, 113000),
-            (2032, 0, 120500),
+            (2030, 23550, 28371),
+            (2031, 0, 92872),
+            (2032, 0, 95463),
             (2033, 0, 133000),
             (2034, 0, 133000),
             (2035, 0, 133000),
-            (2036, 0, 120405),
-            (2037, 0, 0),
+            (2036, 0, 134650),
+            (2037, 0, 99986),
             (2038, 0, 0),
             (2039, 0, 0),
             (2040, 0, 0),
@@ -223,13 +228,16 @@ class TestAutoFillCharacterization:
         # uses full combined_ss (not taxable_ss) — these per-year rows capture that.
         # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
         # see test_auto_fill_12_year_by_year_snapshot for why these numbers moved.
+        # Re-captured again for P2b (baseline option income priced at
+        # hh.projected_txn_price(year)): larger 2030/2031 option income shifts
+        # the 2030/2031 IRMAA-safe fill amounts.
         expected: list[tuple[int, int, int]] = [
             (2026, 218000, 0),
             (2027, 218000, 0),
             (2028, 89602, 128398),
             (2029, 0, 218000),
-            (2030, 0, 168000),
-            (2031, 0, 114634),
+            (2030, 0, 136920),
+            (2031, 0, 147890),
             (2032, 0, 0),
             (2033, 0, 0),
             (2034, 0, 0),

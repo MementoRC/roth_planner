@@ -92,7 +92,7 @@ def test_build_candidate_schedule_forces_remaining_shares_into_expiry_year() -> 
     base_ex_option = {2026: 0.0, 2027: 0.0, 2028: 0.0}
 
     schedule, _over_ceiling_years = _build_candidate_schedule(
-        [grant], base_year, ceiling, base_ex_option, price
+        [grant], base_year, ceiling, base_ex_option, lambda _year: price
     )
 
     assert sum(schedule.shares_by_grant_year[grant.key()].values()) == grant.shares
@@ -109,7 +109,7 @@ def test_build_candidate_schedule_respects_share_cap_and_validates() -> None:
     base_ex_option = dict.fromkeys(range(2026, 2030), 0.0)
 
     schedule, _over_ceiling_years = _build_candidate_schedule(
-        [grant1, grant2], base_year, ceiling, base_ex_option, price
+        [grant1, grant2], base_year, ceiling, base_ex_option, lambda _year: price
     )
 
     for grant in (grant1, grant2):
@@ -129,7 +129,7 @@ def test_build_candidate_schedule_stays_within_ceiling_except_forced_expiry_lump
     base_ex_option = {2026: 0.0, 2027: 0.0, 2028: 0.0}
 
     schedule, over_ceiling_years = _build_candidate_schedule(
-        [grant], base_year, ceiling, base_ex_option, price
+        [grant], base_year, ceiling, base_ex_option, lambda _year: price
     )
 
     for year in (2026, 2027):  # non-expiry years
@@ -152,7 +152,7 @@ def test_build_candidate_schedule_prioritizes_soonest_expiry_for_scarce_room() -
     base_ex_option: dict[int, float] = {}
 
     schedule, _over_ceiling_years = _build_candidate_schedule(
-        [grant_soon, grant_late], base_year, ceiling, base_ex_option, price
+        [grant_soon, grant_late], base_year, ceiling, base_ex_option, lambda _year: price
     )
 
     assert schedule.shares(grant_soon.key(), 2026) == 200
@@ -173,7 +173,7 @@ def test_build_candidate_schedule_underwater_grant_schedules_zero_income() -> No
     base_ex_option = {2026: 0.0, 2027: 0.0}
 
     schedule, over_ceiling_years = _build_candidate_schedule(
-        [grant], base_year, ceiling, base_ex_option, price
+        [grant], base_year, ceiling, base_ex_option, lambda _year: price
     )
 
     assert sum(schedule.shares_by_grant_year[grant.key()].values()) == grant.shares
@@ -417,10 +417,64 @@ def test_optimize_exercises_beats_status_quo_when_spreading_helps() -> None:
     assert result.best.lifetime_all_in <= result.baseline_cost
 
 
+def test_build_candidate_schedule_uses_per_year_projected_price() -> None:
+    """price_for_year is invoked per candidate year (not a single flat value):
+    a later expiry lump must be priced higher than an earlier one when the
+    price-for-year callable grows over time."""
+    grant_early = StockGrant(year=2019, strike=50.0, shares=100, expiry_year=2026, grant_id="early")
+    grant_late = StockGrant(year=2019, strike=50.0, shares=100, expiry_year=2028, grant_id="late")
+    base_year = 2026
+    # Zero ceiling room forces every share into the hold-to-expiration lump.
+    ceiling = dict.fromkeys(range(2026, 2029), 0.0)
+    base_ex_option = dict.fromkeys(range(2026, 2029), 0.0)
+
+    def price_for_year(year: int) -> float:
+        return 100.0 * (1.07 ** (year - base_year))
+
+    schedule, _over = _build_candidate_schedule(
+        [grant_early, grant_late], base_year, ceiling, base_ex_option, price_for_year
+    )
+
+    assert schedule.price_by_year[2026] == pytest.approx(100.0)
+    assert schedule.price_by_year[2028] == pytest.approx(100.0 * 1.07**2)
+
+
+def test_optimize_exercises_wires_projected_price_for_future_exercise_years() -> None:
+    """End-to-end wiring: a non-baseline candidate's scheduled price for a
+    future exercise year equals hh.projected_txn_price(year) (7% default
+    compounding), not a flat hh.txn_price_now. Hand-verified: 2030 price =
+    200.0 * 1.07**4 = 262.16 (approx)."""
+    grant = StockGrant(year=2019, strike=100.0, shares=5000, expiry_year=2030, grant_id="big")
+    hh = Household(
+        your_age=61,
+        spouse_age=55,
+        base_year=2026,
+        your_ira=1_000_000,
+        spouse_ira=1_000_000,
+        txn_price_now=200.0,
+        grants=[grant],
+    )
+
+    result = optimize_exercises(hh)
+
+    non_baseline = [c for c in result.candidates if c.ceiling_label != "current"]
+    future_priced_years = {
+        year for c in non_baseline for year in c.schedule.price_by_year if year > hh.base_year
+    }
+    assert future_priced_years  # spreading/forced-expiry must hit at least one future year
+    assert hh.projected_txn_price(2030) == pytest.approx(200.0 * 1.07**4)
+    for c in non_baseline:
+        for year, price in c.schedule.price_by_year.items():
+            if year > hh.base_year:
+                assert price == pytest.approx(hh.projected_txn_price(year))
+            else:
+                assert price == pytest.approx(hh.txn_price_now)
+
+
 def test_build_candidate_schedule_empty_grants_returns_empty_schedule() -> None:
     """No grants at all: the early-return branch produces an empty schedule
     and no over-ceiling years."""
-    schedule, over_ceiling_years = _build_candidate_schedule([], 2026, {}, {}, 100.0)
+    schedule, over_ceiling_years = _build_candidate_schedule([], 2026, {}, {}, lambda _year: 100.0)
 
     assert schedule.is_empty()
     assert over_ceiling_years == []
@@ -432,7 +486,7 @@ def test_build_candidate_schedule_all_expired_grant_schedules_nothing() -> None:
     likewise skips grants already expired at base_year."""
     old = StockGrant(year=2015, strike=100.0, shares=1000, expiry_year=2020, grant_id="old")
 
-    schedule, over_ceiling_years = _build_candidate_schedule([old], 2026, {}, {}, 200.0)
+    schedule, over_ceiling_years = _build_candidate_schedule([old], 2026, {}, {}, lambda _year: 200.0)
 
     assert schedule.total_exercised(old.key()) == 0
     assert over_ceiling_years == []
