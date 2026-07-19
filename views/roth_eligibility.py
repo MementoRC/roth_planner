@@ -319,9 +319,21 @@ def render(hh: Household):
         else:
             spouse_age = 0
     with col2:
-        has_workplace_plan = st.checkbox("You have workplace plan (403b/401k)", value=True)
+        render_canonical_field(
+            "You have a workplace plan (401k/403b)",
+            hh.your_has_workplace_plan,
+            key="your_workplace_plan",
+            fmt=lambda b: "Yes" if b else "No",
+        )
+        has_workplace_plan = hh.your_has_workplace_plan
         if filing != "Single":
-            spouse_workplace = st.checkbox("Spouse has workplace plan", value=False)
+            render_canonical_field(
+                "Spouse has a workplace plan",
+                hh.spouse_has_workplace_plan,
+                key="spouse_workplace_plan",
+                fmt=lambda b: "Yes" if b else "No",
+            )
+            spouse_workplace = hh.spouse_has_workplace_plan
         else:
             spouse_workplace = False
     with col3:

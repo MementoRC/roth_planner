@@ -147,6 +147,8 @@ class Household:
     # Ages (in base_year)
     your_age: int = _D["your_age"]
     spouse_age: int = _D["spouse_age"]
+    your_has_workplace_plan: bool = _D["your_has_workplace_plan"]
+    spouse_has_workplace_plan: bool = _D["spouse_has_workplace_plan"]
     base_year: int = 2026
 
     # IRA balances (beginning of base_year)

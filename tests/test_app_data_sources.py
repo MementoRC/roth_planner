@@ -141,6 +141,28 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     assert committed_json["your_ira"]["source"] == "MANUAL"
 
 
+def test_workplace_plan_session_state_flows_to_household(clean_command_center_caches) -> None:
+    """W3: your_has_workplace_plan in session_state flows through get_household()
+    into the Household consumed by views. Verified via the Roth Eligibility
+    read-only redirect display, which renders hh.your_has_workplace_plan
+    directly (plain scalar — no candidate/committed machinery involved)."""
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["_suppress_snapshot_autoload"] = True
+    at.session_state["your_has_workplace_plan"] = False
+    at.run()
+    assert not at.exception
+
+    at.sidebar.radio[0].set_value("✅ Roth Eligibility")
+    at.run()
+    assert not at.exception
+
+    joined = "\n".join(
+        el.value for group in ("markdown", "caption") for el in getattr(at, group)
+    )
+    assert "You have a workplace plan (401k/403b)" in joined
+    assert "### No" in joined
+
+
 def test_finextract_sync_snapshot_does_not_bypass_the_gate(
     clean_command_center_caches,
 ) -> None:

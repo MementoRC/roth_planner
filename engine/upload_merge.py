@@ -47,6 +47,8 @@ SCALAR_KEYS: list[str] = [
     "spouse_defer_first_rmd",
     "growth_rate",
     "txn_price_growth_rate",
+    "your_has_workplace_plan",
+    "spouse_has_workplace_plan",
 ]
 
 
@@ -78,6 +80,7 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
             "your_rmd_start_age": "spouse_rmd_start_age",
             "your_fra_age": "spouse_fra_age",
             "your_defer_first_rmd": "spouse_defer_first_rmd",
+            "your_has_workplace_plan": "spouse_has_workplace_plan",
         }
         for file_k, sess_k in spouse_field_map.items():
             if file_k in data:

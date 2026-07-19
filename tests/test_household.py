@@ -54,6 +54,23 @@ class TestHouseholdProperties:
         assert hh.spouse_ss_at_70() == approx(expected_spouse)
 
 
+class TestWorkplacePlanFields:
+    """W3: your/spouse_has_workplace_plan are plain-scalar fields on the your_age
+    manual-entry lifecycle (config/defaults.py -> Household -> app.py -> Setup)."""
+
+    def test_defaults_match_config_defaults(self):
+        hh = Household()
+        assert hh.your_has_workplace_plan is True
+        assert hh.spouse_has_workplace_plan is False
+        assert hh.your_has_workplace_plan == DEFAULTS["your_has_workplace_plan"]
+        assert hh.spouse_has_workplace_plan == DEFAULTS["spouse_has_workplace_plan"]
+
+    def test_accepted_as_constructor_kwargs(self):
+        hh = Household(your_has_workplace_plan=False, spouse_has_workplace_plan=True)
+        assert hh.your_has_workplace_plan is False
+        assert hh.spouse_has_workplace_plan is True
+
+
 class TestPerAccountGrowth:
     """Test per-account growth rate profiles."""
 

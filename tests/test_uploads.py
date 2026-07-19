@@ -98,6 +98,27 @@ class TestBuildUserDefaultsUpdates:
     def test_spouse_mode_empty_data_returns_empty(self):
         assert _build_updates({}, as_spouse=True) == {}
 
+    def test_me_mode_passes_through_workplace_plan_flags(self):
+        """W3: your/spouse_has_workplace_plan are plain scalars on the me-mode path."""
+        data = {"your_has_workplace_plan": False, "spouse_has_workplace_plan": True}
+        upd = _build_updates(data, as_spouse=False)
+        assert upd["your_has_workplace_plan"] is False
+        assert upd["spouse_has_workplace_plan"] is True
+
+    def test_spouse_mode_cross_maps_workplace_plan(self):
+        """W3: spouse-file's your_has_workplace_plan maps to receiver's spouse_has_workplace_plan."""
+        data = {"your_has_workplace_plan": True}
+        upd = _build_updates(data, as_spouse=True)
+        assert upd == {"spouse_has_workplace_plan": True}
+
+
+def test_scalar_keys_include_workplace_plan_flags():
+    """W3: both workplace-plan flags must be in the canonical persisted-scalar list."""
+    from engine.upload_merge import SCALAR_KEYS
+
+    assert "your_has_workplace_plan" in SCALAR_KEYS
+    assert "spouse_has_workplace_plan" in SCALAR_KEYS
+
 
 # ---------------------------------------------------------------------------
 # merge_snapshots (engine.portfolio_sync)

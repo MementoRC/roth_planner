@@ -203,6 +203,38 @@ class TestFilingStatusGate:
         assert 'st.session_state["filing_status"]' in source
 
 
+class TestWorkplacePlanCheckboxesInParametersTab:
+    """W3: Setup / Parameters Me & Spouse tabs own the workplace-plan checkboxes."""
+
+    def _params_source(self) -> str:
+        import inspect
+
+        from views import setup
+
+        return inspect.getsource(setup.render_parameters_tab)
+
+    def test_your_checkbox_present_after_your_age_input(self):
+        source = self._params_source()
+        age_pos = source.find('"Your Age"')
+        wp_pos = source.find("your_has_workplace_plan = st.checkbox(")
+        assert age_pos != -1, "Your Age input not found in render_parameters_tab"
+        assert wp_pos != -1, "your_has_workplace_plan checkbox not found in Me tab"
+        assert age_pos < wp_pos, "Workplace-plan checkbox must render after Your Age input"
+
+    def test_spouse_checkbox_present_after_spouse_age_input(self):
+        source = self._params_source()
+        age_pos = source.find('"Spouse Age"')
+        wp_pos = source.find("spouse_has_workplace_plan = st.checkbox(")
+        assert age_pos != -1, "Spouse Age input not found in render_parameters_tab"
+        assert wp_pos != -1, "spouse_has_workplace_plan checkbox not found in Spouse tab"
+        assert age_pos < wp_pos, "Workplace-plan checkbox must render after Spouse Age input"
+
+    def test_checkboxes_write_session_state(self):
+        source = self._params_source()
+        assert "st.session_state.your_has_workplace_plan = st.checkbox(" in source
+        assert "st.session_state.spouse_has_workplace_plan = st.checkbox(" in source
+
+
 class TestAppFilingStatusWiring:
     """app.py get_household must thread filing_status into Household and seed it."""
 
@@ -448,14 +480,21 @@ class TestRothEligibilitySpouseGating:
             "Spouse Age display appears before the `filing != 'Single'` guard"
         )
 
-    def test_spouse_workplace_checkbox_gated_on_not_single(self):
-        """Spouse workplace checkbox must be inside a `filing != 'Single'` guard."""
+    def test_spouse_workplace_field_gated_on_not_single(self):
+        """Spouse workplace field must be inside a `filing != 'Single'` guard.
+
+        W3 (Command Center redirect) converted the Spouse workplace-plan
+        checkbox to a read-only ``render_canonical_field`` display; it must
+        stay gated behind ``filing != "Single"`` so a Single filer never sees
+        a spouse row. (Inverted from the pre-W3 checkbox-presence assertion —
+        the checkbox itself no longer exists; see TestNoWorkplaceCheckboxOnEligibility.)
+        """
         source = self._roth_source()
         guard_pos = source.find('filing != "Single"')
-        spouse_wp_pos = source.find('"Spouse has workplace plan"')
-        assert spouse_wp_pos != -1, "Spouse workplace checkbox not found"
+        spouse_wp_pos = source.find('"Spouse has a workplace plan"')
+        assert spouse_wp_pos != -1, "Spouse workplace field not found"
         assert guard_pos < spouse_wp_pos, (
-            "Spouse workplace checkbox appears before the `filing != 'Single'` guard"
+            "Spouse workplace field appears before the `filing != 'Single'` guard"
         )
 
     def test_spouse_trad_contrib_gated_on_not_single(self):
@@ -639,6 +678,7 @@ class TestApplySingleFiler:
             spouse_age=55,
             spouse_ss_fra=2_000.0,
             spouse_aca_enrolled=True,
+            spouse_has_workplace_plan=True,
             your_ira=1_700_000,
         )
         out = apply_single_filer(hh)
@@ -647,6 +687,7 @@ class TestApplySingleFiler:
         assert out.spouse_age == 0
         assert out.spouse_ss_fra == 0.0
         assert out.spouse_aca_enrolled is False
+        assert out.spouse_has_workplace_plan is False
         assert out.your_ira == 1_700_000  # your_* untouched
 
     def test_mfj_untouched(self) -> None:
