@@ -149,3 +149,56 @@ def test_ira_balances_are_read_only_with_source_chip():
     # ...with a provenance chip naming the committed Source.
     assert "FINEXTRACT_LIVE" in joined
     assert "MANUAL" in joined
+
+
+# --- Step 5: workplace-plan fields are read-only (W3) --------------------------
+
+
+def test_workplace_plan_fields_are_read_only_no_checkbox():
+    """W3: the workplace-plan checkboxes are replaced by read-only displays."""
+    at = AppTest.from_function(_render_canonical)
+    at.run()
+    assert not at.exception
+    labels = [c.label for c in at.checkbox]
+    assert not any("workplace" in label.lower() for label in labels)
+    joined = "\n".join(_all_text(at))
+    assert "You have a workplace plan (401k/403b)" in joined
+    assert "Spouse has a workplace plan" in joined
+    # Household defaults: your=True, spouse=False -> "Yes" / "No".
+    assert "### Yes" in joined
+    assert "### No" in joined
+
+
+def test_workplace_plan_fields_have_jump_buttons():
+    at = AppTest.from_function(_render_canonical)
+    at.run()
+    assert not at.exception
+    keys = [b.key for b in at.button]
+    assert "nav_your_workplace_plan" in keys
+    assert "nav_spouse_workplace_plan" in keys
+
+
+def test_trad_contrib_inputs_stay_editable_regression_guard():
+    """The owner-decision Trad IRA contribution inputs must NOT be redirected."""
+    at = AppTest.from_function(_render_canonical)
+    at.run()
+    assert not at.exception
+    labels = [n.label for n in at.number_input]
+    assert "Your Trad IRA contribution (this year)" in labels
+    assert "Spouse Trad IRA contribution (this year)" in labels
+
+
+def test_golden_eligibility_outputs_unchanged_after_workplace_redirect():
+    """T0 golden must remain byte-identical after the workplace-field redirect."""
+    at = AppTest.from_function(_render_canonical)
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert sum("IRA contribution limit" in t and "$8,600" in t for t in text) == 2
+    assert (
+        sum(
+            "Partial Roth contribution allowed" in w.value and "$6,020" in w.value
+            for w in at.warning
+        )
+        == 2
+    )

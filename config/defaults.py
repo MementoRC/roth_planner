@@ -13,6 +13,8 @@ DEFAULTS: dict = {
     # Demographics — generic mid-career couple
     "your_age": 55,
     "spouse_age": 53,
+    "your_has_workplace_plan": True,
+    "spouse_has_workplace_plan": False,
     "your_ira": 500_000,
     "spouse_ira": 500_000,
     "your_roth": 0,

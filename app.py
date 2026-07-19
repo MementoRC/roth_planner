@@ -227,6 +227,8 @@ def get_household() -> Household:
     session_hh = Household(
         your_age=st.session_state.your_age,
         spouse_age=st.session_state.spouse_age,
+        your_has_workplace_plan=st.session_state.your_has_workplace_plan,
+        spouse_has_workplace_plan=st.session_state.spouse_has_workplace_plan,
         your_ira=st.session_state.your_ira,
         spouse_ira=st.session_state.spouse_ira,
         your_roth=st.session_state.get("your_roth", 0),

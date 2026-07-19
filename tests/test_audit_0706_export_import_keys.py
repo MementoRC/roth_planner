@@ -199,3 +199,64 @@ class TestUserDefaultsFromSessionRoundtrip:
                 f"{key}: roundtrip mismatch — session={session[key]!r}, "
                 f"exported={exported[key]!r}, imported={imported[key]!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: W3 workplace-plan flags — same export/import roundtrip contract
+# ---------------------------------------------------------------------------
+
+
+class TestWorkplacePlanFlagsExportImportRoundtrip:
+    """W3: your/spouse_has_workplace_plan must survive export -> import, same as
+    the four ACA/defer flags above (SCALAR_KEYS-driven persistence)."""
+
+    FLAGS = {"your_has_workplace_plan": False, "spouse_has_workplace_plan": True}
+
+    def test_flags_survive_import(self) -> None:
+        updates = build_user_defaults_session_updates(self.FLAGS, as_spouse=False)
+        assert updates["your_has_workplace_plan"] is False
+        assert updates["spouse_has_workplace_plan"] is True
+
+    def _make_session(self) -> dict:
+        return {
+            "your_age": 61,
+            "spouse_age": 55,
+            "your_has_workplace_plan": False,
+            "spouse_has_workplace_plan": True,
+        }
+
+    def test_flags_included_in_export(self) -> None:
+        session = self._make_session()
+        mock_ss = MagicMock()
+        mock_ss.__contains__ = lambda self_, k: k in session
+        mock_ss.__getitem__ = lambda self_, k: session[k]
+        mock_ss.get = lambda k, default=None: session.get(k, default)
+
+        with patch("views.setup._state.st") as mock_st:
+            mock_st.session_state = mock_ss
+            from views.setup._state import _user_defaults_from_session
+
+            payload = _user_defaults_from_session()
+
+        assert payload["your_has_workplace_plan"] is False
+        assert payload["spouse_has_workplace_plan"] is True
+
+    def test_full_roundtrip_export_then_import(self) -> None:
+        session = self._make_session()
+        mock_ss = MagicMock()
+        mock_ss.__contains__ = lambda self_, k: k in session
+        mock_ss.__getitem__ = lambda self_, k: session[k]
+        mock_ss.get = lambda k, default=None: session.get(k, default)
+
+        with patch("views.setup._state.st") as mock_st:
+            mock_st.session_state = mock_ss
+            from views.setup._state import _user_defaults_from_session
+
+            exported = _user_defaults_from_session()
+
+        imported = build_user_defaults_session_updates(exported, as_spouse=False)
+
+        for key in ("your_has_workplace_plan", "spouse_has_workplace_plan"):
+            assert key in exported, f"{key} missing from export"
+            assert key in imported, f"{key} dropped during import (was in export)"
+            assert imported[key] == session[key]

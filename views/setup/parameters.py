@@ -73,6 +73,7 @@ def apply_single_filer(hh: Household) -> Household:
         spouse_age=0,
         spouse_ss_fra=0.0,
         spouse_aca_enrolled=False,
+        spouse_has_workplace_plan=False,
     )
 
 
@@ -435,6 +436,10 @@ def render_parameters_tab(hh: Household) -> None:
             step=1,
             format="%d",
         )
+        st.session_state.your_has_workplace_plan = st.checkbox(
+            "You have a workplace retirement plan (401k/403b)",
+            value=st.session_state.your_has_workplace_plan,
+        )
         _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
         your_fra_age = st.session_state.get("your_fra_age", 67)
         st.session_state.your_ss_fra = st.number_input(
@@ -524,6 +529,11 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.spouse_age,
             step=1,
             format="%d",
+            disabled=_is_single,
+        )
+        st.session_state.spouse_has_workplace_plan = st.checkbox(
+            "Spouse has a workplace retirement plan (401k/403b)",
+            value=st.session_state.spouse_has_workplace_plan,
             disabled=_is_single,
         )
         _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
