@@ -76,11 +76,16 @@ def render(hh: Household):
             NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
         )
         net_inv_income = st.number_input(
-            "Net investment income ($/yr)",
+            "Additional net investment income ($/yr)",
             value=0,
             step=5_000,
             format="%d",
-            help=f"Capital gains + dividends + interest. NIIT = {fmt_pct(NIIT_RATE)} when MAGI > ${_niit_threshold // 1000:.0f}K",
+            key="net_inv_income",
+            help=(
+                "Manual NII not otherwise modeled -- on top of forecast dividends/gains "
+                "and YTD investment income (if applied). Shared with the Sweet Spot Finder. "
+                f"NIIT = {fmt_pct(NIIT_RATE)} when MAGI > ${_niit_threshold // 1000:.0f}K"
+            ),
         )
 
     # --- Generate cost curves ---
@@ -89,8 +94,13 @@ def render(hh: Household):
     _view_year = hh.base_year
     _view_cpi = hh.cpi_assumption
 
+    # Inject base-year realized YTD investment income when the user opted in
+    # (mirrors Sweet Spot's apply_ytd_to_projection gating, views/sweet_spot.py).
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+
     curves = compute_cost_curves(
-        magi_points, base_magi, net_inv_income, hh, year=_view_year, cpi=_view_cpi
+        magi_points, base_magi, net_inv_income, hh, year=_view_year, cpi=_view_cpi, ytd=_ytd
     )
 
     # --- Chart 1: ACA Subsidy & Net Premium ---
@@ -210,7 +220,9 @@ def render(hh: Household):
     # --- Chart 3: Combined Hidden Cost ---
     st.markdown("### Total Hidden Cost of Conversion Income")
     st.caption(
-        f"Base MAGI: {fmt_dollars(base_magi)} · Net investment income: {fmt_dollars(net_inv_income)} — "
+        f"Base MAGI: {fmt_dollars(base_magi)} · Net investment income: "
+        f"{fmt_dollars(net_inv_income + curves.auto_nii)} "
+        f"(manual {fmt_dollars(net_inv_income)} + auto-detected {fmt_dollars(curves.auto_nii)}) — "
         "shows ACA subsidy loss + IRMAA increase + NIIT as you add conversion income"
     )
 

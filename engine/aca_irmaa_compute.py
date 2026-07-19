@@ -18,6 +18,7 @@ from engine.aca import (
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
+from engine.sweet_spot_compute import base_income_for_year
 from engine.tax import (
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
@@ -30,6 +31,7 @@ from engine.tax import (
     taxable_ss,
 )
 from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 
 def _nontaxable_ss(
@@ -107,6 +109,10 @@ class CostCurves:
     # ACA MAGI add-back (IRC §36B); 0 unless SS drawn in ACA years. Used to align
     # the cliff marker (audit C7 / aca-4).
     nontaxable_ss: float = 0.0
+    # W4: auto-derived net investment income (forecast div/gains + YTD investment
+    # income, if applied) folded into every NIIT computation below. Exposed so the
+    # view can show the manual field's "on top of X auto-detected" meaning.
+    auto_nii: float = 0.0
 
 
 def compute_cost_curves(
@@ -117,12 +123,22 @@ def compute_cost_curves(
     *,
     year: int,
     cpi: float,
+    ytd: YTDSnapshot | None = None,
 ) -> CostCurves:
     """Build cost curves for ACA, IRMAA, NIIT, federal tax, and total hidden cost.
 
     Computes base-state ACA/IRMAA/NIIT once (was previously recomputed inside the
     loop in views/aca_irmaa.py) and reuses for the hidden-cost decomposition.
+
+    W4: `net_inv_income` (the manual widget value) is treated as "additional NII
+    not otherwise modeled" -- the SAME semantics Sweet Spot uses -- and is added
+    to the auto-derived `net_investment_income_addl` (forecast div/gains + YTD
+    investment income, if `ytd` is supplied) before every NIIT computation below.
+    Pre-fix, this function fed the raw manual value only, under-counting NIIT
+    whenever the household has forecast brokerage income or opted-in YTD actuals.
     """
+    auto_nii = base_income_for_year(hh, year, ytd=ytd).net_investment_income_addl
+    total_nii = net_inv_income + auto_nii
     _your_on_aca = aca_applies(hh.your_age, hh.your_aca_enrolled)
     _spouse_on_aca = aca_applies(hh.spouse_age, hh.spouse_aca_enrolled)
     anyone_on_aca = _your_on_aca or _spouse_on_aca
@@ -186,7 +202,7 @@ def compute_cost_curves(
         year=_irmaa_year,
         cpi=cpi,
     )
-    base_niit = niit(base_magi, net_inv_income, filing_status=hh.filing_status)
+    base_niit = niit(base_magi, total_nii, filing_status=hh.filing_status)
 
     aca_subsidy_vals: list[float] = []
     aca_net_cost_vals: list[float] = []
@@ -251,7 +267,7 @@ def compute_cost_curves(
         )
 
         # NIIT
-        niit_vals.append(niit(magi, net_inv_income, filing_status=hh.filing_status))
+        niit_vals.append(niit(magi, total_nii, filing_status=hh.filing_status))
 
         # Tax
         bonus_ded = senior_bonus_deduction(
@@ -282,7 +298,7 @@ def compute_cost_curves(
                 cpi=cpi,
             )
             + max(surcharge - base_irmaa, 0)
-            + max(niit(magi, net_inv_income, filing_status=hh.filing_status) - base_niit, 0)
+            + max(niit_vals[-1] - base_niit, 0)
         )
         total_hidden_cost.append(hidden)
 
@@ -305,6 +321,7 @@ def compute_cost_curves(
         base_irmaa=base_irmaa,
         base_niit=base_niit,
         nontaxable_ss=nontaxable_ss,
+        auto_nii=auto_nii,
     )
 
 

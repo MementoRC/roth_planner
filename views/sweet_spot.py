@@ -58,12 +58,16 @@ def render(hh: Household) -> None:
         )
     with col_inv:
         net_inv_income = st.number_input(
-            "Net Investment Income (est.)",
+            "Additional net investment income ($/yr)",
             value=0,
             step=5_000,
             format="%d",
-            help="Capital gains + dividends + interest from brokerage. "
-            "Used to estimate NIIT impact.",
+            key="net_inv_income",
+            help=(
+                "Manual NII not otherwise modeled -- on top of forecast dividends/gains "
+                "and YTD investment income (if applied). Shared with the ACA + IRMAA "
+                "Explorer. Used to estimate NIIT impact."
+            ),
         )
 
     # Index IRMAA tiers and brackets for the selected year.
