@@ -661,6 +661,18 @@ def run_scenario(
             + yr.spouse_inherited_distribution
             - yr.federal_tax_amt
         )
+        # audit-0720 F4: YTD wages/NEC/interest/STCG are spendable cash already
+        # received this year (already taxed via combined_gross/federal_tax_amt
+        # above, which IS subtracted) but were never added back as an inflow —
+        # producing a phantom shortfall (understated available_income) for
+        # households with substantial YTD ordinary cash income.
+        if ytd_year is not None:
+            available_income += (
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.interest_ytd
+                + ytd_year.stcg_ytd
+            )
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
