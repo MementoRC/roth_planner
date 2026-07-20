@@ -368,6 +368,10 @@ def run_scenario(
         # conversion stack into combined_gross correctly.
         # spouse_ira_conversions_ytd: same symmetric logic — yr.spouse_conversion was
         # reduced by this amount; re-add it so the full spouse conversion appears in gross.
+        # audit-0720 F: above_the_line_adjustments_ytd (HSA/deductible-IRA) is subtracted
+        # here to match yr.magi's existing treatment (via magi_ytd) — both are AGI-basis
+        # aggregates and above-the-line adjustments reduce AGI, hence both the ordinary
+        # bracket base and MAGI.
         if ytd_year is not None:
             yr.combined_gross += (
                 ytd_year.wages_ytd
@@ -380,6 +384,7 @@ def run_scenario(
                 + ytd_year.ira_distributions_ytd
                 + ytd_year.crypto_stcg_ytd
                 + ytd_year.crypto_income_ytd
+                - ytd_year.above_the_line_adjustments_ytd
             )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
