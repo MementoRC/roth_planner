@@ -575,8 +575,14 @@ def run_scenario(
         # F5: guard widened to include qualified_dividends_ytd (IRC §1(h)(11) — both taxed
         # at preferential rates). If only qual-divs exist and ltcg_ytd==0 the old guard
         # skipped the entire block, applying $0 LTCG-rate tax to qual dividends.
+        # audit-0720 F3: crypto_ltcg_ytd is taxed at the same preferential 0/15/20%
+        # rates (IRC §1(h)) as ltcg_ytd/qualified_dividends_ytd and must be included
+        # in the stack-walk base — it already reaches MAGI/NIIT but was silently
+        # skipping the LTCG-rate tax computation itself.
         _ytd_ltcg_total = (
-            (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd) if ytd_year is not None else 0.0
+            (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd + ytd_year.crypto_ltcg_ytd)
+            if ytd_year is not None
+            else 0.0
         )
         if ytd_year is not None and _ytd_ltcg_total > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
