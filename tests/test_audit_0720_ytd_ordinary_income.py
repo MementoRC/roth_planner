@@ -14,8 +14,10 @@ inclusion in MAGI.
 
 import pytest
 
+from engine.headroom import compute_headroom
 from engine.scenario import ConversionPlan, run_scenario
-from engine.tax import taxable_ss
+from engine.sweet_spot_compute import base_income_for_year
+from engine.tax import deductions, room_to_22, senior_bonus_deduction, taxable_ss
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -197,3 +199,140 @@ class TestF4YtdCashInflowsInAvailableIncome:
         # Sanity: with $80K wages against $30K expenses, there should be no
         # shortfall at all once the cash is correctly counted.
         assert expected_income_needed == 0.0
+
+
+class TestF6SweetSpotYtdOrdinaryAlreadyMatchesScenarioForCrypto:
+    """F6 — SKIPPED: does not reproduce at current HEAD.
+
+    Finding F6 hypothesized that `engine/sweet_spot_compute.py::base_income_for_year`'s
+    `ytd_ordinary` (~line 292, built from `ytd.total_ordinary_income -
+    ytd.nqo_exercise_ytd`) diverges from scenario.py's `combined_gross` for
+    crypto-YTD households. Investigation at current HEAD: `total_ordinary_income`
+    (models/ytd_income.py) ALREADY includes `crypto_stcg_ytd` and
+    `crypto_income_ytd` — that inclusion predates this branch's F1 fix, which
+    only touched `engine/scenario.py`. Since F1 made `combined_gross` include
+    the same two crypto fields, sweet_spot and scenario already agree for a
+    crypto-only household; adding a red test with ONLY crypto YTD income
+    (no above-the-line adjustments) confirmed base.ytd_ordinary ==
+    combined_gross with zero delta.
+
+    The ~$32K gap the audit actually measured came from a household that
+    ALSO carried above-the-line HSA/deductible-IRA YTD contributions:
+    `total_ordinary_income` nets those out, which is the TAX-CORRECT
+    treatment (an above-the-line deduction reduces AGI and therefore the
+    ordinary bracket base) — confirmed independently by the pre-existing,
+    still-passing
+    `tests/test_headroom.py::TestHeadroom::test_above_the_line_adjustments_widen_all_headroom_by_exact_amount`,
+    which pins the identical `total_ordinary_income`-based pattern in
+    headroom.py as correct. It is `engine/scenario.py`'s `combined_gross`
+    that never subtracts above-the-line adjustments at all — a separate,
+    pre-existing gap outside F6's scope (which targets
+    sweet_spot_compute.py) and NOT remediated here.
+
+    Guard (no production change): for a crypto-only YTD snapshot (no
+    above-the-line adjustments), sweet_spot's ytd_ordinary must equal
+    scenario's combined_gross.
+    """
+
+    def test_f6_ytd_ordinary_matches_combined_gross_for_crypto_only_ytd(self) -> None:
+        # Given: a household with $100K of crypto STCG YTD and no
+        # above-the-line adjustments.
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            living_expenses=60_000.0,
+        )
+        ytd = YTDSnapshot(tax_year=2026, crypto_stcg_ytd=100_000.0)
+        plan = ConversionPlan()
+
+        # When: both engines compute their YTD ordinary-income base for the
+        # same base year.
+        base = base_income_for_year(hh, hh.base_year, ytd)
+        result = run_scenario(hh, plan, "f6_guard", end_age=61, ytd=ytd)
+        combined_gross = result.years[0].combined_gross
+
+        # Then: they already agree — no fix needed (F6 does not reproduce).
+        assert base.ytd_ordinary == pytest.approx(combined_gross)
+        assert base.ytd_ordinary == pytest.approx(100_000.0)
+
+
+class TestF7HeadroomLockedGrossAlreadyMatchesScenarioForCrypto:
+    """F7 — SKIPPED: does not reproduce at current HEAD.
+
+    Same root-cause analysis as F6 (see above), applied to
+    `engine/headroom.py::compute_headroom`'s `locked_gross`/`planned_gross`
+    (~line 171/198): both are built from `ytd.total_ordinary_income`, which
+    already included `crypto_stcg_ytd`/`crypto_income_ytd` before this
+    branch's F1 fix, so headroom already agreed with scenario's
+    `combined_gross` for crypto-only households — confirmed by the
+    pre-existing, still-passing
+    `tests/test_headroom.py::TestHeadroom::test_crypto_stcg_reduces_all_four_rooms_by_exact_amount`.
+    The audit's earlier note that headroom.py uses `ytd.total_ordinary_income`
+    "correctly" is independently confirmed by
+    `test_above_the_line_adjustments_widen_all_headroom_by_exact_amount`,
+    which pins that HSA/IRA above-the-line adjustments must widen
+    `room_to_12pct`/`room_to_22pct` by the exact adjustment amount — i.e.
+    `total_ordinary_income`'s above-the-line subtraction is the CORRECT
+    behavior, not a bug. (An earlier attempt to "fix" F7 by removing that
+    subtraction to match scenario.py's combined_gross was reverted after it
+    broke this exact golden test.) The residual gap the audit measured is
+    scenario.py's `combined_gross` never subtracting above-the-line
+    adjustments — out of scope for F7 (which targets headroom.py) and NOT
+    remediated here.
+
+    Guard (no production change): for a crypto-only YTD snapshot (no
+    above-the-line adjustments), headroom's bracket-room computation must
+    reflect the same ordinary gross as scenario's combined_gross.
+    """
+
+    def test_f7_room_to_22pct_reflects_combined_gross_ordinary_base_for_crypto_only_ytd(
+        self,
+    ) -> None:
+        # Given: a household below SS-start age (no SS this year, isolating
+        # the ordinary-gross effect) with $100K of crypto STCG YTD and no
+        # above-the-line adjustments.
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            living_expenses=60_000.0,
+        )
+        ytd = YTDSnapshot(tax_year=2026, crypto_stcg_ytd=100_000.0)
+
+        # When: headroom is computed for the base year.
+        result = compute_headroom(hh, ytd, filing_status=hh.filing_status)
+
+        # Then: room_to_22pct already reflects the same $100K ordinary gross
+        # scenario's combined_gross would produce (no SS, no above-the-line,
+        # standard deduction only at these under-65 ages) — no fix needed
+        # (F7 does not reproduce).
+        ded = deductions(
+            hh.your_age,
+            hh.spouse_age,
+            hh.std_deduction,
+            hh.senior_extra,
+            filing_status=hh.filing_status,
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
+        )
+        ded += senior_bonus_deduction(
+            hh.your_age,
+            hh.spouse_age,
+            ytd.niit_magi_ytd,
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
+            filing_status=hh.filing_status,
+        )
+        expected_room_to_22pct = room_to_22(
+            100_000.0,
+            ded,
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
+            filing_status=hh.filing_status,
+        )
+        assert result.room_to_22pct == pytest.approx(expected_room_to_22pct)
