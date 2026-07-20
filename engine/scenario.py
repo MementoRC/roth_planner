@@ -378,6 +378,8 @@ def run_scenario(
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.spouse_ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
+                + ytd_year.crypto_stcg_ytd
+                + ytd_year.crypto_income_ytd
             )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
