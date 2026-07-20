@@ -321,6 +321,12 @@ def compute_social_security(
             # F3: LTCG and qualified dividends are AGI items per IRC §86(b)(2) provisional-income
             + ytd_year.ltcg_ytd
             + ytd_year.qualified_dividends_ytd
+            # audit-0720 F2: crypto STCG/income (ordinary) and crypto LTCG (capital
+            # gain) are AGI items just like their non-crypto counterparts above and
+            # must count toward IRC §86(b)(2) provisional income.
+            + ytd_year.crypto_stcg_ytd
+            + ytd_year.crypto_income_ytd
+            + ytd_year.crypto_ltcg_ytd
         )
     # A-3: inherited IRA distributions are AGI → required in provisional income (IRC §86(b)(2))
     other_inc += your_inherited_distribution + spouse_inherited_distribution

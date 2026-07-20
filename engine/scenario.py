@@ -368,6 +368,10 @@ def run_scenario(
         # conversion stack into combined_gross correctly.
         # spouse_ira_conversions_ytd: same symmetric logic — yr.spouse_conversion was
         # reduced by this amount; re-add it so the full spouse conversion appears in gross.
+        # audit-0720 F: above_the_line_adjustments_ytd (HSA/deductible-IRA) is subtracted
+        # here to match yr.magi's existing treatment (via magi_ytd) — both are AGI-basis
+        # aggregates and above-the-line adjustments reduce AGI, hence both the ordinary
+        # bracket base and MAGI.
         if ytd_year is not None:
             yr.combined_gross += (
                 ytd_year.wages_ytd
@@ -378,6 +382,9 @@ def run_scenario(
                 + ytd_year.ira_conversions_ytd
                 + ytd_year.spouse_ira_conversions_ytd
                 + ytd_year.ira_distributions_ytd
+                + ytd_year.crypto_stcg_ytd
+                + ytd_year.crypto_income_ytd
+                - ytd_year.above_the_line_adjustments_ytd
             )
         # Forecast ordinary dividends are ordinary income; qualified dividends are MAGI-only (like LTCG)
         yr.combined_gross += ord_div_this_year
@@ -573,8 +580,14 @@ def run_scenario(
         # F5: guard widened to include qualified_dividends_ytd (IRC §1(h)(11) — both taxed
         # at preferential rates). If only qual-divs exist and ltcg_ytd==0 the old guard
         # skipped the entire block, applying $0 LTCG-rate tax to qual dividends.
+        # audit-0720 F3: crypto_ltcg_ytd is taxed at the same preferential 0/15/20%
+        # rates (IRC §1(h)) as ltcg_ytd/qualified_dividends_ytd and must be included
+        # in the stack-walk base — it already reaches MAGI/NIIT but was silently
+        # skipping the LTCG-rate tax computation itself.
         _ytd_ltcg_total = (
-            (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd) if ytd_year is not None else 0.0
+            (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd + ytd_year.crypto_ltcg_ytd)
+            if ytd_year is not None
+            else 0.0
         )
         if ytd_year is not None and _ytd_ltcg_total > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
@@ -653,6 +666,18 @@ def run_scenario(
             + yr.spouse_inherited_distribution
             - yr.federal_tax_amt
         )
+        # audit-0720 F4: YTD wages/NEC/interest/STCG are spendable cash already
+        # received this year (already taxed via combined_gross/federal_tax_amt
+        # above, which IS subtracted) but were never added back as an inflow —
+        # producing a phantom shortfall (understated available_income) for
+        # households with substantial YTD ordinary cash income.
+        if ytd_year is not None:
+            available_income += (
+                ytd_year.wages_ytd
+                + ytd_year.nec_income_ytd
+                + ytd_year.interest_ytd
+                + ytd_year.stcg_ytd
+            )
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
