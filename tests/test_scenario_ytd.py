@@ -899,3 +899,44 @@ class TestOBBBAPhaseoutMAGIConsistency:
             f"no_muni={yr_no_muni.total_deductions:.0f}, "
             f"with_muni={yr_with_muni.total_deductions:.0f}"
         )
+
+
+class TestAboveTheLineAdjustmentReducesCombinedGross:
+    """Audit 2026-07-20: above-the-line HSA/deductible-IRA adjustment must reduce
+    combined_gross (hence taxable_income/federal_tax), consistent with yr.magi.
+
+    IRC: above-the-line adjustments (HSA §223(a), deductible trad-IRA §219) reduce
+    AGI. Taxable income = AGI - std/itemized deduction, so they must also reduce the
+    ordinary-bracket base. yr.magi already subtracts them via YTDSnapshot.magi_ytd;
+    yr.combined_gross summed ytd_year's ordinary fields directly without ever
+    subtracting ytd_year.above_the_line_adjustments_ytd — an internal AGI
+    inconsistency that overstated taxable income and federal tax.
+    """
+
+    def test_above_the_line_adjustment_reduces_combined_gross_by_exact_amount(self) -> None:
+        """Given a base-year household with $100K wages and an $8K above-the-line
+        adjustment (HSA + deductible IRA), When run_scenario computes the base
+        year, Then combined_gross and taxable_income must each be exactly $8K
+        lower than the no-adjustment baseline — mirroring magi's existing,
+        already-correct treatment of the same adjustment.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household()
+        adjustment = 8_000.0
+        plan = ConversionPlan()
+
+        ytd_base = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
+        ytd_adj = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=100_000.0,
+            hsa_contribution_ytd=5_000.0,
+            deductible_ira_contribution_ytd=3_000.0,
+        )
+
+        yr_base = run_scenario(hh, plan, "base", end_age=65, ytd=ytd_base).years[0]
+        yr_adj = run_scenario(hh, plan, "adj", end_age=65, ytd=ytd_adj).years[0]
+
+        assert yr_base.combined_gross - yr_adj.combined_gross == approx(adjustment)
+        assert yr_base.taxable_income - yr_adj.taxable_income == approx(adjustment)
+        assert yr_base.federal_tax_amt > yr_adj.federal_tax_amt
