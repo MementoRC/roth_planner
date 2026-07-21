@@ -249,6 +249,25 @@ class TestBaselineOptionIncomeUsesProjectedPrice:
         assert yr.option_income == pytest.approx(expected_income)
 
 
+class TestEffectiveScheduleKeyMigration:
+    """audit-0720 H10 follow-up: a persisted schedule stored under the legacy
+    ``year:strike`` fallback key must still match its grant after the
+    expiry_year-enriched key format ships (else effective_schedule() silently
+    returns zero option income for it)."""
+
+    def test_legacy_keyed_schedule_still_prices_option_income(self):
+        from models.exercise_schedule import ExerciseSchedule
+        from models.grants import StockGrant
+
+        grant = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        hh = Household(base_year=2026, txn_price_now=200.0, grants=[grant])
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.shares_by_grant_year["2019:104"] = {2029: 500}
+        hh.exercise_schedule.set_price(2029, 200.0)
+
+        assert hh.option_income(2029) == pytest.approx((200.0 - 104.0) * 500)
+
+
 class TestGrowthProfileYield:
     """Tests for the yield/qualified split on GrowthProfile."""
 

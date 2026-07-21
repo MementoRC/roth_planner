@@ -395,6 +395,9 @@ class Household:
         exercises identically to the exercise page and optimizer.
         """
         if self.exercise_schedule is not None and not self.exercise_schedule.is_empty():
+            # Migrate any legacy year:strike fallback keys (pre audit-0720 H10
+            # expiry-year enrichment) so they keep matching self.grants.
+            self.exercise_schedule.migrate_keys(self.grants)
             return self.exercise_schedule
         return ExerciseSchedule.default_at_expiry(
             self.grants, self.base_year, self.txn_price_now, self.projected_txn_price

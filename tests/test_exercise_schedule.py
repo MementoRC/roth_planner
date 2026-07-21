@@ -35,13 +35,16 @@ class TestStockGrantHelpers:
         g = StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029, grant_id="abc123")
         assert g.key() == "abc123"
 
-    def test_key_falls_back_to_year_strike_when_no_grant_id(self):
+    def test_key_falls_back_to_year_strike_expiry_when_no_grant_id(self):
+        # audit-0720 H10: expiry_year is part of the fallback key so two
+        # empty-grant_id grants sharing year+strike but differing in
+        # expiry_year no longer collide.
         g = StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029)
-        assert g.key() == "2019:104"
+        assert g.key() == "2019:104:2029"
 
     def test_key_fallback_formats_strike_with_g(self):
         g = StockGrant(year=2020, strike=130.5, shares=100, expiry_year=2030)
-        assert g.key() == "2020:130.5"
+        assert g.key() == "2020:130.5:2030"
 
 
 class TestIncomeFor:
@@ -264,6 +267,75 @@ class TestContentKeyStability:
         after = sched.income_for(2026, compacted)
 
         assert original == approx(after)
+
+
+class TestKeyCollisionFix:
+    """audit-0720 H10: two empty-grant_id grants that share year+strike but
+    have DIFFERENT expiry_year must not collide on key() -- they used to,
+    silently pooling their exercises together in ExerciseSchedule."""
+
+    def test_distinct_expiry_years_produce_distinct_keys(self):
+        g1 = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        g2 = StockGrant(year=2019, strike=104.0, shares=300, expiry_year=2031)
+        assert g1.key() != g2.key()
+
+    def test_default_at_expiry_does_not_pool_colliding_grants(self):
+        g1 = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        g2 = StockGrant(year=2019, strike=104.0, shares=300, expiry_year=2031)
+        grants = [g1, g2]
+        sched = ExerciseSchedule.default_at_expiry(grants, base_year=2026, price_now=200.0)
+        assert sched.remaining(g1) == 0
+        assert sched.remaining(g2) == 0
+
+
+class TestMigrateKeys:
+    """audit-0720 H10 follow-up: schedules persisted under the legacy
+    ``year:strike`` fallback key must be remapped to the new
+    ``year:strike:expiry_year`` fallback so income_for keeps matching (else
+    the format change silently zeroes out stored option income)."""
+
+    def test_legacy_key_migrated_to_new_key(self):
+        grant = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        sched = ExerciseSchedule()
+        sched.shares_by_grant_year["2019:104"] = {2029: 500}
+        sched.set_price(2029, 200.0)
+
+        sched.migrate_keys([grant])
+
+        assert "2019:104" not in sched.shares_by_grant_year
+        assert sched.shares(grant.key(), 2029) == 500
+        assert sched.income_for(2029, [grant]) == approx((200.0 - 104.0) * 500)
+
+    def test_migration_is_idempotent(self):
+        grant = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        sched = ExerciseSchedule()
+        sched.shares_by_grant_year["2019:104"] = {2029: 500}
+
+        sched.migrate_keys([grant])
+        sched.migrate_keys([grant])  # second call must be a no-op, not error
+
+        assert sched.shares(grant.key(), 2029) == 500
+
+    def test_grant_id_keys_are_never_touched(self):
+        grant = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029, grant_id="g19")
+        sched = ExerciseSchedule()
+        sched.set_shares("g19", 2029, 500)
+
+        sched.migrate_keys([grant])
+
+        assert sched.shares("g19", 2029) == 500
+
+    def test_ambiguous_legacy_key_is_left_unmigrated(self):
+        # g1/g2 share the legacy "2019:104" key but diverge in expiry_year --
+        # migration must not guess which grant the stored entry belongs to.
+        g1 = StockGrant(year=2019, strike=104.0, shares=500, expiry_year=2029)
+        g2 = StockGrant(year=2019, strike=104.0, shares=300, expiry_year=2031)
+        sched = ExerciseSchedule()
+        sched.shares_by_grant_year["2019:104"] = {2029: 500}
+
+        sched.migrate_keys([g1, g2])
+
+        assert "2019:104" in sched.shares_by_grant_year
 
 
 class TestDefaultAtExpiry:

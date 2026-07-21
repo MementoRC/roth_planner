@@ -355,6 +355,94 @@ class TestSurvivorAutofill:
         )
 
 
+class TestSurvivorSSStepUpFullActuarial:
+    """Audit-0720 H5: the survivor SS step-up in _auto_fill_core must apply the
+    full-actuarial SSA survivor rules (age-60 eligibility floor, reduction
+    locked at claim-onset age), mirroring compute_social_security in
+    engine/scenario_compute.py -- NOT the bare max(your_ss, spouse_ss)
+    fallback, which is only the death_year-unknown branch and is never the
+    right rule for auto-fill (survivor_active always carries a real
+    death_year here).
+    """
+
+    def test_survivor_under_60_gets_zero_ss_not_deceased_benefit(self) -> None:
+        """Survivor under age 60 in a post-death year must receive $0 SS.
+
+        MFJ household: you die at end of base_year (death_year=base_year), so
+        survivor_active begins base_year+1. The spouse (survivor) is 55 at
+        base_year -> 56 in the first survivor year, well under the SSA
+        age-60 eligibility floor. The deceased (you) already claimed SS at
+        62, so your_ss > 0 that year.
+
+        Bug: _auto_fill_core used max(your_ss, spouse_ss) = your_ss > 0,
+        leaking the deceased's benefit to the survivor. That overstates
+        combined_ss (and its taxable fraction), overstates fixed_gross, and
+        understates the 22%-bracket conversion room for that year.
+
+        Fix: full-actuarial rules zero the survivor's SS (age < 60 floor), so
+        fixed_gross = 0 and the spouse's conversion exactly fills
+        room_to_22(0, ded, ...) -- unconstrained since her rolled-over IRA is
+        large. No hardcoded dollar figures: the expected conversion is
+        derived directly from engine.tax.room_to_22/deductions using the same
+        inputs the auto-fill loop uses.
+        """
+        from dataclasses import replace
+
+        from engine.ira import ss_benefit_at_age, ss_with_cola
+        from engine.tax import deductions as _deductions
+        from engine.tax import room_to_22 as _room_to_22
+
+        death_year = Household().base_year  # 2026
+        survivor_year = death_year + 1  # 2027 -- first survivor-active year
+        hh = replace(
+            Household(),
+            filing_status="MFJ",
+            your_age=62,
+            your_ira=0.0,
+            your_ss_fra=8_000,  # synthetic large monthly FRA benefit -- pushes the
+            # (buggy) deceased-benefit step-up well into the 85% taxable-SS band so
+            # the divergence is large and unambiguous, not a rounding artifact.
+            your_ss_start_age=62,
+            spouse_age=55,  # -> 56 in survivor_year: under the age-60 floor
+            spouse_ira=10_000_000.0,  # never the binding constraint
+            spouse_ss_fra=0,
+            spouse_ss_start_age=62,
+            grants=[],
+            brokerage_start=0.0,
+            survivor=SurvivorScenario(who_dies="you", death_year=death_year),
+        )
+
+        # Sanity precondition: the deceased's benefit is indeed positive in the
+        # survivor year (so a bug that leaks it to the survivor is observable).
+        your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        deceased_benefit = ss_with_cola(
+            your_ss_base, (hh.your_age + 1) - hh.your_ss_start_age, hh.ss_cola
+        )
+        assert deceased_benefit > 0.0, "Precondition: deceased benefit must be positive"
+
+        # Expected (correct) conversion: combined_ss = 0 (age-60 floor) ->
+        # fixed_gross = 0 -> room = room_to_22(0, ded, ...), fully absorbed by
+        # the spouse's (unconstrained) IRA.
+        ded = _deductions(
+            0, 56, filing_status="Single", year=survivor_year, cpi=hh.cpi_assumption
+        )
+        expected_conversion = _room_to_22(
+            0.0, ded, year=survivor_year, cpi=hh.cpi_assumption, filing_status="Single"
+        )
+        assert expected_conversion > 0.0, "Precondition: bracket room must be positive"
+
+        plan = auto_fill_22(hh)
+        actual_conversion = plan.spouse_conversions.get(survivor_year, 0.0)
+
+        assert actual_conversion == approx(expected_conversion, tol=50.0), (
+            f"survivor_year={survivor_year} conversion={actual_conversion:.0f} must equal "
+            f"the unconstrained 22%-bracket room {expected_conversion:.0f} (survivor SS=0 "
+            f"under the age-60 floor). Bug would instead leak the deceased's benefit "
+            f"(~{deceased_benefit:.0f}) into combined_ss, taxing a chunk of it and "
+            f"reducing the conversion by roughly its taxable fraction."
+        )
+
+
 class TestAutoFillRmdYtdClamp:
     """Audit 0702 / autofill-rmd-clamp: base-year RMD must not be double-counted.
 

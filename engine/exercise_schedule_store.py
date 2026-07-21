@@ -41,11 +41,11 @@ def load_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> Exerci
         return None
     try:
         data = read_pii_json(path)
-    except (json.JSONDecodeError, OSError):
+        if not isinstance(data, dict) or data.get("version") != _SCHEDULE_VERSION:
+            return None
+        return ExerciseSchedule.from_dict(data)
+    except (json.JSONDecodeError, OSError, ValueError, TypeError, KeyError):
         return None
-    if not isinstance(data, dict) or data.get("version") != _SCHEDULE_VERSION:
-        return None
-    return ExerciseSchedule.from_dict(data)
 
 
 def clear_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> None:
