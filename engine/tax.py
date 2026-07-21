@@ -175,8 +175,8 @@ def deductions(
         std_ded = STD_DEDUCTION_MFJ if filing_status == "MFJ" else STD_DEDUCTION_SINGLE
     if senior_extra is None:
         senior_extra = SENIOR_EXTRA_MFJ if filing_status == "MFJ" else SENIOR_EXTRA_SINGLE
-    ded = index_value(std_ded, year, cpi)
-    se = index_value(senior_extra, year, cpi)
+    ded = index_value(std_ded, year, cpi, round50=True)
+    se = index_value(senior_extra, year, cpi, round50=True)
     senior: float = 0.0
     if filing_status == "MFJ":
         if your_age >= 65:
