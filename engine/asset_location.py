@@ -140,12 +140,16 @@ def project_asset_location(
         # RMD computed per-owner: each spouse only owes RMDs on their own IRA
         # once they reach their own required-beginning-date age. Kept separate so
         # each owner's balance is drained by their OWN RMD below.
+        # M3 (audit-0720): beneficiary is the OTHER spouse, only passed when the
+        # household elects the sole-beneficiary toggle AND that spouse is alive.
+        _bene_gate = hh.spouse_is_sole_beneficiary and not survivor_active
         your_rmd = calc_rmd(
             your_ira_bal,
             ya,
             hh.your_rmd_start_age,
             first_year_deferred=hh.your_defer_first_rmd,
             prior_year_balance=prev_your_ira_bal,
+            beneficiary_age=sa if _bene_gate else None,
         )
         spouse_rmd = calc_rmd(
             spouse_ira_bal,
@@ -153,6 +157,7 @@ def project_asset_location(
             hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira_bal,
+            beneficiary_age=ya if _bene_gate else None,
         )
         rmd = your_rmd + spouse_rmd
         yr.rmd = rmd

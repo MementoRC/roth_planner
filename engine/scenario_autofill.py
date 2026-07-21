@@ -147,12 +147,16 @@ def _auto_fill_core(
         combined_ss = your_ss + spouse_ss
 
         # RMD
+        # M3 (audit-0720): beneficiary is the OTHER spouse, only passed when the
+        # household elects the sole-beneficiary toggle AND that spouse is alive.
+        _bene_gate = hh.spouse_is_sole_beneficiary and not survivor_active
         rmd = calc_rmd(
             your_ira,
             ya,
             hh.your_rmd_start_age,
             first_year_deferred=hh.your_defer_first_rmd,
             prior_year_balance=prev_your_ira,
+            beneficiary_age=sa if _bene_gate else None,
         )
         taxable_rmd = rmd  # no QCD in auto-fill (QCDs reduce income but not conversion room)
         spouse_taxable_rmd = calc_rmd(
@@ -161,6 +165,7 @@ def _auto_fill_core(
             hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira,
+            beneficiary_age=ya if _bene_gate else None,
         )  # no spouse QCD in auto-fill
 
         # Inherited IRA drains (SECURE Act 10-year rule) are ordinary income and

@@ -221,6 +221,13 @@ class Household:
     your_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer first RMD to April 1 of following year (two RMDs land in year 2)
     spouse_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(ii): defer spouse's first RMD likewise
 
+    # M3 (audit-0720): household-level (not per-person) toggle. When True AND
+    # the beneficiary spouse is more than 10 years younger than the IRA owner,
+    # RMDs use the IRS Joint & Last Survivor Table (Table II) instead of the
+    # Uniform Lifetime Table (Table III) — see engine/ira.py rmd_divisor().
+    # Default False preserves today's Table-III-only behavior exactly.
+    spouse_is_sole_beneficiary: bool = _D["spouse_is_sole_beneficiary"]
+
     # Healthcare coverage
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
     spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
