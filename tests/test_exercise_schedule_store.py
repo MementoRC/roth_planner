@@ -7,7 +7,8 @@ from __future__ import annotations
 import json
 
 from engine.exercise_schedule_store import load_exercise_schedule, save_exercise_schedule
-from models.exercise_schedule import ExerciseSchedule
+from engine.secure_io import write_pii_json
+from models.exercise_schedule import _SCHEDULE_VERSION, ExerciseSchedule
 
 
 def make_schedule() -> ExerciseSchedule:
@@ -68,6 +69,17 @@ class TestMissingOrMalformed:
         path.write_text(
             json.dumps({"version": 999, "shares_by_grant_year": {}, "price_by_year": {}})
         )
+
+        assert load_exercise_schedule(path=path) is None
+
+    def test_correct_version_but_non_numeric_value_returns_none(self, tmp_path):
+        path = tmp_path / ".exercise_schedule_cache.json"
+        corrupt = {
+            "version": _SCHEDULE_VERSION,
+            "shares_by_grant_year": {"2019:104": {"2029": "not-an-int"}},
+            "price_by_year": {},
+        }
+        write_pii_json(path, corrupt)
 
         assert load_exercise_schedule(path=path) is None
 
