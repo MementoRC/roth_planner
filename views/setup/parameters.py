@@ -587,6 +587,19 @@ def render_parameters_tab(hh: Household) -> None:
             ),
             disabled=_is_single,
         )
+        st.session_state.spouse_is_sole_beneficiary = st.checkbox(
+            "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
+            "Last Survivor Table for RMDs)",
+            value=st.session_state.get("spouse_is_sole_beneficiary", False),
+            help=(
+                "26 CFR §1.401(a)(9)-9 Table II: when your sole primary IRA "
+                "beneficiary is a spouse more than 10 years younger, the IRS "
+                "requires this larger-divisor table instead of the standard "
+                "Uniform Lifetime Table — producing a smaller RMD. Only applies "
+                "when the age gap qualifies; otherwise the standard table is used."
+            ),
+            disabled=_is_single,
+        )
         st.session_state.spouse_fra_age = st.number_input(
             "Spouse FRA (Full Retirement Age)",
             min_value=65,

@@ -92,6 +92,54 @@ class TestScenarioDividendProjection:
         assert yr_ord.brokerage_qual_div == pytest.approx(0.0)
 
 
+class TestSpouseIsSoleBeneficiaryRmd:
+    """M3 (audit-0720): spouse_is_sole_beneficiary threads through the multi-year
+    projection's RMD phase (engine/scenario.py -> compute_rmds -> calc_rmd)."""
+
+    def _qualifying_household(self, **kwargs) -> Household:
+        """Owner at RMD age, spouse-beneficiary 15 years younger (qualifies for
+        Table II: 80 - 65 = 15 > 10)."""
+        return Household(
+            your_age=80,
+            spouse_age=65,
+            base_year=2026,
+            your_ira=4_000_000,
+            spouse_ira=1_000_000,
+            growth_rate=0.07,
+            **kwargs,
+        )
+
+    def test_flag_off_matches_todays_table_iii_rmd(self):
+        """Default-off: RMD identical to the pre-M3 Table-III-only behavior."""
+        hh = self._qualifying_household(spouse_is_sole_beneficiary=False)
+        result = run_scenario(hh, ConversionPlan(), "flag_off", end_age=81)
+        yr0 = result.years[0]
+        assert yr0.your_rmd == approx(4_000_000 / 20.2, tol=1.0)
+
+    def test_flag_on_lowers_rmd_vs_flag_off(self):
+        """Flag on for a qualifying household: Table II's larger divisor produces
+        a strictly smaller projected RMD than flag-off (Table III)."""
+        hh_off = self._qualifying_household(spouse_is_sole_beneficiary=False)
+        hh_on = self._qualifying_household(spouse_is_sole_beneficiary=True)
+        r_off = run_scenario(hh_off, ConversionPlan(), "flag_off", end_age=81)
+        r_on = run_scenario(hh_on, ConversionPlan(), "flag_on", end_age=81)
+        yr_off = r_off.years[0]
+        yr_on = r_on.years[0]
+        assert yr_on.your_rmd < yr_off.your_rmd
+        assert yr_on.your_rmd == approx(4_000_000 / 23.8, tol=1.0)
+
+    def test_default_household_age_gap_does_not_qualify_flag_on_is_golden_stable(self):
+        """Default household (your_age 61 / spouse_age 55, gap 6) does not qualify
+        (gap must be > 10) — flag-on RMDs must be UNCHANGED vs flag-off."""
+        hh_off = Household(spouse_is_sole_beneficiary=False)
+        hh_on = Household(spouse_is_sole_beneficiary=True)
+        r_off = run_scenario(hh_off, ConversionPlan(), "default_off", end_age=95)
+        r_on = run_scenario(hh_on, ConversionPlan(), "default_on", end_age=95)
+        for yr_off, yr_on in zip(r_off.years, r_on.years, strict=True):
+            assert yr_on.your_rmd == pytest.approx(yr_off.your_rmd, abs=0.01)
+            assert yr_on.spouse_rmd == pytest.approx(yr_off.spouse_rmd, abs=0.01)
+
+
 class TestSpouseRMDBrokerageAccumulation:
     """Regression: available_income must include spouse RMD and spouse extra_withdrawal.
 

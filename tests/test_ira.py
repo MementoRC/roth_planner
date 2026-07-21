@@ -4,6 +4,7 @@ import pytest
 
 from engine.ira import (
     calc_rmd,
+    joint_life_divisor,
     project_ira,
     rmd_divisor,
     ss_benefit_at_age,
@@ -90,6 +91,53 @@ class TestIRA:
         balance = 2_000_000.0
         expected = balance / rmd_divisor(75)
         assert calc_rmd(balance, 75, 75, first_year_deferred=False) == approx(expected)
+
+
+class TestJointLastSurvivorTable:
+    """M3 (audit-0720): 26 CFR §1.401(a)(9)-9 Table II — used only when the sole
+    beneficiary spouse is more than 10 years younger than the owner."""
+
+    def test_finding_case_uses_table_ii_and_shrinks_rmd(self):
+        """RED (pre-fix): calc_rmd(500_000, 80, 73, beneficiary_age=65) used
+        Table III (divisor 20.2) -> 24752.48. GREEN (post-fix): the >10-year
+        gap (80-65=15) qualifies for Table II (divisor 23.8) -> 21008.40."""
+        rmd = calc_rmd(500_000, 80, 73, beneficiary_age=65)
+        assert rmd == approx(21_008.40, tol=0.5)
+        # Sanity: confirms this is genuinely smaller than the old Table-III result.
+        table_iii_rmd = 500_000 / 20.2
+        assert rmd < table_iii_rmd
+
+    def test_table_value_pins(self):
+        """Embedded-transcription correctness guards — must match the IRS table exactly."""
+        assert joint_life_divisor(80, 65) == 23.8
+        assert joint_life_divisor(73, 55) == 32.6
+        assert joint_life_divisor(92, 80) == 11.9
+        assert joint_life_divisor(85, 72) == 18.1
+
+    def test_exactly_10_years_younger_uses_table_iii_not_ii(self):
+        """Age gap of exactly 10 does NOT qualify (rule requires MORE than 10)."""
+        rmd = calc_rmd(500_000, 80, 73, beneficiary_age=70)
+        assert rmd == approx(500_000 / rmd_divisor(80), tol=0.01)
+        # A qualifying gap (11+) at the same owner age DOES differ from Table III,
+        # confirming the gate is genuinely load-bearing (not a no-op coincidence).
+        rmd_qualifying = calc_rmd(500_000, 80, 73, beneficiary_age=69)
+        assert rmd_qualifying != approx(rmd)
+
+    def test_owner_out_of_table_range_falls_back_to_table_iii_no_crash(self):
+        """Owner age 95 has no Table II column at all."""
+        assert joint_life_divisor(95, 60) is None
+        rmd = calc_rmd(500_000, 95, 73, beneficiary_age=60)
+        assert rmd == approx(500_000 / rmd_divisor(95), tol=0.01)
+
+    def test_uncovered_cell_owner_92_bene_81_falls_back_to_table_iii_no_crash(self):
+        """The one qualifying-but-uncovered cell noted in the audit finding."""
+        assert joint_life_divisor(92, 81) is None
+        rmd = calc_rmd(500_000, 92, 73, beneficiary_age=81)
+        assert rmd == approx(500_000 / rmd_divisor(92), tol=0.01)
+
+    def test_no_beneficiary_age_is_unaffected(self):
+        """Default (no beneficiary_age passed) behaves exactly as before."""
+        assert calc_rmd(500_000, 80, 73) == approx(500_000 / rmd_divisor(80), tol=0.01)
 
     def test_calc_rmd_default_start_age_covers_age_73_cohort(self):
         """L1 (audit 0702): default rmd_start_age must be 73, not 75, so the

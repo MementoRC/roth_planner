@@ -185,6 +185,15 @@ def run_scenario(
             spouse_defer_first_rmd=hh.spouse_defer_first_rmd,
             your_prior_year_balance=prev_your_ira_begin,
             spouse_prior_year_balance=prev_spouse_ira_begin,
+            # M3 (audit-0720): the beneficiary is the OTHER spouse, only passed
+            # when the household elects the sole-beneficiary toggle AND that
+            # spouse is still alive (a deceased spouse can't be a beneficiary).
+            your_beneficiary_age=(
+                sa if hh.spouse_is_sole_beneficiary and not survivor_active else None
+            ),
+            spouse_beneficiary_age=(
+                ya if hh.spouse_is_sole_beneficiary and not survivor_active else None
+            ),
         )
 
         # === C2/scenario-1: base-year RMD net-of-YTD reconciliation ===

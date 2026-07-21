@@ -71,6 +71,20 @@ class TestWorkplacePlanFields:
         assert hh.spouse_has_workplace_plan is True
 
 
+class TestSpouseIsSoleBeneficiaryField:
+    """M3 (audit-0720): spouse_is_sole_beneficiary is a household-level (not
+    per-person) plain-scalar bool, default-off so existing RMDs are unaffected."""
+
+    def test_default_matches_config_defaults(self):
+        hh = Household()
+        assert hh.spouse_is_sole_beneficiary is False
+        assert hh.spouse_is_sole_beneficiary == DEFAULTS["spouse_is_sole_beneficiary"]
+
+    def test_accepted_as_constructor_kwarg(self):
+        hh = Household(spouse_is_sole_beneficiary=True)
+        assert hh.spouse_is_sole_beneficiary is True
+
+
 class TestPerAccountGrowth:
     """Test per-account growth rate profiles."""
 

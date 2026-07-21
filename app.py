@@ -267,6 +267,7 @@ def get_household() -> Household:
         ),
         your_defer_first_rmd=st.session_state.get("your_defer_first_rmd", False),
         spouse_defer_first_rmd=st.session_state.get("spouse_defer_first_rmd", False),
+        spouse_is_sole_beneficiary=st.session_state.get("spouse_is_sole_beneficiary", False),
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
         prior_year_magi={

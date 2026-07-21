@@ -15,6 +15,10 @@ DEFAULTS: dict = {
     "spouse_age": 53,
     "your_has_workplace_plan": True,
     "spouse_has_workplace_plan": False,
+    # M3 (audit-0720): default-off; when True AND spouse is >10 yrs younger,
+    # RMDs use the IRS Joint & Last Survivor Table (Table II) instead of the
+    # Uniform Lifetime Table (Table III). See engine/ira.py.
+    "spouse_is_sole_beneficiary": False,
     "your_ira": 500_000,
     "spouse_ira": 500_000,
     "your_roth": 0,

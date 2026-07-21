@@ -49,6 +49,7 @@ SCALAR_KEYS: list[str] = [
     "txn_price_growth_rate",
     "your_has_workplace_plan",
     "spouse_has_workplace_plan",
+    "spouse_is_sole_beneficiary",
 ]
 
 

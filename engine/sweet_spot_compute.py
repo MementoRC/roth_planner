@@ -210,12 +210,17 @@ def estimate_rmd_income(hh: Household, year: int) -> float:
     here (no ConversionPlan is available in this module)."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
+    # M3 (audit-0720): beneficiary is the OTHER spouse, only passed when the
+    # household elects the sole-beneficiary toggle. This snapshot function
+    # doesn't model survivor scenarios at all, so no survivor gate is needed.
+    _bene_gate = hh.spouse_is_sole_beneficiary
     your_rmd = calc_rmd(
         hh.your_ira,
         ya,
         hh.your_rmd_start_age,
         first_year_deferred=hh.your_defer_first_rmd,
         prior_year_balance=hh.your_ira if hh.your_defer_first_rmd else 0.0,
+        beneficiary_age=sa if _bene_gate else None,
     )
     spouse_rmd = calc_rmd(
         hh.spouse_ira,
@@ -223,6 +228,7 @@ def estimate_rmd_income(hh: Household, year: int) -> float:
         hh.spouse_rmd_start_age,
         first_year_deferred=hh.spouse_defer_first_rmd,
         prior_year_balance=hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0,
+        beneficiary_age=ya if _bene_gate else None,
     )
     inherited = 0.0
     for iira in hh.inherited_iras:

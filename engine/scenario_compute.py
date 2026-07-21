@@ -163,6 +163,8 @@ def compute_rmds(
     spouse_defer_first_rmd: bool = False,
     your_prior_year_balance: float = 0.0,
     spouse_prior_year_balance: float = 0.0,
+    your_beneficiary_age: int | None = None,
+    spouse_beneficiary_age: int | None = None,
 ) -> tuple[float, float, float, float, float, float]:
     """Return (your_rmd, qcd, taxable_rmd, spouse_rmd, spouse_qcd, spouse_taxable_rmd).
 
@@ -170,6 +172,9 @@ def compute_rmds(
       election.  When True the first-year RMD is deferred (returns 0) and added to year 2.
     your_prior_year_balance / spouse_prior_year_balance: IRA balance at the START of the
       prior year; used to compute the deferred first-year RMD that lands in year 2.
+    your_beneficiary_age / spouse_beneficiary_age: the OTHER spouse's age, passed through
+      to calc_rmd() only when Household.spouse_is_sole_beneficiary is True (M3, audit-0720)
+      — see engine/ira.py rmd_divisor() for the >10-year-gap Table II qualifying rule.
     """
     your_rmd = calc_rmd(
         your_ira,
@@ -177,6 +182,7 @@ def compute_rmds(
         your_rmd_start_age,
         first_year_deferred=your_defer_first_rmd,
         prior_year_balance=your_prior_year_balance,
+        beneficiary_age=your_beneficiary_age,
     )
     qcd = min(your_qcd_planned, qcd_limit) if ya >= QCD_MIN_AGE else 0.0
     taxable_rmd = max(your_rmd - min(qcd, your_rmd), 0)
@@ -186,6 +192,7 @@ def compute_rmds(
         spouse_rmd_start_age,
         first_year_deferred=spouse_defer_first_rmd,
         prior_year_balance=spouse_prior_year_balance,
+        beneficiary_age=spouse_beneficiary_age,
     )
     spouse_qcd = min(spouse_qcd_planned, qcd_limit) if sa >= QCD_MIN_AGE else 0.0
     spouse_taxable_rmd = max(spouse_rmd - min(spouse_qcd, spouse_rmd), 0)
