@@ -606,7 +606,12 @@ def render_parameters_tab(hh: Household) -> None:
 
     with joint_sub:
         st.session_state.growth_rate = st.slider(
-            "Growth Rate %", 3.0, 12.0, st.session_state.growth_rate, 0.5, format="%.1f%%"
+            "Growth Rate %",
+            3.0,
+            12.0,
+            _clamp(st.session_state.growth_rate, 3.0, 12.0),
+            0.5,
+            format="%.1f%%",
         )
         st.session_state.living_expenses = st.number_input(
             "Annual Living Expenses",
@@ -626,7 +631,9 @@ def render_parameters_tab(hh: Household) -> None:
             "ACA Benchmark Premium ($/yr)",
             min_value=0,
             max_value=60_000,
-            value=int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)),
+            value=_clamp(
+                int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)), 0, 60_000
+            ),
             step=100,
             format="%d",
             help=(
@@ -648,7 +655,7 @@ def render_parameters_tab(hh: Household) -> None:
             "Advance APTC ($/yr)",
             min_value=0,
             max_value=60_000,
-            value=int(st.session_state.get("advance_aptc_annual", 0)),
+            value=_clamp(int(st.session_state.get("advance_aptc_annual", 0)), 0, 60_000),
             step=100,
             format="%d",
             help=(
@@ -678,7 +685,7 @@ def render_parameters_tab(hh: Household) -> None:
             "Annual CPI Projection Rate (0.025 = 2.5%)",
             min_value=0.0,
             max_value=0.06,
-            value=float(st.session_state.get("cpi_assumption", 0.025)),
+            value=_clamp(float(st.session_state.get("cpi_assumption", 0.025)), 0.0, 0.06),
             step=0.001,
             format="%.3f",
             help=(
