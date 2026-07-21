@@ -113,6 +113,34 @@ class ExerciseSchedule:
     def is_empty(self) -> bool:
         return not any(years for years in self.shares_by_grant_year.values())
 
+    def migrate_keys(self, grants: list[StockGrant]) -> None:
+        """Rewrite stored grant keys from the legacy ``year:strike`` fallback to
+        the current ``year:strike:expiry_year`` fallback, so schedules persisted
+        before the expiry-year key enrichment keep matching their grants
+        (audit-0720 H10). Only UNAMBIGUOUS remaps are applied: a legacy key is
+        migrated iff exactly one grant maps to it. grant_id-based keys are never
+        touched. Idempotent.
+        """
+        legacy_to_new: dict[str, str] = {}
+        ambiguous: set[str] = set()
+        for g in grants:
+            if g.grant_id:
+                continue  # grant_id keys never used the legacy fallback
+            legacy = f"{g.year}:{g.strike:g}"
+            new = g.key()
+            if legacy in legacy_to_new and legacy_to_new[legacy] != new:
+                ambiguous.add(legacy)
+            legacy_to_new[legacy] = new
+        for legacy in ambiguous:
+            legacy_to_new.pop(legacy, None)
+        for legacy, new in legacy_to_new.items():
+            if legacy == new or legacy not in self.shares_by_grant_year:
+                continue
+            years = self.shares_by_grant_year.pop(legacy)
+            dest = self.shares_by_grant_year.setdefault(new, {})
+            for yr, n in years.items():
+                dest[yr] = dest.get(yr, 0) + n
+
     # -- hold-to-expiration default ---------------------------------------
 
     @classmethod

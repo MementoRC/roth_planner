@@ -27,7 +27,11 @@ class StockGrant:
     def key(self) -> str:
         """Stable, position-independent identity for this grant.
 
-        Content-based (grant_id, else year+strike) so it survives FinExtract
-        list compaction/reordering — see PR #369.
+        Content-based (grant_id, else year+strike+expiry_year) so it survives
+        FinExtract list compaction/reordering — see PR #369. expiry_year is
+        included in the fallback so two empty-grant_id grants that share
+        year+strike but differ in expiry_year don't collide (audit-0720
+        H10) — shares are NOT part of the key since they mutate over a
+        grant's life and the key must stay stable.
         """
-        return self.grant_id or f"{self.year}:{self.strike:g}"
+        return self.grant_id or f"{self.year}:{self.strike:g}:{self.expiry_year}"
