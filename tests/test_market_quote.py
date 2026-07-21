@@ -136,6 +136,17 @@ class TestFetchTxnQuoteFailureModes:
         assert result.ok is False
         assert result.price is None
 
+    def test_non_numeric_price_returns_error_not_raise(self) -> None:
+        session = _FakeSession(_FakeResponse(200, _chart_payload("N/A")))
+
+        result = fetch_txn_quote(session=session)  # must not raise
+
+        assert isinstance(result, QuoteResult)
+        assert result.ok is False
+        assert result.price is None
+        assert result.error is not None
+        assert "non-numeric" in result.error.lower() or "n/a" in result.error.lower()
+
     @pytest.mark.parametrize(
         "exc",
         [

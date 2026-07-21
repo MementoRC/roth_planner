@@ -101,9 +101,21 @@ def fetch_txn_quote(
             error="regularMarketPrice missing",
         )
 
+    try:
+        price_value = float(price)
+    except (ValueError, TypeError) as exc:
+        return QuoteResult(
+            ticker=ticker,
+            price=None,
+            currency=currency,
+            fetched_at=None,
+            detail=detail,
+            error=f"non-numeric price: {exc}",
+        )
+
     return QuoteResult(
         ticker=ticker,
-        price=float(price),
+        price=price_value,
         currency=currency,
         fetched_at=datetime.now(UTC),
         detail=detail,
