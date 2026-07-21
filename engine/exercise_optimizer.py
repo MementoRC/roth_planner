@@ -50,15 +50,19 @@ class OptimizerResult:
 
 
 def _base_projection(
-    hh: Household, end_age: int = 95
+    hh: Household, end_age: int = 95, ytd: YTDSnapshot | None = None
 ) -> tuple[dict[int, float], dict[int, float], dict[int, float], dict[int, str]]:
     """Conversion-free base projection. Returns per-year dicts:
     (base_ordinary, magi_wedge, total_deductions, filing_status).
     base_ordinary nets option income out of ordinary gross (schedule-independent
     baseline); magi_wedge = magi - combined_gross (LTCG/dividends/muni/taxable-SS
     delta above ordinary gross), used to put MAGI ceilings on the ordinary basis.
+
+    ``ytd`` is threaded through to ``run_no_conversion`` so realized base-year
+    YTD income (e.g. wages already earned) reduces the base-year ordinary-income
+    ceiling room, matching ``_score_candidate``'s ytd-aware scoring (audit-0720 M5).
     """
-    result = run_no_conversion(copy.deepcopy(hh), end_age=end_age)
+    result = run_no_conversion(copy.deepcopy(hh), end_age=end_age, ytd=ytd)
     base_ordinary: dict[int, float] = {}
     magi_wedge: dict[int, float] = {}
     total_deductions: dict[int, float] = {}
@@ -249,7 +253,7 @@ def optimize_exercises(
     if ceilings is None:
         ceilings = DEFAULT_CEILINGS
     base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(
-        hh, end_age=end_age
+        hh, end_age=end_age, ytd=ytd
     )
     cpi = hh.cpi_assumption
 

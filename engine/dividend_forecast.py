@@ -193,11 +193,28 @@ def forecast_portfolio(
 
         annual_income = pos.shares * annual_per_share
         qual_frac = _qualified_for(ticker, overrides)
-        per_pos[ticker] = {
-            "annual_div": annual_income,
-            "qualified": qual_frac,
-        }
-        total_qualified += annual_income * qual_frac
+        qualified_dollars = annual_income * qual_frac
+        # Aggregate per ticker instead of overwriting: the same ticker can
+        # appear in multiple Position records (e.g. both spouses' accounts),
+        # and the documented per_position contract is per-ticker totals, not
+        # per-record (audit-0720 L1). "qualified" is re-derived as a blended
+        # fraction across all accumulated records for this ticker so it stays
+        # a valid 0-1 rate even when records disagree (they normally won't).
+        existing = per_pos.get(ticker)
+        if existing is not None:
+            combined_income = existing["annual_div"] + annual_income
+            combined_qualified = existing["annual_div"] * existing["qualified"] + qualified_dollars
+            blended_frac = (combined_qualified / combined_income) if combined_income else 0.0
+            per_pos[ticker] = {
+                "annual_div": combined_income,
+                "qualified": blended_frac,
+            }
+        else:
+            per_pos[ticker] = {
+                "annual_div": annual_income,
+                "qualified": qual_frac,
+            }
+        total_qualified += qualified_dollars
         total_ordinary += annual_income * (1.0 - qual_frac)
 
     total_income = total_qualified + total_ordinary

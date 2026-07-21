@@ -238,7 +238,10 @@ def _resolve_grants(
 
     if isinstance(baseline, SourcedList):
         choice = choices.get(GRANTS_KEY)
-        if _trusted_source_differs(candidates, choice, lambda c: list(c.value) != list(baseline)):
+        baseline_keys = {g.key() for g in baseline}
+        if _trusted_source_differs(
+            candidates, choice, lambda c: {g.key() for g in c.value} != baseline_keys
+        ):
             pending.add(GRANTS_KEY)
         return
 

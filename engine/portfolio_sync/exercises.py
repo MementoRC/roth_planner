@@ -179,30 +179,50 @@ def _normalize_grant_id(gid: str) -> str:
     return "".join(ch for ch in str(gid).strip().upper() if ch.isalnum())
 
 
-def _grant_id_substring_match(raw_norm: str, known_norm: dict[str, str]) -> str | None:
+def _grant_id_substring_match(
+    raw_norm: str, known_norm: dict[str, str]
+) -> tuple[str | None, list[str]]:
     """Bidirectional substring match for grant_id prefix/suffix mismatches.
 
     Handles cases like UBS 'grant_number=197825' vs FinExtract
     'equity_awards.grant_id=N0000197825' (numeric core same, alpha-zero
-    prefix differs). Returns the household grant_id whose normalized form
-    contains (or is contained in) raw_norm. Picks the LONGEST match to
-    avoid spurious collisions.
+    prefix differs). Matches the household grant_id whose normalized form
+    contains (or is contained in) raw_norm, scoring candidates by the length
+    of the KNOWN grant_id itself (``len(norm)``) so the genuinely longest
+    household grant_id wins — NOT ``max(len(norm), len(raw_norm))``, which is
+    constant across all candidates whenever raw_norm is the longer string
+    (e.g. a custodian raw grant_number containing multiple known grant_ids as
+    substrings) and so degenerates to picking whichever candidate is first in
+    dict-iteration order (audit-0720 M7).
 
     Skips matches when EITHER side is shorter than 3 chars (too risky).
+
+    Returns ``(matched_grant_id, ambiguous_grant_ids)``. ``matched_grant_id``
+    is ``None`` when there is no match, OR when two-or-more DISTINCT
+    household grant_ids genuinely tie for the longest match — that tie is
+    real ambiguity, not a "longest match", so the caller must not silently
+    attribute; ``ambiguous_grant_ids`` lists the tied candidates in that case
+    so the caller can warn.
     """
     if not raw_norm or len(raw_norm) < 3:
-        return None
-    best_original: str | None = None
-    best_len = 0
+        return None, []
+    best_len = -1
+    best_originals: list[str] = []
     for norm, original in known_norm.items():
         if not norm or len(norm) < 3:
             continue
         if raw_norm in norm or norm in raw_norm:
-            score = max(len(norm), len(raw_norm))
+            score = len(norm)
             if score > best_len:
-                best_original = original
                 best_len = score
-    return best_original
+                best_originals = [original]
+            elif score == best_len and original not in best_originals:
+                best_originals.append(original)
+    if len(best_originals) == 1:
+        return best_originals[0], []
+    if len(best_originals) > 1:
+        return None, best_originals
+    return None, []
 
 
 def apply_option_exercises(
@@ -241,9 +261,19 @@ def apply_option_exercises(
                 remapped[household_gid] = remapped.get(household_gid, 0.0) + spread
                 continue
             # Tier 3: bidirectional substring match (handles prefix/suffix mismatches)
-            fallback = _grant_id_substring_match(norm, known_norm)
+            fallback, ambiguous = _grant_id_substring_match(norm, known_norm)
             if fallback:
                 remapped[fallback] = remapped.get(fallback, 0.0) + spread
+            elif ambiguous:
+                # Two-or-more distinct household grant_ids genuinely tie for
+                # the longest substring match — do NOT silently guess; keep
+                # the raw key and warn (audit-0720 M7).
+                remapped[raw_gid] = remapped.get(raw_gid, 0.0) + spread
+                exercises.warnings.append(
+                    f"grant_id {raw_gid} ambiguously matches multiple household "
+                    f"grants {sorted(ambiguous)} (normalized: {norm}); not "
+                    "attributed to any single grant"
+                )
             else:
                 # Genuinely unmatched — keep raw key and warn
                 remapped[raw_gid] = remapped.get(raw_gid, 0.0) + spread

@@ -9,9 +9,37 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.loader import load_defaults
-from engine.portfolio_sync import EXPECTED_RETURNS
+from engine.portfolio_sync import EXPECTED_RETURNS, EquityGrant
+from models.grants import StockGrant
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
+
+
+def _pair_grants(
+    snap_grants: list[EquityGrant], planner_grants: list[StockGrant]
+) -> list[tuple[EquityGrant | None, StockGrant | None]]:
+    """Pair FinExtract grants with planner grants by year identity.
+
+    Positional (index-based) pairing misaligns rows whenever the two lists
+    differ in order or length — e.g. PR #374 dropped the 2019 grant from
+    ``hh.grants``, which used to make the 2019 FinExtract row line up against
+    the 2020 planner-default row (audit-0720 M10). ``EquityGrant`` has no
+    strike/expiry_year field, so the grant year (parsed from ``grant_date``)
+    is the identity available on both sides. A grant with no counterpart on
+    the other side is paired with ``None`` so the caller can render a blank
+    side instead of a wrong pairing.
+    """
+    remaining_planner = list(planner_grants)
+    pairs: list[tuple[EquityGrant | None, StockGrant | None]] = []
+    for g in snap_grants:
+        year = int(g.grant_date.split("-")[0]) if g.grant_date else None
+        match = next((p for p in remaining_planner if p.year == year), None)
+        if match is not None:
+            remaining_planner.remove(match)
+        pairs.append((g, match))
+    for p in remaining_planner:
+        pairs.append((None, p))
+    return pairs
 
 
 def render(hh: Household):
@@ -184,29 +212,27 @@ def render(hh: Household):
 
         st.dataframe(pd.DataFrame(grant_rows), hide_index=True, width="stretch")
 
-        # Compare with planner defaults
+        # Compare with planner defaults — paired by grant-year identity, not
+        # list position, so the two sources never misalign (audit-0720 M10).
         st.markdown("#### vs. Planner Defaults")
-        plan_grants = hh.grants
         comp_rows = []
-        for i, g in enumerate(snap.equity_grants):
-            plan = plan_grants[i] if i < len(plan_grants) else None
+        for g, plan in _pair_grants(snap.equity_grants, hh.grants):
             comp_rows.append(
                 {
                     "Source": "FinExtract",
-                    "Grant": g.grant_date,
-                    "Outstanding": g.outstanding,
-                    "Value": fmt_dollars(g.current_value),
+                    "Grant": g.grant_date if g else "—",
+                    "Outstanding": g.outstanding if g else "—",
+                    "Value": fmt_dollars(g.current_value) if g else "—",
                 }
             )
-            if plan:
-                comp_rows.append(
-                    {
-                        "Source": "Planner Default",
-                        "Grant": str(plan.year),
-                        "Outstanding": plan.shares,
-                        "Value": fmt_dollars(plan.spread(hh.txn_price_now)),
-                    }
-                )
+            comp_rows.append(
+                {
+                    "Source": "Planner Default",
+                    "Grant": str(plan.year) if plan else "—",
+                    "Outstanding": plan.shares if plan else "—",
+                    "Value": fmt_dollars(plan.spread(hh.txn_price_now)) if plan else "—",
+                }
+            )
 
         st.dataframe(pd.DataFrame(comp_rows), hide_index=True, width="stretch")
 

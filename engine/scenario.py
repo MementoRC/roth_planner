@@ -820,6 +820,8 @@ def run_scenario(
     )
 
 
-def run_no_conversion(hh: Household, end_age: int = 95) -> ScenarioResult:
+def run_no_conversion(
+    hh: Household, end_age: int = 95, ytd: YTDSnapshot | None = None
+) -> ScenarioResult:
     """Baseline scenario: no conversions at all."""
-    return run_scenario(hh, ConversionPlan(), "No Conversion", end_age)
+    return run_scenario(hh, ConversionPlan(), "No Conversion", end_age, ytd=ytd)

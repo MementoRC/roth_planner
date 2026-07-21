@@ -203,12 +203,23 @@ def project_asset_location(
         combined_after = ira_eq + ira_bd
         pool_before_growth = (eq_after_rmd - conv_eq) + (bd_after_rmd - conv_bd)
         growth_factor = combined_after / pool_before_growth if pool_before_growth > 0 else 0.0
-        prior_total = cur_your_begin + cur_spouse_begin
-        if prior_total > 0:
-            your_conv = conv * (cur_your_begin / prior_total)
-            spouse_conv = conv * (cur_spouse_begin / prior_total)
-            your_post = max(cur_your_begin - your_rmd - your_conv, 0.0)
-            spouse_post = max(cur_spouse_begin - spouse_rmd - spouse_conv, 0.0)
+        # Split the conversion by POST-RMD balance, not beginning-of-year
+        # balance (audit-0720 M4). Splitting by beginning balance let a
+        # heavily-RMD'd owner be allocated more conversion than their
+        # post-RMD balance could afford, clamping that owner's end balance to
+        # 0 and silently losing the difference from the your+spouse == pool
+        # invariant. Since conv is already capped to <= (ira_total - rmd) at
+        # the top of the loop, your_post_rmd + spouse_post_rmd always covers
+        # the full conversion here, so the per-owner clamps below are inert
+        # in the normal case and only guard against float noise.
+        your_post_rmd = max(cur_your_begin - your_rmd, 0.0)
+        spouse_post_rmd = max(cur_spouse_begin - spouse_rmd, 0.0)
+        post_rmd_total = your_post_rmd + spouse_post_rmd
+        if post_rmd_total > 0:
+            your_conv = conv * (your_post_rmd / post_rmd_total)
+            spouse_conv = conv * (spouse_post_rmd / post_rmd_total)
+            your_post = max(your_post_rmd - your_conv, 0.0)
+            spouse_post = max(spouse_post_rmd - spouse_conv, 0.0)
             your_ira_bal = your_post * growth_factor
             spouse_ira_bal = spouse_post * growth_factor
         else:

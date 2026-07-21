@@ -139,8 +139,8 @@ def compute_cost_curves(
     """
     auto_nii = base_income_for_year(hh, year, ytd=ytd).net_investment_income_addl
     total_nii = net_inv_income + auto_nii
-    _your_on_aca = aca_applies(hh.your_age, hh.your_aca_enrolled)
-    _spouse_on_aca = aca_applies(hh.spouse_age, hh.spouse_aca_enrolled)
+    _your_on_aca = aca_applies(hh.your_age_in(year), hh.your_aca_enrolled)
+    _spouse_on_aca = aca_applies(hh.spouse_age_in(year), hh.spouse_aca_enrolled)
     anyone_on_aca = _your_on_aca or _spouse_on_aca
 
     effective_benchmark = effective_benchmark_premium(
