@@ -32,11 +32,9 @@ def _age_gap_household() -> Household:
     """
     return replace(
         Household(),
-        your_age=61,
-        your_birth_year=1965,   # born 1965 → rmd_start_age = 75
+        your_age=61,  # base_year 2026 - 61 = 1965 → rmd_start_age = 75
         your_ira=1_700_000.0,
-        spouse_age=50,
-        spouse_birth_year=1976,  # born 1976 → rmd_start_age = 75
+        spouse_age=50,  # base_year 2026 - 50 = 1976 → rmd_start_age = 75
         spouse_ira=1_700_000.0,
         your_rmd_start_age=75,
         spouse_rmd_start_age=75,
