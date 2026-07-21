@@ -11,7 +11,7 @@ from collections.abc import Callable
 from engine.aca import aca_ceiling_magi
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
-from engine.scenario_compute import compute_brokerage_dividends
+from engine.scenario_compute import compute_brokerage_dividends, survivor_reduction
 from engine.scenario_types import ConversionPlan
 from engine.tax import (
     BRACKETS_MFJ,
@@ -119,14 +119,31 @@ def _auto_fill_core(
             else 0.0
         )
         # Survivor SS step-up (mirror compute_social_security in scenario_compute.py):
-        # from death_year + 1 the survivor keeps the LARGER of the two COLA-grown
-        # benefits; the smaller stops. Pre-survivor years keep the sum.
+        # full-actuarial SSA survivor rules from death_year + 1 onward — age-60
+        # eligibility floor, reduction locked at the claim-onset age (survivor's age
+        # in death_year + 1), and max(survivor's own benefit, reduced deceased
+        # benefit). The prior code implemented only the death_year-is-None fallback
+        # (unreduced max()), which overstated survivor SS and under-sized conversion
+        # room in survivor years (audit-0720 H5).
         if survivor_active and surv is not None:
-            survivor_combined = max(your_ss, spouse_ss)
-            if surv.who_dies == "you":
-                your_ss, spouse_ss = 0.0, survivor_combined
+            who_dies = surv.who_dies
+            survivor_current_age = sa if who_dies == "you" else ya
+            onset_age = (hh.spouse_age if who_dies == "you" else hh.your_age) + (
+                surv.death_year + 1 - hh.base_year
+            )
+            claim_age = max(60, onset_age)
+            survivor_fra = hh.spouse_fra_age if who_dies == "you" else hh.your_fra_age
+            deceased_benefit = your_ss if who_dies == "you" else spouse_ss
+            survivor_own = spouse_ss if who_dies == "you" else your_ss
+            if survivor_current_age < 60:
+                survivor_benefit = 0.0
             else:
-                your_ss, spouse_ss = survivor_combined, 0.0
+                survivor_benefit = deceased_benefit * survivor_reduction(claim_age, survivor_fra)
+            survivor_total = max(survivor_own, survivor_benefit)
+            if who_dies == "you":
+                your_ss, spouse_ss = 0.0, survivor_total
+            else:
+                your_ss, spouse_ss = survivor_total, 0.0
         combined_ss = your_ss + spouse_ss
 
         # RMD
