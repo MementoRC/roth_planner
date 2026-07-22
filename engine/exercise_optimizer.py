@@ -21,7 +21,7 @@ from engine.scenario_types import ConversionPlan
 from engine.tax import room_to_12, room_to_22, room_to_24
 from engine.tax_indexing import index_value
 from models.exercise_schedule import ExerciseSchedule
-from models.grants import StockGrant
+from models.grants import StockGrant, aggregate_by_key
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -133,6 +133,10 @@ def _build_candidate_schedule(
     if not grants:
         return schedule, over_ceiling_years
 
+    # audit-0721 C12: aggregate FIRST so colliding grants (same key(), empty
+    # grant_id) are one summed lot -- a plain dict comprehension keyed by
+    # grant.key() would keep only the LAST colliding grant's shares.
+    grants = aggregate_by_key(grants)
     remaining = {g.key(): g.shares for g in grants}
     committed: dict[int, float] = {}
     last_year = max(g.expiry_year for g in grants)

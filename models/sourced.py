@@ -26,10 +26,11 @@ here; a future wave should extend this if grant lists need provenance.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, SupportsIndex
 
 
 class Source(StrEnum):
@@ -98,15 +99,55 @@ class SourcedValue(float):
 
 
 class SourcedDict(dict):
-    """Dict subclass with a parallel per-key ``Provenance`` map."""
+    """Dict subclass with a parallel per-key ``Provenance`` map.
+
+    Immutable after construction (audit-0721 C24): the inherited dict
+    mutators (``__setitem__``, ``update``, ``pop``, ``popitem``,
+    ``setdefault``, ``clear``, ``__delitem__``) are overridden to raise,
+    because none of them know how to keep ``self.prov`` in sync -- a silent
+    mutation would desync provenance from data and corrupt ``to_json``/
+    ``from_json`` round-trips. Build a new ``SourcedDict`` with the desired
+    data + provenance instead.
+    """
 
     prov: dict[Any, Provenance]
+    _MUTATION_ERROR = (
+        "SourcedDict is immutable after construction — build a new SourcedDict "
+        "with the desired data + provenance instead of mutating in place "
+        "(inherited dict mutators would desync self.prov from the data)."
+    )
 
     def __init__(self, data: dict, prov: dict[Any, Provenance]) -> None:
         super().__init__(data)
         self.prov = dict(prov)
 
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def __delitem__(self, key: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def pop(self, *args: Any) -> Any:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def popitem(self) -> Any:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def clear(self) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
     def to_json(self) -> dict:
+        if self.keys() != self.prov.keys():
+            raise ValueError(
+                f"SourcedDict data/prov key mismatch: {sorted(self.keys(), key=str)} "
+                f"vs {sorted(self.prov.keys(), key=str)}"
+            )
         return {
             "data": {str(k): v for k, v in self.items()},
             "prov": {str(k): p.to_json() for k, p in self.prov.items()},
@@ -127,15 +168,63 @@ class SourcedList(list):
 
     Limitation (this wave only): ``to_json``/``from_json`` only support
     elements that are numbers, strings, or otherwise trivially JSON-able.
+
+    Immutable after construction (audit-0721 C24): the inherited list
+    mutators (``append``, ``insert``, ``extend``, ``pop``, ``remove``,
+    ``clear``, ``__setitem__``, ``__delitem__``, ``__iadd__``) are overridden
+    to raise, because none of them know how to keep ``self.prov`` aligned by
+    index -- a silent mutation would desync provenance from data and
+    corrupt ``to_json``/``from_json`` round-trips. Build a new ``SourcedList``
+    with the desired data + provenance instead.
     """
 
     prov: list[Provenance]
+    _MUTATION_ERROR = (
+        "SourcedList is immutable after construction — build a new SourcedList "
+        "with the desired data + provenance instead of mutating in place "
+        "(inherited list mutators would desync self.prov from the data)."
+    )
 
     def __init__(self, data: list, prov: list[Provenance]) -> None:
         super().__init__(data)
         self.prov = list(prov)
 
+    def append(self, value: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def insert(self, index: SupportsIndex, value: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def extend(self, values: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def pop(self, index: SupportsIndex = -1) -> Any:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def remove(self, value: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def clear(self) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def __delitem__(self, index: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def __iadd__(self, other: Iterable[Any]) -> SourcedList:  # type: ignore[misc]
+        # Always raises -- mypy's __iadd__/__add__ consistency check doesn't
+        # model that, so this override is exempted rather than widened to an
+        # unsound signature.
+        raise TypeError(self._MUTATION_ERROR)
+
     def to_json(self) -> dict:
+        if len(self) != len(self.prov):
+            raise ValueError(
+                f"SourcedList data/prov length mismatch: {len(self)} data vs "
+                f"{len(self.prov)} prov"
+            )
         return {
             "data": list(self),
             "prov": [p.to_json() for p in self.prov],

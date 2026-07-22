@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -190,7 +191,11 @@ class Household:
     ltcg_rate: float = 0.15
 
     # Stock option grants
-    grants: list[StockGrant] = field(default_factory=lambda: list(_D["grants"]))
+    # audit-0721 C23: deep-copy (not list(...)) — the shallow copy shared the
+    # contained StockGrant instances by identity across every
+    # default-constructed Household, so in-place mutation of one household's
+    # grant would leak into all the others.
+    grants: list[StockGrant] = field(default_factory=lambda: copy.deepcopy(_D["grants"]))
     txn_price_now: float = _D["stock_price_now"]  # current stock price
     txn_price_late: float = _D["stock_price_late"]  # projected price at expiry
     # Growth profile for projecting txn_price_now forward to future exercise
