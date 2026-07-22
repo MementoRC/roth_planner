@@ -909,10 +909,19 @@ def apply_account_type_overrides(
     Overrides apply regardless of the parser's original detection -- this lets
     a user correct a wrong Vanguard detection too, not just fill in Schwab's
     permanent "unknown". Records with no matching override pass through unchanged.
+
+    C16 (audit-0721): save_account_type_override validates against
+    ACCOUNT_TYPES, but a stale/hand-edited cache entry could still contain an
+    invalid value. Such an entry is skipped here (record passes through
+    unchanged) rather than reaching BrokerageStatementRecord.__post_init__ and
+    crashing the "Scan folder" handler with a ValueError.
     """
     result: dict[str, BrokerageStatementRecord] = {}
     for account_number, rec in by_account.items():
         override = overrides.get(account_number)
+        if override is not None and override not in ACCOUNT_TYPES:
+            result[account_number] = rec
+            continue
         if override is not None and override != rec.account_type:
             from dataclasses import replace
 
