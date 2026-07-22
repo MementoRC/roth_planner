@@ -14,7 +14,8 @@ from collections.abc import Sequence
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
 # 2026 IRMAA thresholds (MFJ).
-# Tiers 1-4 are CPI-indexed annually; Tier 5 ($750K) is FROZEN by statute since 2020.
+# Tiers 1-4 are CPI-indexed annually; Tier 5 ($750K) is FROZEN by statute since TY2019
+# (created by the Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109).
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
     (218_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
@@ -25,7 +26,8 @@ IRMAA_TIERS_MFJ = [
 ]
 
 # 2026 IRMAA thresholds (Single) — each threshold is roughly half of MFJ.
-# Tiers 1-4 are CPI-indexed annually; Tier 5 ($500K) is FROZEN by statute since 2020.
+# Tiers 1-4 are CPI-indexed annually; Tier 5 ($500K) is FROZEN by statute since TY2019
+# (created by the Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109).
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_SINGLE = [
     (109_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
