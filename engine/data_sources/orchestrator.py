@@ -151,7 +151,16 @@ def resolve_for_app(
         committed_json = migrate_committed(base, recorded_at)
         migrated = True
 
-    committed_json, reconciled = reconcile_manual_edits(session_hh, committed_json, recorded_at)
+    # Skip reconcile on the migration render: the committed baseline just
+    # built above may already include a snapshot overwrite (``base``), while
+    # ``session_hh`` is still the pristine pre-snapshot value. Comparing them
+    # here would spuriously read as a "manual edit" and relabel the freshly
+    # migrated FinExtract-derived value MANUAL with the stale pristine value
+    # (audit-0721 C18). There is nothing to reconcile yet on a first load.
+    if migrated:
+        reconciled = False
+    else:
+        committed_json, reconciled = reconcile_manual_edits(session_hh, committed_json, recorded_at)
 
     apply_committed(session_hh, committed_json)
 
