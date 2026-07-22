@@ -146,6 +146,11 @@ def _clear_personal_session_state() -> None:
         "spouse_defer_first_rmd",
         "growth_rate",
         "txn_price_growth_rate",
+        # C35 (audit-0721 W5): workplace-plan/beneficiary keys were missing,
+        # so they leaked personal values into a demo-mode reset.
+        "your_has_workplace_plan",
+        "spouse_has_workplace_plan",
+        "spouse_is_sole_beneficiary",
         # TODO(audit ui-7/ui-8): dynamic PDF-cache-prefix and generated-keypair
         # keys are separate low-severity findings; not cleared here.
     ]

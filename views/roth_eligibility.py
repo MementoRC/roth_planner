@@ -382,12 +382,21 @@ def render(hh: Household):
     _contrib_limit = contrib_limit_for_year(tax_year, cpi=hh.cpi_assumption)
     _catchup_50 = catchup_50_for_year(tax_year, cpi=hh.cpi_assumption)
 
-    persons = [("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan)]
+    persons = [
+        ("You", your_age, trad_contrib_you, your_trad_balance, has_workplace_plan, spouse_workplace)
+    ]
     if filing != "Single":
         persons.append(
-            ("Spouse", spouse_age, trad_contrib_spouse, spouse_trad_balance, spouse_workplace)
+            (
+                "Spouse",
+                spouse_age,
+                trad_contrib_spouse,
+                spouse_trad_balance,
+                spouse_workplace,
+                has_workplace_plan,
+            )
         )
-    for person, age, trad_contrib, trad_balance, workplace in persons:
+    for person, age, trad_contrib, trad_balance, workplace, other_workplace in persons:
         st.markdown(f"### {person}")
 
         # Contribution limit
@@ -507,7 +516,7 @@ def render(hh: Household):
                 st.write(
                     f"**Not deductible** — MAGI {fmt_dollars(magi)} exceeds {filing} limit with workplace plan ({fmt_dollars(ded_upper)})"
                 )
-        elif filing == "MFJ" and spouse_workplace:
+        elif filing == "MFJ" and other_workplace:
             ded_lower, ded_upper = trad_deduction_phaseout_for_year(tax_year, "MFJ_spouse_only")
             deductible = _phase_out(magi, ded_lower, ded_upper, float(limit))
             if deductible >= limit:
