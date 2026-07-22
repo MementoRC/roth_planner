@@ -188,7 +188,16 @@ def forecast_portfolio(
 
         if annual_per_share is None:
             src_counts["none"] += 1
-            per_pos[ticker] = {"annual_div": 0.0, "qualified": _qualified_for(ticker, overrides)}
+            # C6 (audit-0721): merge with any existing per_pos[ticker] instead of
+            # overwriting, mirroring the sibling merge path below. A second
+            # position of the same ticker with no derivable rate contributes
+            # zero income and must not wipe out a prior position's computed
+            # dividend for that ticker.
+            if ticker not in per_pos:
+                per_pos[ticker] = {
+                    "annual_div": 0.0,
+                    "qualified": _qualified_for(ticker, overrides),
+                }
             continue
 
         annual_income = pos.shares * annual_per_share

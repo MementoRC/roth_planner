@@ -219,8 +219,18 @@ def run_scenario(
             yr.spouse_taxable_rmd -= _spouse_rmd_ytd_reduction
 
         # === Extra voluntary withdrawals (bracket fill post-RMD) ===
-        yr.extra_withdrawal = plan.extra_withdrawals.get(year, 0.0)
-        yr.spouse_extra_withdrawal = plan.spouse_extra_withdrawals.get(year, 0.0)
+        # C8 (audit-0721): clamp to the IRA balance remaining after RMD/QCD, mirroring
+        # the scenario-core-5 conversion clamp below. Without this, a plan
+        # extra_withdrawal larger than what the IRA holds records phantom taxable
+        # income even though yr.your_ira_end floors at 0.
+        yr.extra_withdrawal = min(
+            plan.extra_withdrawals.get(year, 0.0),
+            max(your_ira - max(yr.your_rmd, yr.qcd), 0.0),
+        )
+        yr.spouse_extra_withdrawal = min(
+            plan.spouse_extra_withdrawals.get(year, 0.0),
+            max(spouse_ira - max(yr.spouse_rmd, yr.spouse_qcd), 0.0),
+        )
 
         # === Survivor income gate ===
         # Per IRC §408A(d)(3), a decedent cannot be the distributee of a conversion;

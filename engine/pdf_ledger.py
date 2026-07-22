@@ -43,15 +43,22 @@ _EMPTY_LEDGER: PdfLedger = {"koinly": {}, "brokerage": {}}
 def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyReport) -> PdfLedger:
     """Return a NEW ledger with *owner*'s Koinly slot set to *report*'s figures.
 
-    Re-writing the same owner replaces that owner's prior contribution
-    (idempotent re-scan); a different owner's slot is untouched (additive
-    across owners).
+    Re-writing the same owner with the SAME or a NEWER tax_year replaces that
+    owner's prior contribution (idempotent re-scan); a report from an OLDER
+    tax_year than what's already stored is skipped (C15 audit-0721) -- a
+    multi-year folder scan must keep the latest tax_year's figures rather
+    than silently collapsing to whichever Koinly PDF happens to be processed
+    last. A different owner's slot is untouched (additive across owners).
     """
     updated: PdfLedger = {
         "koinly": dict(ledger.get("koinly", {})),
         "brokerage": dict(ledger.get("brokerage", {})),
     }
+    existing = updated["koinly"].get(owner)
+    if existing is not None and int(existing.get("tax_year", report.tax_year)) > report.tax_year:
+        return updated
     updated["koinly"][owner] = {
+        "tax_year": report.tax_year,
         "stcg": float(report.crypto_stcg),
         "ltcg": float(report.crypto_ltcg),
         "income": float(report.crypto_income),
@@ -67,15 +74,23 @@ def write_brokerage_contribution(
     """Return a NEW ledger with *record* written into *owner*'s brokerage
     slot, keyed by account_number.
 
-    Re-writing the same (owner, account_number) pair replaces that slot
-    (idempotent re-scan, mirrors pick_latest_per_account); a different owner
-    or a different account_number is a separate, additive slot.
+    Re-writing the same (owner, account_number) pair replaces that slot only
+    when *record*'s statement_period_end is the same or newer than the
+    stored slot's (mirrors pick_latest_per_account's comparison, C14
+    audit-0721) -- an out-of-order scan (e.g. Dec statement processed after
+    Jan) leaves the newer stored record untouched. A different owner or a
+    different account_number is a separate, additive slot.
     """
     updated: PdfLedger = {
         "koinly": dict(ledger.get("koinly", {})),
         "brokerage": {k: dict(v) for k, v in ledger.get("brokerage", {}).items()},
     }
     owner_accounts = dict(updated["brokerage"].get(owner, {}))
+    existing = owner_accounts.get(record.account_number)
+    if existing is not None and str(existing.get("statement_period_end", "")) > (
+        record.statement_period_end
+    ):
+        return updated
     owner_accounts[record.account_number] = record.to_dict()
     updated["brokerage"][owner] = owner_accounts
     return updated
