@@ -120,3 +120,38 @@ class TestSeedSessionStateFirstRunDefaults:
         assert state.get("spouse_aca") is False
         assert state.get("your_ss_start_age") == 70
         assert state.get("spouse_rmd_start_age") == 75
+
+
+class TestSeedSessionStateRestoresComplexPersistedKeys:
+    """audit 2026-07-22: the three complex (non-scalar) persisted keys —
+    survivor, inherited_iras, account_type_overrides — are NOT in SCALAR_KEYS,
+    so they must be seeded explicitly from persisted defaults. Pre-fix they were
+    hardcoded (survivor=None, inherited_iras=[], account_type_overrides
+    unseeded), silently dropping a saved survivor scenario, inherited IRAs, and
+    manual account-type overrides on every fresh session / server restart."""
+
+    def test_persisted_survivor_is_restored(self) -> None:
+        persisted = {"survivor": {"who_dies": "you", "death_year": 2035}}
+        state = _run_seed_session_state(persisted)
+        assert state.get("survivor") == {"who_dies": "you", "death_year": 2035}
+
+    def test_persisted_inherited_iras_are_restored(self) -> None:
+        iras = [{"balance": 500_000.0, "inherited_year": 2024, "owner": "you"}]
+        state = _run_seed_session_state({"inherited_iras": iras})
+        assert state.get("inherited_iras") == iras
+
+    def test_persisted_account_type_overrides_are_restored(self) -> None:
+        overrides = {"Z1234": {"type": "trad_ira", "owner": "spouse"}}
+        state = _run_seed_session_state({"account_type_overrides": overrides})
+        assert state.get("account_type_overrides") == overrides
+
+
+class TestSeedSessionStateComplexKeysFirstRun:
+    """No persisted value present → empty demo defaults preserved
+    (survivor None, inherited_iras [], account_type_overrides {})."""
+
+    def test_first_run_complex_keys_default_empty(self) -> None:
+        state = _run_seed_session_state({})
+        assert state.get("survivor") is None
+        assert state.get("inherited_iras") == []
+        assert state.get("account_type_overrides") == {}
