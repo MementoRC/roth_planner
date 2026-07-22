@@ -238,10 +238,18 @@ def _resolve_grants(
 
     if isinstance(baseline, SourcedList):
         choice = choices.get(GRANTS_KEY)
-        baseline_keys = {g.key() for g in baseline}
-        if _trusted_source_differs(
-            candidates, choice, lambda c: {g.key() for g in c.value} != baseline_keys
-        ):
+        baseline_by_key = {g.key(): g for g in baseline}
+
+        def _grants_differ(c: Candidate) -> bool:
+            # Identity (key()) alone isn't enough: a grant matched by id/year
+            # can still have drifted values (strike, shares, expiry_year) —
+            # compare the full dataclass, not just its key set (audit-0721 C19).
+            candidate_by_key = {g.key(): g for g in c.value}
+            if set(candidate_by_key) != set(baseline_by_key):
+                return True
+            return any(candidate_by_key[k] != baseline_by_key[k] for k in candidate_by_key)
+
+        if _trusted_source_differs(candidates, choice, _grants_differ):
             pending.add(GRANTS_KEY)
         return
 

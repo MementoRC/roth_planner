@@ -181,10 +181,14 @@ def record_snapshot_candidates(
 
     dropped_missing_strike: list[tuple[int, int]] = []
     if snap.equity_grants:
+        # ``snap.equity_grants`` non-empty means the snapshot DID report grant
+        # data — always record the merge result (even []) as a candidate so a
+        # snapshot that legitimately clears/empties grants (all exercised) is
+        # still recordable/committable, distinct from "no snapshot data at
+        # all" (the outer guard above) (audit-0721 C20).
         merged_grants, dropped_missing_strike = _merge_snapshot_grants(snap, strikes)
-        if merged_grants:
-            record_candidate(
-                store, GRANTS_KEY, merged_grants, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
-            )
+        record_candidate(
+            store, GRANTS_KEY, merged_grants, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
+        )
 
     return dropped_missing_strike
