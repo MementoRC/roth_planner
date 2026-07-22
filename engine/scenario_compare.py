@@ -36,6 +36,7 @@ from engine.tax import (
 )
 from engine.tax_indexing import index_tuple
 from models.household import Household, SurvivorScenario
+from models.ytd_income import YTDSnapshot
 
 
 def survivor_year_tax(
@@ -302,20 +303,26 @@ def compute_survivor_snapshot(
     return rows
 
 
-def build_scenario(hh: Household, key: str) -> ScenarioResult:
-    """Build a scenario from a preset key."""
+def build_scenario(hh: Household, key: str, *, ytd: YTDSnapshot | None = None) -> ScenarioResult:
+    """Build a scenario from a preset key.
+
+    ``ytd``, when provided, injects base-year realized YTD income into the
+    projection (mirrors Sweet Spot / ACA+IRMAA gating on
+    ``apply_ytd_to_projection``). Defaults to None so existing callers/tests
+    are unaffected.
+    """
     if key == "no_conv":
-        return run_no_conversion(hh, end_age=95)
+        return run_no_conversion(hh, end_age=95, ytd=ytd)
     if key == "fill_12":
-        return run_scenario(hh, auto_fill_12(hh), "Fill to 12%", end_age=95)
+        return run_scenario(hh, auto_fill_12(hh), "Fill to 12%", end_age=95, ytd=ytd)
     if key == "fill_12_bf":
         base = auto_fill_12(hh)
         plan = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
-        return run_scenario(hh, plan, "Fill 12% + Bracket Fill", end_age=95)
+        return run_scenario(hh, plan, "Fill 12% + Bracket Fill", end_age=95, ytd=ytd)
     if key == "fill_22":
-        return run_scenario(hh, auto_fill_22(hh), "Fill to 22%", end_age=95)
+        return run_scenario(hh, auto_fill_22(hh), "Fill to 22%", end_age=95, ytd=ytd)
     if key == "irmaa_safe":
-        return run_scenario(hh, auto_fill_irmaa_safe(hh), "IRMAA-Safe Max", end_age=95)
+        return run_scenario(hh, auto_fill_irmaa_safe(hh), "IRMAA-Safe Max", end_age=95, ytd=ytd)
     if key == "custom":
         import streamlit as st  # noqa: PLC0415 — deferred: engine must not import st at module level
 
@@ -323,9 +330,10 @@ def build_scenario(hh: Household, key: str) -> ScenarioResult:
             your_conversions=dict(st.session_state.get("conv_plan_your", {})),
             spouse_conversions=dict(st.session_state.get("conv_plan_spouse", {})),
             qcds=dict(st.session_state.get("conv_plan_qcd", {})),
+            spouse_qcds=dict(st.session_state.get("conv_plan_spouse_qcd", {})),
         )
-        return run_scenario(hh, plan, "Custom Plan", end_age=95)
-    return run_no_conversion(hh, end_age=95)
+        return run_scenario(hh, plan, "Custom Plan", end_age=95, ytd=ytd)
+    return run_no_conversion(hh, end_age=95, ytd=ytd)
 
 
 # ---------------------------------------------------------------------------

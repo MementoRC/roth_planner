@@ -58,10 +58,14 @@ def render(hh: Household):
         return
 
     # --- Run scenarios ---
+    # Inject base-year realized YTD income when the user opted in (mirrors
+    # Sweet Spot / ACA+IRMAA gating, views/sweet_spot.py).
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
     scenarios: list[ScenarioResult] = []
     for name in selected:
         key = SCENARIO_PRESETS[name]
-        result = build_scenario(hh, key)
+        result = build_scenario(hh, key, ytd=_ytd)
         result.name = name  # override name for display
         scenarios.append(result)
 

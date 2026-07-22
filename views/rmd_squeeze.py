@@ -70,7 +70,11 @@ def render(hh: Household):
         spouse_qcd_annual = 0
 
     # --- Run scenarios ---
-    no_conv = run_no_conversion(hh, end_age=95)
+    # Inject base-year realized YTD income when the user opted in (mirrors
+    # Sweet Spot / ACA+IRMAA gating, views/sweet_spot.py).
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd)
     plan_12 = auto_fill_12(hh)
 
     # Build QCD plan if toggled
@@ -91,15 +95,16 @@ def render(hh: Household):
             qcds=your_qcd_years,
             spouse_qcds=spouse_qcd_years,
         )
-        with_conv = run_scenario(hh, qcd_plan, "Fill 12% + QCD", end_age=95)
+        with_conv = run_scenario(hh, qcd_plan, "Fill 12% + QCD", end_age=95, ytd=_ytd)
         no_conv_qcd = run_scenario(
             hh,
             ConversionPlan(qcds=your_qcd_years, spouse_qcds=spouse_qcd_years),
             "No Conv + QCD",
             end_age=95,
+            ytd=_ytd,
         )
     else:
-        with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95)
+        with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95, ytd=_ytd)
         no_conv_qcd = None
 
     # Filter to RMD years (each person's RMD start age and later)
