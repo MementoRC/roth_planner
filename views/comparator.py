@@ -35,6 +35,17 @@ SCENARIO_PRESETS = {
 }
 
 
+def _baseline_index(scenarios: list[ScenarioResult]) -> int:
+    """Pick the "No Conv" scenario as the economic baseline; else index 0.
+
+    Shared by the Summary Comparison table and the Cumulative Net Benefit
+    chart so both use one consistent baseline-selection rule (C32,
+    audit-0721 W7 — previously the table used scenarios[0] unconditionally
+    while the chart searched for "No Conv" by name).
+    """
+    return next((i for i, s in enumerate(scenarios) if "No Conv" in s.name), 0)
+
+
 def render(hh: Household):
     st.title("⚖️ Scenario Comparator")
     st.caption("Compare conversion strategies side-by-side to find the best approach.")
@@ -72,7 +83,7 @@ def render(hh: Household):
     # --- Summary metrics ---
     st.markdown("### Summary Comparison")
 
-    baseline = scenarios[0]  # first scenario is baseline for delta
+    baseline = scenarios[_baseline_index(scenarios)]  # No-Conv baseline, else first
     summaries = compute_summary_rows(scenarios, baseline)
 
     # Format raw ScenarioSummary values into display dicts
@@ -180,8 +191,8 @@ def render(hh: Household):
         st.plotly_chart(fig_br, width="stretch")
 
     # --- Chart 3: Cumulative Net Benefit ---
-    # Find the no-conversion scenario (or use first as baseline)
-    baseline_idx = next((i for i, s in enumerate(scenarios) if "No Conv" in s.name), 0)
+    # Same baseline rule as the Summary Comparison table above (C32).
+    baseline_idx = _baseline_index(scenarios)
     baseline_s = scenarios[baseline_idx]
 
     st.markdown(f"### Cumulative Net Benefit vs {baseline_s.name}")
