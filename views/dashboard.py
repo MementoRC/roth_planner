@@ -42,9 +42,16 @@ def render(hh: Household):
     st.caption(FORM_8606_CAPTION)
 
     # --- Run both scenarios ---
-    no_conv = run_no_conversion(hh, end_age=95)
+    # C27 (audit-0721): thread base-year YTD actuals through, mirroring the
+    # apply_ytd_to_projection gating already used by sweet_spot.py/aca_irmaa.py
+    # -- otherwise the YTD Income page's "Apply YTD to projections" toggle has
+    # no effect on the dashboard. run_scenario/run_no_conversion narrow ytd to
+    # the base year internally.
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd)
     plan_12 = auto_fill_12(hh)
-    with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95)
+    with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95, ytd=_ytd)
 
     # --- Build data ---
     ages = [yr.your_age for yr in no_conv.years]
