@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from models.grants import StockGrant
+from models.grants import StockGrant, aggregate_by_key
 
 _SCHEDULE_VERSION = 1
 
@@ -61,18 +61,30 @@ class ExerciseSchedule:
         """Ordinary option income landing in ``year`` across all ``grants``.
 
         Defensive safety layer: ignores years past a grant's ``expiry_year``
-        and clamps the exercised share count to ``grant.shares`` per cell, so
-        a malformed/stale cache cannot fabricate income. A missing price
-        falls back to 0.0 (engine safety; the UI supplies its own fallback).
+        and clamps the CUMULATIVE exercised share count (across ALL years, not
+        just this cell) to ``grant.shares``, so a malformed/stale cache cannot
+        fabricate income by over-scheduling several years independently
+        (audit-0721 C22). Colliding grants (same ``key()``, e.g. two
+        empty-grant_id tranches sharing year+strike+expiry_year) are
+        aggregated into one lot first so their shared schedule cell is only
+        counted once, not once per grant object (audit-0721 C21). A missing
+        price falls back to 0.0 (engine safety; the UI supplies its own
+        fallback).
         """
         total = 0.0
-        for grant in grants:
+        for grant in aggregate_by_key(grants):
             if year > grant.expiry_year:
                 continue
             price = self.price(year, fallback=0.0)
             if price is None:
                 price = 0.0
-            exercised = min(self.shares(grant.key(), year), grant.shares)
+            key = grant.key()
+            years_data = self.shares_by_grant_year.get(key, {})
+            cumulative_before = min(
+                sum(n for yr, n in years_data.items() if yr < year), grant.shares
+            )
+            cumulative_upto = min(cumulative_before + years_data.get(year, 0), grant.shares)
+            exercised = cumulative_upto - cumulative_before
             total += grant.per_share_spread(price) * exercised
         return total
 
@@ -165,10 +177,12 @@ class ExerciseSchedule:
         user tunes anything and the projection default for households with no
         stored schedule. Grants already expired at ``base_year`` are skipped
         (nothing left to exercise). Grants that share an expiry year sum under
-        that year.
+        that year. Grants that COLLIDE on ``key()`` (same year+strike+
+        expiry_year, empty grant_id) are aggregated (shares summed) rather
+        than last-write-wins overwritten (audit-0721 C21).
         """
         schedule = cls()
-        for grant in grants:
+        for grant in aggregate_by_key(grants):
             if grant.expiry_year < base_year:
                 continue
             price = price_for_year(grant.expiry_year) if price_for_year is not None else price_now
