@@ -420,14 +420,36 @@ def compute_year_by_year_timeline(
             else None
         )
 
-        eff_bench_yr = effective_benchmark_premium(
-            hh.aca_benchmark_premium_annual,
-            your_age=ya,
-            your_on_aca=you_on_aca,
-            spouse_age=sa if sa is not None else 0,
-            spouse_on_aca=sp_on_aca,
-            filing_status=current_filing_status,
-        )
+        if survivor_active and surv is not None:
+            # C5 fix: hh.aca_benchmark_premium_annual is the ORIGINAL COUPLE'S
+            # benchmark. effective_benchmark_premium's filing_status="Single"
+            # branch assumes couple_benchmark is ALREADY an individual rate
+            # (true for a genuinely-Single household), so passing
+            # current_filing_status="Single" here would return the FULL couple
+            # rate to the survivor instead of their age-rated share. Force the
+            # MFJ partial-enrollment blend path instead — deceased's age still
+            # counts toward the blend (not enrolled), survivor gets the
+            # age-rated share of the couple benchmark.
+            _deceased_age = (
+                hh.spouse_age_in(year) if surv.who_dies == "spouse" else hh.your_age_in(year)
+            )
+            eff_bench_yr = effective_benchmark_premium(
+                hh.aca_benchmark_premium_annual,
+                your_age=ya,
+                your_on_aca=you_on_aca,
+                spouse_age=_deceased_age,
+                spouse_on_aca=False,
+                filing_status="MFJ",
+            )
+        else:
+            eff_bench_yr = effective_benchmark_premium(
+                hh.aca_benchmark_premium_annual,
+                your_age=ya,
+                your_on_aca=you_on_aca,
+                spouse_age=sa if sa is not None else 0,
+                spouse_on_aca=sp_on_aca,
+                filing_status=current_filing_status,
+            )
         aca_sub: float | None = None
         aca_pay: float | None = None
         if you_on_aca or sp_on_aca:

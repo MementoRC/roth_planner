@@ -127,9 +127,13 @@ def compute_headroom(
         if ya >= hh.your_ss_start_age
         else 0.0
     )
+    # C4 (audit-0721 W5): gate spouse_ss on filing_status=="MFJ" — mirrors the
+    # sibling engine.aca_irmaa_compute._nontaxable_ss, which already excludes
+    # spouse SS for a non-MFJ filer. app.py zeroes spouse_age/spouse_ss_fra for
+    # Single, but this restores internal consistency for any other caller.
     spouse_ss = (
         ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
-        if sa >= hh.spouse_ss_start_age
+        if filing_status == "MFJ" and sa >= hh.spouse_ss_start_age
         else 0.0
     )
     combined_ss = your_ss + spouse_ss

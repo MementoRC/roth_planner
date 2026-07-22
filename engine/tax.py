@@ -174,7 +174,11 @@ def deductions(
     if std_ded is None:
         std_ded = STD_DEDUCTION_MFJ if filing_status == "MFJ" else STD_DEDUCTION_SINGLE
     if senior_extra is None:
-        senior_extra = SENIOR_EXTRA_MFJ if filing_status == "MFJ" else SENIOR_EXTRA_SINGLE
+        # C1 (audit-0721 W5): MFS is in the "married" bucket for the additional
+        # standard deduction (IRC §63(f)) — SENIOR_EXTRA_MFJ, not the Single
+        # amount. std_ded stays Single-sized (MFS std ded == half MFJ, already
+        # correct above).
+        senior_extra = SENIOR_EXTRA_MFJ if filing_status in ("MFJ", "MFS") else SENIOR_EXTRA_SINGLE
     ded = index_value(std_ded, year, cpi, round50=True)
     se = index_value(senior_extra, year, cpi, round50=True)
     senior: float = 0.0
@@ -273,6 +277,24 @@ def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceili
     return max(total_deductions + bracket_ceiling - current_gross, 0)
 
 
+# Filing statuses with a modeled bracket/std-deduction/senior-extra table in
+# this module. C2 (audit-0721 W5): filing_status was treated as a binary
+# is_single switch, so an unmodeled status (e.g. "HoH") would silently be
+# taxed on the full MFJ brackets instead of failing loud. The UI can only
+# ever emit "MFJ" or "Single" (see views/setup/parameters.py
+# filing_status_from_label) — HoH is not reachable today — but this guard
+# ensures it can never silently mis-tax if that ever changes.
+_MODELED_FILING_STATUSES = ("MFJ", "Single")
+
+
+def _require_modeled_filing_status(filing_status: str, fn_name: str) -> None:
+    if filing_status not in _MODELED_FILING_STATUSES:
+        raise NotImplementedError(
+            f"{fn_name}: filing_status={filing_status!r} is not modeled "
+            f"(only {_MODELED_FILING_STATUSES} have bracket/deduction tables in engine/tax.py)"
+        )
+
+
 def room_to_12(
     current_gross: float,
     total_deductions: float,
@@ -281,6 +303,7 @@ def room_to_12(
     cpi: float = DEFAULT_CPI,
     filing_status: str = "MFJ",
 ) -> float:
+    _require_modeled_filing_status(filing_status, "room_to_12")
     brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
     ceiling = index_value(brackets[1][0], year, cpi, round50=True)
     return room_to_bracket(current_gross, total_deductions, ceiling)
@@ -294,6 +317,7 @@ def room_to_22(
     cpi: float = DEFAULT_CPI,
     filing_status: str = "MFJ",
 ) -> float:
+    _require_modeled_filing_status(filing_status, "room_to_22")
     brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
     ceiling = index_value(brackets[2][0], year, cpi, round50=True)
     return room_to_bracket(current_gross, total_deductions, ceiling)
@@ -307,6 +331,7 @@ def room_to_24(
     cpi: float = DEFAULT_CPI,
     filing_status: str = "MFJ",
 ) -> float:
+    _require_modeled_filing_status(filing_status, "room_to_24")
     brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
     ceiling = index_value(brackets[3][0], year, cpi, round50=True)
     return room_to_bracket(current_gross, total_deductions, ceiling)
@@ -391,6 +416,7 @@ def estimate_ytd_federal_tax(
     _year = hh.base_year
     _cpi = hh.cpi_assumption
 
+    _require_modeled_filing_status(hh.filing_status, "estimate_ytd_federal_tax")
     is_single = hh.filing_status == "Single"
 
     # Step 1: gross ordinary income (excludes LTCG/qualified divs — those go through
