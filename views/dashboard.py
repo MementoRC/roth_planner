@@ -284,6 +284,12 @@ def render(hh: Household):
     ]
     cols = st.columns(len(milestones))
     for col, (age, label) in zip(cols, milestones, strict=False):
+        # C33 (audit-0721 W7): projection starts at hh.your_age, so a
+        # milestone age below that isn't in `net_benefit` — skip it rather
+        # than let `age - hh.your_age` go negative (silent wrong-value read
+        # via Python negative indexing, masked by the yr_nc/yr_wc guard).
+        if age < hh.your_age:
+            continue
         yr_nc = next((yr for yr in no_conv.years if yr.your_age == age), None)
         yr_wc = next((yr for yr in with_conv.years if yr.your_age == age), None)
         nb_idx = age - hh.your_age
