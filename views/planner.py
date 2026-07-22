@@ -55,6 +55,18 @@ _GRID_KEY = "conv_grid_editor"
 # ---------------------------------------------------------------------------
 
 
+def should_refresh_grid(state_changed: bool, edit_warnings: list[str]) -> bool:
+    """Decide whether the data_editor widget key must be cleared + the page
+    rerun after a grid edit (C31, audit-0721).
+
+    Must fire whenever `edit_warnings` is non-empty, NOT just when the
+    resulting dict differs from what was already in session_state -- a clamp
+    that happens to land back on the already-stored value still leaves the
+    editor's cached raw (invalid) input on screen unless it is cleared.
+    """
+    return state_changed or bool(edit_warnings)
+
+
 def apply_conversion_grid_edits(
     edited_df: pd.DataFrame,
     yr_rows: list[dict],
@@ -218,7 +230,13 @@ def render(hh: Household) -> None:
         qcds=dict(st.session_state.conv_plan_qcd),
         spouse_qcds=dict(st.session_state.conv_plan_spouse_qcd),
     )
-    result = run_scenario(hh, plan, "Custom", end_age=95)
+    # C26 (audit-0721): thread base-year YTD actuals through, mirroring the
+    # apply_ytd_to_projection gating already used by sweet_spot.py/aca_irmaa.py
+    # -- otherwise the YTD Income page's "Apply YTD to projections" toggle has
+    # no effect on this page. run_scenario itself narrows ytd to the base year.
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    result = run_scenario(hh, plan, "Custom", end_age=95, ytd=_ytd)
 
     # Filter to the conversion window (WINDOW_YEARS years from the starting age)
     conv_window = [yr for yr in result.years if yr.your_age <= hh.your_age + WINDOW_YEARS - 1]
@@ -372,18 +390,27 @@ def render(hh: Household) -> None:
     new_qcd = qcd_vals
     new_sp_qcd = sp_qcd_vals
 
-    if (
+    state_changed = (
         new_your != dict(st.session_state.conv_plan_your)
         or new_sp != dict(st.session_state.conv_plan_spouse)
         or new_qcd != dict(st.session_state.conv_plan_qcd)
         or new_sp_qcd != dict(st.session_state.conv_plan_spouse_qcd)
-    ):
+    )
+
+    if state_changed:
         st.session_state.conv_plan_your = new_your
         st.session_state.conv_plan_spouse = new_sp
         st.session_state.conv_plan_qcd = new_qcd
         st.session_state.conv_plan_spouse_qcd = new_sp_qcd
-        if edit_warnings and _GRID_KEY in st.session_state:
-            # Clear grid key so data_editor re-renders with clamped values
+
+    # C31 (audit-0721): a clamp/zero correction that happens to land back on
+    # the value ALREADY stored in session_state (state_changed == False) was
+    # previously masked -- the grid-key clear + rerun lived INSIDE the
+    # state_changed branch, so st.data_editor kept echoing the user's raw
+    # (invalid) input instead of the clamped value. Refresh whenever
+    # edit_warnings fired, independent of whether the dict comparison changed.
+    if should_refresh_grid(state_changed, edit_warnings):
+        if _GRID_KEY in st.session_state:
             del st.session_state[_GRID_KEY]
         st.rerun()
 
@@ -408,7 +435,10 @@ def render(hh: Household) -> None:
 
     from engine.scenario import run_no_conversion
 
-    no_conv = run_no_conversion(hh, end_age=95)
+    # C26 follow-up (audit-0721): thread the same YTD gating into the
+    # no-conversion baseline so the IRA trajectory chart stays consistent
+    # with the YTD-aware "Custom" result above.
+    no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd)
 
     fig = go.Figure()
     all_ages = [yr.your_age for yr in result.years]

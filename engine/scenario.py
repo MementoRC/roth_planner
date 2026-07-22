@@ -680,12 +680,26 @@ def run_scenario(
         # above, which IS subtracted) but were never added back as an inflow —
         # producing a phantom shortfall (understated available_income) for
         # households with substantial YTD ordinary cash income.
+        # audit-0721 C7: ira_distributions_ytd is also spendable cash already
+        # received (taxed via combined_gross/federal_tax_amt) but only the
+        # portion absorbed by the forecast RMD is restored via after_tax_rmd
+        # (_rmd_ytd_reduction/_spouse_rmd_ytd_reduction above). Any distributions
+        # taken BEYOND the forecast RMD (voluntary withdrawals, or distributions
+        # taken before RMD age) were never added back anywhere -- add only that
+        # excess here to avoid double-counting the RMD-absorbed portion.
         if ytd_year is not None:
+            _ytd_dist_excess = max(
+                0.0,
+                ytd_year.ira_distributions_ytd
+                - _rmd_ytd_reduction
+                - _spouse_rmd_ytd_reduction,
+            )
             available_income += (
                 ytd_year.wages_ytd
                 + ytd_year.nec_income_ytd
                 + ytd_year.interest_ytd
                 + ytd_year.stcg_ytd
+                + _ytd_dist_excess
             )
         yr.income_needed = max(yr.living_expenses - available_income, 0)
         yr.excess_rmd = max(available_income - yr.living_expenses, 0)
