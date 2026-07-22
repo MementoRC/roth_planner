@@ -217,7 +217,15 @@ def test_score_candidate_scores_schedule_without_mutating_caller_household() -> 
     hh_check.exercise_schedule = candidate
     expected_conversions = auto_fill_22(hh_check, None)
     expected_result = run_scenario(hh_check, expected_conversions, end_age=95, ytd=None)
-    expected_lifetime = sum(yr.all_in_cost for yr in expected_result.years)
+    # audit-0721 C9: lifetime_all_in is TOTAL cost (federal_tax_amt + irmaa_cost +
+    # aca_loss + niit_cost + conversion_ltcg_cost), NOT sum(yr.all_in_cost). The old
+    # formula (sum(yr.all_in_cost), conversion-marginal only) locked in the defect
+    # where option-income tax in a zero-conversion year was invisible to the
+    # optimizer's objective.
+    expected_lifetime = sum(
+        yr.federal_tax_amt + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost
+        for yr in expected_result.years
+    )
     assert plan.lifetime_all_in == pytest.approx(expected_lifetime)
 
     # Isolation assert: caller's hh must be untouched.
@@ -505,12 +513,11 @@ def test_optimize_exercises_handles_household_with_no_grants() -> None:
 
 
 def test_optimize_exercises_ytd_threads_into_baseline_cost() -> None:
-    """baseline_cost is conversion_tax + irmaa_cost + aca_loss + niit_cost — with an
-    empty baseline conversion plan and no IRMAA/ACA at these young ages, conversion_tax/
-    irmaa_cost/aca_loss are all 0 regardless of YTD. NIIT is the one component a
-    conversion-free baseline can still pick up: a nonzero base-year YTD wages + LTCG
-    figure pushes MAGI over the $250K MFJ NIIT threshold with real net investment
-    income (the LTCG), producing a nonzero niit_cost and moving baseline_cost.
+    """baseline_cost is federal_tax_amt + irmaa_cost + aca_loss + niit_cost +
+    conversion_ltcg_cost (audit-0721 C9: total, not conversion-marginal). The YTD
+    wages/LTCG directly change federal_tax_amt (more ordinary income + a real
+    LTCG-rate tax fold-in) AND push MAGI over the $250K MFJ NIIT threshold, so
+    baseline_cost must differ between the with/without-YTD runs.
     """
     grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
     hh = Household(

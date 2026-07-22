@@ -1,5 +1,7 @@
 """Pure-Python exercise auto-optimizer: solve for the ExerciseSchedule that
-minimizes modeled lifetime all-in cost. NO Streamlit imports (engine purity)."""
+minimizes modeled lifetime TOTAL tax+cost (see ``_lifetime_total_cost`` —
+audit-0721 C9: NOT the conversion-marginal ``yr.all_in_cost``). NO Streamlit
+imports (engine purity)."""
 
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from engine.scenario_autofill import (
     auto_fill_aca,
     auto_fill_irmaa_safe,
 )
-from engine.scenario_types import ConversionPlan
+from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import room_to_12, room_to_22, room_to_24
 from engine.tax_indexing import index_value
 from models.exercise_schedule import ExerciseSchedule
@@ -38,6 +40,12 @@ class OptimizedPlan:
     ceiling_label: str
     schedule: ExerciseSchedule
     conversions: ConversionPlan
+    # audit-0721 C9: this is the LIFETIME TOTAL tax+cost (see _lifetime_total_cost),
+    # NOT sum(yr.all_in_cost). all_in_cost is deliberately conversion-marginal-only
+    # (excludes the base ordinary federal tax on RMDs/SS/option income), so a
+    # schedule that dumps option income into a zero-conversion RMD-phase year would
+    # look artificially cheap if this field only summed all_in_cost. The field name
+    # is kept for API/UI stability; the VALUE now includes total federal tax.
     lifetime_all_in: float
     over_ceiling_years: list[int] = field(default_factory=list)
 
@@ -186,6 +194,34 @@ def _build_candidate_schedule(
     return schedule, over_ceiling_years
 
 
+def _lifetime_total_cost(years: list[YearResult]) -> float:
+    """Lifetime TOTAL tax+cost across years -- the objective the exercise
+    optimizer ranks candidates on (audit-0721 C9).
+
+    ``yr.all_in_cost`` (conversion_tax + irmaa_cost + aca_loss + niit_cost +
+    conversion_ltcg_cost) is deliberately conversion-MARGINAL-only: it excludes
+    the base ordinary federal tax on RMDs/SS/option income, by design, so that
+    other consumers (views, scenario comparator) can isolate "the cost of
+    converting" from the household's underlying tax bill. That's the wrong
+    signal for CHOOSING AN EXERCISE SCHEDULE: exercise timing changes WHERE
+    option income lands, which changes ``federal_tax_amt`` directly -- even in
+    a year where the auto-filled conversion is zero (e.g. an RMD-phase year).
+    Using all_in_cost alone would make a candidate that concentrates a large
+    option-income spread into a high-bracket, zero-conversion RMD year look
+    artificially cheap.
+
+    ``yr.federal_tax_amt`` already contains the full ordinary tax on taxable
+    income INCLUDING any conversion (conversion_tax is only the marginal delta
+    of that same tax, already embedded in federal_tax_amt) -- so this is
+    equivalent to ``all_in_cost + (federal_tax_amt - conversion_tax)`` without
+    double-counting conversion_tax.
+    """
+    return sum(
+        yr.federal_tax_amt + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost
+        for yr in years
+    )
+
+
 def _score_candidate(
     hh: Household,
     schedule: ExerciseSchedule,
@@ -210,7 +246,7 @@ def _score_candidate(
     hh_copy.exercise_schedule = schedule
     plan = autofill_fn(hh_copy, ytd)
     result = run_scenario(hh_copy, plan, end_age=end_age, ytd=ytd)
-    lifetime = sum(yr.all_in_cost for yr in result.years)
+    lifetime = _lifetime_total_cost(result.years)
     if magi_ceiling_fn is not None:
         over_ceiling_years = [
             yr.year
@@ -247,12 +283,15 @@ def optimize_exercises(
     end_age: int = 95,
     ceilings: list[tuple[str, str, _AutofillFn]] | None = None,
 ) -> OptimizerResult:
-    """Solve for the exercise schedule minimizing modeled lifetime all-in cost.
+    """Solve for the exercise schedule minimizing modeled lifetime total cost.
 
     Sweeps each ceiling strategy, scores option-schedule + auto-filled
     conversions with ``run_scenario``, includes the current plan as a
     baseline candidate, and returns the argmin (never worse than status quo,
-    since the baseline is itself a candidate).
+    since the baseline is itself a candidate). Scoring uses
+    ``_lifetime_total_cost`` (audit-0721 C9) so the total federal tax on
+    option income -- which varies with exercise timing even when the
+    auto-filled conversion is zero -- is part of the objective.
     """
     if ceilings is None:
         ceilings = DEFAULT_CEILINGS
@@ -287,7 +326,7 @@ def optimize_exercises(
     hh_copy = copy.deepcopy(hh)
     hh_copy.exercise_schedule = baseline_schedule
     baseline_result = run_scenario(hh_copy, baseline_conv, end_age=end_age, ytd=ytd)
-    baseline_cost = sum(yr.all_in_cost for yr in baseline_result.years)
+    baseline_cost = _lifetime_total_cost(baseline_result.years)
     baseline_plan = OptimizedPlan("current", baseline_schedule, baseline_conv, baseline_cost, [])
     candidates.append(baseline_plan)
 
