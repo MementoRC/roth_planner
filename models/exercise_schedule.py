@@ -57,7 +57,12 @@ class ExerciseSchedule:
 
     # -- engine entry point ---------------------------------------------
 
-    def income_for(self, year: int, grants: list[StockGrant]) -> float:
+    def income_for(
+        self,
+        year: int,
+        grants: list[StockGrant],
+        price_resolver: Callable[[int], float] | None = None,
+    ) -> float:
         """Ordinary option income landing in ``year`` across all ``grants``.
 
         Defensive safety layer: ignores years past a grant's ``expiry_year``
@@ -67,17 +72,24 @@ class ExerciseSchedule:
         (audit-0721 C22). Colliding grants (same ``key()``, e.g. two
         empty-grant_id tranches sharing year+strike+expiry_year) are
         aggregated into one lot first so their shared schedule cell is only
-        counted once, not once per grant object (audit-0721 C21). A missing
-        price falls back to 0.0 (engine safety; the UI supplies its own
-        fallback).
+        counted once, not once per grant object (audit-0721 C21).
+
+        A missing per-year price is resolved via ``price_resolver(year)`` when
+        supplied (e.g. ``hh.projected_txn_price``) -- this is what lets an
+        untouched "assumed" schedule (saved with an intentionally empty
+        ``price_by_year``, see the save-side drop-filter in
+        ``views/option_exercise.py``) still price its exercises correctly
+        instead of silently going to zero (audit-0722b). Falls back to 0.0
+        only when no resolver is given (engine safety for direct/bare-schedule
+        callers; the UI supplies its own fallback independently).
         """
         total = 0.0
         for grant in aggregate_by_key(grants):
             if year > grant.expiry_year:
                 continue
-            price = self.price(year, fallback=0.0)
+            price = self.price(year)
             if price is None:
-                price = 0.0
+                price = price_resolver(year) if price_resolver is not None else 0.0
             key = grant.key()
             years_data = self.shares_by_grant_year.get(key, {})
             cumulative_before = min(

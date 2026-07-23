@@ -30,7 +30,9 @@ class TestConversionTaxBaselineDeduction:
         std_senior = deductions(ya, sa, STD_DEDUCTION_MFJ, SENIOR_EXTRA_MFJ, year=year, cpi=cpi)
         full_ded = std_senior + senior_bonus_deduction(ya, sa, 150_000, year=year, cpi=cpi)
         phased_ded = std_senior + senior_bonus_deduction(ya, sa, 210_000, year=year, cpi=cpi)
-        assert full_ded - phased_ded == approx(7_200.0)  # 12k - 4.8k OBBBA delta
+        # audit-0722b OBBBA-1: phaseout reduces the aggregate bonus once (12k - 8.4k), not
+        # per-person (was 12k - 4.8k under the old, incorrect per-person formula).
+        assert full_ded - phased_ded == approx(3_600.0)
 
         combined_gross = 210_000.0
         taxable_with = max(combined_gross - phased_ded, 0.0)
@@ -43,5 +45,5 @@ class TestConversionTaxBaselineDeduction:
         )
 
         assert conv_tax_correct > conv_tax_buggy
-        # recaptured $7,200 of deduction taxed at the 22% MFJ bracket = ~$1,584
-        assert conv_tax_correct - conv_tax_buggy == approx(7_200.0 * 0.22, tol=5.0)
+        # recaptured $3,600 of deduction taxed at the 22% MFJ bracket = ~$792
+        assert conv_tax_correct - conv_tax_buggy == approx(3_600.0 * 0.22, tol=5.0)

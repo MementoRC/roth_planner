@@ -404,5 +404,9 @@ class Household:
         """Ordinary income from option exercises scheduled in ``year``.
 
         Sourced solely from ``effective_schedule()`` — see models/exercise_schedule.py.
+        A per-year price missing from the stored schedule (e.g. an unedited
+        default persisted with an empty ``price_by_year`` -- see the save-side
+        drop-filter in views/option_exercise.py) is re-projected via
+        ``projected_txn_price`` rather than falling back to 0.0 (audit-0722b).
         """
-        return self.effective_schedule().income_for(year, self.grants)
+        return self.effective_schedule().income_for(year, self.grants, self.projected_txn_price)

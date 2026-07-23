@@ -209,15 +209,20 @@ def senior_bonus_deduction(
     """
     OBBBA Senior Bonus Deduction (2025-2028).
 
-    $6,000 per person age 65+, phases out at $0.06 per $1 of excess MAGI ($60/$1,000) above threshold.
+    $6,000 per person age 65+, phases out at $0.06 per $1 of excess MAGI ($60/$1,000) above threshold,
+    applied once to the AGGREGATE bonus (not per person — see below).
     Sunset: returns 0.0 for year < 2025 or year > 2028 (Pub. L. 119-21 §70103).
     Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
-      MFJ:    phase-out starts $150,000, ends $250,000
+      MFJ (one eligible spouse):  phase-out starts $150,000, ends $250,000
+      MFJ (both eligible):        phase-out starts $150,000, ends $350,000
       Single/HoH: phase-out starts $75,000, ends $175,000
       MFS:    ineligible (returns 0)
 
-    Phaseout is applied per-person independently so the dual-eligible MFJ case
-    zeros at MAGI=$250K (same endpoint as single-eligible MFJ), matching statute intent.
+    Phaseout is applied ONCE against the aggregate bonus (not per person), per
+    Pub. L. 119-21 §70103 / IRC §151(d)(5)(C): total_bonus = $6,000 * eligible,
+    reduced by $0.06 per $1 of MAGI above the threshold. For dual-eligible MFJ
+    ($12,000 aggregate bonus) the deduction zeros at MAGI=$150,000+$12,000/0.06
+    = $350,000, not $250,000 (audit-0722b OBBBA-1).
 
     Pass ``phaseout_start`` explicitly to override the filing-status default.
     Stacks with standard deduction and senior extra.
@@ -244,11 +249,11 @@ def senior_bonus_deduction(
         )
         # Statutory nominal amount — NOT CPI-indexed (Pub. L. 119-21 §70103)
         phaseout_start = _base_phaseout
+    total_bonus = bonus_per_person * eligible
     if magi <= phaseout_start:
-        return bonus_per_person * eligible
-    per_person_reduction = min(bonus_per_person, max(0.0, magi - phaseout_start) * phaseout_rate)
-    deduction_per_person = bonus_per_person - per_person_reduction
-    return deduction_per_person * eligible
+        return total_bonus
+    reduction = phaseout_rate * (magi - phaseout_start)
+    return max(0.0, total_bonus - reduction)
 
 
 def tax_on_conversion(

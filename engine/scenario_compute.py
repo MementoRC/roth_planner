@@ -62,10 +62,13 @@ def compute_phase(
     if ya < rmd_yours and ya >= 70:
         return "ss_conv"
     if ya >= rmd_yours:
-        # sa == 0 signals a single-filer (no spouse); treat RMD years as "rmd",
-        # not "squeeze" — squeeze applies only when a living spouse has not yet
-        # reached rmd_spouse (i.e. sa > 0 and sa < rmd_spouse).
-        return "squeeze" if (sa > 0 and sa < rmd_spouse) else "rmd"
+        # A single filer has no spouse; squeeze applies only to a married
+        # household whose spouse has not yet reached rmd_spouse. Gating on
+        # filing_status (rather than sa == 0) keeps this correct in every
+        # projected year, not just the base year — sa increments with
+        # yr_idx even for single filers (whose spouse_age is seeded at 0).
+        is_married = hh.filing_status != "Single"
+        return "squeeze" if (is_married and sa < rmd_spouse) else "rmd"
     return "clean"
 
 
