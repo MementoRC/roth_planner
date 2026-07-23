@@ -160,7 +160,9 @@ def _fmt_dollars_simple(v: float) -> str:
 
 def _ltcg_stack_tax(start: float, eligible: float, thresholds: tuple[float, float]) -> float:
     """LTCG/qualified-dividend tax via the 0%/15%/20% stack-walk, mirroring
-    engine.scenario:564-576. `start` is ordinary taxable income (the stack base),
+    the "=== LTCG tax ===" stack-walk block in engine.scenario.compute_scenario
+    (grep for that header rather than a line number -- it has moved before).
+    `start` is ordinary taxable income (the stack base),
     `eligible` is realized LTCG + qualified dividends, `thresholds` are the
     (0%→15%, 15%→20%) ceilings already indexed for the year. Uses LTCG_RATES_MFJ
     for both filing statuses (no separate Single rates exist)."""
@@ -175,8 +177,9 @@ def estimate_brokerage_income(
     hh: Household, year: int, ytd: YTDSnapshot | None = None
 ) -> tuple[float, float, float]:
     """Estimate forecast (qualified_div, ordinary_div, realized_gains) for `year`,
-    mirroring engine.scenario's compute_brokerage_dividends + realized_gains
-    suppression (scenario.py:123-127, 281-291). Uses hh.brokerage_start as a static
+    mirroring engine.scenario's compute_brokerage_dividends call and the "B1/B2"
+    realized_gains suppression comment in compute_scenario (grep those markers
+    rather than a line number -- it has moved before). Uses hh.brokerage_start as a static
     balance -- Sweet Spot Finder is a per-year snapshot, not a multi-year balance
     projection (see estimate_ltcg_eligible for the same simplification).
 
