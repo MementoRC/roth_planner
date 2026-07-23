@@ -608,6 +608,14 @@ def run_scenario(
             if ytd_year is not None
             else 0.0
         )
+        # P3-2 (audit-0723): base-year ltcg_eligible below (realized_gains + qual_div_this_year)
+        # is force-suppressed to 0.0 whenever ytd_year is not None (see the B1/B2 comment
+        # above), so the C2 conversion_ltcg_cost block later in this function — which reuses
+        # that same ltcg_eligible — silently drops the conversion-induced bracket-stacking
+        # cost on YTD-*actual* realized gains. Compute the without-conversion counterfactual
+        # for _ytd_ltcg_total here (mirroring the with-conversion stack immediately below) so
+        # the difference can be folded into conversion_ltcg_cost alongside the forecast case.
+        _ytd_ltcg_marginal_cost = 0.0
         if ytd_year is not None and _ytd_ltcg_total > 0:
             # Thresholds depend on filing status: Single for survivor years, MFJ otherwise.
             _base_ytd_ltcg_thresholds = (
@@ -628,6 +636,23 @@ def run_scenario(
             yr.ytd_ltcg_tax = (
                 _ytd_ltcg_at_15 * _ltcg_rates[1] + _ytd_ltcg_at_20 * _ltcg_rates[2]
             )
+            # P3-2: without-conversion counterfactual for the SAME _ytd_ltcg_total,
+            # stacked from base_taxable (the no-conversion ordinary taxable income)
+            # instead of yr.taxable_income (which includes this year's conversion).
+            _ytd_ltcg_start_base = max(0.0, base_taxable)
+            _ytd_ltcg_end_base = _ytd_ltcg_start_base + max(0.0, _ytd_ltcg_total)
+            _ytd_ltcg_at_15_base = max(
+                0.0,
+                min(_ytd_ltcg_end_base, _ytd_ltcg_thresholds[1])
+                - max(_ytd_ltcg_start_base, _ytd_ltcg_thresholds[0]),
+            )
+            _ytd_ltcg_at_20_base = max(
+                0.0, _ytd_ltcg_end_base - max(_ytd_ltcg_start_base, _ytd_ltcg_thresholds[1])
+            )
+            _ytd_ltcg_tax_base = (
+                _ytd_ltcg_at_15_base * _ltcg_rates[1] + _ytd_ltcg_at_20_base * _ltcg_rates[2]
+            )
+            _ytd_ltcg_marginal_cost = max(0.0, yr.ytd_ltcg_tax - _ytd_ltcg_tax_base)
             # grid-05: YTD realized LTCG tax is a real federal tax for the base year
             # but was previously orphaned (computed, never counted in any total). Fold
             # it into federal_tax_amt so lifetime tax / all-in cost reflect it.
@@ -755,7 +780,13 @@ def run_scenario(
         _brokerage_gain_tax_base = (
             _ltcg_at_15_base * _ltcg_rates[1] + _ltcg_at_20_base * _ltcg_rates[2]
         )
-        yr.conversion_ltcg_cost = max(0.0, yr.brokerage_gain_tax - _brokerage_gain_tax_base)
+        # P3-2: ltcg_eligible (and thus the two lines above) is 0.0 in the base year
+        # (see B1/B2 suppression), so add the YTD-actual marginal cost computed
+        # earlier alongside the forecast-sourced one — the two are mutually
+        # exclusive per year (ytd_year is only non-None in the base year).
+        yr.conversion_ltcg_cost = (
+            max(0.0, yr.brokerage_gain_tax - _brokerage_gain_tax_base) + _ytd_ltcg_marginal_cost
+        )
         yr.all_in_cost += yr.conversion_ltcg_cost
 
         total_div = qual_div_this_year + ord_div_this_year

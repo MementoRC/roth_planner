@@ -660,3 +660,56 @@ class TestAuditC2ConversionLtcgCost:
         assert result.total_brok_tax == approx(sum_brok_tax, tol=1.0), (
             "total_brok_tax must equal sum of yr.brokerage_gain_tax only (no C2 leakage)"
         )
+
+    # ------------------------------------------------------------------
+    # Test 5 — audit-0723 P3-2: base-year YTD-realized LTCG must ALSO
+    # contribute to conversion_ltcg_cost, not just forecast realized_gains.
+    # ------------------------------------------------------------------
+
+    def test_p32_ytd_realized_ltcg_contributes_conversion_stacking_cost(self):
+        """P3-2: base-year ltcg_eligible (line ~731) is realized_gains + qual_div,
+        both force-suppressed to 0.0 in the base year (ytd_year is not None) —
+        see the B1/B2 comment at scenario.py:299-309. The C2 conversion_ltcg_cost
+        block (scenario.py:742-759) reuses that same (0.0) ltcg_eligible, so it
+        silently drops the conversion-induced LTCG-bracket-stacking cost on
+        YTD-*actual* realized gains, even though yr.ytd_ltcg_tax (a SEPARATE
+        computation at scenario.py:606-634) correctly taxes them.
+
+        Same worked-numbers shape as test_c2_conversion_ltcg_cost_audit_worked_numbers,
+        but the $20k LTCG-eligible amount is sourced from ytd.ltcg_ytd (a base-year
+        YTD actual) instead of forecast brokerage appreciation:
+
+          base_taxable = 90_000 (extra_withdrawal 122_200 - std_ded 32_200)
+          WITHOUT-conv LTCG stack: start=90k, end=110k → 8,900@0% + 11,100@15% = 1,665
+          WITH-conv (+20k conversion) LTCG stack: start=110k, end=130k → 20,000@15% = 3,000
+          conversion_ltcg_cost = 3,000 - 1,665 = 1,335
+
+        Pre-fix: conversion_ltcg_cost == 0.0 (bug — ltcg_eligible forced to 0 in
+        the base year regardless of ytd.ltcg_ytd).
+        Post-fix: conversion_ltcg_cost ≈ 1,335, matching the forecast-sourced case.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._hh(brokerage_start=0.0)  # no forecast realized_gains/qual_div
+        ytd = YTDSnapshot(tax_year=2026, ltcg_ytd=20_000)
+        plan = ConversionPlan(
+            your_conversions={2026: 20_000},
+            extra_withdrawals={2026: 122_200},
+        )
+        result = run_scenario(hh, plan, end_age=hh.your_age, ytd=ytd)
+        yr = result.years[0]
+
+        # Sanity: the base-year YTD LTCG tax is actually being taxed (grid-05 path).
+        assert yr.ytd_ltcg_tax > 0, (
+            f"Fixture broken: expected ytd_ltcg_tax > 0, got {yr.ytd_ltcg_tax}"
+        )
+
+        assert yr.conversion_ltcg_cost == approx(1_335.0, tol=50.0), (
+            "P3-2: base-year YTD-realized LTCG must contribute to conversion_ltcg_cost "
+            f"the same way forecast realized_gains does; got {yr.conversion_ltcg_cost:.2f} "
+            "(bug: base-year ltcg_eligible is force-zeroed, dropping this entirely)"
+        )
+        assert yr.all_in_cost == approx(
+            yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost,
+            tol=1.0,
+        ), "all_in_cost must equal conversion_tax+irmaa+aca+niit+conversion_ltcg_cost (C2)"
