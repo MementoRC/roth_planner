@@ -63,6 +63,7 @@ class TestComputePhaseSingleFilerRmd:
     def _hh_single_filer(self) -> Household:
         """Single-filer household: spouse_age=0 signals no spouse."""
         return _base_hh(
+            filing_status="Single",
             your_age=75,
             spouse_age=0,
             your_rmd_start_age=73,
@@ -121,6 +122,7 @@ class TestComputePhaseSingleFilerRmd:
     def test_single_filer_exactly_at_rmd_start_is_rmd(self) -> None:
         """ya == rmd_start and sa == 0: first RMD year must be 'rmd'."""
         hh = _base_hh(
+            filing_status="Single",
             your_age=73,
             spouse_age=0,
             your_rmd_start_age=73,

@@ -249,10 +249,10 @@ def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = N
     R5 (audit 2026-07-13): when `ytd` actuals are supplied (base year), the forecast
     is suppressed and replaced with the YTD LTCG + qualified dividends actually
     realized so far this year -- mirroring scenario.py's base-year YTD LTCG
-    stack-walk input (_ytd_ltcg_total = ytd.ltcg_ytd + ytd.qualified_dividends_ytd,
-    scenario.py:577-579)."""
+    stack-walk input (_ytd_ltcg_total = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
+    + ytd.crypto_ltcg_ytd, scenario.py:606-607)."""
     if ytd is not None:
-        return ytd.ltcg_ytd + ytd.qualified_dividends_ytd
+        return ytd.ltcg_ytd + ytd.qualified_dividends_ytd + ytd.crypto_ltcg_ytd
     qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, None)
     return realized_gains + qual_div
 

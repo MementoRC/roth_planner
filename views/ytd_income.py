@@ -123,6 +123,7 @@ def render(hh: Household):
                     ytd_snap.crypto_stcg_ytd = prev.crypto_stcg_ytd
                     ytd_snap.crypto_ltcg_ytd = prev.crypto_ltcg_ytd
                     ytd_snap.crypto_income_ytd = prev.crypto_income_ytd
+                    ytd_snap.income_events = prev.income_events
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:

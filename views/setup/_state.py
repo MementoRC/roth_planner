@@ -151,6 +151,10 @@ def _clear_personal_session_state() -> None:
         "your_has_workplace_plan",
         "spouse_has_workplace_plan",
         "spouse_is_sole_beneficiary",
+        # audit-0722b: net_inv_income (shared manual-NIIT input key on the
+        # ACA+IRMAA and Sweet-Spot pages) was missing from this list, so a
+        # personal value survived "Reset to demo" and kept inflating NIIT.
+        "net_inv_income",
         # TODO(audit ui-7/ui-8): dynamic PDF-cache-prefix and generated-keypair
         # keys are separate low-severity findings; not cleared here.
     ]
