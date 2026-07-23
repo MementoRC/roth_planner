@@ -235,3 +235,29 @@ def test_sync_everything_button_invokes_handler_and_renders_summary(
     # Pending count reflects contributions from all three sources (existing
     # review-gate mechanism, untouched by this change).
     assert at.metric[0].value == "3"
+
+
+def test_sync_everything_clears_suppress_snapshot_autoload_flag(
+    clean_command_center_caches,
+) -> None:
+    """P4-1: Sync everything must clear the Reset-to-demo autoload-suppression flag.
+
+    The only other code path that ever clears ``_suppress_snapshot_autoload``
+    (``_apply_portfolio_snapshot`` in views/setup/_state.py) has no live
+    caller, so without this the flag -- and the autosave-to-.user_defaults.json
+    calls in parameters.py/option_exercise.py that are gated on it -- stay
+    silently disabled for the rest of the session after any Reset-to-demo.
+    """
+    import views.setup.command_center as command_center_mod
+
+    mock_sync = MagicMock(return_value=_canned_sync_everything_result())
+
+    at = AppTest.from_function(_render_sync_everything)
+    with patch.object(command_center_mod, "sync_everything", mock_sync):
+        at.run()
+        at.session_state["_suppress_snapshot_autoload"] = True
+
+        at.button(key="sync_everything_btn").click().run()
+        assert not at.exception
+
+    assert "_suppress_snapshot_autoload" not in at.session_state
