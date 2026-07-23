@@ -85,7 +85,7 @@ class BaseIncome:
     def net_investment_income_addl(self) -> float:
         """Year-level net-investment-income additions for NIIT: forecast realized
         gains + forecast qual/ord dividends + YTD investment income. Mirrors
-        engine.scenario's net_investment_income assembly (scenario.py:612-615).
+        engine.scenario's net_investment_income assembly (scenario.py:643-646).
         Excludes rmd_income (RMDs are not investment income)."""
         return (
             self.forecast_realized_gains
@@ -287,10 +287,17 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     # YTD ordinary income (wages, NEC, STCG, ordinary dividends, interest,
     # IRA distributions, etc.) — hoisted so it can feed both the SS provisional
     # income computation (F9) and the MAGI base below.
-    ytd_magi = ytd.magi_ytd if ytd is not None else 0.0  # base-year realized YTD (niit-5)
-    ytd_niit_magi = ytd.niit_magi_ytd if ytd is not None else 0.0  # IRC §1411(d)(3)
+    # nqo_exercise_ytd is already captured in `opt` for the base year (it is part of
+    # hh.option_income), so subtract it here to avoid double-counting it in the MAGI /
+    # NIIT-MAGI base — mirroring the ytd_ordinary dedup below and scenario.py:343-345
+    # (option_income_for_magi = option_income - nqo_exercise_ytd). (Audit 2026-07-22:
+    # the ordinary path dedup'd it but this MAGI path did not, overstating base_magi,
+    # niit_magi, taxable_ss, and the senior-bonus phaseout by nqo_exercise_ytd.)
+    _nqo_ytd = ytd.nqo_exercise_ytd if ytd is not None else 0.0
+    ytd_magi = (ytd.magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # base-year realized YTD (niit-5)
+    ytd_niit_magi = (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # IRC §1411(d)(3)
     # MU8-F1: ordinary-income portion of YTD for the bracket/LTCG-stack base.
-    # Mirrors scenario.py combined_gross YTD injection (lines 371-381): wages, NEC, STCG,
+    # Mirrors scenario.py combined_gross YTD injection (lines 394-407): wages, NEC, STCG,
     # ordinary dividends, interest, ira_conversions_ytd, spouse_ira_conversions_ytd,
     # ira_distributions_ytd. Excludes LTCG and qualified dividends (preferential-rate, not
     # in ordinary brackets) and muni interest (MAGI-only). nqo_exercise_ytd is already
@@ -500,7 +507,7 @@ def all_in_at_conversion(
         + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
     )
     # R2: net investment income = realized gains + qual/ord dividends + YTD investment
-    # income, mirroring scenario.py's net_investment_income (scenario.py:612-615).
+    # income, mirroring scenario.py's net_investment_income (scenario.py:643-646).
     # Added to the caller-supplied net_inv_income, a manual estimate/override for NII
     # not otherwise modeled by this module (e.g. non-brokerage taxable accounts).
     total_net_inv_income = net_inv_income + base.net_investment_income_addl

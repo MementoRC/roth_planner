@@ -280,3 +280,60 @@ class TestMU8F1LtcgStackRegression:
             "ytd_ordinary must shift the LTCG-stack start above the threshold, "
             f"got ltcg_delta={res_with_ytd.ltcg_delta}"
         )
+
+
+class TestBaseYearNqoExerciseMagiParity:
+    """Audit 2026-07-22 (CROSS-magi-nqo / CROSS-niitmagi-nqo): a base-year NQO
+    exercise spread is already captured in hh.option_income(base_year), so it
+    must be counted ONCE in sweet_spot's MAGI / NIIT-MAGI base, matching
+    scenario.py (which subtracts nqo_exercise_ytd from option_income before
+    folding in magi_ytd -- scenario.py:343-345). Before the fix, sweet_spot
+    added it via BOTH `opt` (hh.option_income) AND `magi_ytd`, overstating magi
+    and niit_magi by exactly nqo_exercise_ytd, inflating irmaa/aca/niit deltas
+    and misdirecting the IRMAA-safe conversion search.
+
+    The rest of this suite misses the case because _no_ss_no_option_household
+    zeroes grants/option income, so no test combined nqo_exercise_ytd > 0 with a
+    live base-year exercise.
+    """
+
+    def _hh(self) -> Household:
+        from models.exercise_schedule import ExerciseSchedule
+
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            base_year=2026,
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            your_ss_start_age=70,
+            spouse_ss_start_age=70,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            filing_status="MFJ",
+        )
+        # Exercise the first TXN grant's full block in the base year so its
+        # spread lands in option_income(base_year).
+        hh.exercise_schedule = ExerciseSchedule()
+        hh.exercise_schedule.set_shares(hh.grants[0].key(), hh.base_year, hh.grants[0].shares)
+        hh.exercise_schedule.set_price(hh.base_year, hh.txn_price_now)
+        return hh
+
+    def test_magi_and_niit_magi_count_nqo_exercise_once(self) -> None:
+        hh = self._hh()
+        year = hh.base_year
+        nqo = hh.option_income(year)
+        assert nqo > 0, "precondition: base-year exercise must produce option income"
+
+        # The realized exercise IS the base-year YTD actual (magi_ytd/niit_magi_ytd
+        # both include nqo_exercise_ytd), exactly as a real mid-year exercise would.
+        ytd = YTDSnapshot(tax_year=year, nqo_exercise_ytd=nqo)
+        oracle = _oracle_year(hh, year, ytd=ytd)
+
+        base = base_income_for_year(hh, year, ytd=ytd)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        # Counted once: sweet_spot must agree with the scenario oracle. Pre-fix,
+        # result.magi/niit_magi were oracle + nqo (double-counted).
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0)
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0)

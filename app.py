@@ -56,8 +56,16 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("your_fra_age", 67)
     st.session_state.setdefault("spouse_fra_age", 67)
     st.session_state.setdefault("prior_year_magi", {})
-    st.session_state.setdefault("survivor", None)
-    st.session_state.setdefault("inherited_iras", [])
+    # Complex (non-scalar) persisted keys: seed from `defaults` so a saved
+    # value survives a fresh session. (Audit 2026-07-22: these were hardcoded
+    # to empty — survivor=None, inherited_iras=[], account_type_overrides
+    # unseeded — so a restart silently reverted them to default, dropping the
+    # survivor single-filer model, inherited-IRA 10-yr-rule income, and manual
+    # account-type corrections.) prior_year_magi stays hardcoded above — it is
+    # governed via Source.PDF/BUNDLE candidates, not user-defaults seeding.
+    st.session_state.setdefault("survivor", defaults.get("survivor"))
+    st.session_state.setdefault("inherited_iras", defaults.get("inherited_iras", []))
+    st.session_state.setdefault("account_type_overrides", defaults.get("account_type_overrides", {}))
     st.session_state.setdefault("cpi_assumption", 0.025)
     st.session_state.setdefault("filing_status", "MFJ")
     # Cache ticker for sidebar label (avoids re-importing config on every render)
