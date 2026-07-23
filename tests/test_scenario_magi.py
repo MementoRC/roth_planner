@@ -348,6 +348,39 @@ class TestAuditF3F4SSProvisionalIncome:
             "qualified_dividends_ytd must increase taxable SS via provisional income"
         )
 
+    def test_p31_above_the_line_adjustments_reduce_taxable_ss(self):
+        """P3-1 (2026-07-23 audit): HSA/deductible-IRA above-the-line adjustments must
+        reduce SS provisional income the same way they reduce magi_ytd/total_ordinary_income
+        (YTDSnapshot.above_the_line_adjustments_ytd). Without this, scenario_compute's
+        taxable-SS/MAGI diverges from sweet_spot_compute/tax.py's magi_ytd-based treatment.
+        """
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._base_hh()
+        # wages_ytd alone (40K) pushes provisional income past the MFJ tier-2 threshold
+        # ($44,000) into the 85% marginal band, but stays below the 85%-of-benefits
+        # ceiling (min(taxable, 0.85*combined_ss)) so the adjustment's effect is visible
+        # rather than absorbed by the cap.
+        ytd_no_adj = YTDSnapshot(tax_year=hh.base_year, wages_ytd=40_000.0)
+        ytd_with_adj = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=40_000.0,
+            hsa_contribution_ytd=2_000.0,
+            deductible_ira_contribution_ytd=675.0,
+        )
+        adjustment = ytd_with_adj.above_the_line_adjustments_ytd  # 2675.0
+
+        ss_no_adj = self._call_ss(hh, ytd_year=ytd_no_adj)
+        ss_with_adj = self._call_ss(hh, ytd_year=ytd_with_adj)
+
+        expected_reduction = 0.85 * adjustment
+        assert ss_no_adj - ss_with_adj == pytest.approx(expected_reduction, abs=0.01), (
+            f"$2,675 of HSA/IRA above-the-line adjustments must reduce taxable SS by "
+            f"${expected_reduction:.2f} (85% marginal), matching magi_ytd's netting. "
+            f"Got a reduction of ${ss_no_adj - ss_with_adj:.2f} instead — "
+            "compute_social_security's other_inc omits above_the_line_adjustments_ytd."
+        )
+
     def test_f4_forecast_qual_div_raises_taxable_ss(self):
         """F4: forecast qual_div_this_year must enter provisional income."""
         hh = self._base_hh()
