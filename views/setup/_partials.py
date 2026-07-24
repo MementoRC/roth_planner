@@ -590,6 +590,12 @@ def render_options_partial(hh: Household, container) -> None:
     inline trust/manual-override/confirm governance card when a candidate is
     pending.
 
+    Note: ``hh`` parameter is unused in this function's body; it is retained
+    for interface parity with ``render_household_partial`` and
+    ``render_accounts_partial``, which do use their ``hh`` argument. This
+    consistency enables uniform ``(hh, container)`` call signatures across
+    all Setup-domain partials for Task 8's shell composition.
+
     Unlike ``render_household_partial``/``render_accounts_partial``, this
     partial takes no ``owner`` argument — grants and the stock price are
     household-level, not per-person.
