@@ -180,59 +180,72 @@ class TestFilingStatusGate:
         assert filing_status_from_label("Single") not in _FILING_STATUS_OPTIONS
 
     def test_widget_renders_before_subtabs(self):
+        """The filing-status radio (rendered by ``render_household_partial(hh, st,
+        "joint")``, extracted from ``render_parameters_tab`` in Task 3) must still
+        run before the Me/Spouse/Joint sub-tabs are created, so spouse state can be
+        zeroed in the same render pass."""
         import inspect
 
         from views import setup
+        from views.setup._partials import render_household_partial
 
-        source = inspect.getsource(setup.render_parameters_tab)
-        radio_pos = source.find('"Filing status"')
-        tabs_pos = source.find("st.tabs(")
-        assert radio_pos != -1, "Filing status radio not found in render_parameters_tab"
+        tab_source = inspect.getsource(setup.render_parameters_tab)
+        partial_call_pos = tab_source.find('render_household_partial(hh, st, "joint")')
+        tabs_pos = tab_source.find("st.tabs(")
+        assert partial_call_pos != -1, (
+            'render_household_partial(hh, st, "joint") call not found in render_parameters_tab'
+        )
         assert tabs_pos != -1
-        assert radio_pos < tabs_pos, (
+        assert partial_call_pos < tabs_pos, (
             "Filing status must render before the Me/Spouse/Joint sub-tabs so spouse "
             "state can be zeroed in the same render pass"
+        )
+
+        partial_source = inspect.getsource(render_household_partial)
+        assert '"Filing status"' in partial_source, (
+            "Filing status radio not found in render_household_partial's 'joint' branch"
         )
 
     def test_filing_status_written_to_session_state(self):
         import inspect
 
-        from views import setup
+        from views.setup._partials import render_household_partial
 
-        source = inspect.getsource(setup.render_parameters_tab)
+        source = inspect.getsource(render_household_partial)
         assert 'st.session_state["filing_status"]' in source
 
 
 class TestWorkplacePlanCheckboxesInParametersTab:
-    """W3: Setup / Parameters Me & Spouse tabs own the workplace-plan checkboxes."""
+    """W3: render_household_partial (extracted Task 3 from Setup / Parameters
+    Me & Spouse tabs) owns the workplace-plan checkboxes."""
 
-    def _params_source(self) -> str:
+    def _partial_source(self) -> str:
         import inspect
 
-        from views import setup
+        from views.setup._partials import render_household_partial
 
-        return inspect.getsource(setup.render_parameters_tab)
+        return inspect.getsource(render_household_partial)
 
     def test_your_checkbox_present_after_your_age_input(self):
-        source = self._params_source()
+        source = self._partial_source()
         age_pos = source.find('"Your Age"')
-        wp_pos = source.find("your_has_workplace_plan = st.checkbox(")
-        assert age_pos != -1, "Your Age input not found in render_parameters_tab"
-        assert wp_pos != -1, "your_has_workplace_plan checkbox not found in Me tab"
+        wp_pos = source.find("your_has_workplace_plan = container.checkbox(")
+        assert age_pos != -1, "Your Age input not found in render_household_partial"
+        assert wp_pos != -1, "your_has_workplace_plan checkbox not found in 'your' branch"
         assert age_pos < wp_pos, "Workplace-plan checkbox must render after Your Age input"
 
     def test_spouse_checkbox_present_after_spouse_age_input(self):
-        source = self._params_source()
+        source = self._partial_source()
         age_pos = source.find('"Spouse Age"')
-        wp_pos = source.find("spouse_has_workplace_plan = st.checkbox(")
-        assert age_pos != -1, "Spouse Age input not found in render_parameters_tab"
-        assert wp_pos != -1, "spouse_has_workplace_plan checkbox not found in Spouse tab"
+        wp_pos = source.find("spouse_has_workplace_plan = container.checkbox(")
+        assert age_pos != -1, "Spouse Age input not found in render_household_partial"
+        assert wp_pos != -1, "spouse_has_workplace_plan checkbox not found in 'spouse' branch"
         assert age_pos < wp_pos, "Workplace-plan checkbox must render after Spouse Age input"
 
     def test_checkboxes_write_session_state(self):
-        source = self._params_source()
-        assert "st.session_state.your_has_workplace_plan = st.checkbox(" in source
-        assert "st.session_state.spouse_has_workplace_plan = st.checkbox(" in source
+        source = self._partial_source()
+        assert "st.session_state.your_has_workplace_plan = container.checkbox(" in source
+        assert "st.session_state.spouse_has_workplace_plan = container.checkbox(" in source
 
 
 class TestAppFilingStatusWiring:

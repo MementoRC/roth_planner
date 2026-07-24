@@ -144,3 +144,93 @@ def test_setup_widget_key_set_unchanged(setup_app_test: AppTest) -> None:
     extra = actual - EXPECTED_WIDGET_KEYS
     assert not missing, f"Widget keys disappeared from Setup: {sorted(missing)}"
     assert not extra, f"New/unexpected widget keys appeared on Setup: {sorted(extra)}"
+
+
+# --- Task 3 supplementary safety net: render_household_partial ----------------
+#
+# ``views/setup/_partials.py:render_household_partial`` extracts filing status +
+# your/spouse age/workplace-plan/ACA-eligible/RMD-timing/sole-beneficiary widgets
+# out of ``views/setup/parameters.py``. Every one of those (except filing status)
+# is UNKEYED (Owner decision 5), so the key-set test above cannot catch a
+# typo'd ``session_state.<attr>`` name introduced during the move — a typo would
+# silently create a NEW session_state attribute rather than raising. These
+# tests drive a distinct sentinel value through each extracted field and
+# assert the correct attribute reflects it.
+
+
+def _number_input_by_label(at: AppTest, label: str):
+    return next(w for w in at.number_input if w.label == label)
+
+
+def _checkbox_by_label(at: AppTest, label: str):
+    return next(w for w in at.checkbox if w.label == label)
+
+
+def _selectbox_by_label(at: AppTest, label: str):
+    return next(w for w in at.selectbox if w.label == label)
+
+
+def test_household_partial_joint_filing_status_round_trip(setup_app_test: AppTest) -> None:
+    at = setup_app_test
+    assert at.session_state["filing_status"] == "MFJ"
+    at.radio(key="_hh_filing_status_choice").set_value("Single").run()
+    assert at.session_state["filing_status"] == "Single"
+
+
+def test_household_partial_your_fields_round_trip(setup_app_test: AppTest) -> None:
+    at = setup_app_test
+
+    _number_input_by_label(at, "Your Age").set_value(51).run()
+    assert at.session_state["your_age"] == 51
+
+    _checkbox_by_label(at, "You have a workplace retirement plan (401k/403b)").set_value(
+        True
+    ).run()
+    assert at.session_state["your_has_workplace_plan"] is True
+
+    _selectbox_by_label(at, "Your RMD start age").select(73).run()
+    assert at.session_state["your_rmd_start_age"] == 73
+
+    _checkbox_by_label(at, "Defer first RMD to April 1 (two RMDs in year 2)").set_value(
+        True
+    ).run()
+    assert at.session_state["your_defer_first_rmd"] is True
+
+    _number_input_by_label(at, "Your FRA (Full Retirement Age)").set_value(66).run()
+    assert at.session_state["your_fra_age"] == 66
+
+    _checkbox_by_label(at, "You on ACA Marketplace").set_value(True).run()
+    assert at.session_state["your_aca"] is True
+
+
+def test_household_partial_spouse_fields_round_trip(setup_app_test: AppTest) -> None:
+    at = setup_app_test
+
+    _number_input_by_label(at, "Spouse Age").set_value(52).run()
+    assert at.session_state["spouse_age"] == 52
+
+    _checkbox_by_label(at, "Spouse has a workplace retirement plan (401k/403b)").set_value(
+        True
+    ).run()
+    assert at.session_state["spouse_has_workplace_plan"] is True
+
+    _selectbox_by_label(at, "Spouse RMD start age").select(73).run()
+    assert at.session_state["spouse_rmd_start_age"] == 73
+
+    _checkbox_by_label(
+        at, "Defer spouse's first RMD to April 1 (two RMDs in year 2)"
+    ).set_value(True).run()
+    assert at.session_state["spouse_defer_first_rmd"] is True
+
+    _checkbox_by_label(
+        at,
+        "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
+        "Last Survivor Table for RMDs)",
+    ).set_value(True).run()
+    assert at.session_state["spouse_is_sole_beneficiary"] is True
+
+    _number_input_by_label(at, "Spouse FRA (Full Retirement Age)").set_value(66).run()
+    assert at.session_state["spouse_fra_age"] == 66
+
+    _checkbox_by_label(at, "Spouse on ACA Marketplace").set_value(True).run()
+    assert at.session_state["spouse_aca"] is True

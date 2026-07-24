@@ -23,10 +23,8 @@ from engine.tax_return_pdf import (
 from models.household import Household
 from models.sourced import Source
 from views._format import fmt_dollars
+from views.setup._partials import render_household_partial
 from views.setup._state import _user_defaults_from_session
-
-_HH_FILING_LABEL_MFJ = "Married filing jointly"
-_HH_FILING_LABEL_SINGLE = "Single"
 
 _Num = TypeVar("_Num", int, float)
 
@@ -42,18 +40,6 @@ def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
     final backstop so genuinely corrupt data still cannot crash the render.
     """
     return min(max(value, lo), hi)
-
-
-def filing_status_from_label(label: str) -> str:
-    """Map the household filing-status radio label to the engine's canonical value.
-
-    The engine compares ``hh.filing_status`` against ``"MFJ"`` / ``"Single"``
-    (capitalized). This is a DIFFERENT vocabulary from the lowercase
-    ``_FILING_STATUS_OPTIONS`` used by the PDF-1040 import widget to tag an
-    imported prior-year return — the two must not be conflated, or the engine's
-    ``== "Single"`` branches stay dead code (R1 #6).
-    """
-    return _HH_FILING_LABEL_SINGLE if label == _HH_FILING_LABEL_SINGLE else "MFJ"
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -387,22 +373,7 @@ def render_parameters_tab(hh: Household) -> None:
     _synced = bool(st.session_state.get("portfolio_snapshot"))
 
     # Household filing status — gate that activates the engine's Single-filer paths.
-    _filing_choice = st.radio(
-        "Filing status",
-        [_HH_FILING_LABEL_MFJ, _HH_FILING_LABEL_SINGLE],
-        index=0 if st.session_state.get("filing_status", "MFJ") == "MFJ" else 1,
-        horizontal=True,
-        key="_hh_filing_status_choice",
-        help=(
-            "Single models a single-from-the-start household: spouse inputs are "
-            "zeroed and single-filer brackets, standard deduction, IRMAA/NIIT "
-            "thresholds, and ACA FPL apply. To model a spouse dying mid-projection, "
-            "leave this on Married filing jointly and use the Survivor scenario "
-            "(Joint sub-tab)."
-        ),
-    )
-    _is_single = filing_status_from_label(_filing_choice) == "Single"
-    st.session_state["filing_status"] = "Single" if _is_single else "MFJ"
+    _is_single = bool(render_household_partial(hh, st, "joint"))
     # NOTE: spouse inputs are intentionally NOT zeroed in session_state here — doing so
     # permanently destroyed the user's real spouse balances on a Single→MFJ round-trip
     # (audit C9 / ui-streamlit-4). The spouse widgets are disabled while Single, and the
@@ -430,16 +401,7 @@ def render_parameters_tab(hh: Household) -> None:
             disabled=_synced,
             help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
-        st.session_state.your_age = st.number_input(
-            "Your Age",
-            value=st.session_state.your_age,
-            step=1,
-            format="%d",
-        )
-        st.session_state.your_has_workplace_plan = st.checkbox(
-            "You have a workplace retirement plan (401k/403b)",
-            value=st.session_state.your_has_workplace_plan,
-        )
+        render_household_partial(hh, me_sub, "your")
         _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
         your_fra_age = st.session_state.get("your_fra_age", 67)
         st.session_state.your_ss_fra = st.number_input(
@@ -464,40 +426,6 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.get("your_ss_start_age", 70),
             step=1,
             format="%d",
-        )
-        _your_rmd_stored = st.session_state.get("your_rmd_start_age")
-        if _your_rmd_stored is not None and _your_rmd_stored not in {73, 75}:
-            st.warning(
-                f"Stored RMD start age {_your_rmd_stored} is not valid (must be 73 or 75); "
-                "falling back to 75."
-            )
-        st.session_state.your_rmd_start_age = st.selectbox(
-            "Your RMD start age",
-            options=[73, 75],
-            index=0 if st.session_state.get("your_rmd_start_age", 75) == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
-        )
-        st.session_state.your_defer_first_rmd = st.checkbox(
-            "Defer first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("your_defer_first_rmd", False),
-            help=(
-                "IRC §401(a)(9)(C)(ii): delay the first RMD to April 1 of the following year. "
-                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
-            ),
-        )
-        st.session_state.your_fra_age = st.number_input(
-            "Your FRA (Full Retirement Age)",
-            min_value=65,
-            max_value=70,
-            value=st.session_state.get("your_fra_age", 67),
-            step=1,
-            format="%d",
-            help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
-        )
-        st.session_state.your_aca = st.checkbox(
-            "You on ACA Marketplace",
-            value=st.session_state.your_aca,
-            help="Check if you are enrolled in ACA marketplace (not employer plan)",
         )
 
     with spouse_sub:
@@ -524,18 +452,7 @@ def render_parameters_tab(hh: Household) -> None:
             disabled=_synced or _is_single,
             help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
-        st.session_state.spouse_age = st.number_input(
-            "Spouse Age",
-            value=st.session_state.spouse_age,
-            step=1,
-            format="%d",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_has_workplace_plan = st.checkbox(
-            "Spouse has a workplace retirement plan (401k/403b)",
-            value=st.session_state.spouse_has_workplace_plan,
-            disabled=_is_single,
-        )
+        render_household_partial(hh, spouse_sub, "spouse")
         _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
         spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
         st.session_state.spouse_ss_fra = st.number_input(
@@ -563,57 +480,6 @@ def render_parameters_tab(hh: Household) -> None:
             value=st.session_state.get("spouse_ss_start_age", 70),
             step=1,
             format="%d",
-            disabled=_is_single,
-        )
-        _spouse_rmd_stored = st.session_state.get("spouse_rmd_start_age")
-        if _spouse_rmd_stored is not None and _spouse_rmd_stored not in {73, 75}:
-            st.warning(
-                f"Stored spouse RMD start age {_spouse_rmd_stored} is not valid (must be 73 or 75); "
-                "falling back to 75."
-            )
-        st.session_state.spouse_rmd_start_age = st.selectbox(
-            "Spouse RMD start age",
-            options=[73, 75],
-            index=0 if st.session_state.get("spouse_rmd_start_age", 75) == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_defer_first_rmd = st.checkbox(
-            "Defer spouse's first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("spouse_defer_first_rmd", False),
-            help=(
-                "IRC §401(a)(9)(C)(ii): delay the spouse's first RMD to April 1 of the following year. "
-                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
-            ),
-            disabled=_is_single,
-        )
-        st.session_state.spouse_is_sole_beneficiary = st.checkbox(
-            "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
-            "Last Survivor Table for RMDs)",
-            value=st.session_state.get("spouse_is_sole_beneficiary", False),
-            help=(
-                "26 CFR §1.401(a)(9)-9 Table II: when your sole primary IRA "
-                "beneficiary is a spouse more than 10 years younger, the IRS "
-                "requires this larger-divisor table instead of the standard "
-                "Uniform Lifetime Table — producing a smaller RMD. Only applies "
-                "when the age gap qualifies; otherwise the standard table is used."
-            ),
-            disabled=_is_single,
-        )
-        st.session_state.spouse_fra_age = st.number_input(
-            "Spouse FRA (Full Retirement Age)",
-            min_value=65,
-            max_value=70,
-            value=st.session_state.get("spouse_fra_age", 67),
-            step=1,
-            format="%d",
-            help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_aca = st.checkbox(
-            "Spouse on ACA Marketplace",
-            value=st.session_state.spouse_aca,
-            help="Check if spouse is enrolled in ACA marketplace",
             disabled=_is_single,
         )
 

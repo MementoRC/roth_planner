@@ -6,12 +6,12 @@ import streamlit as st
 
 from models.household import Household
 
+from ._partials import filing_status_from_label
 from .command_center import render_command_center
 from .data_bridge import render_data_bridge_tab
 from .parameters import (
     _FILING_STATUS_OPTIONS,
     _render_pdf_1040_import,
-    filing_status_from_label,
     render_parameters_tab,
 )
 from .portfolio import render_portfolio_tab
