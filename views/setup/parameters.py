@@ -380,13 +380,11 @@ def render_parameters_tab(hh: Household) -> None:
             step=5_000,
             format="%d",
         )
-        st.session_state.txn_price = st.number_input(
-            f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
-            min_value=0,
-            value=st.session_state.txn_price,
-            step=5,
-            format="%d",
-        )
+        # txn_price / txn_price_now moved into
+        # views/setup/_partials.py:render_options_partial (called once from
+        # views/setup/portfolio.py's Portfolio tab) as of Task 5 of the
+        # ui-shell-theme-toggle plan — co-located with the stock-grants table
+        # it prices, alongside its own trust/manual/confirm governance card.
         st.session_state["aca_benchmark_premium_annual"] = st.number_input(
             "ACA Benchmark Premium ($/yr)",
             min_value=0,

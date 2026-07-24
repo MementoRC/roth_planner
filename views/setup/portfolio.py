@@ -1,4 +1,10 @@
-"""Portfolio tab — accounts/holdings tables, grants, portfolio sub-tabs, account-type overrides."""
+"""Portfolio tab — accounts/holdings tables, portfolio sub-tabs, account-type overrides.
+
+The equity-grants table (and its ``GRANTS_KEY`` governance card) moved into
+``views/setup/_partials.py:render_options_partial`` as of Task 5 of the
+ui-shell-theme-toggle plan — it now renders once, below the Me/Spouse/All
+sub-tabs, instead of being duplicated inside the Me and All sub-tabs.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,6 @@ from engine.data_bridge_browser import (
 from engine.data_sources.record import record_magi_candidates
 from engine.portfolio_sync import (
     AccountSummary,
-    EquityGrant,
     MagiSnapshot,
     PortfolioSnapshot,
     apply_dividends_rollup,
@@ -30,6 +35,7 @@ from engine.portfolio_sync import (
 )
 from models.household import Household
 from models.sourced import Source
+from views.setup._partials import render_options_partial
 
 
 def _no_data_msg(noun: str) -> str:
@@ -90,32 +96,6 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
     )
 
 
-def _render_grants_section(grants: list[EquityGrant]) -> None:
-    """Render equity grants as a dataframe, or an info banner when empty."""
-    if not grants:
-        st.info("No grants loaded.")
-        return
-    rows = [
-        {
-            "grant_id": g.grant_id,
-            "type": g.grant_type,
-            "grant_date": g.grant_date,
-            "shares_granted": g.shares_granted,
-            "outstanding": g.outstanding,
-            "current_value": g.current_value,
-        }
-        for g in grants
-    ]
-    st.dataframe(
-        pd.DataFrame(rows),
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "current_value": st.column_config.NumberColumn("Current Value", format="$%,.0f"),
-        },
-    )
-
-
 def _render_portfolio_sub_tabs(
     snap: PortfolioSnapshot | None,
 ) -> None:
@@ -136,31 +116,18 @@ def _render_portfolio_sub_tabs(
         _render_accounts_table(me_accounts, show_owner=False)
         st.subheader("Holdings")
         _render_holdings_table(me_accounts)
-        st.subheader("Grants")
-        _render_grants_section(snap.equity_grants)
-        st.caption(
-            "Grant owner attribution is not yet available from FinExtract — "
-            "all grants are shown here."
-        )
 
     with spouse_tab:
         st.subheader("Accounts")
         _render_accounts_table(spouse_accounts, show_owner=False)
         st.subheader("Holdings")
         _render_holdings_table(spouse_accounts)
-        st.subheader("Grants")
-        st.caption(
-            "Grant owner attribution is not yet available from FinExtract — "
-            "see the Me tab or All tab for all loaded grants."
-        )
 
     with all_tab:
         st.subheader("Accounts")
         _render_accounts_table(snap.accounts, show_owner=True)
         st.subheader("Holdings")
         _render_holdings_table(snap.accounts)
-        st.subheader("Grants")
-        _render_grants_section(snap.equity_grants)
 
 
 def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
@@ -368,3 +335,4 @@ def render_portfolio_tab(hh: Household) -> None:
 
     _render_portfolio_sub_tabs(snap)
     _render_account_type_overrides(snap)
+    render_options_partial(hh, st)
