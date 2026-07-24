@@ -223,6 +223,12 @@ def render_command_center(hh: Household) -> None:
     if st.button("⟳ Sync everything", key="sync_everything_btn"):
         with st.spinner("Syncing all sources…"):
             summary = sync_everything(hh)
+        # P4-1: the only other clearer of this Reset-to-demo sentinel
+        # (_apply_portfolio_snapshot) has no live caller, so without this an
+        # explicit sync would otherwise leave user-defaults autosave
+        # (parameters.py/option_exercise.py, gated on the same flag) silently
+        # disabled for the rest of the session.
+        st.session_state.pop("_suppress_snapshot_autoload", None)
         st.info(_format_sync_everything_summary(summary))
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)

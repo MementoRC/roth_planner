@@ -337,6 +337,10 @@ def compute_social_security(
             + ytd_year.crypto_stcg_ytd
             + ytd_year.crypto_income_ytd
             + ytd_year.crypto_ltcg_ytd
+            # P3-1 (2026-07-23 audit): HSA/deductible-IRA contributions are above-the-line
+            # and reduce AGI — magi_ytd/total_ordinary_income already net this out, so SS
+            # provisional income (also AGI-basis per IRC §86(b)(2)) must too.
+            - ytd_year.above_the_line_adjustments_ytd
         )
     # A-3: inherited IRA distributions are AGI → required in provisional income (IRC §86(b)(2))
     other_inc += your_inherited_distribution + spouse_inherited_distribution
