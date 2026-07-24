@@ -42,6 +42,38 @@ def _pair_grants(
     return pairs
 
 
+def _build_grant_comparison_rows(
+    pairs: list[tuple[EquityGrant | None, StockGrant | None]], txn_price_now: float
+) -> list[dict[str, str]]:
+    """Build the FinExtract-vs-planner comparison table rows.
+
+    Every value is formatted to ``str`` up front (including "Outstanding",
+    which is otherwise a bare ``int``) so every column is uniformly typed —
+    a column mixing ``int`` and the ``"—"`` placeholder string makes
+    pyarrow infer int64 and then raise ``ArrowInvalid`` on the placeholder
+    when Streamlit serializes the dataframe for ``st.dataframe``.
+    """
+    comp_rows: list[dict[str, str]] = []
+    for g, plan in pairs:
+        comp_rows.append(
+            {
+                "Source": "FinExtract",
+                "Grant": g.grant_date if g else "—",
+                "Outstanding": f"{g.outstanding:,}" if g else "—",
+                "Value": fmt_dollars(g.current_value) if g else "—",
+            }
+        )
+        comp_rows.append(
+            {
+                "Source": "Planner Default",
+                "Grant": str(plan.year) if plan else "—",
+                "Outstanding": f"{plan.shares:,}" if plan else "—",
+                "Value": fmt_dollars(plan.spread(txn_price_now)) if plan else "—",
+            }
+        )
+    return comp_rows
+
+
 def render(hh: Household):
     _cfg = load_defaults()
     ticker = _cfg["stock_ticker"]
@@ -215,24 +247,8 @@ def render(hh: Household):
         # Compare with planner defaults — paired by grant-year identity, not
         # list position, so the two sources never misalign (audit-0720 M10).
         st.markdown("#### vs. Planner Defaults")
-        comp_rows = []
-        for g, plan in _pair_grants(snap.equity_grants, hh.grants):
-            comp_rows.append(
-                {
-                    "Source": "FinExtract",
-                    "Grant": g.grant_date if g else "—",
-                    "Outstanding": g.outstanding if g else "—",
-                    "Value": fmt_dollars(g.current_value) if g else "—",
-                }
-            )
-            comp_rows.append(
-                {
-                    "Source": "Planner Default",
-                    "Grant": str(plan.year) if plan else "—",
-                    "Outstanding": plan.shares if plan else "—",
-                    "Value": fmt_dollars(plan.spread(hh.txn_price_now)) if plan else "—",
-                }
-            )
+        pairs = _pair_grants(snap.equity_grants, hh.grants)
+        comp_rows = _build_grant_comparison_rows(pairs, hh.txn_price_now)
 
         st.dataframe(pd.DataFrame(comp_rows), hide_index=True, width="stretch")
 
