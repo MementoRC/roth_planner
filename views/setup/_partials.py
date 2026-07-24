@@ -48,17 +48,34 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
       * ``"spouse"`` — the same fields for spouse, plus
         ``spouse_is_sole_beneficiary`` (spouse-only). Reads
         ``st.session_state["filing_status"]`` (set by the ``"joint"`` call
-        earlier in the same script run) to disable spouse fields when Single.
+        earlier in the same script run) to disable spouse fields when Single
+        — this one read deliberately stays on ``session_state`` rather than
+        ``hh.filing_status``: ``hh`` is a snapshot built at the TOP of this
+        script run (before this partial executes), so it would still show
+        the PRE-interaction value, one render behind the "joint" branch's
+        own write a few lines above it in this same run.
 
     Every widget keeps its EXACT current shape (unkeyed
     ``session_state.<attr> = st.<widget>(..., value=hh.<attr>)`` controlled
-    pattern, or the one explicit ``key=``) per Owner decision 5.
+    pattern, or the one explicit ``key=``) per Owner decision 5. ``value=``/
+    ``index=`` read from ``hh.<attr>`` (not raw ``session_state``) because
+    ``hh`` is not always a pure passthrough: ``Household.__post_init__``
+    derives ``your_rmd_start_age``/``spouse_rmd_start_age`` from birth
+    cohort whenever the raw stored value isn't exactly 73, so
+    ``hh.your_rmd_start_age`` can legitimately differ from
+    ``session_state.get("your_rmd_start_age", 75)`` — reading raw
+    session_state here would show a stale/sentinel value in the dropdown
+    while the engine actually computes RMDs off the derived one. The
+    "stored value is invalid" warning checks below are the one exception:
+    they intentionally read raw ``session_state`` (not ``hh``, which is
+    always self-correcting and would never show as invalid) to flag
+    corrupted persisted data before ``__post_init__`` silently fixes it.
     """
     if owner == "joint":
         _filing_choice = container.radio(
             "Filing status",
             [_HH_FILING_LABEL_MFJ, _HH_FILING_LABEL_SINGLE],
-            index=0 if st.session_state.get("filing_status", "MFJ") == "MFJ" else 1,
+            index=0 if hh.filing_status == "MFJ" else 1,
             horizontal=True,
             key="_hh_filing_status_choice",
             help=(
@@ -76,13 +93,13 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
     if owner == "your":
         st.session_state.your_age = container.number_input(
             "Your Age",
-            value=st.session_state.your_age,
+            value=hh.your_age,
             step=1,
             format="%d",
         )
         st.session_state.your_has_workplace_plan = container.checkbox(
             "You have a workplace retirement plan (401k/403b)",
-            value=st.session_state.your_has_workplace_plan,
+            value=hh.your_has_workplace_plan,
         )
         _your_rmd_stored = st.session_state.get("your_rmd_start_age")
         if _your_rmd_stored is not None and _your_rmd_stored not in {73, 75}:
@@ -93,12 +110,12 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         st.session_state.your_rmd_start_age = container.selectbox(
             "Your RMD start age",
             options=[73, 75],
-            index=0 if st.session_state.get("your_rmd_start_age", 75) == 73 else 1,
+            index=0 if hh.your_rmd_start_age == 73 else 1,
             help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
         )
         st.session_state.your_defer_first_rmd = container.checkbox(
             "Defer first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("your_defer_first_rmd", False),
+            value=hh.your_defer_first_rmd,
             help=(
                 "IRC §401(a)(9)(C)(ii): delay the first RMD to April 1 of the following year. "
                 "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
@@ -108,14 +125,14 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             "Your FRA (Full Retirement Age)",
             min_value=65,
             max_value=70,
-            value=st.session_state.get("your_fra_age", 67),
+            value=hh.your_fra_age,
             step=1,
             format="%d",
             help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
         )
         st.session_state.your_aca = container.checkbox(
             "You on ACA Marketplace",
-            value=st.session_state.your_aca,
+            value=hh.your_aca_enrolled,
             help="Check if you are enrolled in ACA marketplace (not employer plan)",
         )
         return None
@@ -124,14 +141,14 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         _is_single = st.session_state.get("filing_status", "MFJ") == "Single"
         st.session_state.spouse_age = container.number_input(
             "Spouse Age",
-            value=st.session_state.spouse_age,
+            value=hh.spouse_age,
             step=1,
             format="%d",
             disabled=_is_single,
         )
         st.session_state.spouse_has_workplace_plan = container.checkbox(
             "Spouse has a workplace retirement plan (401k/403b)",
-            value=st.session_state.spouse_has_workplace_plan,
+            value=hh.spouse_has_workplace_plan,
             disabled=_is_single,
         )
         _spouse_rmd_stored = st.session_state.get("spouse_rmd_start_age")
@@ -143,13 +160,13 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         st.session_state.spouse_rmd_start_age = container.selectbox(
             "Spouse RMD start age",
             options=[73, 75],
-            index=0 if st.session_state.get("spouse_rmd_start_age", 75) == 73 else 1,
+            index=0 if hh.spouse_rmd_start_age == 73 else 1,
             help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
             disabled=_is_single,
         )
         st.session_state.spouse_defer_first_rmd = container.checkbox(
             "Defer spouse's first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("spouse_defer_first_rmd", False),
+            value=hh.spouse_defer_first_rmd,
             help=(
                 "IRC §401(a)(9)(C)(ii): delay the spouse's first RMD to April 1 of the "
                 "following year. The deferred RMD then stacks on year 2's RMD — may push "
@@ -160,7 +177,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         st.session_state.spouse_is_sole_beneficiary = container.checkbox(
             "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
             "Last Survivor Table for RMDs)",
-            value=st.session_state.get("spouse_is_sole_beneficiary", False),
+            value=hh.spouse_is_sole_beneficiary,
             help=(
                 "26 CFR §1.401(a)(9)-9 Table II: when your sole primary IRA "
                 "beneficiary is a spouse more than 10 years younger, the IRS "
@@ -174,7 +191,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             "Spouse FRA (Full Retirement Age)",
             min_value=65,
             max_value=70,
-            value=st.session_state.get("spouse_fra_age", 67),
+            value=hh.spouse_fra_age,
             step=1,
             format="%d",
             help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
@@ -182,7 +199,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         )
         st.session_state.spouse_aca = container.checkbox(
             "Spouse on ACA Marketplace",
-            value=st.session_state.spouse_aca,
+            value=hh.spouse_aca_enrolled,
             help="Check if spouse is enrolled in ACA marketplace",
             disabled=_is_single,
         )
