@@ -9,9 +9,13 @@ class TestPortfolioColumnConfig:
     """Verify NumberColumn formatting is present in all three portfolio table helpers."""
 
     def _get_source(self, func_name: str) -> str:
-        from views.setup import portfolio as port_mod
+        """``_render_accounts_table``/``_render_holdings_table`` moved from
+        ``views.setup.portfolio`` into ``views.setup._partials`` as part of
+        Task 6 of the ui-shell-theme-toggle plan.
+        """
+        from views.setup import _partials as partials_mod
 
-        func = getattr(port_mod, func_name)
+        func = getattr(partials_mod, func_name)
         return inspect.getsource(func)
 
     def _get_options_partial_source(self) -> str:

@@ -44,19 +44,24 @@ class TestPyodideGating:
 
         Post-W2-Part-B refactor: the actual ``fetch_portfolio(`` call now lives in
         ``sync_portfolio_from_finextract`` (extracted so ``views._shared.
-        sync_everything`` can reuse it) — ``render_portfolio_tab`` only calls that
-        helper, still after the ``is_pyodide()`` guard.
+        sync_everything`` can reuse it). Post-Task-6 (ui-shell-theme-toggle plan):
+        the ``is_pyodide()`` guard + the ``sync_portfolio_from_finextract(`` call
+        both moved out of ``render_portfolio_tab`` into
+        ``views/setup/_partials.py:render_portfolio_partial`` — this test now
+        inspects that partial's source instead.
         """
         import inspect
 
-        from views import setup
         from views.setup import portfolio as portfolio_mod
+        from views.setup._partials import render_portfolio_partial
 
-        source = inspect.getsource(setup.render_portfolio_tab)
+        source = inspect.getsource(render_portfolio_partial)
         guard_pos = source.find("is_pyodide()")
         sync_call_pos = source.find("sync_portfolio_from_finextract(")
-        assert guard_pos != -1, "is_pyodide() guard not found in render()"
-        assert sync_call_pos != -1, "sync_portfolio_from_finextract( call not found in render()"
+        assert guard_pos != -1, "is_pyodide() guard not found in render_portfolio_partial()"
+        assert sync_call_pos != -1, (
+            "sync_portfolio_from_finextract( call not found in render_portfolio_partial()"
+        )
         assert guard_pos < sync_call_pos, (
             "sync_portfolio_from_finextract() appears before is_pyodide() guard — "
             "sync block is not properly gated on Pyodide"
@@ -536,10 +541,15 @@ class TestRothEligibilitySpouseGating:
 
 
 class TestNoDataMsg:
-    """Unit tests for views.setup.portfolio._no_data_msg (U4/U5/U13)."""
+    """Unit tests for views.setup._partials._no_data_msg (U4/U5/U13).
+
+    Moved from ``views.setup.portfolio`` into ``views.setup._partials`` as
+    part of Task 6 of the ui-shell-theme-toggle plan (co-located with the
+    accounts/holdings table helpers that use it).
+    """
 
     def test_pyodide_true_returns_upload_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: True)
         msg = mod._no_data_msg("accounts")
@@ -547,7 +557,7 @@ class TestNoDataMsg:
         assert "Sync button" not in msg
 
     def test_pyodide_false_returns_sync_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         msg = mod._no_data_msg("holdings")
@@ -555,7 +565,7 @@ class TestNoDataMsg:
         assert "upload a data file" in msg
 
     def test_noun_interpolated(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         assert "widgets" in mod._no_data_msg("widgets")

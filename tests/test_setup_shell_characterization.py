@@ -341,3 +341,91 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
     assert not rejected, f"a governance card silently swallowed an error: {rejected}"
     assert at.button(key="confirm_your_ira") is not None
     assert at.button(key="confirm_your_ss_fra") is not None
+
+
+# --- Task 6 supplementary safety net: render_portfolio_partial -----------------
+#
+# ``views/setup/_partials.py:render_portfolio_partial`` extracts the "Sync from
+# FinExtract" button, the read-only accounts/holdings tables, and the Account
+# Type Overrides expander out of ``views/setup/portfolio.py``. None of these
+# widgets bind to a plain unkeyed ``session_state.<attr>`` (Owner decision 5) --
+# the Account Type Overrides Type/Owner selectboxes ARE explicitly keyed
+# (``key=f"_override_type_{acct_id}"``/``key=f"_override_owner_{acct_id}"``,
+# verified by reading the moved source), so the typo-prone unkeyed-widget
+# failure mode Owner decision 5 guards against does not apply here. This test
+# still pins the dynamic-key round-trip as a straight-move regression: it
+# proves the move didn't silently break the override write-through into
+# ``session_state["account_type_overrides"]``.
+
+
+def _render_portfolio_with_snapshot(snap) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_portfolio_partial
+
+    st.session_state["portfolio_snapshot"] = snap
+    render_portfolio_partial(Household(), st)
+
+
+def test_portfolio_partial_account_type_overrides_round_trip(
+    clean_command_center_caches,
+) -> None:
+    from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+    snap = PortfolioSnapshot(
+        accounts=[
+            AccountSummary(
+                account_type="trad_ira",
+                owner="you",
+                account_name="U1234567",
+                total_value=750_000.0,
+            )
+        ],
+        equity_grants=[],
+        server_available=True,
+    )
+
+    at = AppTest.from_function(_render_portfolio_with_snapshot, kwargs={"snap": snap})
+    at.run()
+    assert not at.exception
+
+    at.selectbox(key="_override_type_U1234567").select("roth_ira").run()
+    at.selectbox(key="_override_owner_U1234567").select("spouse").run()
+
+    overrides = at.session_state["account_type_overrides"]
+    assert overrides["U1234567"] == {"type": "roth_ira", "owner": "spouse"}
+
+
+def test_portfolio_partial_widget_keys_present_with_snapshot(
+    clean_command_center_caches,
+) -> None:
+    """Extends the Task 1 characterization baseline to the Portfolio tab: on a
+    clean checkout, ``EXPECTED_WIDGET_KEYS`` has no Portfolio-tab entries
+    because the Sync button is unkeyed and the overrides expander short-circuits
+    with no accounts loaded — this test instead confirms the dynamic
+    ``_override_type_*``/``_override_owner_*`` keys DO appear once a snapshot
+    with accounts is present, so a future regression that silently drops their
+    ``key=`` would be caught here.
+    """
+    from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
+
+    snap = PortfolioSnapshot(
+        accounts=[
+            AccountSummary(
+                account_type="brokerage",
+                owner="you",
+                account_name="ACCT-1",
+                total_value=100_000.0,
+            )
+        ],
+        equity_grants=[],
+        server_available=True,
+    )
+
+    at = AppTest.from_function(_render_portfolio_with_snapshot, kwargs={"snap": snap})
+    at.run()
+    assert not at.exception
+
+    keys = {node.key for node in at.main if getattr(node, "key", None)}
+    assert {"_override_type_ACCT-1", "_override_owner_ACCT-1"} <= keys
