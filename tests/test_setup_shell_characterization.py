@@ -429,3 +429,104 @@ def test_portfolio_partial_widget_keys_present_with_snapshot(
 
     keys = {node.key for node in at.main if getattr(node, "key", None)}
     assert {"_override_type_ACCT-1", "_override_owner_ACCT-1"} <= keys
+
+
+# --- Code-quality fix regression: container threading in the Portfolio partial's
+# nested-tabs/expander helpers ------------------------------------------------
+#
+# A 2026-07-24 code-quality review of Task 6's ``render_portfolio_partial``
+# found that its two private helpers, ``_render_portfolio_sub_tabs`` and
+# ``_render_account_type_overrides``, hard-coded module-level ``st.tabs``/
+# ``st.expander`` calls instead of using the ``container`` parameter the
+# caller passes in. It was harmless while the only caller passes ``st``
+# itself (module-level ``st.tabs`` and ``st``-as-container behave
+# identically), but would silently misplace the tabs/expander once Task 8
+# nests this partial inside a real non-``st`` container object (an actual
+# ``st.tabs(...)`` tab or ``st.expander(...)``). A plain ``render(hh, st)``
+# characterization test cannot catch this — it needs a container that is
+# NOT ``st`` itself, with ``st.tabs``/``st.expander`` monkeypatched to fail
+# loudly if bypassed.
+
+
+def test_portfolio_sub_tabs_uses_passed_container_not_bare_st(monkeypatch) -> None:
+    """``_render_portfolio_sub_tabs`` must call ``container.tabs(...)``, not
+    the module-level ``st.tabs(...)`` — and render its Me/Spouse/All content
+    onto the returned tab objects, not bare ``st.``.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st
+
+    from views.setup._partials import _render_portfolio_sub_tabs
+
+    monkeypatch.setattr(
+        st, "tabs", MagicMock(side_effect=AssertionError("st.tabs() must not be called directly"))
+    )
+
+    fake_container = MagicMock()
+    me_tab, spouse_tab, all_tab = MagicMock(), MagicMock(), MagicMock()
+    fake_container.tabs.return_value = (me_tab, spouse_tab, all_tab)
+
+    _render_portfolio_sub_tabs(None, fake_container)
+
+    fake_container.tabs.assert_called_once_with(["Me", "Spouse", "All"])
+    me_tab.info.assert_called_once()
+    spouse_tab.info.assert_called_once()
+    all_tab.info.assert_called_once()
+
+
+def test_account_type_overrides_uses_passed_container_not_bare_st(monkeypatch) -> None:
+    """``_render_account_type_overrides`` must call ``container.expander(...)``,
+    not the module-level ``st.expander(...)``, and render its empty-state
+    message onto the returned expander object, not bare ``st.``.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st
+
+    from views.setup._partials import _render_account_type_overrides
+
+    monkeypatch.setattr(
+        st,
+        "expander",
+        MagicMock(side_effect=AssertionError("st.expander() must not be called directly")),
+    )
+
+    fake_container = MagicMock()
+    fake_expander = MagicMock()
+    fake_container.expander.return_value = fake_expander
+
+    _render_account_type_overrides(None, fake_container)
+
+    fake_container.expander.assert_called_once_with("🏷️ Account Type Overrides")
+    fake_expander.info.assert_called_once()
+
+
+def test_portfolio_partial_threads_its_container_into_both_helpers(monkeypatch) -> None:
+    """``render_portfolio_partial`` must pass its OWN ``container`` argument
+    through to both ``_render_portfolio_sub_tabs`` and
+    ``_render_account_type_overrides`` (not the module-level ``st``).
+
+    Mirrors ``TestSyncSsaForRecordsCandidate._run_sync`` (tests/test_views_setup.py)
+    for monkeypatching ``st.session_state`` to a plain dict so the partial can
+    be exercised directly without ``AppTest``.
+    """
+    from unittest.mock import MagicMock
+
+    from models.household import Household
+    from views.setup import _partials
+
+    monkeypatch.setattr(_partials.st, "session_state", {"portfolio_snapshot": None})
+    fake_container = MagicMock()
+    fake_container.button.return_value = False
+
+    sub_tabs_mock = MagicMock()
+    overrides_mock = MagicMock()
+    monkeypatch.setattr(_partials, "_render_portfolio_sub_tabs", sub_tabs_mock)
+    monkeypatch.setattr(_partials, "_render_account_type_overrides", overrides_mock)
+    monkeypatch.setattr(_partials, "is_pyodide", lambda: True)
+
+    _partials.render_portfolio_partial(Household(), fake_container)
+
+    sub_tabs_mock.assert_called_once_with(None, fake_container)
+    overrides_mock.assert_called_once_with(None, fake_container)

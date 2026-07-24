@@ -598,10 +598,14 @@ def _no_data_msg(noun: str) -> str:
     return f"No {noun} loaded — use the Sync button below (local install) or upload a data file."
 
 
-def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) -> None:
-    """Render a read-only accounts dataframe, or an info banner when empty."""
+def _render_accounts_table(accounts: list[AccountSummary], container, *, show_owner: bool) -> None:
+    """Render a read-only accounts dataframe, or an info banner when empty.
+
+    ``container`` is threaded through (not hard-coded to ``st``) so callers
+    can pass a tab/expander sub-container — see ``_render_portfolio_sub_tabs``.
+    """
     if not accounts:
-        st.info(_no_data_msg("accounts"))
+        container.info(_no_data_msg("accounts"))
         return
     rows = [
         {
@@ -612,7 +616,7 @@ def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) 
         }
         for a in accounts
     ]
-    st.dataframe(
+    container.dataframe(
         pd.DataFrame(rows),
         hide_index=True,
         width="stretch",
@@ -622,8 +626,12 @@ def _render_accounts_table(accounts: list[AccountSummary], *, show_owner: bool) 
     )
 
 
-def _render_holdings_table(accounts: list[AccountSummary]) -> None:
-    """Render a read-only holdings dataframe across the given accounts."""
+def _render_holdings_table(accounts: list[AccountSummary], container) -> None:
+    """Render a read-only holdings dataframe across the given accounts.
+
+    ``container`` is threaded through (not hard-coded to ``st``) so callers
+    can pass a tab/expander sub-container — see ``_render_portfolio_sub_tabs``.
+    """
     rows = [
         {
             "symbol": h.symbol,
@@ -636,9 +644,9 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
         for h in a.holdings
     ]
     if not rows:
-        st.info(_no_data_msg("holdings"))
+        container.info(_no_data_msg("holdings"))
         return
-    st.dataframe(
+    container.dataframe(
         pd.DataFrame(rows),
         hide_index=True,
         width="stretch",
@@ -651,105 +659,112 @@ def _render_holdings_table(accounts: list[AccountSummary]) -> None:
 
 def _render_portfolio_sub_tabs(
     snap: PortfolioSnapshot | None,
+    container,
 ) -> None:
-    """Render Me / Spouse / All sub-tabs for the Portfolio tab."""
-    me_tab, spouse_tab, all_tab = st.tabs(["Me", "Spouse", "All"])
+    """Render Me / Spouse / All sub-tabs for the Portfolio tab.
+
+    ``container.tabs(...)`` (not ``st.tabs(...)``) so the tabs themselves
+    nest correctly inside whatever container the caller hands us (Task 8
+    may drop ``render_portfolio_partial`` inside an outer expander/tab).
+    Content inside each returned tab uses that tab object directly (not
+    bare ``st.``) for the same reason.
+    """
+    me_tab, spouse_tab, all_tab = container.tabs(["Me", "Spouse", "All"])
 
     if snap is None:
         for tab in (me_tab, spouse_tab, all_tab):
-            with tab:
-                st.info(_no_data_msg("accounts"))
+            tab.info(_no_data_msg("accounts"))
         return
 
     me_accounts = [a for a in snap.accounts if a.owner == "you"]
     spouse_accounts = [a for a in snap.accounts if a.owner == "spouse"]
 
-    with me_tab:
-        st.subheader("Accounts")
-        _render_accounts_table(me_accounts, show_owner=False)
-        st.subheader("Holdings")
-        _render_holdings_table(me_accounts)
+    me_tab.subheader("Accounts")
+    _render_accounts_table(me_accounts, me_tab, show_owner=False)
+    me_tab.subheader("Holdings")
+    _render_holdings_table(me_accounts, me_tab)
 
-    with spouse_tab:
-        st.subheader("Accounts")
-        _render_accounts_table(spouse_accounts, show_owner=False)
-        st.subheader("Holdings")
-        _render_holdings_table(spouse_accounts)
+    spouse_tab.subheader("Accounts")
+    _render_accounts_table(spouse_accounts, spouse_tab, show_owner=False)
+    spouse_tab.subheader("Holdings")
+    _render_holdings_table(spouse_accounts, spouse_tab)
 
-    with all_tab:
-        st.subheader("Accounts")
-        _render_accounts_table(snap.accounts, show_owner=True)
-        st.subheader("Holdings")
-        _render_holdings_table(snap.accounts)
+    all_tab.subheader("Accounts")
+    _render_accounts_table(snap.accounts, all_tab, show_owner=True)
+    all_tab.subheader("Holdings")
+    _render_holdings_table(snap.accounts, all_tab)
 
 
-def _render_account_type_overrides(snap: PortfolioSnapshot | None) -> None:
-    """Render the Account Type Overrides expander."""
+def _render_account_type_overrides(snap: PortfolioSnapshot | None, container) -> None:
+    """Render the Account Type Overrides expander.
+
+    ``container.expander(...)`` (not ``st.expander(...)``) so the expander
+    itself nests correctly inside whatever container the caller hands us;
+    content inside uses the expander object directly (not bare ``st.``).
+    """
     from engine.portfolio_sync import (
         _classify_account,
         _resolve_override,
     )
 
-    with st.expander("🏷️ Account Type Overrides"):
-        if snap is None or not snap.accounts:
-            st.info("No accounts loaded — sync first to see detected acctIds.")
-            return
+    expander = container.expander("🏷️ Account Type Overrides")
+    if snap is None or not snap.accounts:
+        expander.info("No accounts loaded — sync first to see detected acctIds.")
+        return
 
-        st.caption("Changes take effect on next sync.")
-        _type_options = ["trad_ira", "roth_ira", "brokerage", "hsa", "403b"]
-        _owner_options = ["you", "spouse"]
-        overrides: dict[str, str | dict[str, str]] = (
-            st.session_state.get("account_type_overrides") or {}
+    expander.caption("Changes take effect on next sync.")
+    _type_options = ["trad_ira", "roth_ira", "brokerage", "hsa", "403b"]
+    _owner_options = ["you", "spouse"]
+    overrides: dict[str, str | dict[str, str]] = st.session_state.get("account_type_overrides") or {}
+
+    seen: set[str] = set()
+    for acct in snap.accounts:
+        acct_id = acct.account_name
+        if acct_id in seen:
+            continue
+        seen.add(acct_id)
+
+        auto_type, _ = _classify_account(acct_id)
+        existing = overrides.get(acct_id)
+        if existing is not None:
+            current_type, current_owner = _resolve_override(existing)
+            if not current_type:
+                current_type = auto_type
+        else:
+            current_type, current_owner = auto_type, "you"
+        try:
+            type_idx = _type_options.index(current_type)
+        except ValueError:
+            type_idx = 0
+        try:
+            owner_idx = _owner_options.index(current_owner)
+        except ValueError:
+            owner_idx = 0
+
+        col_id, col_auto, col_type, col_owner = expander.columns([3, 2, 2, 2])
+        col_id.text(acct_id)
+        col_auto.caption(f"auto: {auto_type}")
+        chosen_type = col_type.selectbox(
+            "Type",
+            _type_options,
+            index=type_idx,
+            key=f"_override_type_{acct_id}",
+            label_visibility="collapsed",
         )
-
-        seen: set[str] = set()
-        for acct in snap.accounts:
-            acct_id = acct.account_name
-            if acct_id in seen:
-                continue
-            seen.add(acct_id)
-
-            auto_type, _ = _classify_account(acct_id)
-            existing = overrides.get(acct_id)
-            if existing is not None:
-                current_type, current_owner = _resolve_override(existing)
-                if not current_type:
-                    current_type = auto_type
-            else:
-                current_type, current_owner = auto_type, "you"
-            try:
-                type_idx = _type_options.index(current_type)
-            except ValueError:
-                type_idx = 0
-            try:
-                owner_idx = _owner_options.index(current_owner)
-            except ValueError:
-                owner_idx = 0
-
-            col_id, col_auto, col_type, col_owner = st.columns([3, 2, 2, 2])
-            col_id.text(acct_id)
-            col_auto.caption(f"auto: {auto_type}")
-            chosen_type = col_type.selectbox(
-                "Type",
-                _type_options,
-                index=type_idx,
-                key=f"_override_type_{acct_id}",
-                label_visibility="collapsed",
-            )
-            chosen_owner = col_owner.selectbox(
-                "Owner",
-                _owner_options,
-                index=owner_idx,
-                key=f"_override_owner_{acct_id}",
-                label_visibility="collapsed",
-            )
-            # Write through the nested form so owner is persisted alongside type.
-            if "account_type_overrides" not in st.session_state:
-                st.session_state["account_type_overrides"] = {}
-            st.session_state["account_type_overrides"][acct_id] = {
-                "type": chosen_type,
-                "owner": chosen_owner,
-            }
+        chosen_owner = col_owner.selectbox(
+            "Owner",
+            _owner_options,
+            index=owner_idx,
+            key=f"_override_owner_{acct_id}",
+            label_visibility="collapsed",
+        )
+        # Write through the nested form so owner is persisted alongside type.
+        if "account_type_overrides" not in st.session_state:
+            st.session_state["account_type_overrides"] = {}
+        st.session_state["account_type_overrides"][acct_id] = {
+            "type": chosen_type,
+            "owner": chosen_owner,
+        }
 
 
 def render_portfolio_partial(hh: Household, container) -> None:
@@ -826,8 +841,8 @@ def render_portfolio_partial(hh: Household, container) -> None:
                 container.error(f"Server unavailable: {snap.error}")
                 snap = st.session_state.get("portfolio_snapshot")
 
-    _render_portfolio_sub_tabs(snap)
-    _render_account_type_overrides(snap)
+    _render_portfolio_sub_tabs(snap, container)
+    _render_account_type_overrides(snap, container)
 
 
 def render_options_partial(hh: Household, container) -> None:
