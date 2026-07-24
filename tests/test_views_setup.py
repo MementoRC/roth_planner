@@ -546,10 +546,17 @@ class TestNoDataMsg:
     Moved from ``views.setup.portfolio`` into ``views.setup._partials`` as
     part of Task 6 of the ui-shell-theme-toggle plan (co-located with the
     accounts/holdings table helpers that use it).
+
+    Post Task-6b (package split): ``_no_data_msg`` now lives in the
+    ``_partials`` package's ``_portfolio`` submodule, so these tests patch
+    that submodule directly rather than the package's ``__init__.py``
+    re-export — ``_no_data_msg``'s internal call to ``is_pyodide()``
+    resolves against its own defining module's globals, not the package
+    namespace.
     """
 
     def test_pyodide_true_returns_upload_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup._partials as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: True)
         msg = mod._no_data_msg("accounts")
@@ -557,7 +564,7 @@ class TestNoDataMsg:
         assert "Sync button" not in msg
 
     def test_pyodide_false_returns_sync_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup._partials as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         msg = mod._no_data_msg("holdings")
@@ -565,7 +572,7 @@ class TestNoDataMsg:
         assert "upload a data file" in msg
 
     def test_noun_interpolated(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup._partials as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         assert "widgets" in mod._no_data_msg("widgets")
@@ -733,12 +740,19 @@ class TestSyncSsaForRecordsCandidate:
     _sync_ssa_for moved from views/setup/parameters.py to
     views/setup/_partials.py in Task 4 of the ui-shell-theme-toggle plan
     (render_accounts_partial's "Sync SS from FinExtract" button now calls it
-    directly, avoiding a parameters.py <-> _partials.py import cycle)."""
+    directly, avoiding a parameters.py <-> _partials.py import cycle).
+
+    Post Task-6b (package split): ``_sync_ssa_for`` now lives in the
+    ``_partials`` package's ``_accounts`` submodule, so this test patches
+    that submodule directly rather than the package's ``__init__.py``
+    re-export — ``_sync_ssa_for``'s internal calls resolve against its own
+    defining module's globals, not the package namespace.
+    """
 
     def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> tuple[dict, list]:
         from types import SimpleNamespace
 
-        import views.setup._partials as partials_mod
+        import views.setup._partials._accounts as partials_mod
 
         fake_snap = SimpleNamespace(
             error=None,

@@ -510,23 +510,32 @@ def test_portfolio_partial_threads_its_container_into_both_helpers(monkeypatch) 
     Mirrors ``TestSyncSsaForRecordsCandidate._run_sync`` (tests/test_views_setup.py)
     for monkeypatching ``st.session_state`` to a plain dict so the partial can
     be exercised directly without ``AppTest``.
+
+    Post Task-6b (package split): ``render_portfolio_partial`` and its two
+    collaborator helpers now live in the ``_partials`` package's
+    ``_portfolio`` submodule, so this test patches that submodule directly
+    rather than the package's ``__init__.py`` re-export —
+    ``render_portfolio_partial``'s internal calls to
+    ``_render_portfolio_sub_tabs``/``_render_account_type_overrides``/
+    ``is_pyodide``/``st`` resolve against its own defining module's globals,
+    not the package namespace.
     """
     from unittest.mock import MagicMock
 
     from models.household import Household
-    from views.setup import _partials
+    from views.setup._partials import _portfolio as portfolio_partial_mod
 
-    monkeypatch.setattr(_partials.st, "session_state", {"portfolio_snapshot": None})
+    monkeypatch.setattr(portfolio_partial_mod.st, "session_state", {"portfolio_snapshot": None})
     fake_container = MagicMock()
     fake_container.button.return_value = False
 
     sub_tabs_mock = MagicMock()
     overrides_mock = MagicMock()
-    monkeypatch.setattr(_partials, "_render_portfolio_sub_tabs", sub_tabs_mock)
-    monkeypatch.setattr(_partials, "_render_account_type_overrides", overrides_mock)
-    monkeypatch.setattr(_partials, "is_pyodide", lambda: True)
+    monkeypatch.setattr(portfolio_partial_mod, "_render_portfolio_sub_tabs", sub_tabs_mock)
+    monkeypatch.setattr(portfolio_partial_mod, "_render_account_type_overrides", overrides_mock)
+    monkeypatch.setattr(portfolio_partial_mod, "is_pyodide", lambda: True)
 
-    _partials.render_portfolio_partial(Household(), fake_container)
+    portfolio_partial_mod.render_portfolio_partial(Household(), fake_container)
 
     sub_tabs_mock.assert_called_once_with(None, fake_container)
     overrides_mock.assert_called_once_with(None, fake_container)

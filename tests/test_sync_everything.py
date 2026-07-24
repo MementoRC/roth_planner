@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import views._shared as shared_mod
-import views.setup._partials as partials_mod
+import views.setup._partials._accounts as partials_mod
 import views.setup.portfolio as portfolio_mod
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.committed import load_committed
@@ -168,12 +168,17 @@ def _patch_portfolio_fetches(*, fetch_portfolio_side_effect=None, snapshot=None)
 
 
 def _patch_ss_fetch(*, estimates=None):
-    """Patch views.setup._partials's fetch/save SSA snapshot calls.
+    """Patch views.setup._partials._accounts's fetch/save SSA snapshot calls.
 
     ``_sync_ssa_for`` (called by both each owner's inline "Sync SS from
     FinExtract" button and ``views._shared._sync_ss_source``) moved from
     ``views.setup.parameters`` to ``views.setup._partials`` in Task 4 of the
-    ui-shell-theme-toggle plan.
+    ui-shell-theme-toggle plan, and now lives in the package's
+    ``_accounts`` submodule (post Task-6b package split) — patches must
+    target that submodule directly (not the package's ``__init__.py``
+    re-export) since ``_sync_ssa_for``'s internal calls to
+    ``fetch_ssa_snapshot``/``save_ssa_snapshot``/``st`` resolve against its
+    OWN defining module's globals, not the package namespace.
     """
     estimates = estimates if estimates is not None else [
         SSABenefitEstimate(retirement_age=67, claim_date="", benefit_type="", monthly_amount=2500.0)
