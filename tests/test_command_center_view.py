@@ -1,4 +1,7 @@
-"""AppTest smoke tests for views/setup/command_center.py — the review/confirm gate.
+"""AppTest smoke tests for views/setup/command_center.py — the sync trigger +
+pending-review status (Command Center no longer renders per-field
+trust/manual/confirm governance cards as of Task 4 of the
+ui-shell-theme-toggle plan; see that module's docstring).
 
 Uses ``streamlit.testing.v1.AppTest.from_function`` (mirrors the pattern in
 tests/test_auto_optimizer_view.py — the wrapped function must be fully
@@ -8,6 +11,14 @@ The Command Center's cache paths (``engine.data_sources.paths``) are
 repo-root-anchored regardless of cwd (matching every other engine/data_sources
 cache file), so this test seeds/cleans those exact files directly rather than
 using a tmp cwd — same isolation approach as tests/test_app_data_sources.py.
+
+Per-field governance-card tests for ``your_ira``/``your_roth``/
+``your_ss_fra`` (formerly rendered here) moved to
+``tests/test_setup_accounts_partial.py`` — that behavior now lives in
+``views/setup/_partials.py:render_accounts_partial``, co-located with each
+field's own balance widget instead of Command Center's old generic loop.
+The ``txn_price_now`` card test below is SKIPPED (not deleted): that field's
+card has no owning partial yet — it moves to Options in Task 5.
 """
 
 from __future__ import annotations
@@ -65,6 +76,15 @@ def _render_with_pending_txn_price_now() -> None:
     render_command_center(Household())
 
 
+@pytest.mark.skip(
+    reason=(
+        "txn_price_now's trust/manual/confirm card has no owning partial yet — "
+        "it moves into views/setup/_partials.py:render_options_partial in Task 5 "
+        "of docs/superpowers/plans/2026-07-24-ui-shell-theme-toggle.md. Command "
+        "Center's generic per-field loop (which used to render this card) was "
+        "removed in Task 4 (DuplicateWidgetID fix) before Task 5 lands."
+    )
+)
 def test_confirm_txn_price_now_syncs_the_aliased_session_key(
     clean_command_center_caches,
 ) -> None:
@@ -92,47 +112,6 @@ def test_confirm_txn_price_now_syncs_the_aliased_session_key(
     assert committed_json["txn_price_now"]["source"] == "FINEXTRACT_LIVE"
 
 
-def _seed_pending_your_ira() -> None:
-    """Committed your_ira=1.7M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    committed_json = {
-        "your_ira": SourcedValue(1_700_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
-    }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
-
-    store = CandidateStore()
-    store.record_candidate(
-        "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
-    )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
-
-
-def _render_with_pending_your_ira() -> None:
-    import streamlit as st
-
-    from models.household import Household
-    from views.setup.command_center import render_command_center
-
-    st.session_state["_pending_review"] = {"your_ira"}
-    render_command_center(Household())
-
-
-def test_command_center_renders_and_shows_pending_candidate(
-    clean_command_center_caches,
-) -> None:
-    _seed_pending_your_ira()
-
-    at = AppTest.from_function(_render_with_pending_your_ira)
-    at.run()
-
-    assert not at.exception
-    assert at.metric[0].value == "1"
-
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
-    assert "2,000,000" in rendered_text  # the FINEXTRACT_LIVE candidate value
-    assert "1,700,000" in rendered_text  # the currently-committed value
-
-
 def test_command_center_no_pending_shows_reconciled_message(
     clean_command_center_caches,
 ) -> None:
@@ -151,31 +130,6 @@ def test_command_center_no_pending_shows_reconciled_message(
     assert not at.exception
     assert len(at.success) == 1
     assert "reconciled" in at.success[0].value.lower()
-
-
-def test_confirm_button_commits_chosen_source_and_syncs_session(
-    clean_command_center_caches,
-) -> None:
-    _seed_pending_your_ira()
-
-    at = AppTest.from_function(_render_with_pending_your_ira)
-    at.run()
-    assert not at.exception
-
-    at.button(key="confirm_your_ira").click().run()
-
-    assert not at.exception
-    assert at.session_state["your_ira"] == 2_000_000.0
-
-    committed_json = load_committed(COMMITTED_PATH)
-    assert committed_json is not None
-    assert committed_json["your_ira"]["value"] == 2_000_000.0
-    assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
-
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    choice = choices.get("your_ira")
-    assert choice is not None
-    assert choice.source == Source.FINEXTRACT_LIVE
 
 
 def _canned_sync_everything_result() -> SyncEverythingResult:

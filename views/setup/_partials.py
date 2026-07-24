@@ -15,12 +15,225 @@ Owner decision 5 in docs/superpowers/plans/2026-07-24-ui-shell-theme-toggle.md
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 import streamlit as st
 
+from engine.data_sources.candidate_store import Candidate, CandidateStore
+from engine.data_sources.choices import ChoiceMap
+from engine.data_sources.committed import load_committed, save_committed
+from engine.data_sources.confirm import confirm_field
+from engine.data_sources.orchestrator import session_keys_for_writeback
+from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.record import record_ss_fra_candidate
+from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
+from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from models.household import Household
+from models.sourced import Source
 
 _HH_FILING_LABEL_MFJ = "Married filing jointly"
 _HH_FILING_LABEL_SINGLE = "Single"
+
+_MAGI_PREFIX = "prior_year_magi."
+
+_FIELD_LABELS: dict[str, str] = {
+    "your_ira": "Your IRA balance",
+    "spouse_ira": "Spouse IRA balance",
+    "your_roth": "Your Roth balance",
+    "spouse_roth": "Spouse Roth balance",
+    "txn_price_now": "Stock price",
+    "your_ss_fra": "Your SS at FRA ($/mo)",
+    "spouse_ss_fra": "Spouse SS at FRA ($/mo)",
+    GRANTS_KEY: "Option grants",
+}
+
+
+def _field_label(field_key: str) -> str:
+    """Human-readable label for a sourced field key."""
+    if field_key.startswith(_MAGI_PREFIX):
+        return f"Prior-year MAGI ({field_key[len(_MAGI_PREFIX) :]})"
+    return _FIELD_LABELS.get(field_key, field_key)
+
+
+def _format_value(field_key: str, value: Any) -> str:
+    """Format a candidate/committed value for display."""
+    if field_key == GRANTS_KEY:
+        return "no data" if value is None else f"{len(value)} grants"
+    if value is None:
+        return "no data"
+    return f"${float(value):,.2f}"
+
+
+def _committed_value_and_source(committed_json: dict, field_key: str) -> tuple[Any, str | None]:
+    """Return (current committed value, source label) for ``field_key``."""
+    if field_key.startswith(_MAGI_PREFIX):
+        year = field_key[len(_MAGI_PREFIX) :]
+        payload = committed_json.get("prior_year_magi") or {}
+        value = payload.get("data", {}).get(year)
+        source = payload.get("prov", {}).get(year, {}).get("source")
+        return value, source
+    if field_key == GRANTS_KEY:
+        payload = committed_json.get(GRANTS_KEY) or {}
+        data = payload.get("data")
+        prov_list = payload.get("prov") or []
+        source = prov_list[0].get("source") if prov_list else None
+        return data, source
+    payload = committed_json.get(field_key) or {}
+    return payload.get("value"), payload.get("source")
+
+
+def _render_candidate_row(candidate: Candidate, field_key: str) -> None:
+    """Render one candidate's source/value/detail row; never raises."""
+    try:
+        value_str = _format_value(field_key, candidate.value)
+        recorded = candidate.prov.recorded_at.isoformat(timespec="seconds")
+        st.write(
+            f"- **{candidate.prov.source}**: {value_str} "
+            f"— {candidate.prov.detail or '(no detail)'} — recorded {recorded}"
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        source = getattr(getattr(candidate, "prov", None), "source", "?")
+        st.caption(f"⚠️ rejected: candidate from {source} — {exc}")
+
+
+def _resolve_confirm_choice(
+    candidates: list[Candidate], chosen_source: Source | None, manual_value: float
+) -> tuple[Any, Source, str] | None:
+    """Return (value, source, detail) to confirm, or None if nothing was chosen."""
+    if manual_value:
+        return manual_value, Source.MANUAL, "manual entry"
+    if chosen_source is not None:
+        for candidate in candidates:
+            if candidate.prov.source == chosen_source:
+                return candidate.value, candidate.prov.source, candidate.prov.detail
+    return None
+
+
+def _apply_confirm_to_session(field_key: str, value: Any) -> None:
+    """Keep session_state in sync so reconcile_manual_edits doesn't revert the confirm.
+
+    Uses the shared field->session_key alias map (txn_price_now is aliased to
+    "txn_price") — writing under the raw field_key here previously left
+    session_state["txn_price"] stale, so the next reconcile saw a diff and
+    reverted the confirm. Session-mirror values are int, not float: every
+    Setup number_input bound to these keys uses format="%d"/int
+    min_value/step, so a float here would raise
+    StreamlitMixedNumericTypesError on the next Setup render.
+    """
+    if field_key in HOUSEHOLD_SCALAR_FIELDS:
+        session_key = session_keys_for_writeback().get(field_key, field_key)
+        st.session_state[session_key] = int(round(value))
+    elif field_key.startswith(_MAGI_PREFIX):
+        year = int(field_key[len(_MAGI_PREFIX) :])
+        magi = dict(st.session_state.get("prior_year_magi") or {})
+        magi[year] = float(value)
+        st.session_state["prior_year_magi"] = magi
+    # grants: no direct session_state representation exists today — grants are
+    # re-derived live from portfolio_snapshot + strikes on every render — so
+    # this is a best-effort no-op. Revisit in a future wave if that changes.
+    st.session_state.get("_pending_review", set()).discard(field_key)
+
+
+def _handle_confirm_click(
+    field_key: str,
+    committed_json: dict,
+    choices: ChoiceMap,
+    candidates: list[Candidate],
+    chosen_source: Source | None,
+    manual_value: float,
+) -> bool:
+    """Process a Confirm click; returns True if a value was actually confirmed."""
+    picked = _resolve_confirm_choice(candidates, chosen_source, manual_value)
+    if picked is None:
+        st.warning("No candidate or manual value to confirm.")
+        return False
+    value, source, detail = picked
+
+    confirm_field(committed_json, choices, field_key, value, source, datetime.now(), detail=detail)
+    save_committed(COMMITTED_PATH, committed_json)
+    choices.save(TRUST_CHOICES_PATH)
+    _apply_confirm_to_session(field_key, value)
+    st.success(f"Confirmed {_field_label(field_key)} from {source}.")
+    return True
+
+
+def _render_field_card(
+    field_key: str, committed_json: dict, store: CandidateStore, choices: ChoiceMap
+) -> None:
+    """Render one pending-review card; defensive — never crashes the gate.
+
+    Shared by every owning partial's inline sourced-field governance UI
+    (Accounts here; Options in Task 5; Assumptions in Task 7) — moved from
+    ``views/setup/command_center.py``'s old generic per-pending-field loop
+    (removed in Task 4; see that module's docstring for why).
+    """
+    try:
+        candidates = store.candidates_for(field_key)
+        committed_value, committed_source = _committed_value_and_source(committed_json, field_key)
+
+        st.subheader(_field_label(field_key))
+        st.caption(
+            f"Currently committed: {_format_value(field_key, committed_value)} "
+            f"(source: {committed_source or 'none'})"
+        )
+        for candidate in candidates:
+            _render_candidate_row(candidate, field_key)
+
+        source_options = [c.prov.source for c in candidates]
+        chosen_source = (
+            st.radio(
+                "Trust which source?",
+                source_options,
+                key=f"trust_{field_key}",
+                format_func=str,
+                horizontal=True,
+            )
+            if source_options
+            else None
+        )
+        manual_value = 0.0
+        if field_key != GRANTS_KEY:
+            manual_value = st.number_input(
+                "Or enter manually (0 = use the selected source above)",
+                key=f"manual_{field_key}",
+                value=0.0,
+                step=1000.0,
+            )
+
+        if st.button("Confirm", key=f"confirm_{field_key}"):
+            confirmed = _handle_confirm_click(
+                field_key, committed_json, choices, candidates, chosen_source, manual_value
+            )
+            if confirmed:
+                st.rerun()
+    except Exception as exc:  # noqa: BLE001 - defensive UI guard; a malformed card must not crash
+        st.warning(f"⚠️ rejected: {field_key} — {exc}")
+
+
+def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
+    """Fetch, match, and record the FRA SSA benefit for *owner* ('you' or 'spouse').
+
+    Records the matched monthly benefit as a FINEXTRACT_LIVE candidate
+    (engine.data_sources.record.record_ss_fra_candidate) instead of writing
+    directly to session_state — the value sits pending until confirmed via
+    the Setup / Command Center review gate (same freeze-until-confirm seam
+    as your_ira/your_roth/txn_price_now). Also caches the raw snapshot.
+    Returns a warning message on failure/no-match, or None on success.
+    """
+    snap = fetch_ssa_snapshot()
+    if snap.error:
+        return f"SSA sync failed: {snap.error}"
+    match = match_fra_estimate(snap.estimates, fra_age)
+    if match is None:
+        return "No SSA benefit estimate found near the configured FRA age; sync skipped."
+    field_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
+    record_ss_fra_candidate(
+        field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
+    )
+    st.session_state[f"ssa_snapshot_{owner}"] = snap
+    save_ssa_snapshot(snap, owner=owner)
+    return None
 
 
 def filing_status_from_label(label: str) -> str:
@@ -204,5 +417,167 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             disabled=_is_single,
         )
         return None
+
+    raise ValueError(f"Unknown owner slice: {owner!r}")
+
+
+def render_accounts_partial(hh: Household, container, owner: str) -> None:
+    """Render one owner's IRA/Roth/SS-FRA accounts widgets plus, inline right
+    after each field's own balance widget, that field's trust/manual-
+    override/confirm governance card if a sourced candidate is pending.
+
+    ``owner`` is ``"your"`` or ``"spouse"`` — every field here is per-person
+    (unlike ``render_household_partial``, there is no ``"joint"`` case).
+
+    ``your_ira``/``your_roth``/``your_ss_fra`` (and the spouse equivalents)
+    are all in ``HOUSEHOLD_SCALAR_FIELDS`` — Command Center's governed
+    sourced fields — so each renders its card here instead of the old
+    generic per-pending-field loop that used to live in
+    ``views/setup/command_center.py``. That loop was REMOVED (not filtered)
+    in this same task: Classic mode's ``st.tabs()`` executes every tab's
+    body every script run regardless of which tab is visually selected, so
+    rendering the same ``trust_<field>``/``manual_<field>``/
+    ``confirm_<field>`` widget key from both that loop AND here in one run
+    would raise ``DuplicateWidgetID`` (see
+    ``tests/test_setup_shell_characterization.py``'s Task-4 regression
+    test). SS-start-age (``your_ss_start_age``/``spouse_ss_start_age``) is a
+    plain scalar, not governed/sourced, but stays co-located with SS-FRA
+    per the plan.
+
+    ``value=`` for SS-start-age reads from ``hh.<attr>`` (see
+    ``render_household_partial``'s docstring for the general rule) —
+    ``Household.__post_init__`` never derives it, so ``hh.<attr>`` always
+    equals the live ``session_state.<attr>``. The 6 governed IRA/Roth/SS-FRA
+    fields are the DOCUMENTED EXCEPTION to that rule: by the time this
+    partial runs, ``hh`` is ``app.py get_household()``'s POST-RESOLVE
+    household (``app_res.result.household``), whose governed fields are
+    ``SourcedValue`` (a ``float`` subclass carrying provenance) rather than
+    a plain ``float``/``int`` — Streamlit's ``number_input`` does an exact
+    ``type(value) in (int, float)`` check, so passing ``hh.your_ira``
+    directly raises ``StreamlitMixedNumericTypesError`` even though it's
+    numerically a float. ``get_household()`` mirrors the resolved value back
+    into ``session_state`` (int-coerced) before this partial ever runs, so
+    these 6 widgets read ``st.session_state.<attr>`` instead — matching
+    their exact pre-Task-4 shape.
+    """
+    pending: set[str] = st.session_state.get("_pending_review", set())
+    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    committed_json = load_committed(COMMITTED_PATH) or {}
+
+    def _maybe_card(field_key: str) -> None:
+        if field_key not in pending:
+            return
+        with container.container(border=True):
+            _render_field_card(field_key, committed_json, store, choices)
+
+    if owner == "your":
+        _synced = bool(st.session_state.get("portfolio_snapshot"))
+        st.session_state.your_ira = container.number_input(
+            "Your Trad IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
+            value=st.session_state.your_ira,
+            step=50_000,
+            format="%d",
+            disabled=_synced,
+            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
+        )
+        _maybe_card("your_ira")
+
+        st.session_state.your_roth = container.number_input(
+            "Your Roth IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
+            value=st.session_state.get("your_roth", 0),
+            step=50_000,
+            format="%d",
+            disabled=_synced,
+            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
+        )
+        _maybe_card("your_roth")
+
+        _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
+        your_fra_age = st.session_state.get("your_fra_age", 67)
+        st.session_state.your_ss_fra = container.number_input(
+            f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
+            min_value=0,  # UU2-UI-06
+            value=int(round(st.session_state.your_ss_fra)),
+            step=100,
+            format="%d",
+            disabled=_ssa_synced_you,
+            help="Auto-synced from FinExtract (SSA benefit estimate)" if _ssa_synced_you else None,
+        )
+        _maybe_card("your_ss_fra")
+        if container.button("Sync SS from FinExtract", key="_sync_ssa_you_btn"):
+            _warning = _sync_ssa_for("you", your_fra_age)
+            if _warning:
+                container.warning(_warning)
+            else:
+                st.rerun()
+        st.session_state.your_ss_start_age = container.number_input(
+            "Your SS claim age",
+            min_value=62,
+            max_value=70,
+            value=hh.your_ss_start_age,
+            step=1,
+            format="%d",
+        )
+        return
+
+    if owner == "spouse":
+        _is_single = st.session_state.get("filing_status", "MFJ") == "Single"
+        _synced = bool(st.session_state.get("portfolio_snapshot"))
+        st.session_state.spouse_ira = container.number_input(
+            "Spouse Trad IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
+            value=st.session_state.spouse_ira,
+            step=50_000,
+            format="%d",
+            disabled=_synced or _is_single,
+            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
+        )
+        _maybe_card("spouse_ira")
+
+        st.session_state.spouse_roth = container.number_input(
+            "Spouse Roth IRA" + (" (synced)" if _synced else ""),
+            min_value=0,
+            value=st.session_state.get("spouse_roth", 0),
+            step=50_000,
+            format="%d",
+            disabled=_synced or _is_single,
+            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
+        )
+        _maybe_card("spouse_roth")
+
+        _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
+        spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
+        st.session_state.spouse_ss_fra = container.number_input(
+            f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
+            + (" (synced)" if _ssa_synced_spouse else ""),
+            min_value=0,  # UU2-UI-06
+            value=int(round(st.session_state.spouse_ss_fra)),
+            step=100,
+            format="%d",
+            disabled=_is_single or _ssa_synced_spouse,
+            help="Auto-synced from FinExtract (SSA benefit estimate)"
+            if _ssa_synced_spouse
+            else None,
+        )
+        _maybe_card("spouse_ss_fra")
+        if container.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
+            _warning = _sync_ssa_for("spouse", spouse_fra_age)
+            if _warning:
+                container.warning(_warning)
+            else:
+                st.rerun()
+        st.session_state.spouse_ss_start_age = container.number_input(
+            "Spouse SS claim age",
+            min_value=62,
+            max_value=70,
+            value=hh.spouse_ss_start_age,
+            step=1,
+            format="%d",
+            disabled=_is_single,
+        )
+        return
 
     raise ValueError(f"Unknown owner slice: {owner!r}")

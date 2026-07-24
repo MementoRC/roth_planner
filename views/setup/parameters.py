@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
 from typing import TypeVar
 
 import streamlit as st
@@ -12,18 +11,15 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
-from engine.data_sources.record import record_ss_fra_candidate
 from engine.irmaa import BASE_PART_B
-from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
     Form1040Record,
     load_pdf_tax_records,
     save_pdf_tax_records,
 )
 from models.household import Household
-from models.sourced import Source
 from views._format import fmt_dollars
-from views.setup._partials import render_household_partial
+from views.setup._partials import render_accounts_partial, render_household_partial
 from views.setup._state import _user_defaults_from_session
 
 _Num = TypeVar("_Num", int, float)
@@ -343,35 +339,8 @@ def _render_prior_year_magi_anchor(base_year: int) -> None:
         st.session_state["prior_year_magi"] = prior_magi
 
 
-def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
-    """Fetch, match, and record the FRA SSA benefit for *owner* ('you' or 'spouse').
-
-    Records the matched monthly benefit as a FINEXTRACT_LIVE candidate
-    (engine.data_sources.record.record_ss_fra_candidate) instead of writing
-    directly to session_state — the value sits pending until confirmed via
-    the Setup / Command Center review gate (same freeze-until-confirm seam
-    as your_ira/your_roth/txn_price_now). Also caches the raw snapshot.
-    Returns a warning message on failure/no-match, or None on success.
-    """
-    snap = fetch_ssa_snapshot()
-    if snap.error:
-        return f"SSA sync failed: {snap.error}"
-    match = match_fra_estimate(snap.estimates, fra_age)
-    if match is None:
-        return "No SSA benefit estimate found near the configured FRA age; sync skipped."
-    field_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
-    record_ss_fra_candidate(
-        field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
-    )
-    st.session_state[f"ssa_snapshot_{owner}"] = snap
-    save_ssa_snapshot(snap, owner=owner)
-    return None
-
-
 def render_parameters_tab(hh: Household) -> None:
     """Extracted from setup.py render() — parameters tab body."""
-    _synced = bool(st.session_state.get("portfolio_snapshot"))
-
     # Household filing status — gate that activates the engine's Single-filer paths.
     _is_single = bool(render_household_partial(hh, st, "joint"))
     # NOTE: spouse inputs are intentionally NOT zeroed in session_state here — doing so
@@ -383,50 +352,8 @@ def render_parameters_tab(hh: Household) -> None:
     me_sub, spouse_sub, joint_sub = st.tabs(["Me", "Spouse", "Joint"])
 
     with me_sub:
-        st.session_state.your_ira = st.number_input(
-            "Your Trad IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.your_ira,
-            step=50_000,
-            format="%d",
-            disabled=_synced,
-            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
-        )
-        st.session_state.your_roth = st.number_input(
-            "Your Roth IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.get("your_roth", 0),
-            step=50_000,
-            format="%d",
-            disabled=_synced,
-            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
-        )
         render_household_partial(hh, me_sub, "your")
-        _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
-        your_fra_age = st.session_state.get("your_fra_age", 67)
-        st.session_state.your_ss_fra = st.number_input(
-            f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
-            min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.your_ss_fra)),
-            step=100,
-            format="%d",
-            disabled=_ssa_synced_you,
-            help="Auto-synced from FinExtract (SSA benefit estimate)" if _ssa_synced_you else None,
-        )
-        if st.button("Sync SS from FinExtract", key="_sync_ssa_you_btn"):
-            _warning = _sync_ssa_for("you", your_fra_age)
-            if _warning:
-                st.warning(_warning)
-            else:
-                st.rerun()
-        st.session_state.your_ss_start_age = st.number_input(
-            "Your SS claim age",
-            min_value=62,
-            max_value=70,
-            value=st.session_state.get("your_ss_start_age", 70),
-            step=1,
-            format="%d",
-        )
+        render_accounts_partial(hh, me_sub, "your")
 
     with spouse_sub:
         if _is_single:
@@ -434,54 +361,8 @@ def render_parameters_tab(hh: Household) -> None:
                 "Single filer — spouse inputs are disabled and treated as zero. "
                 "Switch Filing status to Married filing jointly to re-enable."
             )
-        st.session_state.spouse_ira = st.number_input(
-            "Spouse Trad IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.spouse_ira,
-            step=50_000,
-            format="%d",
-            disabled=_synced or _is_single,
-            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
-        )
-        st.session_state.spouse_roth = st.number_input(
-            "Spouse Roth IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.get("spouse_roth", 0),
-            step=50_000,
-            format="%d",
-            disabled=_synced or _is_single,
-            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
-        )
         render_household_partial(hh, spouse_sub, "spouse")
-        _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
-        spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
-        st.session_state.spouse_ss_fra = st.number_input(
-            f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
-            + (" (synced)" if _ssa_synced_spouse else ""),
-            min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.spouse_ss_fra)),
-            step=100,
-            format="%d",
-            disabled=_is_single or _ssa_synced_spouse,
-            help="Auto-synced from FinExtract (SSA benefit estimate)"
-            if _ssa_synced_spouse
-            else None,
-        )
-        if st.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
-            _warning = _sync_ssa_for("spouse", spouse_fra_age)
-            if _warning:
-                st.warning(_warning)
-            else:
-                st.rerun()
-        st.session_state.spouse_ss_start_age = st.number_input(
-            "Spouse SS claim age",
-            min_value=62,
-            max_value=70,
-            value=st.session_state.get("spouse_ss_start_age", 70),
-            step=1,
-            format="%d",
-            disabled=_is_single,
-        )
+        render_accounts_partial(hh, spouse_sub, "spouse")
 
     with joint_sub:
         st.session_state.growth_rate = st.slider(

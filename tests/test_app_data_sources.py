@@ -24,6 +24,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from config.defaults import DEFAULTS
@@ -228,6 +229,16 @@ def test_resolved_sourced_values_are_written_back_to_session_state(
     assert at.session_state["txn_price"] == DEFAULTS["stock_price_now"]
 
 
+@pytest.mark.skip(
+    reason=(
+        "txn_price_now's trust/manual/confirm card has no owning partial yet — "
+        "it moves into views/setup/_partials.py:render_options_partial in Task 5 "
+        "of docs/superpowers/plans/2026-07-24-ui-shell-theme-toggle.md. Command "
+        "Center's generic per-field loop (which used to render this card, "
+        "including the confirm_txn_price_now button this test drives) was "
+        "removed in Task 4 (DuplicateWidgetID fix) before Task 5 lands."
+    )
+)
 def test_command_center_txn_price_confirm_sticks_and_next_render_does_not_revert(
     clean_command_center_caches,
 ) -> None:

@@ -718,12 +718,17 @@ class TestSyncSsaForRecordsCandidate:
     value sits pending until confirmed through the freeze-until-confirm gate,
     same seam as your_ira/your_roth/txn_price_now. The int-coercion contract
     (StreamlitMixedNumericTypesError regression) now lives inside
-    record_ss_fra_candidate itself (see TestRecordSsFraCandidate)."""
+    record_ss_fra_candidate itself (see TestRecordSsFraCandidate).
+
+    _sync_ssa_for moved from views/setup/parameters.py to
+    views/setup/_partials.py in Task 4 of the ui-shell-theme-toggle plan
+    (render_accounts_partial's "Sync SS from FinExtract" button now calls it
+    directly, avoiding a parameters.py <-> _partials.py import cycle)."""
 
     def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> tuple[dict, list]:
         from types import SimpleNamespace
 
-        import views.setup.parameters as parameters_mod
+        import views.setup._partials as partials_mod
 
         fake_snap = SimpleNamespace(
             error=None,
@@ -735,14 +740,14 @@ class TestSyncSsaForRecordsCandidate:
         def _fake_record(field_key, monthly_amount, source, detail, recorded_at):  # noqa: ANN001
             calls.append((field_key, monthly_amount, source, detail))
 
-        monkeypatch.setattr(parameters_mod.st, "session_state", fake_state)
-        monkeypatch.setattr(parameters_mod, "fetch_ssa_snapshot", lambda: fake_snap)
+        monkeypatch.setattr(partials_mod.st, "session_state", fake_state)
+        monkeypatch.setattr(partials_mod, "fetch_ssa_snapshot", lambda: fake_snap)
         monkeypatch.setattr(
-            parameters_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
+            partials_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
         )
-        monkeypatch.setattr(parameters_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
-        monkeypatch.setattr(parameters_mod, "record_ss_fra_candidate", _fake_record)
-        warning = parameters_mod._sync_ssa_for(owner, 67)
+        monkeypatch.setattr(partials_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
+        monkeypatch.setattr(partials_mod, "record_ss_fra_candidate", _fake_record)
+        warning = partials_mod._sync_ssa_for(owner, 67)
         assert warning is None
         return fake_state, calls
 

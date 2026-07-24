@@ -40,6 +40,8 @@ disk-cache-free render to be reproducible across machines/CI:
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -234,3 +236,108 @@ def test_household_partial_spouse_fields_round_trip(setup_app_test: AppTest) -> 
 
     _checkbox_by_label(at, "Spouse on ACA Marketplace").set_value(True).run()
     assert at.session_state["spouse_aca"] is True
+
+
+# --- Task 4 supplementary safety net: render_accounts_partial -----------------
+#
+# ``views/setup/_partials.py:render_accounts_partial`` extracts IRA/Roth/SS-FRA
+# balance widgets (+ their inline sourced-field trust/manual/confirm card) and
+# SS-start-age out of ``views/setup/parameters.py``. SS-start-age is UNKEYED
+# (Owner decision 5) and not covered by the key-set test above — same sentinel
+# round-trip pattern as Task 3's tests. The IRA/Roth/SS-FRA fields ARE covered
+# by a key set (via their trust_*/manual_*/confirm_* card keys, exercised by
+# tests/test_setup_accounts_partial.py instead — this partial's card only
+# renders when a candidate is pending, so it's absent from the clean-checkout
+# baseline above).
+
+
+def test_accounts_partial_ss_start_age_round_trip(setup_app_test: AppTest) -> None:
+    at = setup_app_test
+
+    _number_input_by_label(at, "Your SS claim age").set_value(65).run()
+    assert at.session_state["your_ss_start_age"] == 65
+
+    _number_input_by_label(at, "Spouse SS claim age").set_value(64).run()
+    assert at.session_state["spouse_ss_start_age"] == 64
+
+
+def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fields(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Task 4 regression: IRA/Roth/SS-FRA governance cards now render INLINE
+    inside ``render_accounts_partial`` (Parameters tab) instead of Command
+    Center's old generic per-pending-field loop. Classic mode's ``st.tabs()``
+    executes EVERY tab's body every script run regardless of which tab is
+    visually selected, so if that old loop had been left in place alongside
+    the new inline card, the same ``trust_<field>``/``manual_<field>``/
+    ``confirm_<field>`` widget key would be registered TWICE in one run --
+    Streamlit's ``DuplicateWidgetID``. Seeds TWO simultaneously-pending
+    accounts fields (``your_ira``, ``your_ss_fra``) to actually exercise
+    this, not just one.
+
+    Verified this would have failed against the naive "co-locate but don't
+    remove the old loop" version: temporarily re-adding
+    ``for field_key in sorted(pending): ...`` (calling the same
+    ``_render_field_card`` this partial calls inline) to
+    ``render_command_center`` reproduces a ``DuplicateWidgetID`` exception
+    here; removing it (the actual Task 4 fix) makes this test pass.
+    """
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
+    from engine.data_sources.candidate_store import CandidateStore
+    from engine.data_sources.choices import ChoiceMap
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from models.sourced import Provenance, Source, SourcedValue
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+
+    recorded_at = datetime(2026, 7, 24, 12, 0, 0)
+    committed_json = {
+        "your_ira": SourcedValue(1_700_000.0, Provenance(Source.UNKNOWN, recorded_at)).to_json(),
+        "your_ss_fra": SourcedValue(2_000.0, Provenance(Source.UNKNOWN, recorded_at)).to_json(),
+    }
+    COMMITTED_PATH.write_text(json.dumps(committed_json))
+
+    store = CandidateStore()
+    store.record_candidate(
+        "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, recorded_at, "live sync")
+    )
+    store.record_candidate(
+        "your_ss_fra", 2_500.0, Provenance(Source.FINEXTRACT_LIVE, recorded_at, "SSA statement")
+    )
+    store.save(CANDIDATE_STORE_PATH)
+    ChoiceMap().save(TRUST_CHOICES_PATH)
+
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["_suppress_snapshot_autoload"] = True
+    # Pre-seed session_state to match the committed baseline exactly (mirrors
+    # tests/test_app_data_sources.py's isolation pattern) -- otherwise
+    # reconcile_manual_edits compares the fresh config-default session value
+    # against the committed baseline, sees a "genuine edit", and silently
+    # promotes the DEFAULT to a new MANUAL commit before resolve() ever runs.
+    # (This bit us for real here: the config default your_ss_fra is 2_500,
+    # which coincidentally equals the candidate below, so the reconciled
+    # MANUAL/2_500 baseline no longer differed from the candidate and the
+    # field never went pending -- isolating the mechanism this way avoids
+    # depending on candidate values never colliding with config defaults.)
+    at.session_state["your_ira"] = 1_700_000
+    at.session_state["your_ss_fra"] = 2_000
+    at.run()
+
+    assert not at.exception
+    assert {"your_ira", "your_ss_fra"} <= at.session_state["_pending_review"]
+    # Each pending field's governance card renders exactly once (inline
+    # inside render_accounts_partial) -- proves the old Command Center loop
+    # is gone, not merely that AppTest silently swallowed a crash. Checking
+    # at.exception alone is NOT enough: _render_field_card wraps its own
+    # widget calls in a defensive `except Exception` that swallows
+    # DuplicateWidgetID into an "rejected" st.warning instead of propagating
+    # it, so the duplicate-registration failure must be asserted via the
+    # ABSENCE of that rejection warning, not just a clean at.exception.
+    rejected = [w.value for w in at.warning if "rejected" in w.value]
+    assert not rejected, f"a governance card silently swallowed an error: {rejected}"
+    assert at.button(key="confirm_your_ira") is not None
+    assert at.button(key="confirm_your_ss_fra") is not None
