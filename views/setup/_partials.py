@@ -603,8 +603,11 @@ def render_options_partial(hh: Household, container) -> None:
     + All tab) since ``GRANTS_KEY``'s governance card below has explicit
     widget keys (``trust_grants``/``manual_grants``/``confirm_grants``) that
     would raise ``DuplicateWidgetID`` if rendered from two call sites in the
-    same script run — the accepted-reordering exception from Task 3 extends
-    to this consolidation.
+    same script run — this dedup, and the txn_price relocation described
+    next, are a single deliberate Task 5 decision (NOT an application of
+    Task 3's reordering exception, which was scoped only to minor same-tab
+    cosmetic reordering and does not cover either of these changes — see
+    below).
 
     ``txn_price_now`` is a Command-Center-governed sourced field (one of
     ``HOUSEHOLD_SCALAR_FIELDS``) aliased to the ``"txn_price"`` session key
@@ -612,9 +615,22 @@ def render_options_partial(hh: Household, container) -> None:
     docstring for why) — the widget reads/writes
     ``st.session_state.txn_price`` (not ``hh.txn_price_now``, which is a
     ``SourcedValue`` post-resolve and would raise
-    ``StreamlitMixedNumericTypesError``), moved verbatim (same unkeyed
+    ``StreamlitMixedNumericTypesError``), moved (same unkeyed
     controlled-widget shape) from ``views/setup/parameters.py``'s Joint
-    sub-tab.
+    sub-tab to here, co-located with the stock-grants table it prices.
+
+    This is a cross-tab, user-visible Classic-mode layout change (Parameters
+    -> Joint to Portfolio), which exceeds Task 5's literal text. A
+    2026-07-24 spec-compliance review of commit 19e04f69 flagged it as such
+    and flagged this docstring's prior (incorrect) citation of "Task 3's
+    accepted-reordering exception" as not actually covering a cross-tab
+    move. The project owner reviewed and explicitly APPROVED it the same day
+    as a deliberate Task 5 design decision: all Options-domain fields
+    (equity grants + the stock price that prices them) consolidate into
+    exactly one call site, rendered from the Portfolio tab, going forward.
+    See ``tests/test_setup_options_partial.py`` for the regression test that
+    pins the Stock Price widget to the Portfolio tab (and asserts its
+    absence from Parameters -> Joint).
 
     ``GRANTS_KEY``'s own governance card has no manual-override
     ``number_input`` (see ``_render_field_card``'s ``field_key != GRANTS_KEY``
