@@ -24,6 +24,8 @@ behavior change) with one module per partial:
 - ``_options.py`` — Task 5: ``render_options_partial``.
 - ``_portfolio.py`` — Task 6: ``render_portfolio_partial`` + its private
   table/expander helpers.
+- ``_assumptions.py`` — Task 7: ``render_assumptions_partial`` + its private
+  prior-year-MAGI-anchor/survivor-scenario/inherited-IRAs helpers.
 
 Every name that was importable from the old flat module remains importable
 from ``views.setup._partials`` unchanged via the re-exports below — no
@@ -33,6 +35,7 @@ caller (production code or tests) needs to change its import statements.
 from __future__ import annotations
 
 from ._accounts import _sync_ssa_for, render_accounts_partial
+from ._assumptions import render_assumptions_partial
 from ._governance import (
     _FIELD_LABELS,
     _MAGI_PREFIX,
@@ -66,6 +69,7 @@ __all__ = [
     "render_accounts_partial",
     "render_options_partial",
     "render_portfolio_partial",
+    "render_assumptions_partial",
     "filing_status_from_label",
     "_sync_ssa_for",
     "_render_field_card",

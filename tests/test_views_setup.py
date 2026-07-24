@@ -117,13 +117,19 @@ class TestPdf1040ImportHelper:
         assert "_render_pdf_1040_import()" in source, (
             "_render_pdf_1040_import() not called in render_parameters_tab — widget not wired up"
         )
-        magi_pos = source.find("_render_prior_year_magi_anchor(")
+        # Task 7 (ui-shell-theme-toggle): the prior-year-MAGI anchor (and the rest of
+        # the Joint tab's assumptions widgets) moved into
+        # views.setup._partials._assumptions.render_assumptions_partial, called
+        # once from here — this test now pins THAT call's position relative to
+        # _render_pdf_1040_import() instead of the (no-longer-present) private
+        # helper name.
+        assumptions_pos = source.find("render_assumptions_partial(")
         pdf_pos = source.find("_render_pdf_1040_import()")
-        assert magi_pos != -1
+        assert assumptions_pos != -1
         assert pdf_pos != -1
-        assert magi_pos < pdf_pos, (
-            "_render_pdf_1040_import() appears before _render_prior_year_magi_anchor() — "
-            "expected PDF import to follow the manual number_input widget"
+        assert assumptions_pos < pdf_pos, (
+            "_render_pdf_1040_import() appears before render_assumptions_partial() — "
+            "expected PDF import to follow the assumptions widgets"
         )
 
 
@@ -580,32 +586,40 @@ class TestNoDataMsg:
 
 class TestClampWidgetBounds:
     """C4 regression: _clamp keeps out-of-bounds cached/uploaded JSON from crashing
-    st.number_input at render, without corrupting legitimate large/past values."""
+    st.number_input at render, without corrupting legitimate large/past values.
+
+    ``_clamp`` moved from ``views.setup.parameters`` to
+    ``views.setup._partials._assumptions`` as of Task 7 of the
+    ui-shell-theme-toggle plan (its only callers — growth_rate/
+    living_expenses/ACA-benchmark/etc., the prior-year-MAGI anchor, the
+    survivor-scenario expander, and the inherited-IRAs expander — all moved
+    there too), so these tests import it from its new home.
+    """
 
     def test_in_range_unchanged(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(500, 0, 1000) == 500
 
     def test_above_hi_clamped(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(1500, 0, 1000) == 1000
 
     def test_below_lo_clamped(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(-5, 0, 1000) == 0
 
     def test_preserves_int_type(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         r = _clamp(5, 0, 10)
         assert isinstance(r, int)
         assert r == 5
 
     def test_preserves_float_type(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         r = _clamp(2434.80, 0.0, 5000.0)
         assert isinstance(r, float)
@@ -614,13 +628,13 @@ class TestClampWidgetBounds:
     def test_legitimate_large_magi_not_corrupted(self) -> None:
         # $2.5M filed MAGI is legitimate for a large-IRA household; the widened bound
         # keeps it intact (a pure clamp-to-$2M would corrupt the IRMAA anchor).
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(2_500_000, 0, 100_000_000) == 2_500_000
 
     def test_past_inherited_year_not_corrupted(self) -> None:
         # Inheriting 4 years before base_year is a valid mid-drain SECURE 10-year case.
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         base_year = 2026
         assert _clamp(2022, base_year - 15, base_year + 30) == 2022

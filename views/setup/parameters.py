@@ -1,9 +1,16 @@
-"""Parameters tab — Me/Spouse/Joint sub-tabs (survivor, inherited IRAs, PDF 1040 import, MAGI anchor, filing-status pickers)."""
+"""Parameters tab — Me/Spouse/Joint sub-tabs (PDF 1040 import, filing-status pickers).
+
+Growth-rate/living-expenses/ACA-benchmark/enhanced-subsidies/advance-APTC/
+Medicare-Part-B/CPI/prior-year-MAGI-anchor widgets, plus the survivor-scenario
+and inherited-IRAs expanders, moved into
+``views/setup/_partials._assumptions:render_assumptions_partial`` as of Task 7
+of the ui-shell-theme-toggle plan — this module's Joint sub-tab now just calls
+that partial (see ``render_parameters_tab``).
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TypeVar
 
 import streamlit as st
 
@@ -11,7 +18,6 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
-from engine.irmaa import BASE_PART_B
 from engine.tax_return_pdf import (
     Form1040Record,
     load_pdf_tax_records,
@@ -19,23 +25,12 @@ from engine.tax_return_pdf import (
 )
 from models.household import Household
 from views._format import fmt_dollars
-from views.setup._partials import render_accounts_partial, render_household_partial
+from views.setup._partials import (
+    render_accounts_partial,
+    render_assumptions_partial,
+    render_household_partial,
+)
 from views.setup._state import _user_defaults_from_session
-
-_Num = TypeVar("_Num", int, float)
-
-
-def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
-    """Clamp ``value`` into ``[lo, hi]``.
-
-    Cached/uploaded JSON (.user_defaults.json, .tax_pdf_cache.json) can seed a
-    widget ``value`` outside its ``[min_value, max_value]`` bounds, and Streamlit
-    raises ``StreamlitAPIException`` at render time — crashing the Joint sub-tab on
-    load with no user interaction (audit C4). The widget bounds are widened to
-    generous limits so no legitimate value is ever out of range; this clamp is a
-    final backstop so genuinely corrupt data still cannot crash the render.
-    """
-    return min(max(value, lo), hi)
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -57,147 +52,6 @@ def apply_single_filer(hh: Household) -> Household:
         spouse_aca_enrolled=False,
         spouse_has_workplace_plan=False,
     )
-
-
-def _render_survivor_scenario(base_year: int) -> None:
-    """Render the Survivor scenario expander in the Joint sub-tab."""
-    current: dict = st.session_state.get("survivor") or {}
-
-    with st.expander("Survivor scenario (advanced sensitivity)", expanded=False):
-        st.caption(
-            "Optional. Models death of one spouse mid-projection. "
-            "Survivor switches to single-filer brackets, std deduction, and senior bonus "
-            "starting death_year + 1. Deceased's IRA rolls to survivor (spousal rollover); "
-            "deceased's SS ends. "
-            "NOT YET MODELED: SS survivor benefit step-up; inherited-IRA stretch rules."
-        )
-        # Seed the Enable flag once from any persisted/uploaded survivor scenario. Do NOT
-        # pass value= alongside the persistent key: Streamlit ignores value= once the key
-        # exists, so after an uncheck a mid-session upload that sets "survivor" would be
-        # re-nulled by the else-branch below. The upload path sets "_survivor_enabled" too
-        # (audit C9 / ui-streamlit-5).
-        st.session_state.setdefault("_survivor_enabled", bool(current))
-        enabled = st.checkbox(
-            "Enable survivor scenario",
-            key="_survivor_enabled",
-        )
-        if enabled:
-            who_options = ["Me", "Spouse"]
-            who_default = 0 if current.get("who_dies", "you") == "you" else 1
-            who_choice = st.radio(
-                "Who dies?",
-                who_options,
-                index=who_default,
-                horizontal=True,
-                key="_survivor_who_dies",
-            )
-            who_dies = "you" if who_choice == "Me" else "spouse"
-            death_year = st.number_input(
-                "Year of death",
-                min_value=base_year,
-                max_value=base_year + 50,
-                value=_clamp(
-                    int(current.get("death_year", base_year + 5)), base_year, base_year + 50
-                ),
-                step=1,
-                format="%d",
-                help=(
-                    "Calendar year in which the spouse dies. "
-                    "MFJ filing applies for that year; Single filing begins the following year."
-                ),
-                key="_survivor_death_year",
-            )
-            st.session_state["survivor"] = {"who_dies": who_dies, "death_year": int(death_year)}
-        else:
-            st.session_state["survivor"] = None
-
-
-def _render_inherited_iras(base_year: int) -> None:
-    """Render the Inherited IRAs expander in the Joint sub-tab."""
-
-    with st.expander("Inherited IRAs (non-spousal, 10-year rule)", expanded=False):
-        st.caption(
-            "Model non-spousal inherited IRAs subject to the SECURE Act 10-year rule. "
-            "The beneficiary must fully distribute the balance within 10 years of inheritance. "
-            "Distributions add to ordinary income (MAGI). "
-            "Leave empty if no inheritances are modeled."
-        )
-
-        iiras: list[dict] = list(st.session_state.get("inherited_iras") or [])
-        to_remove: int | None = None
-
-        for idx, entry in enumerate(iiras):
-            col_bal, col_yr, col_rate, col_owner, col_remove = st.columns([3, 2, 2, 2, 1])
-            new_bal = col_bal.number_input(
-                "Balance ($)",
-                min_value=0,
-                max_value=100_000_000,
-                value=_clamp(int(entry.get("balance", 0)), 0, 100_000_000),
-                step=10_000,
-                format="%d",
-                key=f"iira_balance_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            new_yr = col_yr.number_input(
-                "Year inherited",
-                min_value=base_year - 15,
-                max_value=base_year + 30,
-                value=_clamp(
-                    int(entry.get("inherited_year", base_year + 5)), base_year - 15, base_year + 30
-                ),
-                step=1,
-                format="%d",
-                key=f"iira_year_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            new_rate = col_rate.number_input(
-                "Growth Rate (%)",
-                min_value=0.0,
-                max_value=15.0,
-                value=float(entry.get("growth_rate", 0.07)) * 100,
-                step=0.5,
-                format="%.1f",
-                key=f"iira_rate_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            owner_options = ["Me", "Spouse"]
-            owner_val = entry.get("owner", "you")
-            owner_idx_sel = 0 if owner_val == "you" else 1
-            owner_choice = col_owner.radio(
-                "Owner",
-                owner_options,
-                index=owner_idx_sel,
-                horizontal=True,
-                key=f"iira_owner_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            if col_remove.button("Remove", key=f"iira_remove_{idx}"):
-                to_remove = idx
-            iiras[idx] = {
-                "balance": float(new_bal),
-                "inherited_year": int(new_yr),
-                "owner": "you" if owner_choice == "Me" else "spouse",
-                "growth_rate": new_rate / 100.0,
-            }
-
-        if to_remove is not None:
-            iiras.pop(to_remove)
-            st.session_state["inherited_iras"] = iiras
-            st.rerun()
-
-        if st.button("Add inherited IRA", key="iira_add"):
-            iiras.append(
-                {
-                    "balance": 0.0,
-                    "inherited_year": base_year + 5,
-                    "owner": "you",
-                    "growth_rate": 0.07,
-                }
-            )
-            st.session_state["inherited_iras"] = iiras
-            st.rerun()
-
-        st.session_state["inherited_iras"] = iiras
 
 
 _FILING_STATUS_OPTIONS = [
@@ -289,56 +143,6 @@ def _render_pdf_1040_import() -> None:
                 st.rerun()
 
 
-def _render_prior_year_magi_anchor(base_year: int) -> None:
-    """Render the Prior-year filed MAGI anchor expander in the Joint sub-tab."""
-    with st.expander("Prior-year filed MAGI anchor (IRMAA lookback)", expanded=False):
-        st.caption(
-            "Optional. Enter actual filed MAGI from your tax return. "
-            "The engine will use these values instead of projecting MAGI for the "
-            "IRMAA 2-year-lookback "
-            f"(years {base_year} and {base_year + 1} IRMAA will be anchored to these). "
-            "Leave 0 to use projected MAGI."
-        )
-        prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
-
-        v1 = st.number_input(
-            f"{base_year - 2} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 2, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
-            help=(
-                f"Filed MAGI from your {base_year - 2} tax return. "
-                f"Anchors {base_year} IRMAA via the 2-year lookback."
-            ),
-        )
-        v2 = st.number_input(
-            f"{base_year - 1} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 1, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
-            help=(
-                f"Filed MAGI from your {base_year - 1} tax return. "
-                f"Anchors {base_year + 1} IRMAA via the 2-year lookback."
-            ),
-        )
-
-        if v1 > 0:
-            prior_magi[base_year - 2] = float(v1)
-        else:
-            prior_magi.pop(base_year - 2, None)
-
-        if v2 > 0:
-            prior_magi[base_year - 1] = float(v2)
-        else:
-            prior_magi.pop(base_year - 1, None)
-
-        st.session_state["prior_year_magi"] = prior_magi
-
-
 def render_parameters_tab(hh: Household) -> None:
     """Extracted from setup.py render() — parameters tab body."""
     # Household filing status — gate that activates the engine's Single-filer paths.
@@ -365,96 +169,17 @@ def render_parameters_tab(hh: Household) -> None:
         render_accounts_partial(hh, spouse_sub, "spouse")
 
     with joint_sub:
-        st.session_state.growth_rate = st.slider(
-            "Growth Rate %",
-            3.0,
-            12.0,
-            _clamp(st.session_state.growth_rate, 3.0, 12.0),
-            0.5,
-            format="%.1f%%",
-        )
-        st.session_state.living_expenses = st.number_input(
-            "Annual Living Expenses",
-            min_value=0,
-            value=st.session_state.living_expenses,
-            step=5_000,
-            format="%d",
-        )
-        # txn_price / txn_price_now moved into
-        # views/setup/_partials.py:render_options_partial (called once from
-        # views/setup/portfolio.py's Portfolio tab) as of Task 5 of the
-        # ui-shell-theme-toggle plan — co-located with the stock-grants table
-        # it prices, alongside its own trust/manual/confirm governance card.
-        st.session_state["aca_benchmark_premium_annual"] = st.number_input(
-            "ACA Benchmark Premium ($/yr)",
-            min_value=0,
-            max_value=60_000,
-            value=_clamp(
-                int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)), 0, 60_000
-            ),
-            step=100,
-            format="%d",
-            help=(
-                "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
-                "for your age group. Used to calculate ACA subsidy loss from conversions. "
-                "Varies widely by geography — check healthcare.gov for your area."
-            ),
-        )
-        st.session_state["aca_enhanced_subsidies_active"] = st.checkbox(
-            "ACA enhanced subsidies active (ARP/IRA-style)",
-            value=st.session_state.get("aca_enhanced_subsidies_active", False),
-            help=(
-                "Toggle for sensitivity analysis. Default OFF matches current law "
-                "(ARP enhanced subsidies expired Dec 31, 2025). Turn ON to model "
-                "what-if ARP gets extended."
-            ),
-        )
-        st.session_state["advance_aptc_annual"] = st.number_input(
-            "Advance APTC ($/yr)",
-            min_value=0,
-            max_value=60_000,
-            value=_clamp(int(st.session_state.get("advance_aptc_annual", 0)), 0, 60_000),
-            step=100,
-            format="%d",
-            help=(
-                "Annual advance APTC (total IRS pre-payments to your insurer). "
-                "Set 0 if not on marketplace insurance. Reconciled on Form 8962 at "
-                "year-end — conversions that raise MAGI may trigger clawback; per "
-                "P.L. 119-21, no repayment cap applies for TY 2026+."
-            ),
-        )
-        st.session_state["medicare_part_b_base_monthly"] = st.number_input(
-            "Medicare Part B Base Premium ($/mo)",
-            min_value=0.0,
-            max_value=5000.0,
-            value=_clamp(
-                float(st.session_state.get("medicare_part_b_base_monthly", BASE_PART_B / 12)),
-                0.0,
-                5000.0,
-            ),
-            step=1.0,
-            format="%.2f",
-            help=(
-                "Standard Medicare Part B monthly premium (CMS-published; $202.90 in 2026). "
-                "IRMAA surcharges are computed on top of this base."
-            ),
-        )
-        st.session_state["cpi_assumption"] = st.number_input(
-            "Annual CPI Projection Rate (0.025 = 2.5%)",
-            min_value=0.0,
-            max_value=0.06,
-            value=_clamp(float(st.session_state.get("cpi_assumption", 0.025)), 0.0, 0.06),
-            step=0.001,
-            format="%.3f",
-            help=(
-                "Annual CPI projection rate (default 2.5%). Tax brackets, IRMAA tiers, "
-                "FPL, etc. are projected forward from 2026 base values using this rate."
-            ),
-        )
-        _render_prior_year_magi_anchor(hh.base_year)
+        # growth_rate/living_expenses/ACA-benchmark/enhanced-subsidies/
+        # advance-APTC/Medicare-Part-B/CPI/prior-year-MAGI-anchor (incl. its
+        # governance card), survivor-scenario, and inherited-IRAs widgets
+        # moved into render_assumptions_partial as of Task 7 of the
+        # ui-shell-theme-toggle plan. _render_pdf_1040_import (not part of
+        # that field list) now renders AFTER this call instead of between
+        # the MAGI anchor and the survivor-scenario expander — a minor
+        # same-tab reorder accepted under the plan's Task 3 exception (see
+        # render_assumptions_partial's docstring).
+        render_assumptions_partial(hh, joint_sub)
         _render_pdf_1040_import()
-        _render_survivor_scenario(hh.base_year)
-        _render_inherited_iras(hh.base_year)
 
     if not st.session_state.get("_suppress_snapshot_autoload"):
         save_user_defaults(_user_defaults_from_session())
