@@ -300,6 +300,49 @@ def _render_contextual_conflict_field() -> None:
     render_setup(hh, "Contextual")
 
 
+def _render_contextual_stale_field() -> None:
+    """AppTest target: ``your_ira`` confirmed, but its provenance
+    ``recorded_at`` is older than ``engine.data_status.STALE_THRESHOLD_DAYS``
+    -> a "stale" chip for ``your_ira`` specifically.
+    """
+    from datetime import datetime, timedelta
+
+    import streamlit as st
+
+    from config.defaults import DEFAULTS
+    from engine.data_status import STALE_THRESHOLD_DAYS
+    from engine.irmaa import BASE_PART_B
+    from models.household import Household
+    from models.sourced import Provenance, Source, SourcedValue
+    from views.shells import render_setup
+
+    st.session_state["_suppress_snapshot_autoload"] = True
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
+    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
+    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
+    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
+    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
+    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
+    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("advance_aptc_annual", 0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+    st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state.setdefault("_pending_review", set())
+    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+
+    stale_at = datetime.now() - timedelta(days=STALE_THRESHOLD_DAYS + 3)
+    hh = Household()
+    hh.your_ira = SourcedValue(
+        float(DEFAULTS["your_ira"]),
+        Provenance(source=Source.MANUAL, recorded_at=stale_at, detail="test fixture"),
+    )
+    render_setup(hh, "Contextual")
+
+
 def _render_contextual_all_good() -> None:
     """AppTest target: every governed field confirmed recently, nothing
     pending -> the "All set" affirmation and zero chips.
@@ -377,6 +420,30 @@ def test_contextual_missing_field_shows_missing_chip(clean_command_center_caches
     assert any("Your IRA balance" in w and "missing" in w for w in warnings)
 
 
+def test_contextual_chip_jump_button_sets_nav_page(clean_command_center_caches, monkeypatch) -> None:
+    """Clicking a status chip's "Edit in Command Center ->" jump button (the
+    ``command_center_button`` reused from ``views/_shared.py``) must set
+    ``session_state[NAV_KEY]`` to the Setup page label — the actual mechanism
+    ``app.py``'s sidebar radio uses to navigate on the next rerun. Proves the
+    jump button really works when triggered from a Contextual status chip,
+    not just that it renders.
+    """
+    from views._shared import NAV_KEY, SETUP_PAGE
+
+    at = _run_contextual(_render_contextual_missing_fields, monkeypatch)
+    assert not at.exception
+
+    jump_buttons = [b for b in at.button if b.key == "status_jump_your_ira"]
+    assert len(jump_buttons) == 1, (
+        f"expected exactly one jump button with key 'status_jump_your_ira', found {len(jump_buttons)}"
+    )
+
+    jump_buttons[0].click().run()
+
+    assert not at.exception
+    assert at.session_state[NAV_KEY] == SETUP_PAGE
+
+
 def test_contextual_conflict_field_shows_conflict_chip(clean_command_center_caches, monkeypatch) -> None:
     at = _run_contextual(_render_contextual_conflict_field, monkeypatch)
     assert not at.exception
@@ -386,6 +453,15 @@ def test_contextual_conflict_field_shows_conflict_chip(clean_command_center_cach
     assert any("Your IRA balance" in w and "conflict" in w for w in warnings)
 
 
+def test_contextual_stale_field_shows_stale_chip(clean_command_center_caches, monkeypatch) -> None:
+    at = _run_contextual(_render_contextual_stale_field, monkeypatch)
+    assert not at.exception
+
+    assert not any("All set" in s.value for s in at.success)
+    warnings = [w.value for w in at.warning]
+    assert any("Your IRA balance" in w and "stale" in w for w in warnings)
+
+
 def test_contextual_all_good_household_shows_affirmation_no_chips(
     clean_command_center_caches, monkeypatch
 ) -> None:
@@ -393,5 +469,7 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     assert not at.exception
 
     assert any("All set" in s.value for s in at.success)
-    warnings = [w.value for w in at.warning if "rejected" not in w.value]
+    # The fixture's `_pending_review` is empty so no "rejected" candidate
+    # warning can fire here; the all-good household simply has none to filter.
+    warnings = [w.value for w in at.warning]
     assert warnings == []

@@ -105,7 +105,7 @@ def render(hh: Household) -> None:
         hh, _governed_field_keys(hh), pending_candidates, now=datetime.now()
     )
 
-    st.subheader("Data status")
+    st.markdown("**Data status**")
     if not items:
         st.success("✅ All set — every governed field is confirmed and current.")
     else:
