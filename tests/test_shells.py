@@ -1,12 +1,17 @@
-"""Tests for ``views/shells/`` — Task 8 of the ui-shell-theme-toggle plan.
+"""Tests for ``views/shells/`` — Tasks 8-9 of the ui-shell-theme-toggle plan.
 
 Two guarantees per shell:
-  1. Smoke: each of the 3 implemented shells (Classic/Domains/Hub) renders
-     without exception for a demo household.
-  2. Key-set parity: editing the same field (``your_ira``) through Domains
-     and Hub updates the exact same ``session_state`` key Classic does —
-     proving no silent fork of the data model (Owner decisions 4/5 in
+  1. Smoke: each of the 4 implemented shells (Classic/Domains/Hub/Contextual)
+     renders without exception for a demo household.
+  2. Key-set parity: editing the same field (``your_ira``) through
+     Domains/Hub/Contextual updates the exact same ``session_state`` key
+     Classic does — proving no silent fork of the data model (Owner
+     decisions 4/5 in
      ``docs/superpowers/plans/2026-07-24-ui-shell-theme-toggle.md``).
+
+Task 9 adds Contextual's own status-bar tests further down (a household
+with a missing/stale/conflict field shows the matching chip; an all-good
+household shows the "All set" affirmation with no chips).
 
 Each shell is exercised directly via ``AppTest.from_function`` with a small
 self-contained session-state seed (NOT via the real ``app.py`` — Task 10
@@ -36,7 +41,12 @@ from streamlit.testing.v1 import AppTest
 
 from views.shells import THEMES, render_setup
 
-_SHELL_NAME_TO_THEME = {"classic": "Classic", "domains": "Domains", "hub": "Hub"}
+_SHELL_NAME_TO_THEME = {
+    "classic": "Classic",
+    "domains": "Domains",
+    "hub": "Hub",
+    "contextual": "Contextual",
+}
 
 
 def _render_shell(theme: str, seed_1040_scanned: bool = False) -> None:
@@ -135,13 +145,6 @@ def test_themes_list_matches_plan_scope() -> None:
     assert THEMES == ["Classic", "Domains", "Hub", "Contextual"]
 
 
-def test_render_setup_contextual_raises_not_implemented() -> None:
-    from models.household import Household
-
-    with pytest.raises(NotImplementedError):
-        render_setup(Household(), "Contextual")
-
-
 def test_render_setup_unknown_theme_raises_value_error() -> None:
     from models.household import Household
 
@@ -152,22 +155,24 @@ def test_render_setup_unknown_theme_raises_value_error() -> None:
 # --- Smoke tests: each shell renders without exception ---------------------
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub"])
+@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual"])
 def test_shell_renders_without_exception(shell_name, clean_command_center_caches, monkeypatch) -> None:
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
 
 
-# --- Key-set parity: Domains/Hub touch the same session_state key as Classic
+# --- Key-set parity: Domains/Hub/Contextual touch the same session_state key
+# as Classic
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub"])
+@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual"])
 def test_your_ira_edit_updates_same_session_state_key(
     shell_name, clean_command_center_caches, monkeypatch
 ) -> None:
     """Setting ``your_ira`` through each shell must update the identical
-    ``session_state["your_ira"]`` key — proves Domains/Hub don't fork the
-    data model onto a differently-named key (Task 8's key-set parity check).
+    ``session_state["your_ira"]`` key — proves Domains/Hub/Contextual don't
+    fork the data model onto a differently-named key (Task 8's key-set parity
+    check).
     """
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
@@ -212,3 +217,181 @@ def test_1040_import_section_reuses_classic_widget_key(
         f"expected exactly one selectbox with key '_pdf_1040_filing_status_2024' in "
         f"{shell_name}, found {len(matches)}"
     )
+
+
+# --- Contextual status bar (Task 9) -----------------------------------------
+#
+# Each target function below is self-contained (see the module docstring's
+# note on ``AppTest.from_function`` only carrying its OWN source) and shares
+# the same base session_state seed ``_render_shell`` uses, so Classic's
+# wrapped body renders without crashing regardless of which chip case is
+# under test.
+
+
+def _render_contextual_missing_fields() -> None:
+    """AppTest target: a brand-new, never-sourced household -> "missing"
+    chips (``your_ira``, ``grants``, ...), no "All set" affirmation.
+    """
+    import streamlit as st
+
+    from config.defaults import DEFAULTS
+    from engine.irmaa import BASE_PART_B
+    from models.household import Household
+    from views.shells import render_setup
+
+    st.session_state["_suppress_snapshot_autoload"] = True
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
+    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
+    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
+    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
+    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
+    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
+    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("advance_aptc_annual", 0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+    st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state.setdefault("_pending_review", set())
+    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+
+    render_setup(Household(), "Contextual")
+
+
+def _render_contextual_conflict_field() -> None:
+    """AppTest target: ``your_ira`` confirmed but ALSO in ``_pending_review``
+    -> a "conflict" chip for ``your_ira`` specifically.
+    """
+    from datetime import datetime
+
+    import streamlit as st
+
+    from config.defaults import DEFAULTS
+    from engine.irmaa import BASE_PART_B
+    from models.household import Household
+    from models.sourced import Provenance, Source, SourcedValue
+    from views.shells import render_setup
+
+    st.session_state["_suppress_snapshot_autoload"] = True
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
+    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
+    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
+    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
+    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
+    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
+    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("advance_aptc_annual", 0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+    st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state["_pending_review"] = {"your_ira"}
+    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+
+    hh = Household()
+    hh.your_ira = SourcedValue(
+        float(DEFAULTS["your_ira"]),
+        Provenance(source=Source.MANUAL, recorded_at=datetime.now(), detail="test fixture"),
+    )
+    render_setup(hh, "Contextual")
+
+
+def _render_contextual_all_good() -> None:
+    """AppTest target: every governed field confirmed recently, nothing
+    pending -> the "All set" affirmation and zero chips.
+    """
+    from datetime import datetime, timedelta
+
+    import streamlit as st
+
+    from config.defaults import DEFAULTS
+    from engine.irmaa import BASE_PART_B
+    from models.grants import StockGrant
+    from models.household import Household
+    from models.sourced import Provenance, Source, SourcedList, SourcedValue
+    from views.shells import render_setup
+
+    st.session_state["_suppress_snapshot_autoload"] = True
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
+    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
+    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
+    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
+    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
+    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
+    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("advance_aptc_annual", 0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+    st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state.setdefault("_pending_review", set())
+    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+
+    recent = datetime.now() - timedelta(hours=1)
+    prov = Provenance(source=Source.MANUAL, recorded_at=recent, detail="test fixture")
+    hh = Household()
+    hh.your_ira = SourcedValue(float(DEFAULTS["your_ira"]), prov)
+    hh.spouse_ira = SourcedValue(float(DEFAULTS["spouse_ira"]), prov)
+    hh.your_roth = SourcedValue(float(DEFAULTS["your_roth"]), prov)
+    hh.spouse_roth = SourcedValue(float(DEFAULTS["spouse_roth"]), prov)
+    hh.txn_price_now = SourcedValue(float(DEFAULTS["stock_price_now"]), prov)
+    hh.your_ss_fra = SourcedValue(float(DEFAULTS["your_ss_fra"]), prov)
+    hh.spouse_ss_fra = SourcedValue(float(DEFAULTS["spouse_ss_fra"]), prov)
+    hh.grants = SourcedList([StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029)], [prov])
+
+    render_setup(hh, "Contextual")
+
+
+def _run_contextual(target, monkeypatch) -> AppTest:
+    """Same disk-source neutralization as ``_run_shell``, for a bespoke
+    Contextual target function that doesn't go through ``_render_shell``.
+    """
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+
+    at = AppTest.from_function(target)
+    at.run()
+    return at
+
+
+def test_contextual_missing_field_shows_missing_chip(clean_command_center_caches, monkeypatch) -> None:
+    at = _run_contextual(_render_contextual_missing_fields, monkeypatch)
+    assert not at.exception
+
+    # No "All set" affirmation (Command Center's own unrelated "reconciled"
+    # success — driven purely by an empty _pending_review, not by missing
+    # fields — is allowed to coexist and is deliberately not asserted here).
+    assert not any("All set" in s.value for s in at.success)
+    warnings = [w.value for w in at.warning]
+    assert any("Your IRA balance" in w and "missing" in w for w in warnings)
+
+
+def test_contextual_conflict_field_shows_conflict_chip(clean_command_center_caches, monkeypatch) -> None:
+    at = _run_contextual(_render_contextual_conflict_field, monkeypatch)
+    assert not at.exception
+
+    assert not any("All set" in s.value for s in at.success)
+    warnings = [w.value for w in at.warning]
+    assert any("Your IRA balance" in w and "conflict" in w for w in warnings)
+
+
+def test_contextual_all_good_household_shows_affirmation_no_chips(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    at = _run_contextual(_render_contextual_all_good, monkeypatch)
+    assert not at.exception
+
+    assert any("All set" in s.value for s in at.success)
+    warnings = [w.value for w in at.warning if "rejected" not in w.value]
+    assert warnings == []
