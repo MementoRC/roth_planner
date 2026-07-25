@@ -1,7 +1,7 @@
 """Shared sourced-field governance-card rendering, used by every owning
 partial's inline trust/manual-override/confirm UI (Accounts in
-``_accounts.py``; Options in ``_options.py``; Assumptions in a future
-partial) — moved from ``views/setup/command_center.py``'s old generic
+``_accounts.py``; Options in ``_options.py``; Assumptions in ``_assumptions.py``
+as of Task 7) — moved from ``views/setup/command_center.py``'s old generic
 per-pending-field loop (removed in Task 4; see that module's docstring for
 why).
 

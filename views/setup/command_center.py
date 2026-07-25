@@ -5,7 +5,7 @@ rendered here generically for every field flagged pending review
 (``st.session_state["_pending_review"]``, populated by
 ``engine.data_sources.resolver.resolve()`` via ``app.py``'s
 ``get_household()``), now render INLINE within each field's owning partial
-instead (``views/setup/_partials.py``: Accounts —
+instead (``views/setup/_partials/_accounts.py``: Accounts —
 ``render_accounts_partial`` — as of Task 4 of the ui-shell-theme-toggle
 plan; Options in Task 5; Assumptions in Task 7).
 
@@ -20,8 +20,8 @@ Task-4 regression test for the specific before/after proof.
 
 No committed value changes as a result of THIS module without passing
 through ``engine.data_sources.confirm.confirm_field`` — that mutation path
-now lives in ``views/setup/_partials.py``, exercised by the owning
-partials, not here.
+now lives in ``views/setup/_partials/`` (exercised by the owning
+partials), not here.
 """
 
 from __future__ import annotations

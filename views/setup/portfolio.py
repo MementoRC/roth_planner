@@ -1,10 +1,10 @@
 """Portfolio tab — the FinExtract sync core, and the thin tab-body composition.
 
 The equity-grants table (and its ``GRANTS_KEY`` governance card) moved into
-``views/setup/_partials.py:render_options_partial`` as of Task 5 of the
+``views/setup/_partials/_options.py:render_options_partial`` as of Task 5 of the
 ui-shell-theme-toggle plan. The Sync-from-FinExtract button, the read-only
 accounts/holdings tables, and the Account Type Overrides expander moved into
-``views/setup/_partials.py:render_portfolio_partial`` as of Task 6 — this
+``views/setup/_partials/_portfolio.py:render_portfolio_partial`` as of Task 6 — this
 module now holds only ``sync_portfolio_from_finextract`` (the sync core,
 also reused directly by ``views._shared.sync_everything``) and
 ``render_portfolio_tab``, which composes the two partials.
