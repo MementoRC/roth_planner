@@ -18,7 +18,9 @@ from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
 from models.sourced import Source  # noqa: E402
-from views import shells  # noqa: E402
+from views import (  # noqa: E402
+    shells,  # intentionally eager (not lazy/per-branch like other page views) — shells.THEMES needed by sidebar selectbox before page dispatch
+)
 
 
 def _seed_session_state() -> None:
