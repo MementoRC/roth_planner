@@ -25,6 +25,22 @@ passed explicitly as ``container`` — this partial-composability contract
 honor (see ``views/setup/_partials/_portfolio.py``'s module docstring for
 the code-quality fix this exercises): a real Streamlit ``st.tabs(...)`` tab
 object nested inside the outer "Portfolio" tab.
+
+A 7th tab, "1040 Import", was added post-Task-8 (spec-compliance review of
+this commit) to close a parity gap: ``views/setup/parameters.py``'s
+``_render_pdf_1040_import`` (the "Import 1040 PDF" confirm-and-save
+workflow) is a genuine, distinct user-facing feature that Task 8 left
+reachable only from Classic mode. It is imported directly from
+``views.setup.parameters`` despite its leading underscore — the same
+pattern ``views/setup/__init__.py`` already uses for this exact function
+(Python does not enforce module privacy, and this codebase already crosses
+"private" module boundaries this way). Called with no ``container`` arg,
+same as ``render_data_bridge_tab`` — it renders via bare ``st.*`` calls
+internally and must run inside a ``with`` block so Streamlit's ambient
+"current container" places it in this tab. It reuses the exact SAME widget
+keys Classic's copy does (``_pdf_1040_filing_status_<year>`` /
+``_pdf_1040_save_<year>``) — no new keys introduced, per the plan's "no
+session_state key renames" principle (Owner decision 4).
 """
 
 from __future__ import annotations
@@ -40,14 +56,31 @@ from views.setup._partials import (
     render_portfolio_partial,
 )
 from views.setup.data_bridge import render_data_bridge_tab
+from views.setup.parameters import _render_pdf_1040_import
 
 
 def render(hh: Household) -> None:
-    """Render the Domains Setup layout: 6 tabs grouped by data domain."""
+    """Render the Domains Setup layout: 7 tabs grouped by data domain."""
     st.title("⚙️ Setup — Domains")
 
-    tab_household, tab_accounts, tab_options, tab_assumptions, tab_portfolio, tab_bridge = (
-        st.tabs(["Household", "Accounts", "Options", "Assumptions", "Portfolio", "Data bridge"])
+    (
+        tab_household,
+        tab_accounts,
+        tab_options,
+        tab_assumptions,
+        tab_portfolio,
+        tab_bridge,
+        tab_1040,
+    ) = st.tabs(
+        [
+            "Household",
+            "Accounts",
+            "Options",
+            "Assumptions",
+            "Portfolio",
+            "Data bridge",
+            "1040 Import",
+        ]
     )
 
     tab_household.subheader("Filing status")
@@ -80,6 +113,11 @@ def render(hh: Household) -> None:
         # tab (same pattern views/setup/__init__.py's Classic composition
         # already uses for this exact function).
         render_data_bridge_tab(hh)
+
+    with tab_1040:
+        # _render_pdf_1040_import() takes no container arg — same reason as
+        # render_data_bridge_tab above.
+        _render_pdf_1040_import()
 
 
 __all__ = ["render"]

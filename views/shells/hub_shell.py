@@ -19,6 +19,15 @@ code-quality fix that made this safe). Nesting an expander inside another
 expander is expander-inside-expander — Streamlit's docs discourage this for
 readability but it does not raise; verified empirically via this module's
 AppTest smoke test in ``tests/test_shells.py``.
+
+A 7th expander, "1040 Import", was added post-Task-8 (spec-compliance
+review of this commit) — see ``views/shells/domains_shell.py``'s module
+docstring for the full rationale (parity gap: ``_render_pdf_1040_import``
+was reachable only from Classic). ``_render_pdf_1040_import`` itself opens
+its own inner ``st.expander(...)`` (see ``views/setup/parameters.py``), so
+this is a third level of expander-nesting here — same "discouraged but
+doesn't raise" caveat as above, verified via this module's AppTest smoke
+test.
 """
 
 from __future__ import annotations
@@ -34,10 +43,11 @@ from views.setup._partials import (
     render_portfolio_partial,
 )
 from views.setup.data_bridge import render_data_bridge_tab
+from views.setup.parameters import _render_pdf_1040_import
 
 
 def render(hh: Household) -> None:
-    """Render the Hub Setup layout: 6 expanders grouped by data domain, one page."""
+    """Render the Hub Setup layout: 7 expanders grouped by data domain, one page."""
     st.title("⚙️ Setup — Hub")
 
     exp_household = st.expander("🏠 Household", expanded=True)
@@ -74,6 +84,11 @@ def render(hh: Household) -> None:
         # render_data_bridge_tab(hh) takes no container arg — see
         # domains_shell.py's identical note on this same call.
         render_data_bridge_tab(hh)
+
+    with st.expander("📄 1040 Import"):
+        # _render_pdf_1040_import() takes no container arg and opens its own
+        # inner expander — see domains_shell.py's identical note.
+        _render_pdf_1040_import()
 
 
 __all__ = ["render"]

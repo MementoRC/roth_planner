@@ -39,7 +39,7 @@ from views.shells import THEMES, render_setup
 _SHELL_NAME_TO_THEME = {"classic": "Classic", "domains": "Domains", "hub": "Hub"}
 
 
-def _render_shell(theme: str) -> None:
+def _render_shell(theme: str, seed_1040_scanned: bool = False) -> None:
     """AppTest.from_function target: seed a minimal demo session_state, then
     render the shell named by *theme* ("Classic"/"Domains"/"Hub").
 
@@ -50,11 +50,17 @@ def _render_shell(theme: str) -> None:
     ``app.py:_seed_session_state`` (values sourced from
     ``config.defaults.DEFAULTS`` to stay in sync with the real app's demo
     numbers).
+
+    ``seed_1040_scanned=True`` additionally seeds
+    ``st.session_state["_pdf_1040_scanned"]`` with a fake scanned
+    Form1040Record, exercising the "Import 1040 PDF" section's confirmation
+    UI (added to Domains/Hub post-Task-8 for parity with Classic).
     """
     import streamlit as st
 
     from config.defaults import DEFAULTS
     from engine.irmaa import BASE_PART_B
+    from engine.tax_return_pdf import Form1040Record
     from models.household import Household
     from views.shells import render_setup
 
@@ -76,10 +82,26 @@ def _render_shell(theme: str) -> None:
     st.session_state.setdefault("_pending_review", set())
     st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
 
+    if seed_1040_scanned:
+        st.session_state["_pdf_1040_scanned"] = {
+            2024: Form1040Record(
+                tax_year=2024,
+                agi=280_000.0,
+                tax_exempt_interest=1_000.0,
+                taxable_ss=0.0,
+                qualified_dividends=0.0,
+                ordinary_dividends=0.0,
+                feie=0.0,
+                magi=281_000.0,
+                filing_status=None,
+                captured_at="2026-07-17T00:00:00+00:00",
+            )
+        }
+
     render_setup(Household(), theme)
 
 
-def _run_shell(shell_name: str, monkeypatch) -> AppTest:
+def _run_shell(shell_name: str, monkeypatch, seed_1040_scanned: bool = False) -> AppTest:
     """Run the shell named by *shell_name* ("classic"/"domains"/"hub") under
     ``AppTest``, neutralizing local-disk sources of non-determinism the same
     way ``tests/test_setup_shell_characterization.py``'s ``setup_app_test``
@@ -94,7 +116,10 @@ def _run_shell(shell_name: str, monkeypatch) -> AppTest:
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_function(_render_shell, kwargs={"theme": _SHELL_NAME_TO_THEME[shell_name]})
+    at = AppTest.from_function(
+        _render_shell,
+        kwargs={"theme": _SHELL_NAME_TO_THEME[shell_name], "seed_1040_scanned": seed_1040_scanned},
+    )
     at.run()
     return at
 
@@ -151,3 +176,39 @@ def test_your_ira_edit_updates_same_session_state_key(
 
     assert not at.exception
     assert at.session_state["your_ira"] == 999_000
+
+
+# --- 1040 PDF import section: parity fix (Domains/Hub, post-Task-8) --------
+
+
+@pytest.mark.parametrize("shell_name", ["domains", "hub"])
+def test_1040_import_section_renders_without_exception(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
+    """The "Import 1040 PDF" workflow (``_render_pdf_1040_import``) is now
+    reachable from Domains/Hub, not just Classic — closes the parity gap a
+    spec-compliance review of Task 8 found. With no scanned record pending,
+    it should render its "scan on YTD Income" caption without exception.
+    """
+    at = _run_shell(shell_name, monkeypatch)
+    assert not at.exception
+
+
+@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub"])
+def test_1040_import_section_reuses_classic_widget_key(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
+    """With a scanned 1040 record pending, Domains/Hub's confirmation
+    selectbox must carry the EXACT SAME key Classic's copy of this widget
+    uses (``_pdf_1040_filing_status_2024``) — proving the new section
+    reuses Classic's existing widget key rather than minting a new one
+    (plan Owner decision 4: no session_state key renames/forks).
+    """
+    at = _run_shell(shell_name, monkeypatch, seed_1040_scanned=True)
+    assert not at.exception
+
+    matches = [w for w in at.selectbox if w.key == "_pdf_1040_filing_status_2024"]
+    assert len(matches) == 1, (
+        f"expected exactly one selectbox with key '_pdf_1040_filing_status_2024' in "
+        f"{shell_name}, found {len(matches)}"
+    )
