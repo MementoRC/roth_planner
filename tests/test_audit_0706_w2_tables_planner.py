@@ -9,10 +9,23 @@ class TestPortfolioColumnConfig:
     """Verify NumberColumn formatting is present in all three portfolio table helpers."""
 
     def _get_source(self, func_name: str) -> str:
-        from views.setup import portfolio as port_mod
+        """``_render_accounts_table``/``_render_holdings_table`` moved from
+        ``views.setup.portfolio`` into ``views.setup._partials`` as part of
+        Task 6 of the ui-shell-theme-toggle plan.
+        """
+        from views.setup import _partials as partials_mod
 
-        func = getattr(port_mod, func_name)
+        func = getattr(partials_mod, func_name)
         return inspect.getsource(func)
+
+    def _get_options_partial_source(self) -> str:
+        """The equity-grants table moved into render_options_partial (Task 5,
+        ui-shell-theme-toggle plan) — grants-specific assertions below read
+        its source instead of the old views.setup.portfolio._render_grants_section.
+        """
+        from views.setup._partials import render_options_partial
+
+        return inspect.getsource(render_options_partial)
 
     def test_accounts_table_has_market_value_format(self):
         """_render_accounts_table must include a NumberColumn for market_value."""
@@ -36,8 +49,8 @@ class TestPortfolioColumnConfig:
         assert "%,.0f" in src
 
     def test_grants_section_has_current_value_format(self):
-        """_render_grants_section must include a NumberColumn for current_value."""
-        src = self._get_source("_render_grants_section")
+        """render_options_partial's grants table must include a NumberColumn for current_value."""
+        src = self._get_options_partial_source()
         assert "current_value" in src
         assert "NumberColumn" in src
         assert "$%,.0f" in src
@@ -53,8 +66,8 @@ class TestPortfolioColumnConfig:
         assert "column_config" in src
 
     def test_column_config_kwarg_present_in_grants_section(self):
-        """_render_grants_section must pass column_config to st.dataframe."""
-        src = self._get_source("_render_grants_section")
+        """render_options_partial's grants table must pass column_config to st.dataframe."""
+        src = self._get_options_partial_source()
         assert "column_config" in src
 
 

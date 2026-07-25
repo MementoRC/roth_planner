@@ -18,6 +18,9 @@ from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
 from models.sourced import Source  # noqa: E402
+from views import (  # noqa: E402
+    shells,  # intentionally eager (not lazy/per-branch like other page views) — shells.THEMES needed by sidebar selectbox before page dispatch
+)
 
 
 def _seed_session_state() -> None:
@@ -153,6 +156,15 @@ if _pdf_records:
 
 st.sidebar.title("🎯 Roth Planner")
 st.sidebar.markdown("---")
+
+# UI-shell-theme-toggle plan (Task 10): live-swappable Setup-domain layouts.
+# Deliberately session-local only, NOT persisted to .user_defaults.json — this
+# is a UI display preference, not household financial data (unlike every
+# other seeded key in _seed_session_state above, which round-trips through
+# config.loader/SCALAR_KEYS). No existing precedent persists a UI-only
+# setting, so per the plan's own scope this stays ephemeral; index=0 ("Classic")
+# on every fresh session preserves today's exact default behavior.
+st.sidebar.selectbox("Layout", shells.THEMES, key="ui_theme", index=0)
 
 page = st.sidebar.radio(
     "Navigate",
@@ -366,9 +378,7 @@ def get_household() -> Household:
 
 # Route to page
 if page == "⚙️ Setup":
-    from views import setup
-
-    setup.render(get_household())
+    shells.render_setup(get_household(), st.session_state["ui_theme"])
 elif page == "📊 Dashboard":
     from views.dashboard import render
 

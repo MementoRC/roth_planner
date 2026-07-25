@@ -1,10 +1,16 @@
-"""Parameters tab — Me/Spouse/Joint sub-tabs (survivor, inherited IRAs, PDF 1040 import, MAGI anchor, filing-status pickers)."""
+"""Parameters tab — Me/Spouse/Joint sub-tabs (PDF 1040 import, filing-status pickers).
+
+Growth-rate/living-expenses/ACA-benchmark/enhanced-subsidies/advance-APTC/
+Medicare-Part-B/CPI/prior-year-MAGI-anchor widgets, plus the survivor-scenario
+and inherited-IRAs expanders, moved into
+``views/setup/_partials._assumptions:render_assumptions_partial`` as of Task 7
+of the ui-shell-theme-toggle plan — this module's Joint sub-tab now just calls
+that partial (see ``render_parameters_tab``).
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
-from typing import TypeVar
 
 import streamlit as st
 
@@ -12,48 +18,19 @@ from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
-from engine.data_sources.record import record_ss_fra_candidate
-from engine.irmaa import BASE_PART_B
-from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from engine.tax_return_pdf import (
     Form1040Record,
     load_pdf_tax_records,
     save_pdf_tax_records,
 )
 from models.household import Household
-from models.sourced import Source
 from views._format import fmt_dollars
+from views.setup._partials import (
+    render_accounts_partial,
+    render_assumptions_partial,
+    render_household_partial,
+)
 from views.setup._state import _user_defaults_from_session
-
-_HH_FILING_LABEL_MFJ = "Married filing jointly"
-_HH_FILING_LABEL_SINGLE = "Single"
-
-_Num = TypeVar("_Num", int, float)
-
-
-def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
-    """Clamp ``value`` into ``[lo, hi]``.
-
-    Cached/uploaded JSON (.user_defaults.json, .tax_pdf_cache.json) can seed a
-    widget ``value`` outside its ``[min_value, max_value]`` bounds, and Streamlit
-    raises ``StreamlitAPIException`` at render time — crashing the Joint sub-tab on
-    load with no user interaction (audit C4). The widget bounds are widened to
-    generous limits so no legitimate value is ever out of range; this clamp is a
-    final backstop so genuinely corrupt data still cannot crash the render.
-    """
-    return min(max(value, lo), hi)
-
-
-def filing_status_from_label(label: str) -> str:
-    """Map the household filing-status radio label to the engine's canonical value.
-
-    The engine compares ``hh.filing_status`` against ``"MFJ"`` / ``"Single"``
-    (capitalized). This is a DIFFERENT vocabulary from the lowercase
-    ``_FILING_STATUS_OPTIONS`` used by the PDF-1040 import widget to tag an
-    imported prior-year return — the two must not be conflated, or the engine's
-    ``== "Single"`` branches stay dead code (R1 #6).
-    """
-    return _HH_FILING_LABEL_SINGLE if label == _HH_FILING_LABEL_SINGLE else "MFJ"
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -75,147 +52,6 @@ def apply_single_filer(hh: Household) -> Household:
         spouse_aca_enrolled=False,
         spouse_has_workplace_plan=False,
     )
-
-
-def _render_survivor_scenario(base_year: int) -> None:
-    """Render the Survivor scenario expander in the Joint sub-tab."""
-    current: dict = st.session_state.get("survivor") or {}
-
-    with st.expander("Survivor scenario (advanced sensitivity)", expanded=False):
-        st.caption(
-            "Optional. Models death of one spouse mid-projection. "
-            "Survivor switches to single-filer brackets, std deduction, and senior bonus "
-            "starting death_year + 1. Deceased's IRA rolls to survivor (spousal rollover); "
-            "deceased's SS ends. "
-            "NOT YET MODELED: SS survivor benefit step-up; inherited-IRA stretch rules."
-        )
-        # Seed the Enable flag once from any persisted/uploaded survivor scenario. Do NOT
-        # pass value= alongside the persistent key: Streamlit ignores value= once the key
-        # exists, so after an uncheck a mid-session upload that sets "survivor" would be
-        # re-nulled by the else-branch below. The upload path sets "_survivor_enabled" too
-        # (audit C9 / ui-streamlit-5).
-        st.session_state.setdefault("_survivor_enabled", bool(current))
-        enabled = st.checkbox(
-            "Enable survivor scenario",
-            key="_survivor_enabled",
-        )
-        if enabled:
-            who_options = ["Me", "Spouse"]
-            who_default = 0 if current.get("who_dies", "you") == "you" else 1
-            who_choice = st.radio(
-                "Who dies?",
-                who_options,
-                index=who_default,
-                horizontal=True,
-                key="_survivor_who_dies",
-            )
-            who_dies = "you" if who_choice == "Me" else "spouse"
-            death_year = st.number_input(
-                "Year of death",
-                min_value=base_year,
-                max_value=base_year + 50,
-                value=_clamp(
-                    int(current.get("death_year", base_year + 5)), base_year, base_year + 50
-                ),
-                step=1,
-                format="%d",
-                help=(
-                    "Calendar year in which the spouse dies. "
-                    "MFJ filing applies for that year; Single filing begins the following year."
-                ),
-                key="_survivor_death_year",
-            )
-            st.session_state["survivor"] = {"who_dies": who_dies, "death_year": int(death_year)}
-        else:
-            st.session_state["survivor"] = None
-
-
-def _render_inherited_iras(base_year: int) -> None:
-    """Render the Inherited IRAs expander in the Joint sub-tab."""
-
-    with st.expander("Inherited IRAs (non-spousal, 10-year rule)", expanded=False):
-        st.caption(
-            "Model non-spousal inherited IRAs subject to the SECURE Act 10-year rule. "
-            "The beneficiary must fully distribute the balance within 10 years of inheritance. "
-            "Distributions add to ordinary income (MAGI). "
-            "Leave empty if no inheritances are modeled."
-        )
-
-        iiras: list[dict] = list(st.session_state.get("inherited_iras") or [])
-        to_remove: int | None = None
-
-        for idx, entry in enumerate(iiras):
-            col_bal, col_yr, col_rate, col_owner, col_remove = st.columns([3, 2, 2, 2, 1])
-            new_bal = col_bal.number_input(
-                "Balance ($)",
-                min_value=0,
-                max_value=100_000_000,
-                value=_clamp(int(entry.get("balance", 0)), 0, 100_000_000),
-                step=10_000,
-                format="%d",
-                key=f"iira_balance_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            new_yr = col_yr.number_input(
-                "Year inherited",
-                min_value=base_year - 15,
-                max_value=base_year + 30,
-                value=_clamp(
-                    int(entry.get("inherited_year", base_year + 5)), base_year - 15, base_year + 30
-                ),
-                step=1,
-                format="%d",
-                key=f"iira_year_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            new_rate = col_rate.number_input(
-                "Growth Rate (%)",
-                min_value=0.0,
-                max_value=15.0,
-                value=float(entry.get("growth_rate", 0.07)) * 100,
-                step=0.5,
-                format="%.1f",
-                key=f"iira_rate_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            owner_options = ["Me", "Spouse"]
-            owner_val = entry.get("owner", "you")
-            owner_idx_sel = 0 if owner_val == "you" else 1
-            owner_choice = col_owner.radio(
-                "Owner",
-                owner_options,
-                index=owner_idx_sel,
-                horizontal=True,
-                key=f"iira_owner_{idx}",
-                label_visibility="collapsed" if idx > 0 else "visible",
-            )
-            if col_remove.button("Remove", key=f"iira_remove_{idx}"):
-                to_remove = idx
-            iiras[idx] = {
-                "balance": float(new_bal),
-                "inherited_year": int(new_yr),
-                "owner": "you" if owner_choice == "Me" else "spouse",
-                "growth_rate": new_rate / 100.0,
-            }
-
-        if to_remove is not None:
-            iiras.pop(to_remove)
-            st.session_state["inherited_iras"] = iiras
-            st.rerun()
-
-        if st.button("Add inherited IRA", key="iira_add"):
-            iiras.append(
-                {
-                    "balance": 0.0,
-                    "inherited_year": base_year + 5,
-                    "owner": "you",
-                    "growth_rate": 0.07,
-                }
-            )
-            st.session_state["inherited_iras"] = iiras
-            st.rerun()
-
-        st.session_state["inherited_iras"] = iiras
 
 
 _FILING_STATUS_OPTIONS = [
@@ -307,102 +143,10 @@ def _render_pdf_1040_import() -> None:
                 st.rerun()
 
 
-def _render_prior_year_magi_anchor(base_year: int) -> None:
-    """Render the Prior-year filed MAGI anchor expander in the Joint sub-tab."""
-    with st.expander("Prior-year filed MAGI anchor (IRMAA lookback)", expanded=False):
-        st.caption(
-            "Optional. Enter actual filed MAGI from your tax return. "
-            "The engine will use these values instead of projecting MAGI for the "
-            "IRMAA 2-year-lookback "
-            f"(years {base_year} and {base_year + 1} IRMAA will be anchored to these). "
-            "Leave 0 to use projected MAGI."
-        )
-        prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
-
-        v1 = st.number_input(
-            f"{base_year - 2} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 2, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
-            help=(
-                f"Filed MAGI from your {base_year - 2} tax return. "
-                f"Anchors {base_year} IRMAA via the 2-year lookback."
-            ),
-        )
-        v2 = st.number_input(
-            f"{base_year - 1} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 1, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
-            help=(
-                f"Filed MAGI from your {base_year - 1} tax return. "
-                f"Anchors {base_year + 1} IRMAA via the 2-year lookback."
-            ),
-        )
-
-        if v1 > 0:
-            prior_magi[base_year - 2] = float(v1)
-        else:
-            prior_magi.pop(base_year - 2, None)
-
-        if v2 > 0:
-            prior_magi[base_year - 1] = float(v2)
-        else:
-            prior_magi.pop(base_year - 1, None)
-
-        st.session_state["prior_year_magi"] = prior_magi
-
-
-def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
-    """Fetch, match, and record the FRA SSA benefit for *owner* ('you' or 'spouse').
-
-    Records the matched monthly benefit as a FINEXTRACT_LIVE candidate
-    (engine.data_sources.record.record_ss_fra_candidate) instead of writing
-    directly to session_state — the value sits pending until confirmed via
-    the Setup / Command Center review gate (same freeze-until-confirm seam
-    as your_ira/your_roth/txn_price_now). Also caches the raw snapshot.
-    Returns a warning message on failure/no-match, or None on success.
-    """
-    snap = fetch_ssa_snapshot()
-    if snap.error:
-        return f"SSA sync failed: {snap.error}"
-    match = match_fra_estimate(snap.estimates, fra_age)
-    if match is None:
-        return "No SSA benefit estimate found near the configured FRA age; sync skipped."
-    field_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
-    record_ss_fra_candidate(
-        field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
-    )
-    st.session_state[f"ssa_snapshot_{owner}"] = snap
-    save_ssa_snapshot(snap, owner=owner)
-    return None
-
-
 def render_parameters_tab(hh: Household) -> None:
     """Extracted from setup.py render() — parameters tab body."""
-    _synced = bool(st.session_state.get("portfolio_snapshot"))
-
     # Household filing status — gate that activates the engine's Single-filer paths.
-    _filing_choice = st.radio(
-        "Filing status",
-        [_HH_FILING_LABEL_MFJ, _HH_FILING_LABEL_SINGLE],
-        index=0 if st.session_state.get("filing_status", "MFJ") == "MFJ" else 1,
-        horizontal=True,
-        key="_hh_filing_status_choice",
-        help=(
-            "Single models a single-from-the-start household: spouse inputs are "
-            "zeroed and single-filer brackets, standard deduction, IRMAA/NIIT "
-            "thresholds, and ACA FPL apply. To model a spouse dying mid-projection, "
-            "leave this on Married filing jointly and use the Survivor scenario "
-            "(Joint sub-tab)."
-        ),
-    )
-    _is_single = filing_status_from_label(_filing_choice) == "Single"
-    st.session_state["filing_status"] = "Single" if _is_single else "MFJ"
+    _is_single = bool(render_household_partial(hh, st, "joint"))
     # NOTE: spouse inputs are intentionally NOT zeroed in session_state here — doing so
     # permanently destroyed the user's real spouse balances on a Single→MFJ round-trip
     # (audit C9 / ui-streamlit-4). The spouse widgets are disabled while Single, and the
@@ -412,93 +156,8 @@ def render_parameters_tab(hh: Household) -> None:
     me_sub, spouse_sub, joint_sub = st.tabs(["Me", "Spouse", "Joint"])
 
     with me_sub:
-        st.session_state.your_ira = st.number_input(
-            "Your Trad IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.your_ira,
-            step=50_000,
-            format="%d",
-            disabled=_synced,
-            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
-        )
-        st.session_state.your_roth = st.number_input(
-            "Your Roth IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.get("your_roth", 0),
-            step=50_000,
-            format="%d",
-            disabled=_synced,
-            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
-        )
-        st.session_state.your_age = st.number_input(
-            "Your Age",
-            value=st.session_state.your_age,
-            step=1,
-            format="%d",
-        )
-        st.session_state.your_has_workplace_plan = st.checkbox(
-            "You have a workplace retirement plan (401k/403b)",
-            value=st.session_state.your_has_workplace_plan,
-        )
-        _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
-        your_fra_age = st.session_state.get("your_fra_age", 67)
-        st.session_state.your_ss_fra = st.number_input(
-            f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
-            min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.your_ss_fra)),
-            step=100,
-            format="%d",
-            disabled=_ssa_synced_you,
-            help="Auto-synced from FinExtract (SSA benefit estimate)" if _ssa_synced_you else None,
-        )
-        if st.button("Sync SS from FinExtract", key="_sync_ssa_you_btn"):
-            _warning = _sync_ssa_for("you", your_fra_age)
-            if _warning:
-                st.warning(_warning)
-            else:
-                st.rerun()
-        st.session_state.your_ss_start_age = st.number_input(
-            "Your SS claim age",
-            min_value=62,
-            max_value=70,
-            value=st.session_state.get("your_ss_start_age", 70),
-            step=1,
-            format="%d",
-        )
-        _your_rmd_stored = st.session_state.get("your_rmd_start_age")
-        if _your_rmd_stored is not None and _your_rmd_stored not in {73, 75}:
-            st.warning(
-                f"Stored RMD start age {_your_rmd_stored} is not valid (must be 73 or 75); "
-                "falling back to 75."
-            )
-        st.session_state.your_rmd_start_age = st.selectbox(
-            "Your RMD start age",
-            options=[73, 75],
-            index=0 if st.session_state.get("your_rmd_start_age", 75) == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
-        )
-        st.session_state.your_defer_first_rmd = st.checkbox(
-            "Defer first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("your_defer_first_rmd", False),
-            help=(
-                "IRC §401(a)(9)(C)(ii): delay the first RMD to April 1 of the following year. "
-                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
-            ),
-        )
-        st.session_state.your_fra_age = st.number_input(
-            "Your FRA (Full Retirement Age)",
-            min_value=65,
-            max_value=70,
-            value=st.session_state.get("your_fra_age", 67),
-            step=1,
-            format="%d",
-            help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
-        )
-        st.session_state.your_aca = st.checkbox(
-            "You on ACA Marketplace",
-            value=st.session_state.your_aca,
-            help="Check if you are enrolled in ACA marketplace (not employer plan)",
-        )
+        render_household_partial(hh, me_sub, "your")
+        render_accounts_partial(hh, me_sub, "your")
 
     with spouse_sub:
         if _is_single:
@@ -506,210 +165,21 @@ def render_parameters_tab(hh: Household) -> None:
                 "Single filer — spouse inputs are disabled and treated as zero. "
                 "Switch Filing status to Married filing jointly to re-enable."
             )
-        st.session_state.spouse_ira = st.number_input(
-            "Spouse Trad IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.spouse_ira,
-            step=50_000,
-            format="%d",
-            disabled=_synced or _is_single,
-            help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
-        )
-        st.session_state.spouse_roth = st.number_input(
-            "Spouse Roth IRA" + (" (synced)" if _synced else ""),
-            min_value=0,
-            value=st.session_state.get("spouse_roth", 0),
-            step=50_000,
-            format="%d",
-            disabled=_synced or _is_single,
-            help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
-        )
-        st.session_state.spouse_age = st.number_input(
-            "Spouse Age",
-            value=st.session_state.spouse_age,
-            step=1,
-            format="%d",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_has_workplace_plan = st.checkbox(
-            "Spouse has a workplace retirement plan (401k/403b)",
-            value=st.session_state.spouse_has_workplace_plan,
-            disabled=_is_single,
-        )
-        _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
-        spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
-        st.session_state.spouse_ss_fra = st.number_input(
-            f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
-            + (" (synced)" if _ssa_synced_spouse else ""),
-            min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.spouse_ss_fra)),
-            step=100,
-            format="%d",
-            disabled=_is_single or _ssa_synced_spouse,
-            help="Auto-synced from FinExtract (SSA benefit estimate)"
-            if _ssa_synced_spouse
-            else None,
-        )
-        if st.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
-            _warning = _sync_ssa_for("spouse", spouse_fra_age)
-            if _warning:
-                st.warning(_warning)
-            else:
-                st.rerun()
-        st.session_state.spouse_ss_start_age = st.number_input(
-            "Spouse SS claim age",
-            min_value=62,
-            max_value=70,
-            value=st.session_state.get("spouse_ss_start_age", 70),
-            step=1,
-            format="%d",
-            disabled=_is_single,
-        )
-        _spouse_rmd_stored = st.session_state.get("spouse_rmd_start_age")
-        if _spouse_rmd_stored is not None and _spouse_rmd_stored not in {73, 75}:
-            st.warning(
-                f"Stored spouse RMD start age {_spouse_rmd_stored} is not valid (must be 73 or 75); "
-                "falling back to 75."
-            )
-        st.session_state.spouse_rmd_start_age = st.selectbox(
-            "Spouse RMD start age",
-            options=[73, 75],
-            index=0 if st.session_state.get("spouse_rmd_start_age", 75) == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_defer_first_rmd = st.checkbox(
-            "Defer spouse's first RMD to April 1 (two RMDs in year 2)",
-            value=st.session_state.get("spouse_defer_first_rmd", False),
-            help=(
-                "IRC §401(a)(9)(C)(ii): delay the spouse's first RMD to April 1 of the following year. "
-                "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
-            ),
-            disabled=_is_single,
-        )
-        st.session_state.spouse_is_sole_beneficiary = st.checkbox(
-            "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
-            "Last Survivor Table for RMDs)",
-            value=st.session_state.get("spouse_is_sole_beneficiary", False),
-            help=(
-                "26 CFR §1.401(a)(9)-9 Table II: when your sole primary IRA "
-                "beneficiary is a spouse more than 10 years younger, the IRS "
-                "requires this larger-divisor table instead of the standard "
-                "Uniform Lifetime Table — producing a smaller RMD. Only applies "
-                "when the age gap qualifies; otherwise the standard table is used."
-            ),
-            disabled=_is_single,
-        )
-        st.session_state.spouse_fra_age = st.number_input(
-            "Spouse FRA (Full Retirement Age)",
-            min_value=65,
-            max_value=70,
-            value=st.session_state.get("spouse_fra_age", 67),
-            step=1,
-            format="%d",
-            help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
-            disabled=_is_single,
-        )
-        st.session_state.spouse_aca = st.checkbox(
-            "Spouse on ACA Marketplace",
-            value=st.session_state.spouse_aca,
-            help="Check if spouse is enrolled in ACA marketplace",
-            disabled=_is_single,
-        )
+        render_household_partial(hh, spouse_sub, "spouse")
+        render_accounts_partial(hh, spouse_sub, "spouse")
 
     with joint_sub:
-        st.session_state.growth_rate = st.slider(
-            "Growth Rate %",
-            3.0,
-            12.0,
-            _clamp(st.session_state.growth_rate, 3.0, 12.0),
-            0.5,
-            format="%.1f%%",
-        )
-        st.session_state.living_expenses = st.number_input(
-            "Annual Living Expenses",
-            min_value=0,
-            value=st.session_state.living_expenses,
-            step=5_000,
-            format="%d",
-        )
-        st.session_state.txn_price = st.number_input(
-            f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
-            min_value=0,
-            value=st.session_state.txn_price,
-            step=5,
-            format="%d",
-        )
-        st.session_state["aca_benchmark_premium_annual"] = st.number_input(
-            "ACA Benchmark Premium ($/yr)",
-            min_value=0,
-            max_value=60_000,
-            value=_clamp(
-                int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)), 0, 60_000
-            ),
-            step=100,
-            format="%d",
-            help=(
-                "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
-                "for your age group. Used to calculate ACA subsidy loss from conversions. "
-                "Varies widely by geography — check healthcare.gov for your area."
-            ),
-        )
-        st.session_state["aca_enhanced_subsidies_active"] = st.checkbox(
-            "ACA enhanced subsidies active (ARP/IRA-style)",
-            value=st.session_state.get("aca_enhanced_subsidies_active", False),
-            help=(
-                "Toggle for sensitivity analysis. Default OFF matches current law "
-                "(ARP enhanced subsidies expired Dec 31, 2025). Turn ON to model "
-                "what-if ARP gets extended."
-            ),
-        )
-        st.session_state["advance_aptc_annual"] = st.number_input(
-            "Advance APTC ($/yr)",
-            min_value=0,
-            max_value=60_000,
-            value=_clamp(int(st.session_state.get("advance_aptc_annual", 0)), 0, 60_000),
-            step=100,
-            format="%d",
-            help=(
-                "Annual advance APTC (total IRS pre-payments to your insurer). "
-                "Set 0 if not on marketplace insurance. Reconciled on Form 8962 at "
-                "year-end — conversions that raise MAGI may trigger clawback; per "
-                "P.L. 119-21, no repayment cap applies for TY 2026+."
-            ),
-        )
-        st.session_state["medicare_part_b_base_monthly"] = st.number_input(
-            "Medicare Part B Base Premium ($/mo)",
-            min_value=0.0,
-            max_value=5000.0,
-            value=_clamp(
-                float(st.session_state.get("medicare_part_b_base_monthly", BASE_PART_B / 12)),
-                0.0,
-                5000.0,
-            ),
-            step=1.0,
-            format="%.2f",
-            help=(
-                "Standard Medicare Part B monthly premium (CMS-published; $202.90 in 2026). "
-                "IRMAA surcharges are computed on top of this base."
-            ),
-        )
-        st.session_state["cpi_assumption"] = st.number_input(
-            "Annual CPI Projection Rate (0.025 = 2.5%)",
-            min_value=0.0,
-            max_value=0.06,
-            value=_clamp(float(st.session_state.get("cpi_assumption", 0.025)), 0.0, 0.06),
-            step=0.001,
-            format="%.3f",
-            help=(
-                "Annual CPI projection rate (default 2.5%). Tax brackets, IRMAA tiers, "
-                "FPL, etc. are projected forward from 2026 base values using this rate."
-            ),
-        )
-        _render_prior_year_magi_anchor(hh.base_year)
+        # growth_rate/living_expenses/ACA-benchmark/enhanced-subsidies/
+        # advance-APTC/Medicare-Part-B/CPI/prior-year-MAGI-anchor (incl. its
+        # governance card), survivor-scenario, and inherited-IRAs widgets
+        # moved into render_assumptions_partial as of Task 7 of the
+        # ui-shell-theme-toggle plan. _render_pdf_1040_import (not part of
+        # that field list) now renders AFTER this call instead of between
+        # the MAGI anchor and the survivor-scenario expander — a minor
+        # same-tab reorder accepted under the plan's Task 3 exception (see
+        # render_assumptions_partial's docstring).
+        render_assumptions_partial(hh, joint_sub)
         _render_pdf_1040_import()
-        _render_survivor_scenario(hh.base_year)
-        _render_inherited_iras(hh.base_year)
 
     if not st.session_state.get("_suppress_snapshot_autoload"):
         save_user_defaults(_user_defaults_from_session())

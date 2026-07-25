@@ -44,19 +44,24 @@ class TestPyodideGating:
 
         Post-W2-Part-B refactor: the actual ``fetch_portfolio(`` call now lives in
         ``sync_portfolio_from_finextract`` (extracted so ``views._shared.
-        sync_everything`` can reuse it) — ``render_portfolio_tab`` only calls that
-        helper, still after the ``is_pyodide()`` guard.
+        sync_everything`` can reuse it). Post-Task-6 (ui-shell-theme-toggle plan):
+        the ``is_pyodide()`` guard + the ``sync_portfolio_from_finextract(`` call
+        both moved out of ``render_portfolio_tab`` into
+        ``views/setup/_partials.py:render_portfolio_partial`` — this test now
+        inspects that partial's source instead.
         """
         import inspect
 
-        from views import setup
         from views.setup import portfolio as portfolio_mod
+        from views.setup._partials import render_portfolio_partial
 
-        source = inspect.getsource(setup.render_portfolio_tab)
+        source = inspect.getsource(render_portfolio_partial)
         guard_pos = source.find("is_pyodide()")
         sync_call_pos = source.find("sync_portfolio_from_finextract(")
-        assert guard_pos != -1, "is_pyodide() guard not found in render()"
-        assert sync_call_pos != -1, "sync_portfolio_from_finextract( call not found in render()"
+        assert guard_pos != -1, "is_pyodide() guard not found in render_portfolio_partial()"
+        assert sync_call_pos != -1, (
+            "sync_portfolio_from_finextract( call not found in render_portfolio_partial()"
+        )
         assert guard_pos < sync_call_pos, (
             "sync_portfolio_from_finextract() appears before is_pyodide() guard — "
             "sync block is not properly gated on Pyodide"
@@ -112,13 +117,19 @@ class TestPdf1040ImportHelper:
         assert "_render_pdf_1040_import()" in source, (
             "_render_pdf_1040_import() not called in render_parameters_tab — widget not wired up"
         )
-        magi_pos = source.find("_render_prior_year_magi_anchor(")
+        # Task 7 (ui-shell-theme-toggle): the prior-year-MAGI anchor (and the rest of
+        # the Joint tab's assumptions widgets) moved into
+        # views.setup._partials._assumptions.render_assumptions_partial, called
+        # once from here — this test now pins THAT call's position relative to
+        # _render_pdf_1040_import() instead of the (no-longer-present) private
+        # helper name.
+        assumptions_pos = source.find("render_assumptions_partial(")
         pdf_pos = source.find("_render_pdf_1040_import()")
-        assert magi_pos != -1
+        assert assumptions_pos != -1
         assert pdf_pos != -1
-        assert magi_pos < pdf_pos, (
-            "_render_pdf_1040_import() appears before _render_prior_year_magi_anchor() — "
-            "expected PDF import to follow the manual number_input widget"
+        assert assumptions_pos < pdf_pos, (
+            "_render_pdf_1040_import() appears before render_assumptions_partial() — "
+            "expected PDF import to follow the assumptions widgets"
         )
 
 
@@ -180,59 +191,72 @@ class TestFilingStatusGate:
         assert filing_status_from_label("Single") not in _FILING_STATUS_OPTIONS
 
     def test_widget_renders_before_subtabs(self):
+        """The filing-status radio (rendered by ``render_household_partial(hh, st,
+        "joint")``, extracted from ``render_parameters_tab`` in Task 3) must still
+        run before the Me/Spouse/Joint sub-tabs are created, so spouse state can be
+        zeroed in the same render pass."""
         import inspect
 
         from views import setup
+        from views.setup._partials import render_household_partial
 
-        source = inspect.getsource(setup.render_parameters_tab)
-        radio_pos = source.find('"Filing status"')
-        tabs_pos = source.find("st.tabs(")
-        assert radio_pos != -1, "Filing status radio not found in render_parameters_tab"
+        tab_source = inspect.getsource(setup.render_parameters_tab)
+        partial_call_pos = tab_source.find('render_household_partial(hh, st, "joint")')
+        tabs_pos = tab_source.find("st.tabs(")
+        assert partial_call_pos != -1, (
+            'render_household_partial(hh, st, "joint") call not found in render_parameters_tab'
+        )
         assert tabs_pos != -1
-        assert radio_pos < tabs_pos, (
+        assert partial_call_pos < tabs_pos, (
             "Filing status must render before the Me/Spouse/Joint sub-tabs so spouse "
             "state can be zeroed in the same render pass"
+        )
+
+        partial_source = inspect.getsource(render_household_partial)
+        assert '"Filing status"' in partial_source, (
+            "Filing status radio not found in render_household_partial's 'joint' branch"
         )
 
     def test_filing_status_written_to_session_state(self):
         import inspect
 
-        from views import setup
+        from views.setup._partials import render_household_partial
 
-        source = inspect.getsource(setup.render_parameters_tab)
+        source = inspect.getsource(render_household_partial)
         assert 'st.session_state["filing_status"]' in source
 
 
 class TestWorkplacePlanCheckboxesInParametersTab:
-    """W3: Setup / Parameters Me & Spouse tabs own the workplace-plan checkboxes."""
+    """W3: render_household_partial (extracted Task 3 from Setup / Parameters
+    Me & Spouse tabs) owns the workplace-plan checkboxes."""
 
-    def _params_source(self) -> str:
+    def _partial_source(self) -> str:
         import inspect
 
-        from views import setup
+        from views.setup._partials import render_household_partial
 
-        return inspect.getsource(setup.render_parameters_tab)
+        return inspect.getsource(render_household_partial)
 
     def test_your_checkbox_present_after_your_age_input(self):
-        source = self._params_source()
+        source = self._partial_source()
         age_pos = source.find('"Your Age"')
-        wp_pos = source.find("your_has_workplace_plan = st.checkbox(")
-        assert age_pos != -1, "Your Age input not found in render_parameters_tab"
-        assert wp_pos != -1, "your_has_workplace_plan checkbox not found in Me tab"
+        wp_pos = source.find("your_has_workplace_plan = container.checkbox(")
+        assert age_pos != -1, "Your Age input not found in render_household_partial"
+        assert wp_pos != -1, "your_has_workplace_plan checkbox not found in 'your' branch"
         assert age_pos < wp_pos, "Workplace-plan checkbox must render after Your Age input"
 
     def test_spouse_checkbox_present_after_spouse_age_input(self):
-        source = self._params_source()
+        source = self._partial_source()
         age_pos = source.find('"Spouse Age"')
-        wp_pos = source.find("spouse_has_workplace_plan = st.checkbox(")
-        assert age_pos != -1, "Spouse Age input not found in render_parameters_tab"
-        assert wp_pos != -1, "spouse_has_workplace_plan checkbox not found in Spouse tab"
+        wp_pos = source.find("spouse_has_workplace_plan = container.checkbox(")
+        assert age_pos != -1, "Spouse Age input not found in render_household_partial"
+        assert wp_pos != -1, "spouse_has_workplace_plan checkbox not found in 'spouse' branch"
         assert age_pos < wp_pos, "Workplace-plan checkbox must render after Spouse Age input"
 
     def test_checkboxes_write_session_state(self):
-        source = self._params_source()
-        assert "st.session_state.your_has_workplace_plan = st.checkbox(" in source
-        assert "st.session_state.spouse_has_workplace_plan = st.checkbox(" in source
+        source = self._partial_source()
+        assert "st.session_state.your_has_workplace_plan = container.checkbox(" in source
+        assert "st.session_state.spouse_has_workplace_plan = container.checkbox(" in source
 
 
 class TestAppFilingStatusWiring:
@@ -523,10 +547,22 @@ class TestRothEligibilitySpouseGating:
 
 
 class TestNoDataMsg:
-    """Unit tests for views.setup.portfolio._no_data_msg (U4/U5/U13)."""
+    """Unit tests for views.setup._partials._no_data_msg (U4/U5/U13).
+
+    Moved from ``views.setup.portfolio`` into ``views.setup._partials`` as
+    part of Task 6 of the ui-shell-theme-toggle plan (co-located with the
+    accounts/holdings table helpers that use it).
+
+    Post Task-6b (package split): ``_no_data_msg`` now lives in the
+    ``_partials`` package's ``_portfolio`` submodule, so these tests patch
+    that submodule directly rather than the package's ``__init__.py``
+    re-export — ``_no_data_msg``'s internal call to ``is_pyodide()``
+    resolves against its own defining module's globals, not the package
+    namespace.
+    """
 
     def test_pyodide_true_returns_upload_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: True)
         msg = mod._no_data_msg("accounts")
@@ -534,7 +570,7 @@ class TestNoDataMsg:
         assert "Sync button" not in msg
 
     def test_pyodide_false_returns_sync_message(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         msg = mod._no_data_msg("holdings")
@@ -542,7 +578,7 @@ class TestNoDataMsg:
         assert "upload a data file" in msg
 
     def test_noun_interpolated(self, monkeypatch: pytest.MonkeyPatch):
-        import views.setup.portfolio as mod
+        import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: False)
         assert "widgets" in mod._no_data_msg("widgets")
@@ -550,32 +586,40 @@ class TestNoDataMsg:
 
 class TestClampWidgetBounds:
     """C4 regression: _clamp keeps out-of-bounds cached/uploaded JSON from crashing
-    st.number_input at render, without corrupting legitimate large/past values."""
+    st.number_input at render, without corrupting legitimate large/past values.
+
+    ``_clamp`` moved from ``views.setup.parameters`` to
+    ``views.setup._partials._assumptions`` as of Task 7 of the
+    ui-shell-theme-toggle plan (its only callers — growth_rate/
+    living_expenses/ACA-benchmark/etc., the prior-year-MAGI anchor, the
+    survivor-scenario expander, and the inherited-IRAs expander — all moved
+    there too), so these tests import it from its new home.
+    """
 
     def test_in_range_unchanged(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(500, 0, 1000) == 500
 
     def test_above_hi_clamped(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(1500, 0, 1000) == 1000
 
     def test_below_lo_clamped(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(-5, 0, 1000) == 0
 
     def test_preserves_int_type(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         r = _clamp(5, 0, 10)
         assert isinstance(r, int)
         assert r == 5
 
     def test_preserves_float_type(self) -> None:
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         r = _clamp(2434.80, 0.0, 5000.0)
         assert isinstance(r, float)
@@ -584,13 +628,13 @@ class TestClampWidgetBounds:
     def test_legitimate_large_magi_not_corrupted(self) -> None:
         # $2.5M filed MAGI is legitimate for a large-IRA household; the widened bound
         # keeps it intact (a pure clamp-to-$2M would corrupt the IRMAA anchor).
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         assert _clamp(2_500_000, 0, 100_000_000) == 2_500_000
 
     def test_past_inherited_year_not_corrupted(self) -> None:
         # Inheriting 4 years before base_year is a valid mid-drain SECURE 10-year case.
-        from views.setup.parameters import _clamp
+        from views.setup._partials._assumptions import _clamp
 
         base_year = 2026
         assert _clamp(2022, base_year - 15, base_year + 30) == 2022
@@ -705,12 +749,24 @@ class TestSyncSsaForRecordsCandidate:
     value sits pending until confirmed through the freeze-until-confirm gate,
     same seam as your_ira/your_roth/txn_price_now. The int-coercion contract
     (StreamlitMixedNumericTypesError regression) now lives inside
-    record_ss_fra_candidate itself (see TestRecordSsFraCandidate)."""
+    record_ss_fra_candidate itself (see TestRecordSsFraCandidate).
+
+    _sync_ssa_for moved from views/setup/parameters.py to
+    views/setup/_partials.py in Task 4 of the ui-shell-theme-toggle plan
+    (render_accounts_partial's "Sync SS from FinExtract" button now calls it
+    directly, avoiding a parameters.py <-> _partials.py import cycle).
+
+    Post Task-6b (package split): ``_sync_ssa_for`` now lives in the
+    ``_partials`` package's ``_accounts`` submodule, so this test patches
+    that submodule directly rather than the package's ``__init__.py``
+    re-export — ``_sync_ssa_for``'s internal calls resolve against its own
+    defining module's globals, not the package namespace.
+    """
 
     def _run_sync(self, monkeypatch: pytest.MonkeyPatch, owner: str) -> tuple[dict, list]:
         from types import SimpleNamespace
 
-        import views.setup.parameters as parameters_mod
+        import views.setup._partials._accounts as partials_mod
 
         fake_snap = SimpleNamespace(
             error=None,
@@ -722,14 +778,14 @@ class TestSyncSsaForRecordsCandidate:
         def _fake_record(field_key, monthly_amount, source, detail, recorded_at):  # noqa: ANN001
             calls.append((field_key, monthly_amount, source, detail))
 
-        monkeypatch.setattr(parameters_mod.st, "session_state", fake_state)
-        monkeypatch.setattr(parameters_mod, "fetch_ssa_snapshot", lambda: fake_snap)
+        monkeypatch.setattr(partials_mod.st, "session_state", fake_state)
+        monkeypatch.setattr(partials_mod, "fetch_ssa_snapshot", lambda: fake_snap)
         monkeypatch.setattr(
-            parameters_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
+            partials_mod, "match_fra_estimate", lambda estimates, fra_age: estimates[0]
         )
-        monkeypatch.setattr(parameters_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
-        monkeypatch.setattr(parameters_mod, "record_ss_fra_candidate", _fake_record)
-        warning = parameters_mod._sync_ssa_for(owner, 67)
+        monkeypatch.setattr(partials_mod, "save_ssa_snapshot", lambda snap, *, owner: None)
+        monkeypatch.setattr(partials_mod, "record_ss_fra_candidate", _fake_record)
+        warning = partials_mod._sync_ssa_for(owner, 67)
         assert warning is None
         return fake_state, calls
 

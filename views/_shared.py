@@ -183,11 +183,13 @@ class SsSyncSummary:
 def _sync_ss_source() -> SsSyncSummary:
     """Sync SS-at-FRA for both people (skipping spouse when filing Single).
 
-    Reuses ``views.setup.parameters._sync_ssa_for`` — the same per-person
-    callable the individual "Sync SS from FinExtract" buttons call — which
-    already records through ``record_ss_fra_candidate`` (W2 Part C).
+    Reuses ``views.setup._partials._sync_ssa_for`` — the same per-person
+    callable each owner's inline "Sync SS from FinExtract" button
+    (``render_accounts_partial``, Task 4 of the ui-shell-theme-toggle plan)
+    calls — which already records through ``record_ss_fra_candidate`` (W2
+    Part C).
     """
-    from views.setup.parameters import _sync_ssa_for
+    from views.setup._partials import _sync_ssa_for
 
     warnings: list[str] = []
     recorded = 0

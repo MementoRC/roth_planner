@@ -10,8 +10,10 @@ Isolation: the three new Setup / Command Center cache files
 are written at repo-root (mirroring the existing ``__file__``-anchored cache
 path convention used throughout ``engine/*`` — see e.g.
 ``engine/exercise_schedule_store.py``). They are already covered by
-``.gitignore``, but this test still deletes them afterward so repeated local
-test runs never leave stray state behind. ``_suppress_snapshot_autoload`` is
+``.gitignore``. The shared ``clean_command_center_caches`` fixture
+(``tests/conftest.py``) deletes them before AND after each test so repeated
+local test runs never leave stray state behind and a developer's personal
+committed/candidate state never leaks in. ``_suppress_snapshot_autoload`` is
 pre-seeded so a developer's real ``.portfolio_cache.json`` (personal data)
 cannot influence the migration-identity assertion below.
 """
@@ -22,7 +24,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 from config.defaults import DEFAULTS
@@ -34,24 +35,14 @@ from models.sourced import Provenance, Source, SourcedValue
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 REPO_ROOT = APP_PATH.parent
 
+# Mirrors tests/conftest.py's _COMMAND_CENTER_CACHE_FILES — several tests
+# below need an explicit mid-test pre-clean (e.g. before writing a seeded
+# committed baseline), in addition to the shared fixture's before/after clean.
 _NEW_CACHE_FILES = [
     REPO_ROOT / ".candidate_store.json",
     REPO_ROOT / ".trust_choices.json",
     REPO_ROOT / ".committed_household.json",
 ]
-
-
-@pytest.fixture
-def clean_command_center_caches():
-    """Delete the 3 new Setup/Command Center cache files after the test.
-
-    Paths are repo-root-anchored (via ``__file__``, matching the existing
-    cache-path convention), so cwd is irrelevant — cleanup targets the exact
-    files app.py's get_household() writes.
-    """
-    yield
-    for p in _NEW_CACHE_FILES:
-        p.unlink(missing_ok=True)
 
 
 def test_setup_page_renders_without_exception(clean_command_center_caches) -> None:
@@ -241,7 +232,9 @@ def test_command_center_txn_price_confirm_sticks_and_next_render_does_not_revert
     clean_command_center_caches,
 ) -> None:
     """Bug 2 regression, end-to-end through the real app.py router + Setup
-    page's Command Center tab: confirming a pending txn_price_now candidate
+    page's Portfolio tab (``render_options_partial`` as of Task 5 of the
+    ui-shell-theme-toggle plan — previously Command Center's generic loop,
+    removed in Task 4): confirming a pending txn_price_now candidate
     must (a) write session_state["txn_price"] — the aliased key the Setup
     widget actually reads, not the raw "txn_price_now" field key — and (b)
     stick on the next render rather than reverting because that aliased key
