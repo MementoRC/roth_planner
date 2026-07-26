@@ -475,6 +475,72 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     assert warnings == []
 
 
+def test_wizard_next_advances_step() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    next_btns = [b for b in at.button if b.label == "Next"]
+    assert next_btns, "Next button missing"
+    next_btns[0].click().run()
+    assert at.session_state["wizard_step"] == 1
+
+
+def test_wizard_back_clamps_at_zero() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    # already at step 0: Back should be disabled (or a click must not go negative)
+    back_btns = [b for b in at.button if b.label == "Back"]
+    assert back_btns
+    assert back_btns[0].disabled is True
+
+
+def test_wizard_next_clamps_at_last_step() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        import streamlit as st
+
+        from config.defaults import DEFAULTS
+        from engine.irmaa import BASE_PART_B
+        from models.household import Household
+        from views import shells as s
+
+        # Assumptions (last step) reads several session_state fields directly
+        # (no .get() fallback) -- mirror the seeding pattern the module-level
+        # _render_shell() helper above uses for Domains/Hub/Contextual,
+        # trimmed to what render_assumptions_partial actually needs.
+        st.session_state["_suppress_snapshot_autoload"] = True
+        st.session_state.setdefault("growth_rate", 7.0)
+        st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+        st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+        st.session_state.setdefault("advance_aptc_annual", 0)
+        st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+        st.session_state.setdefault("cpi_assumption", 0.025)
+        st.session_state.setdefault("_pending_review", set())
+
+        st.session_state["wizard_step"] = 4  # last (assumptions)
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+    next_btns = [b for b in at.button if b.label == "Next"]
+    assert next_btns
+    assert next_btns[0].disabled is True
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 
