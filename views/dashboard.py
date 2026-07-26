@@ -7,14 +7,28 @@ Shows:
 4. Key metrics at ages 80/85/90/95
 """
 
+from datetime import datetime
+
 import plotly.graph_objects as go
 import streamlit as st
 
+from engine.data_status import (
+    SETUP_STEP_GROUPS,
+    compute_data_completeness,
+    governed_fields_for_step,
+)
 from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compare import compute_cumulative_net_benefit, compute_summary_rows
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
+
+
+def _dashboard_governed_fields(hh: Household) -> list[str]:
+    fields: list[str] = []
+    for step_key, _label, _f in SETUP_STEP_GROUPS:
+        fields.extend(governed_fields_for_step(hh, step_key))
+    return fields
 
 
 def render(hh: Household):
@@ -37,6 +51,24 @@ def render(hh: Household):
                 if hh.spouse_rmd_start_age != hh.your_rmd_start_age
                 else ""
             )
+        )
+
+    _completeness = compute_data_completeness(
+        hh,
+        _dashboard_governed_fields(hh),
+        # MVP simplification: pending Command Center candidates are not
+        # surfaced here (only missing/stale); the Contextual shells status
+        # bar already covers pending conflicts.
+        pending_candidates=set(),
+        now=datetime.now(),
+    )
+    _pct = round(_completeness.fraction * 100)
+    if _completeness.is_complete:
+        st.caption(f"Data completeness: {_pct}% -- all key inputs present")
+    else:
+        st.caption(
+            f"Data completeness: {_pct}% -- "
+            f"{len(_completeness.issues)} item(s) need attention"
         )
 
     st.caption(FORM_8606_CAPTION)
