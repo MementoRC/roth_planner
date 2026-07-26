@@ -142,7 +142,7 @@ def _number_input_by_label(at: AppTest, label: str):
 
 
 def test_themes_list_matches_plan_scope() -> None:
-    assert THEMES == ["Classic", "Domains", "Hub", "Contextual"]
+    assert THEMES == ["Classic", "Domains", "Hub", "Contextual", "Wizard"]
 
 
 def test_render_setup_unknown_theme_raises_value_error() -> None:
@@ -473,3 +473,20 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     # warning can fire here; the all-good household simply has none to filter.
     warnings = [w.value for w in at.warning]
     assert warnings == []
+
+
+def test_wizard_registered_and_renders() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from views import shells
+
+    assert "Wizard" in shells.THEMES
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
