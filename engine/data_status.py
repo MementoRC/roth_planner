@@ -146,3 +146,62 @@ def compute_data_status(
             )
 
     return items
+
+
+@dataclass(frozen=True)
+class DataCompleteness:
+    total: int
+    ok: int
+    issues: tuple[DataStatusItem, ...]
+
+    @property
+    def by_severity(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.issues:
+            counts[item.severity] = counts.get(item.severity, 0) + 1
+        return counts
+
+    @property
+    def is_complete(self) -> bool:
+        return not any(i.severity in ('missing', 'conflict') for i in self.issues)
+
+    @property
+    def fraction(self) -> float:
+        return self.ok / self.total if self.total else 1.0
+
+
+def compute_data_completeness(
+    hh: Household,
+    sourced_fields: list[str],
+    pending_candidates: set[str],
+    *,
+    now: datetime,
+) -> DataCompleteness:
+    items = compute_data_status(hh, sourced_fields, pending_candidates, now=now)
+    flagged = {i.field for i in items}
+    ok = len(sourced_fields) - len(flagged)
+    return DataCompleteness(total=len(sourced_fields), ok=ok, issues=tuple(items))
+
+
+# Best-guess assignment of governed scalar fields to the 5 Setup steps.
+# Static scalar groups only; dynamic prior_year_magi.<year> keys are appended
+# at runtime for the "assumptions" step (see governed_fields_for_step).
+SETUP_STEP_GROUPS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("household", "Household", ("your_ss_fra", "spouse_ss_fra")),
+    ("accounts", "Accounts", ("your_ira", "spouse_ira", "your_roth", "spouse_roth")),
+    ("options", "Options", ("txn_price_now", GRANTS_KEY)),
+    ("portfolio", "Portfolio", ()),
+    ("assumptions", "Assumptions", ()),
+]
+
+
+def governed_fields_for_step(hh: Household, step_key: str) -> list[str]:
+    for key, _label, fields in SETUP_STEP_GROUPS:
+        if key == step_key:
+            result = list(fields)
+            if step_key == "assumptions":
+                from engine.data_sources.resolver import magi_field_key  # lazy: avoid import cycle
+
+                result += [magi_field_key(y) for y in sorted(hh.prior_year_magi.keys())]
+            return result
+    raise ValueError("Unknown setup step: " + repr(step_key))

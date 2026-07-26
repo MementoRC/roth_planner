@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from engine.data_status import STALE_THRESHOLD_DAYS, DataStatusItem, compute_data_status
+from engine.data_status import (
+    STALE_THRESHOLD_DAYS,
+    DataCompleteness,
+    DataStatusItem,
+    compute_data_completeness,
+    compute_data_status,
+)
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedValue
 
@@ -70,3 +76,132 @@ def test_fully_populated_recently_confirmed_household_returns_empty() -> None:
     )
 
     assert items == []
+
+
+def test_completeness_counts_total_ok_and_fraction() -> None:
+    hh = Household()
+    hh.your_ira = SourcedValue(500_000.0, Provenance(source=Source.MANUAL, recorded_at=NOW))
+
+    result = compute_data_completeness(
+        hh, ["your_ira", "spouse_ira"], pending_candidates=set(), now=NOW
+    )
+
+    assert isinstance(result, DataCompleteness)
+    assert result.total == 2
+    assert result.ok + len(result.issues) == result.total
+    assert 0.0 <= result.fraction <= 1.0
+    assert isinstance(result.is_complete, bool)
+
+
+def test_completeness_all_ok_fields_is_complete() -> None:
+    recent = NOW - timedelta(days=1)
+    hh = Household()
+    hh.your_ira = SourcedValue(500_000.0, Provenance(source=Source.MANUAL, recorded_at=recent))
+    hh.spouse_ira = SourcedValue(400_000.0, Provenance(source=Source.PDF, recorded_at=recent))
+
+    result = compute_data_completeness(
+        hh, ["your_ira", "spouse_ira"], pending_candidates=set(), now=NOW
+    )
+
+    assert result.is_complete is True
+    assert result.fraction == 1.0
+    assert result.ok == result.total
+    assert result.issues == ()
+
+
+def test_completeness_missing_item_blocks_completeness() -> None:
+    hh = Household()
+
+    result = compute_data_completeness(
+        hh, ["your_ira"], pending_candidates=set(), now=NOW
+    )
+
+    assert result.is_complete is False
+
+
+def test_completeness_stale_only_is_non_blocking() -> None:
+    old_recorded_at = NOW - timedelta(days=STALE_THRESHOLD_DAYS + 1)
+    hh = Household()
+    hh.your_ira = SourcedValue(
+        500_000.0, Provenance(source=Source.MANUAL, recorded_at=old_recorded_at)
+    )
+
+    result = compute_data_completeness(
+        hh, ["your_ira"], pending_candidates=set(), now=NOW
+    )
+
+    assert result.is_complete is True
+    assert len(result.issues) == 1
+    assert result.issues[0].severity == "stale"
+
+
+def test_completeness_by_severity_tallies_mix() -> None:
+    old_recorded_at = NOW - timedelta(days=STALE_THRESHOLD_DAYS + 1)
+    hh = Household()
+    hh.your_ira = SourcedValue(
+        500_000.0, Provenance(source=Source.MANUAL, recorded_at=old_recorded_at)
+    )
+    hh.spouse_ira = SourcedValue(400_000.0, Provenance(source=Source.PDF, recorded_at=NOW))
+
+    result = compute_data_completeness(
+        hh,
+        ["your_ira", "spouse_ira", "your_roth"],
+        pending_candidates={"spouse_ira"},
+        now=NOW,
+    )
+
+    assert result.by_severity == {"stale": 1, "conflict": 1, "missing": 1}
+
+
+def test_setup_step_groups_partition_governed_scalars() -> None:
+    from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS
+    from engine.data_status import SETUP_STEP_GROUPS
+
+    assert [key for key, _label, _fields in SETUP_STEP_GROUPS] == [
+        "household",
+        "accounts",
+        "options",
+        "portfolio",
+        "assumptions",
+    ]
+
+    for field_name in HOUSEHOLD_SCALAR_FIELDS:
+        occurrences = sum(
+            1 for _key, _label, fields in SETUP_STEP_GROUPS if field_name in fields
+        )
+        assert occurrences == 1
+
+
+def test_governed_fields_for_step_static() -> None:
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household()
+
+    assert governed_fields_for_step(hh, "accounts") == [
+        "your_ira",
+        "spouse_ira",
+        "your_roth",
+        "spouse_roth",
+    ]
+    assert governed_fields_for_step(hh, "portfolio") == []
+
+
+def test_governed_fields_for_step_appends_dynamic_magi() -> None:
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household(prior_year_magi={2024: 280_000.0})
+
+    fields = governed_fields_for_step(hh, "assumptions")
+
+    assert "prior_year_magi.2024" in fields
+
+
+def test_governed_fields_for_step_unknown_raises() -> None:
+    import pytest
+
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household()
+
+    with pytest.raises(ValueError, match="Unknown setup step"):
+        governed_fields_for_step(hh, "bogus")
