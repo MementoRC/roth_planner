@@ -46,6 +46,7 @@ _SHELL_NAME_TO_THEME = {
     "domains": "Domains",
     "hub": "Hub",
     "contextual": "Contextual",
+    "wizard": "Wizard",
 }
 
 
@@ -142,7 +143,7 @@ def _number_input_by_label(at: AppTest, label: str):
 
 
 def test_themes_list_matches_plan_scope() -> None:
-    assert THEMES == ["Classic", "Domains", "Hub", "Contextual"]
+    assert THEMES == ["Classic", "Domains", "Hub", "Contextual", "Wizard"]
 
 
 def test_render_setup_unknown_theme_raises_value_error() -> None:
@@ -155,7 +156,7 @@ def test_render_setup_unknown_theme_raises_value_error() -> None:
 # --- Smoke tests: each shell renders without exception ---------------------
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual"])
+@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual", "wizard"])
 def test_shell_renders_without_exception(shell_name, clean_command_center_caches, monkeypatch) -> None:
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
@@ -473,3 +474,140 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     # warning can fire here; the all-good household simply has none to filter.
     warnings = [w.value for w in at.warning]
     assert warnings == []
+
+
+def test_wizard_next_advances_step() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    next_btns = [b for b in at.button if b.label == "Next"]
+    assert next_btns, "Next button missing"
+    next_btns[0].click().run()
+    assert at.session_state["wizard_step"] == 1
+
+
+def test_wizard_back_clamps_at_zero() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    # already at step 0: Back should be disabled (or a click must not go negative)
+    back_btns = [b for b in at.button if b.label == "Back"]
+    assert back_btns
+    assert back_btns[0].disabled is True
+
+
+def test_wizard_next_clamps_at_last_step() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        import streamlit as st
+
+        from config.defaults import DEFAULTS
+        from engine.irmaa import BASE_PART_B
+        from models.household import Household
+        from views import shells as s
+
+        # Assumptions (last step) reads several session_state fields directly
+        # (no .get() fallback) -- mirror the seeding pattern the module-level
+        # _render_shell() helper above uses for Domains/Hub/Contextual,
+        # trimmed to what render_assumptions_partial actually needs.
+        st.session_state["_suppress_snapshot_autoload"] = True
+        st.session_state.setdefault("growth_rate", 7.0)
+        st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+        st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+        st.session_state.setdefault("advance_aptc_annual", 0)
+        st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+        st.session_state.setdefault("cpi_assumption", 0.025)
+        st.session_state.setdefault("_pending_review", set())
+
+        st.session_state["wizard_step"] = 4  # last (assumptions)
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+    next_btns = [b for b in at.button if b.label == "Next"]
+    assert next_btns
+    assert next_btns[0].disabled is True
+
+
+def test_wizard_shows_step_completeness() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+        s.render_setup(Household(), "Wizard")  # step 0 = household (has governed fields)
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+    texts = (
+        [c.value for c in at.caption]
+        + [w.value for w in at.warning]
+        + [su.value for su in at.success]
+    )
+    assert any("complete" in t.lower() for t in texts)
+
+
+def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, 'load_pubkey', lambda: None)
+
+    def _script() -> None:
+        import streamlit as st
+
+        from config.defaults import DEFAULTS
+        from engine.irmaa import BASE_PART_B
+        from models.household import Household
+        from views import shells as s
+
+        st.session_state['_suppress_snapshot_autoload'] = True
+        st.session_state.setdefault('growth_rate', 7.0)
+        st.session_state.setdefault('living_expenses', DEFAULTS['living_expenses'])
+        st.session_state.setdefault('aca_benchmark_premium_annual', 21_600.0)
+        st.session_state.setdefault('advance_aptc_annual', 0)
+        st.session_state.setdefault('medicare_part_b_base_monthly', BASE_PART_B / 12)
+        st.session_state.setdefault('cpi_assumption', 0.025)
+        st.session_state.setdefault('_pending_review', set())
+
+        st.session_state['wizard_step'] = 4
+        s.render_setup(Household(), 'Wizard')
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+
+    expander_labels = [e.label for e in at.expander]
+    subheader_texts = [sh.value for sh in at.subheader]
+    assert any('1040' in lbl for lbl in expander_labels), expander_labels
+    assert any('bridge' in txt.lower() for txt in subheader_texts), subheader_texts
+
+
+def test_wizard_registered_and_renders() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from views import shells
+
+    assert "Wizard" in shells.THEMES
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+
+        s.render_setup(Household(), "Wizard")
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception

@@ -20,15 +20,16 @@ from collections.abc import Callable
 
 from models.household import Household
 
-from . import classic_shell, contextual_shell, domains_shell, hub_shell
+from . import classic_shell, contextual_shell, domains_shell, hub_shell, wizard_shell
 
-THEMES = ["Classic", "Domains", "Hub", "Contextual"]
+THEMES = ["Classic", "Domains", "Hub", "Contextual", "Wizard"]
 
 _RENDERERS: dict[str, Callable[[Household], None]] = {
     "Classic": classic_shell.render,
     "Domains": domains_shell.render,
     "Hub": hub_shell.render,
     "Contextual": contextual_shell.render,
+    "Wizard": wizard_shell.render,
 }
 
 
