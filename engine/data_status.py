@@ -146,3 +146,38 @@ def compute_data_status(
             )
 
     return items
+
+
+@dataclass(frozen=True)
+class DataCompleteness:
+    total: int
+    ok: int
+    issues: tuple[DataStatusItem, ...]
+
+    @property
+    def by_severity(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.issues:
+            counts[item.severity] = counts.get(item.severity, 0) + 1
+        return counts
+
+    @property
+    def is_complete(self) -> bool:
+        return not any(i.severity in ('missing', 'conflict') for i in self.issues)
+
+    @property
+    def fraction(self) -> float:
+        return self.ok / self.total if self.total else 1.0
+
+
+def compute_data_completeness(
+    hh: Household,
+    sourced_fields: list[str],
+    pending_candidates: set[str],
+    *,
+    now: datetime,
+) -> DataCompleteness:
+    items = compute_data_status(hh, sourced_fields, pending_candidates, now=now)
+    flagged = {i.field for i in items}
+    ok = len(sourced_fields) - len(flagged)
+    return DataCompleteness(total=len(sourced_fields), ok=ok, issues=tuple(items))
