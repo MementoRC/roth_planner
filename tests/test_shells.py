@@ -541,6 +541,24 @@ def test_wizard_next_clamps_at_last_step() -> None:
     assert next_btns[0].disabled is True
 
 
+def test_wizard_shows_step_completeness() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def _script() -> None:
+        from models.household import Household
+        from views import shells as s
+        s.render_setup(Household(), "Wizard")  # step 0 = household (has governed fields)
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+    texts = (
+        [c.value for c in at.caption]
+        + [w.value for w in at.warning]
+        + [su.value for su in at.success]
+    )
+    assert any("complete" in t.lower() for t in texts)
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 

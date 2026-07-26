@@ -13,9 +13,15 @@ Back/Next navigation mutates the step index, clamped to
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import streamlit as st
 
-from engine.data_status import SETUP_STEP_GROUPS
+from engine.data_status import (
+    SETUP_STEP_GROUPS,
+    compute_data_completeness,
+    governed_fields_for_step,
+)
 from models.household import Household
 from views.setup._partials import (
     render_accounts_partial,
@@ -36,6 +42,21 @@ def render(hh: Household) -> None:
     st.session_state[_STEP_KEY] = step
     key, label, _fields = SETUP_STEP_GROUPS[step]
     st.caption("Step " + str(step + 1) + " of " + str(n_steps) + " -- " + label)
+    _step_fields = governed_fields_for_step(hh, key)
+    if _step_fields:
+        _c = compute_data_completeness(
+            hh, _step_fields, pending_candidates=set(), now=datetime.now()
+        )
+        _pct = round(_c.fraction * 100)
+        if _c.is_complete:
+            st.success("This step looks complete (" + str(_pct) + "%).")
+        else:
+            st.warning(
+                "This step is " + str(_pct) + "% complete -- "
+                + str(len(_c.issues)) + " item(s) need attention. You can still continue."
+            )
+    else:
+        st.caption("No sourced fields to validate on this step -- complete when ready.")
     _render_step(hh, key)
     _render_nav(n_steps)
 
