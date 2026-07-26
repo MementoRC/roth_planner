@@ -46,6 +46,7 @@ _SHELL_NAME_TO_THEME = {
     "domains": "Domains",
     "hub": "Hub",
     "contextual": "Contextual",
+    "wizard": "Wizard",
 }
 
 
@@ -155,7 +156,7 @@ def test_render_setup_unknown_theme_raises_value_error() -> None:
 # --- Smoke tests: each shell renders without exception ---------------------
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual"])
+@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual", "wizard"])
 def test_shell_renders_without_exception(shell_name, clean_command_center_caches, monkeypatch) -> None:
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
