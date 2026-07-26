@@ -151,3 +151,57 @@ def test_completeness_by_severity_tallies_mix() -> None:
     )
 
     assert result.by_severity == {"stale": 1, "conflict": 1, "missing": 1}
+
+
+def test_setup_step_groups_partition_governed_scalars() -> None:
+    from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS
+    from engine.data_status import SETUP_STEP_GROUPS
+
+    assert [key for key, _label, _fields in SETUP_STEP_GROUPS] == [
+        "household",
+        "accounts",
+        "options",
+        "portfolio",
+        "assumptions",
+    ]
+
+    for field_name in HOUSEHOLD_SCALAR_FIELDS:
+        occurrences = sum(
+            1 for _key, _label, fields in SETUP_STEP_GROUPS if field_name in fields
+        )
+        assert occurrences == 1
+
+
+def test_governed_fields_for_step_static() -> None:
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household()
+
+    assert governed_fields_for_step(hh, "accounts") == [
+        "your_ira",
+        "spouse_ira",
+        "your_roth",
+        "spouse_roth",
+    ]
+    assert governed_fields_for_step(hh, "portfolio") == []
+
+
+def test_governed_fields_for_step_appends_dynamic_magi() -> None:
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household(prior_year_magi={2024: 280_000.0})
+
+    fields = governed_fields_for_step(hh, "assumptions")
+
+    assert "prior_year_magi.2024" in fields
+
+
+def test_governed_fields_for_step_unknown_raises() -> None:
+    import pytest
+
+    from engine.data_status import governed_fields_for_step
+
+    hh = Household()
+
+    with pytest.raises(ValueError, match="Unknown setup step"):
+        governed_fields_for_step(hh, "bogus")
