@@ -30,6 +30,8 @@ from views.setup._partials import (
     render_options_partial,
     render_portfolio_partial,
 )
+from views.setup.data_bridge import render_data_bridge_tab
+from views.setup.parameters import _render_pdf_1040_import
 
 _STEP_KEY = "wizard_step"
 
@@ -85,6 +87,10 @@ def _render_step(hh: Household, key: str) -> None:
         render_portfolio_partial(hh, body)
     elif key == "assumptions":
         render_assumptions_partial(hh, body)
+        with body:
+            st.subheader('Data bridge')
+            render_data_bridge_tab(hh)
+            _render_pdf_1040_import()
     else:
         raise ValueError("Unknown wizard step key: " + repr(key))
 

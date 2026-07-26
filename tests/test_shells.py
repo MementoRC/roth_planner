@@ -559,6 +559,42 @@ def test_wizard_shows_step_completeness() -> None:
     assert any("complete" in t.lower() for t in texts)
 
 
+def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, 'load_pubkey', lambda: None)
+
+    def _script() -> None:
+        import streamlit as st
+
+        from config.defaults import DEFAULTS
+        from engine.irmaa import BASE_PART_B
+        from models.household import Household
+        from views import shells as s
+
+        st.session_state['_suppress_snapshot_autoload'] = True
+        st.session_state.setdefault('growth_rate', 7.0)
+        st.session_state.setdefault('living_expenses', DEFAULTS['living_expenses'])
+        st.session_state.setdefault('aca_benchmark_premium_annual', 21_600.0)
+        st.session_state.setdefault('advance_aptc_annual', 0)
+        st.session_state.setdefault('medicare_part_b_base_monthly', BASE_PART_B / 12)
+        st.session_state.setdefault('cpi_assumption', 0.025)
+        st.session_state.setdefault('_pending_review', set())
+
+        st.session_state['wizard_step'] = 4
+        s.render_setup(Household(), 'Wizard')
+
+    at = AppTest.from_function(_script).run()
+    assert not at.exception
+
+    expander_labels = [e.label for e in at.expander]
+    subheader_texts = [sh.value for sh in at.subheader]
+    assert any('1040' in lbl for lbl in expander_labels), expander_labels
+    assert any('bridge' in txt.lower() for txt in subheader_texts), subheader_texts
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 
