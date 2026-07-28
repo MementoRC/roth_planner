@@ -50,11 +50,11 @@ class TestImportEquality:
         )
 
     def test_views_ytd_income_uses_canonical_niit_threshold(self):
-        """views/ytd_income.py must import NIIT_THRESHOLD_MFJ for the help-text mention."""
-        import views.ytd_income as ytd_income
+        """views/ytd_income's analysis partial must import NIIT_THRESHOLD_MFJ for the help-text mention."""
+        import views.ytd_income._partials._analysis as ytd_income_analysis
 
-        assert "NIIT_THRESHOLD_MFJ" in dir(ytd_income), (
-            "views/ytd_income.py must import NIIT_THRESHOLD_MFJ from engine.niit"
+        assert "NIIT_THRESHOLD_MFJ" in dir(ytd_income_analysis), (
+            "views/ytd_income/_partials/_analysis.py must import NIIT_THRESHOLD_MFJ from engine.niit"
         )
 
     def test_views_sweet_spot_uses_canonical_niit_threshold(self):
@@ -77,11 +77,11 @@ class TestImportEquality:
         )
 
     def test_views_ytd_income_uses_canonical_ltcg_rates(self):
-        """views/ytd_income.py must import LTCG_RATES_MFJ from engine.tax."""
-        import views.ytd_income as ytd_income
+        """views/ytd_income's analysis partial must import LTCG_RATES_MFJ from engine.tax."""
+        import views.ytd_income._partials._analysis as ytd_income_analysis
 
-        assert "LTCG_RATES_MFJ" in dir(ytd_income), (
-            "views/ytd_income.py must import LTCG_RATES_MFJ from engine.tax"
+        assert "LTCG_RATES_MFJ" in dir(ytd_income_analysis), (
+            "views/ytd_income/_partials/_analysis.py must import LTCG_RATES_MFJ from engine.tax"
         )
 
 
