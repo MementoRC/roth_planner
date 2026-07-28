@@ -7,10 +7,14 @@ IRMAA, NIIT, and ACA thresholds.
 Key insight: LTCG consumes IRMAA/NIIT room but NOT ordinary bracket room.
 """
 
+from datetime import datetime
+
 import streamlit as st
 
+from engine.data_status import compute_ytd_completeness
 from engine.portfolio_sync import save_ytd_snapshot
 from models.household import Household
+from models.ytd_income import YTDSnapshot
 from views.ytd_income._partials import (
     render_analysis_partial,
     render_manual_entry_partial,
@@ -18,32 +22,29 @@ from views.ytd_income._partials import (
 )
 
 
-def _color_for_room(room: float) -> str:
-    if room <= 0:
-        return "inverse"  # red
-    if room <= 50_000:
-        return "off"  # orange-ish (streamlit uses "off" for warning-style)
-    return "normal"  # green
-
-
-def _metric_delta_color(room: float) -> str:
-    if room <= 0:
-        return "inverse"
-    return "normal"
-
-
-def render(hh: Household):
+def render(hh: Household, theme: str | None = None) -> None:
     st.title("YTD Income & Conversion Headroom")
     st.caption(
         "Track mid-year income events and see how much Roth conversion room remains. "
         "LTCG from stop-loss triggers consumes IRMAA room but leaves bracket room intact."
     )
 
-    render_sync_scan_partial(hh)
+    _snapshot_for_badge = st.session_state.get("ytd_snapshot", YTDSnapshot())
+    _completeness = compute_ytd_completeness(_snapshot_for_badge, now=datetime.now())
+    if _completeness.issues:
+        st.caption(f"⚠️ {_completeness.issues[0].detail}")
 
-    ytd = render_manual_entry_partial(hh)
+    _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
+    if _theme == "Domains":  # noqa: SIM108 (branches diverge in Task 8)
+        ytd = _render_classic(hh)  # TODO(Task 8): real Domains 2-tab layout
+    else:
+        ytd = _render_classic(hh)
 
-    render_analysis_partial(hh, ytd)
-
-    # Save snapshot for persistence
     save_ytd_snapshot(ytd)
+
+
+def _render_classic(hh: Household) -> YTDSnapshot:
+    render_sync_scan_partial(hh)
+    ytd = render_manual_entry_partial(hh)
+    render_analysis_partial(hh, ytd)
+    return ytd
