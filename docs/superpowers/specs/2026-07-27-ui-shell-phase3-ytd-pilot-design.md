@@ -94,8 +94,10 @@ Two decoupled additions:
     `DataStatusItem` (severity `stale`, or `missing` if `snapshot_date` is empty);
     otherwise zero issues.
 - `views/ytd_income/__init__.py` (new, replaces flat `views/ytd_income.py`):
-  - `render(hh)`: renders the completeness badge unconditionally (same ~20-line pattern
-    as `views/dashboard.py`'s existing badge integration), then branches on
+  - `render(hh)`: renders the completeness badge as a single-line caption, in the same
+    lightweight style as `views/dashboard.py`'s existing badge integration
+    (`views/dashboard.py:56-72`), but conditional on `completeness.issues` being
+    non-empty rather than always-visible, then branches on
     `st.session_state.get("ui_theme")`: `"Domains"` → `_render_domains(hh)`, else →
     `_render_classic(hh)`.
   - `_render_classic(hh)`: today's section order, composed from the extracted partials
@@ -124,16 +126,20 @@ abstraction Setup needed for 4+ variants.
 1. `app.py`'s existing `ui_theme` sidebar `selectbox` (session-local, `key="ui_theme"`)
    is unchanged — no new control added. YTD's `render(hh)` simply reads the same
    session-state key Setup's shells already read.
-2. Badge: `compute_ytd_completeness(st.session_state["ytd_snapshot"], now=datetime.now())`
+2. Badge: `compute_ytd_completeness(st.session_state.get("ytd_snapshot", YTDSnapshot()), now=datetime.now())`
    is called at the top of `render(hh)` regardless of theme value, then rendered as a
-   single-line caption if `not completeness.is_complete` — mirroring Dashboard's
-   integration shape exactly.
+   single-line caption if `completeness.issues` is non-empty — in the same lightweight
+   style as Dashboard's badge (`views/dashboard.py:56-72`), but conditional rather than
+   always-visible.
 3. No engine/tax computation changes anywhere in this pilot.
 
 ## Error handling / edge cases
 
 - Empty/never-saved `snapshot_date` (e.g., a fresh household that hasn't touched this
   page yet) is treated as `missing`, not a crash on date parsing.
+- A session with no `"ytd_snapshot"` key yet (never touched this page) must not raise
+  `KeyError`: the badge computation uses the same `st.session_state.get("ytd_snapshot",
+  YTDSnapshot())` fallback pattern already used throughout `views/ytd_income.py` today.
 - All datetime comparisons use naive `datetime.now()`, consistent with this project's
   existing provenance-timestamp convention (see project memory — no tz-aware code paths
   introduced).
