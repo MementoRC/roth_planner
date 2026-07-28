@@ -35,10 +35,7 @@ def render(hh: Household, theme: str | None = None) -> None:
         st.caption(f"⚠️ {_completeness.issues[0].detail}")
 
     _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
-    if _theme == "Domains":  # noqa: SIM108 (branches diverge in Task 8)
-        ytd = _render_classic(hh)  # TODO(Task 8): real Domains 2-tab layout
-    else:
-        ytd = _render_classic(hh)
+    ytd = _render_domains(hh) if _theme == "Domains" else _render_classic(hh)
 
     save_ytd_snapshot(ytd)
 
@@ -47,4 +44,14 @@ def _render_classic(hh: Household) -> YTDSnapshot:
     render_sync_scan_partial(hh)
     ytd = render_manual_entry_partial(hh)
     render_analysis_partial(hh, ytd)
+    return ytd
+
+
+def _render_domains(hh: Household) -> YTDSnapshot:
+    tab1, tab2 = st.tabs(["Update Your Data", "Review Headroom"])
+    with tab1:
+        render_sync_scan_partial(hh)
+        ytd = render_manual_entry_partial(hh)
+    with tab2:
+        render_analysis_partial(hh, ytd)
     return ytd
