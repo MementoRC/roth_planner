@@ -110,7 +110,7 @@ class TestNoLiteralBracketCeilings:
 
     def test_no_literal_niit_threshold_in_ytd_income(self):
         """views/ytd_income.py must not contain the hardcoded $250K NIIT threshold."""
-        text = _file_text("views/ytd_income.py")
+        text = _file_text("views/ytd_income/__init__.py")
         assert "$250K" not in text, (
             "views/ytd_income.py — use NIIT_THRESHOLD_MFJ interpolation instead of hardcoded $250K"
         )
@@ -141,7 +141,7 @@ class TestNoLiteralLTCGRatesInViews:
 
     def test_no_literal_ltcg_rates_in_ytd_income(self):
         """views/ytd_income.py must not contain hardcoded LTCG rate strings."""
-        text = _file_text("views/ytd_income.py")
+        text = _file_text("views/ytd_income/__init__.py")
         assert "15%/20%" not in text, (
             "views/ytd_income.py contains '15%/20%' — interpolate from LTCG_RATES_MFJ instead"
         )
