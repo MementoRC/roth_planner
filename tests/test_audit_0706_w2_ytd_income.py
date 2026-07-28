@@ -161,7 +161,7 @@ class TestModuleLevelImport:
         import ast
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income.py").read_text()
+        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income" / "__init__.py").read_text()
         tree = ast.parse(src)
 
         # Find all import statements at module level (not nested inside functions)
@@ -203,7 +203,15 @@ class TestQualifiedDividendsHelpText:
         import ast
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income.py").read_text()
+        # The qualified_dividends number_input widget lives in the manual-entry
+        # partial (extracted from views/ytd_income/__init__.py).
+        src = (
+            Path(__file__).resolve().parent.parent
+            / "views"
+            / "ytd_income"
+            / "_partials"
+            / "_manual_entry.py"
+        ).read_text()
         tree = ast.parse(src)
 
         # Find the help= kwarg for the qualified_dividends number_input
