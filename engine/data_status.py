@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 
 from models.household import Household
 from models.sourced import Provenance, SourcedDict, SourcedList, SourcedValue
+from models.ytd_income import YTDSnapshot
 
 STALE_THRESHOLD_DAYS = 7
 
@@ -205,3 +206,48 @@ def governed_fields_for_step(hh: Household, step_key: str) -> list[str]:
                 result += [magi_field_key(y) for y in sorted(hh.prior_year_magi.keys())]
             return result
     raise ValueError("Unknown setup step: " + repr(step_key))
+
+
+YTD_STALE_AFTER_DAYS = 14
+
+
+def compute_ytd_completeness(snapshot: YTDSnapshot, *, now: datetime) -> DataCompleteness:
+    """Flag a YTDSnapshot as missing (never saved) or stale (not updated recently).
+
+    Unlike compute_data_completeness, this does not check field-level presence:
+    YTDSnapshot's manual-entry fields legitimately default to 0.0 (e.g. no wages
+    recorded yet in January), so an "is it populated" check would false-positive
+    constantly. The only meaningful signal available is when the snapshot was
+    last saved (snapshot_date), so this checks staleness only.
+    """
+    if not snapshot.snapshot_date:
+        item = DataStatusItem(
+            field="snapshot_date",
+            label="YTD snapshot",
+            severity="missing",
+            detail="No YTD data recorded yet.",
+        )
+        return DataCompleteness(total=1, ok=0, issues=(item,))
+
+    try:
+        recorded = datetime.fromisoformat(snapshot.snapshot_date)
+    except ValueError:
+        item = DataStatusItem(
+            field="snapshot_date",
+            label="YTD snapshot",
+            severity="missing",
+            detail=f"Unrecognized snapshot_date value: {snapshot.snapshot_date!r}.",
+        )
+        return DataCompleteness(total=1, ok=0, issues=(item,))
+
+    age = now - recorded
+    if age > timedelta(days=YTD_STALE_AFTER_DAYS):
+        item = DataStatusItem(
+            field="snapshot_date",
+            label="YTD snapshot",
+            severity="stale",
+            detail=f"Last updated {age.days} days ago.",
+        )
+        return DataCompleteness(total=1, ok=0, issues=(item,))
+
+    return DataCompleteness(total=1, ok=1, issues=())

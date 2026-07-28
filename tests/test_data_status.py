@@ -14,9 +14,11 @@ from engine.data_status import (
     DataStatusItem,
     compute_data_completeness,
     compute_data_status,
+    compute_ytd_completeness,
 )
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedValue
+from models.ytd_income import YTDSnapshot
 
 NOW = datetime(2026, 7, 24, 12, 0, 0)
 
@@ -205,3 +207,34 @@ def test_governed_fields_for_step_unknown_raises() -> None:
 
     with pytest.raises(ValueError, match="Unknown setup step"):
         governed_fields_for_step(hh, "bogus")
+
+
+class TestComputeYtdCompleteness:
+    def test_empty_snapshot_date_is_missing(self):
+        snap = YTDSnapshot()
+        result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
+        assert result.issues[0].severity == "missing"
+        assert result.ok == 0
+
+    def test_malformed_snapshot_date_is_missing(self):
+        snap = YTDSnapshot(snapshot_date="not-a-date")
+        result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
+        assert result.issues[0].severity == "missing"
+
+    def test_recent_snapshot_is_ok(self):
+        snap = YTDSnapshot(snapshot_date="2026-07-27")
+        result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
+        assert result.issues == ()
+        assert result.ok == 1
+
+    def test_snapshot_at_exact_threshold_is_still_ok(self):
+        # exactly 14 days -- NOT > threshold, so still ok (boundary case)
+        snap = YTDSnapshot(snapshot_date="2026-07-14")
+        result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
+        assert result.issues == ()
+
+    def test_snapshot_just_past_threshold_is_stale(self):
+        # 15 days -- past the 14-day threshold
+        snap = YTDSnapshot(snapshot_date="2026-07-13")
+        result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
+        assert result.issues[0].severity == "stale"
