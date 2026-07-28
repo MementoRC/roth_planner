@@ -12,6 +12,8 @@ from engine.pdf_import import PdfImportResult
 from models.grants import StockGrant
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+from views.ytd_income._partials import _event_log as event_log_mod
+from views.ytd_income._partials import _manual_entry as manual_entry_mod
 from views.ytd_income._partials import _sync_scan as sync_scan_mod
 
 
@@ -66,6 +68,8 @@ class TestYtdIncomeNqoDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -87,6 +91,8 @@ class TestYtdIncomeNqoDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -117,6 +123,8 @@ class TestYtdIncomeNqoDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -153,6 +161,8 @@ class TestYtdIncomeNqoDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -188,6 +198,8 @@ class TestYtdIncomeNqoDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -246,6 +258,8 @@ class TestInvestmentIncomeDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -297,6 +311,8 @@ class TestInvestmentIncomeDisplay:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -343,6 +359,8 @@ class TestManualEntryAutoDeselect:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -387,6 +405,8 @@ class TestManualEntryAutoDeselect:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=failed_ytd),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -449,6 +469,8 @@ class TestManualEntryAutoDeselect:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -487,6 +509,8 @@ class TestTaxBracketAndSafeHarborSections:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -509,6 +533,8 @@ class TestTaxBracketAndSafeHarborSections:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -530,6 +556,8 @@ class TestTaxBracketAndSafeHarborSections:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
             patch("views.ytd_income.load_prior_year_federal_tax", return_value=0.0),
         ):
@@ -565,6 +593,8 @@ class TestTaxBracketAndSafeHarborSections:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
             patch("views.ytd_income.load_prior_year_federal_tax", return_value=50_000.0),
             patch("views.ytd_income.safe_harbor_payment", side_effect=_capture),
@@ -595,6 +625,8 @@ class TestTaxBracketAndSafeHarborSections:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -632,6 +664,8 @@ class TestManualEntryFieldCoverage:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -656,6 +690,8 @@ class TestManualEntryFieldCoverage:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -681,6 +717,8 @@ class TestIncomeEventLog:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -707,6 +745,8 @@ class TestIncomeEventLog:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -736,6 +776,8 @@ class TestIncomeEventLog:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -775,6 +817,8 @@ class TestIncomeEventLog:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             ytd_income_mod.render(hh)
@@ -823,6 +867,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch(
                 "engine.pdf_import.scan_pdf_folder",
                 return_value=PdfImportResult(brokerage_records=[taxable_rec]),
@@ -879,6 +925,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch(
                 "engine.pdf_import.scan_pdf_folder",
                 return_value=PdfImportResult(brokerage_records=[taxable_rec]),
@@ -935,6 +983,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch(
                 "engine.pdf_import.scan_pdf_folder",
                 return_value=PdfImportResult(brokerage_records=[roth_rec]),
@@ -972,6 +1022,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
@@ -1000,6 +1052,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
@@ -1038,6 +1092,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
@@ -1074,6 +1130,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
@@ -1110,6 +1168,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
@@ -1158,6 +1218,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch(
                 "engine.pdf_import.scan_pdf_folder",
                 return_value=PdfImportResult(brokerage_records=[taxable_rec]),
@@ -1215,6 +1277,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.load_statement_records", return_value=cached_by_account),
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
@@ -1279,6 +1343,8 @@ class TestBrokerageStatementSync:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_account_type_override") as mock_save_override,
             patch(
@@ -1336,6 +1402,8 @@ class TestOwnerAttributionScanFlow:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -1468,6 +1536,8 @@ class TestBrokerageOwnerAttributionScanFlow:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
@@ -1588,6 +1658,8 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
         with (
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),

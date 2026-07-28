@@ -31,6 +31,8 @@ from engine.tax_return_pdf import Form1040Record
 from models.household import Household
 from models.sourced import Source
 from models.ytd_income import YTDSnapshot
+from views.ytd_income._partials import _event_log as event_log_mod
+from views.ytd_income._partials import _manual_entry as manual_entry_mod
 from views.ytd_income._partials import _sync_scan as sync_scan_mod
 
 _RECORDED_AT = datetime(2026, 7, 17, 9, 0, 0)
@@ -140,6 +142,8 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
         # handler post-Task-3 extraction -- has its own `import streamlit as st`
         # binding, so must be patched separately too.
         patch.object(sync_scan_mod, "st", mock_st),
+        patch.object(manual_entry_mod, "st", mock_st),
+        patch.object(event_log_mod, "st", mock_st),
         patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()),
         patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
         patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
@@ -313,6 +317,8 @@ class TestA2RewiredYtdIncomeView:
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(shared_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
+        patch.object(manual_entry_mod, "st", mock_st),
+        patch.object(event_log_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()) as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
