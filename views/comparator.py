@@ -23,6 +23,7 @@ from engine.scenario_compare import (
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
+from views._shared import render_completeness_badge
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -50,6 +51,7 @@ def render(hh: Household):
     st.title("⚖️ Scenario Comparator")
     st.caption("Compare conversion strategies side-by-side to find the best approach.")
     st.caption(FORM_8606_CAPTION)
+    render_completeness_badge(hh)
 
     # --- Scenario selection ---
     st.markdown("### Select Scenarios to Compare")
