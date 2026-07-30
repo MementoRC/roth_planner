@@ -28,10 +28,13 @@ def _grant(*, year=2019, strike=104.0, shares=1000, expiry_year=2029) -> StockGr
 
 
 def _render_oe(schedule=None) -> None:
+    import streamlit as st
+
     from models.grants import StockGrant
     from models.household import Household
     from views.option_exercise import render
 
+    st.session_state["_suppress_snapshot_autoload"] = True
     grant = StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029)
     hh = Household(grants=[grant], base_year=2026)
     hh.exercise_schedule = schedule
