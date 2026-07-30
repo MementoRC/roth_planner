@@ -275,6 +275,7 @@ class TestComputeExerciseCompleteness:
 
         assert len(result.issues) == 1
         assert result.issues[0].severity == "missing"
+        assert result.issues[0].field == self._grant().key()
 
     def test_partially_allocated_flags_incomplete_grants_only(self):
         g1 = self._grant(year=2019, strike=104.0, expiry_year=2029)
