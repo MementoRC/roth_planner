@@ -15,7 +15,7 @@ import streamlit as st
 from engine.tax_indexing import DEFAULT_CPI, index_tuple, index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
-from views._shared import render_canonical_field
+from views._shared import render_canonical_field, render_completeness_badge
 
 # Per-year IRA contribution limits.
 # 2025 source: IRS Notice 2024-80.
@@ -258,6 +258,7 @@ def render(hh: Household):
         "Check whether you can make a direct Roth IRA contribution, "
         "and whether a backdoor Roth makes sense given your IRA balances."
     )
+    render_completeness_badge(hh)
 
     # Prior-year MAGI anchor (from the 1040 PDF import) seeds the MAGI default
     # and the IRMAA 2-year lookback.
