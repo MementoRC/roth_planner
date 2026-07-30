@@ -14,6 +14,7 @@ from engine.exercise_schedule_store import save_exercise_schedule
 from engine.scenario_types import ConversionPlan
 from models.household import Household
 from views._format import fmt_dollars
+from views._shared import render_completeness_badge
 
 _RESULT_KEY = "_auto_opt_result"
 _SIG_KEY = "_auto_opt_sig"
@@ -123,6 +124,7 @@ def render(hh: Household) -> None:
         "lowest modeled lifetime all-in cost. Never worse than your current "
         "plan — it's included as a baseline candidate."
     )
+    render_completeness_badge(hh)
 
     if not hh.grants:
         st.info("No option grants loaded.")
