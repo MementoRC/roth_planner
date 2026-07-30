@@ -61,7 +61,7 @@ def render(hh: Household, theme: str | None = None) -> None:
 
     _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
     if _theme == "Domains":
-        _render_classic(hh)  # TODO(Task 21): real Domains 2-tab layout
+        _render_domains(hh)
     else:
         _render_classic(hh)
 
@@ -88,6 +88,19 @@ def _prep(
     )
     explicit_price_years = set(explicit_schedule.price_by_year) if explicit_schedule else set()
     return schedule, years, explicit_schedule, explicit_price_years
+
+
+def _render_domains(hh: Household) -> None:
+    schedule, years, explicit_schedule, explicit_price_years = _prep(hh)
+    tab1, tab2 = st.tabs(["Edit Allocation", "Review Impact"])
+    with tab1:
+        price_by_year, effective_base, effective_growth = render_price_basis_partial(
+            hh, years, explicit_schedule, explicit_price_years
+        )
+        norm = render_grid_partial(hh, years, schedule)
+        render_validate_save_partial(hh, norm, price_by_year, effective_base, effective_growth)
+    with tab2:
+        render_review_partial(hh, years, norm, price_by_year)
 
 
 def _render_classic(hh: Household) -> None:
