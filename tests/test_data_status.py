@@ -14,8 +14,11 @@ from engine.data_status import (
     DataStatusItem,
     compute_data_completeness,
     compute_data_status,
+    compute_exercise_completeness,
     compute_ytd_completeness,
 )
+from models.exercise_schedule import ExerciseSchedule
+from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedValue
 from models.ytd_income import YTDSnapshot
@@ -238,3 +241,72 @@ class TestComputeYtdCompleteness:
         snap = YTDSnapshot(snapshot_date="2026-07-13")
         result = compute_ytd_completeness(snap, now=datetime(2026, 7, 28))
         assert result.issues[0].severity == "stale"
+
+
+class TestComputeExerciseCompleteness:
+    @staticmethod
+    def _grant(*, year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id=""):
+        return StockGrant(
+            year=year, strike=strike, shares=shares, expiry_year=expiry_year, grant_id=grant_id
+        )
+
+    def test_no_grants_is_ok(self):
+        hh = Household(grants=[], base_year=2026)
+
+        result = compute_exercise_completeness(hh)
+
+        assert result.issues == ()
+
+    def test_no_schedule_is_missing(self):
+        hh = Household(grants=[self._grant()], base_year=2026)
+        hh.exercise_schedule = None
+
+        result = compute_exercise_completeness(hh)
+
+        assert len(result.issues) == 1
+        assert result.issues[0].severity == "missing"
+        assert result.ok == 0
+
+    def test_empty_but_not_none_schedule_is_missing_per_grant(self):
+        hh = Household(grants=[self._grant()], base_year=2026)
+        hh.exercise_schedule = ExerciseSchedule()
+
+        result = compute_exercise_completeness(hh)
+
+        assert len(result.issues) == 1
+        assert result.issues[0].severity == "missing"
+
+    def test_partially_allocated_flags_incomplete_grants_only(self):
+        g1 = self._grant(year=2019, strike=104.0, expiry_year=2029)
+        g2 = self._grant(year=2020, strike=130.0, expiry_year=2030)
+        hh = Household(grants=[g1, g2], base_year=2026)
+        schedule = ExerciseSchedule()
+        schedule.set_shares(g1.key(), 2029, g1.shares)  # g1 fully allocated, g2 untouched
+        hh.exercise_schedule = schedule
+
+        result = compute_exercise_completeness(hh)
+
+        assert len(result.issues) == 1
+        assert result.issues[0].field == g2.key()
+
+    def test_expired_grant_is_skipped(self):
+        expired = self._grant(year=2010, strike=50.0, expiry_year=2020)
+        hh = Household(grants=[expired], base_year=2026)
+        hh.exercise_schedule = None
+
+        result = compute_exercise_completeness(hh)
+
+        assert result.issues == ()
+        assert result.total == 0
+
+    def test_fully_allocated_is_ok(self):
+        g = self._grant(year=2019, strike=104.0, expiry_year=2029)
+        hh = Household(grants=[g], base_year=2026)
+        schedule = ExerciseSchedule()
+        schedule.set_shares(g.key(), 2029, g.shares)
+        hh.exercise_schedule = schedule
+
+        result = compute_exercise_completeness(hh)
+
+        assert result.issues == ()
+        assert result.ok == result.total
