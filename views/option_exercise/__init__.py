@@ -12,17 +12,16 @@ owns Streamlit only.
 
 from dataclasses import replace
 
-import pandas as pd
 import streamlit as st
 
 from engine.exercise_schedule_store import clear_exercise_schedule, save_exercise_schedule
 from models.exercise_schedule import ExerciseSchedule
 from models.household import Household, project_price
-from views._format import fmt_dollars
 from views.option_exercise._partials import (
     handle_txn_quote_fetch,
     render_grid_partial,
     render_price_basis_partial,
+    render_review_partial,
 )
 from views.option_exercise._partials._helpers import _clear_widget_state
 
@@ -66,38 +65,7 @@ def render(hh: Household) -> None:
 
     norm = render_grid_partial(hh, years, schedule)
 
-    # --- 3. Live "Remaining" readout (same-rerun, from current edits) ---
-    st.markdown("### Remaining Unexercised")
-    remaining_rows = []
-    for g in hh.grants:
-        scheduled = sum(norm.shares_by_key[g.key()].values())
-        remaining_rows.append(
-            {
-                "Grant": f"{g.year} · ${g.strike:g}",
-                "Granted": f"{g.shares:,}",
-                "Scheduled": f"{scheduled:,}",
-                "Remaining": f"{g.shares - scheduled:,}",
-            }
-        )
-    st.dataframe(pd.DataFrame(remaining_rows), hide_index=True, width="stretch")
-
-    # --- 4. Read-only dollar mirror grid ---
-    st.markdown("### Ordinary Income Produced (unsaved edits included)")
-    dollar_rows = []
-    year_totals = dict.fromkeys(years, 0.0)
-    for g in hh.grants:
-        row = {"Grant": f"{g.year} · ${g.strike:g} · {g.shares:,} sh"}
-        for year in years:
-            shares = norm.shares_by_key[g.key()].get(year, 0)
-            dollars = g.per_share_spread(price_by_year[year]) * shares
-            row[str(year)] = fmt_dollars(dollars) if year <= g.expiry_year else "—"
-            year_totals[year] += dollars
-        dollar_rows.append(row)
-    total_row = {"Grant": "Total (ordinary income)"}
-    for year in years:
-        total_row[str(year)] = fmt_dollars(year_totals[year])
-    dollar_rows.append(total_row)
-    st.dataframe(pd.DataFrame(dollar_rows), hide_index=True, width="stretch")
+    render_review_partial(hh, years, norm, price_by_year)
 
     # --- 5. Validation banner ---
     current_schedule = ExerciseSchedule(
