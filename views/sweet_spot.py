@@ -27,6 +27,7 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
+from views._shared import render_completeness_badge
 
 
 def render(hh: Household) -> None:
@@ -36,6 +37,7 @@ def render(hh: Household) -> None:
         "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
     )
     st.caption(FORM_8606_CAPTION)
+    render_completeness_badge(hh)
 
     # Filing-status-aware constants for chart annotations (indexed for selected year)
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
