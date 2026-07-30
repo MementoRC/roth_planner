@@ -394,7 +394,7 @@ elif page == "💰 YTD Income":
 elif page == "📝 Option Exercise Planner":
     from views.option_exercise import render
 
-    render(get_household())
+    render(get_household(), st.session_state["ui_theme"])
 elif page == "🧮 Exercise Auto-Optimizer":
     from views.auto_optimizer import render
 
