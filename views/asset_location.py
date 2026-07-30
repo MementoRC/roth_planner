@@ -11,6 +11,7 @@ from engine.asset_location import project_asset_location
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
+from views._shared import render_completeness_badge
 
 STRATEGIES = {
     "equity_first": ("Equity First", "#22c55e"),
@@ -25,6 +26,7 @@ def render(hh: Household):
         "Compare converting high-growth equities first vs proportionally vs bonds first. "
         "Same total conversion amount — different long-term outcomes."
     )
+    render_completeness_badge(hh)
 
     # --- Controls ---
     c1, c2, c3 = st.columns(3)
