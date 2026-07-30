@@ -58,8 +58,9 @@ Two independent tracks:
 **Track 1 — Universal completeness badge (9 pages + 1 refactor).** A new shared helper
 `render_completeness_badge(hh: Household) -> None` in `views/_shared.py` (which already holds
 cross-page UI primitives like `render_canonical_field`), wrapping the existing
-`compute_data_completeness` and rendering the same caption + "jump to Setup" button shape
-Dashboard's current bespoke badge already uses. Dashboard's badge is refactored to call this
+`compute_data_completeness` and rendering the same caption-only shape (percent-complete, or an
+issue-count caption) Dashboard's current bespoke badge already uses — no button, matching
+Dashboard's actual current behavior exactly. Dashboard's badge is refactored to call this
 helper (dedup, zero behavior change), then the same one-line call is wired into: Conversion
 Planner, Sweet Spot Finder, RMD Squeeze Analyzer, Scenario Comparator, ACA+IRMAA Explorer, Asset
 Location Optimizer, Roth Eligibility, Portfolio, Exercise Auto-Optimizer. No new engine code.
@@ -114,8 +115,10 @@ inputs) / "Review Impact" (Remaining/mirror tables + projection) tabs.
 
 - New `TestComputeExerciseCompleteness` class in `tests/test_data_status.py` (same file as the
   other two validators — not `test_engine.py`, per this repo's established convention): no-grants
-  → ok, no-schedule → missing, partially-allocated → missing, expired-grant → skipped,
-  fully-allocated → ok.
+  → ok, no-schedule (`exercise_schedule is None`) → missing, empty-but-not-None schedule
+  (`exercise_schedule.is_empty()`, falls through to per-grant check since `effective_schedule()`
+  treats both as "no plan") → missing per grant, partially-allocated → missing, expired-grant →
+  skipped, fully-allocated → ok.
 - Track 1 needs no new engine tests (pure wiring); a full-suite run after each page's one-line
   addition is the verification gate.
 - Track 2's Domains layout gets `tests/test_option_exercise_shell.py`, mirroring
