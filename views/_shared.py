@@ -47,7 +47,11 @@ from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.data_sources.snapshot_ingest import record_snapshot_candidates
-from engine.data_status import SETUP_STEP_GROUPS, compute_data_completeness, governed_fields_for_step
+from engine.data_status import (
+    SETUP_STEP_GROUPS,
+    compute_data_completeness,
+    governed_fields_for_step,
+)
 from models.household import Household
 from models.sourced import Source
 
