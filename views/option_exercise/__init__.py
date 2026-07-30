@@ -10,27 +10,36 @@ All computation goes through ``ExerciseSchedule`` / the store — this module
 owns Streamlit only.
 """
 
-from dataclasses import replace
-
 import streamlit as st
 
 from engine.exercise_schedule_store import clear_exercise_schedule, save_exercise_schedule
-from models.exercise_schedule import ExerciseSchedule
-from models.household import Household, project_price
+from models.household import Household
 from views.option_exercise._partials import (
     handle_txn_quote_fetch,
     render_grid_partial,
     render_price_basis_partial,
     render_review_partial,
+    render_validate_save_partial,
 )
-from views.option_exercise._partials._helpers import _clear_widget_state
+
+# save_exercise_schedule / clear_exercise_schedule are imported (but not called
+# directly in this module — the actual calls live in _validate_save.py,
+# resolved via this module's own attribute) so that
+# monkeypatch.setattr(oe_module, "save_exercise_schedule", ...) /
+# "clear_exercise_schedule" in tests still intercepts the real page's
+# Save/Reset buttons.
 
 # handle_txn_quote_fetch is re-exported (not called directly in this module —
 # the actual call lives in _price_basis.py, resolved via this module's own
 # attribute) so that tests can still `from views.option_exercise import
 # handle_txn_quote_fetch` and `monkeypatch.setattr(oe_module,
 # "handle_txn_quote_fetch", ...)` to intercept the real page's fetch button.
-__all__ = ["handle_txn_quote_fetch", "render"]
+__all__ = [
+    "clear_exercise_schedule",
+    "handle_txn_quote_fetch",
+    "render",
+    "save_exercise_schedule",
+]
 
 
 def render(hh: Household) -> None:
@@ -67,41 +76,4 @@ def render(hh: Household) -> None:
 
     render_review_partial(hh, years, norm, price_by_year)
 
-    # --- 5. Validation banner ---
-    current_schedule = ExerciseSchedule(
-        shares_by_grant_year={
-            key: dict(cells) for key, cells in norm.shares_by_key.items() if cells
-        },
-        price_by_year=dict(price_by_year),
-    )
-    messages = current_schedule.validate(hh.grants, hh.base_year)
-    for msg in messages:
-        st.error(msg)
-
-    # --- 6. Save / Reset buttons ---
-    st.markdown("---")
-    b1, b2 = st.columns(2)
-    with b1:
-        if st.button("Save schedule", type="primary"):
-            # Only persist a year's price as an explicit override if the widget
-            # value actually diverges from the projected assumption -- untouched
-            # "assumed" cells must never freeze into fake overrides that shadow a
-            # later live-quote fetch (the "stuck at old price" bug).
-            persisted_prices = {
-                year: price
-                for year, price in price_by_year.items()
-                if abs(price - project_price(effective_base, hh.base_year, effective_growth, year))
-                > 0.005
-            }
-            schedule_to_save = replace(current_schedule, price_by_year=persisted_prices)
-            save_exercise_schedule(schedule_to_save)
-            hh.exercise_schedule = schedule_to_save
-            st.success("Exercise schedule saved.")
-            st.rerun()
-    with b2:
-        if st.button("Reset to default (hold to expiry)"):
-            clear_exercise_schedule()
-            hh.exercise_schedule = None
-            _clear_widget_state()
-            st.success("Reset to legacy default.")
-            st.rerun()
+    render_validate_save_partial(hh, norm, price_by_year, effective_base, effective_growth)
