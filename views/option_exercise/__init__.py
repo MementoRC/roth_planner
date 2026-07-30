@@ -15,22 +15,24 @@ from dataclasses import replace
 import pandas as pd
 import streamlit as st
 
-from config.loader import save_user_defaults
 from engine.exercise_grid import normalize_grid_edits
 from engine.exercise_schedule_store import clear_exercise_schedule, save_exercise_schedule
 from models.exercise_schedule import ExerciseSchedule
 from models.household import Household, project_price
 from views._format import fmt_dollars
-from views.option_exercise._partials import handle_txn_quote_fetch
+from views.option_exercise._partials import handle_txn_quote_fetch, render_price_basis_partial
 from views.option_exercise._partials._helpers import (
     _GRID_EDITOR_KEY,
-    _GROWTH_RATE_KEY,
-    _QUOTE_PRICE_KEY,
     _SHARES_STATE_KEY,
-    _clear_assumed_price_widgets,
     _clear_widget_state,
-    _price_key,
 )
+
+# handle_txn_quote_fetch is re-exported (not called directly in this module —
+# the actual call lives in _price_basis.py, resolved via this module's own
+# attribute) so that tests can still `from views.option_exercise import
+# handle_txn_quote_fetch` and `monkeypatch.setattr(oe_module,
+# "handle_txn_quote_fetch", ...)` to intercept the real page's fetch button.
+__all__ = ["handle_txn_quote_fetch", "render"]
 
 
 def render(hh: Household) -> None:
@@ -59,55 +61,9 @@ def render(hh: Household) -> None:
     )
     explicit_price_years = set(explicit_schedule.price_by_year) if explicit_schedule else set()
 
-    # --- 0. Live TXN quote + growth-rate controls ---
-    st.markdown("### TXN Price Basis")
-    qc1, qc2 = st.columns([1, 2])
-    with qc1:
-        if st.button("Fetch TXN quote (Yahoo)"):
-            result = handle_txn_quote_fetch()
-            if result.ok and result.price is not None:
-                st.success(f"Fetched TXN @ ${result.price:.2f}")
-                st.caption("source: Yahoo Finance · pending review in Command Center")
-                _clear_assumed_price_widgets(explicit_price_years)
-            else:
-                st.warning(
-                    f"Couldn't fetch a live quote ({result.error}); using last known price."
-                )
-    with qc2:
-        growth_pct = st.number_input(
-            "Assumed TXN growth (%/yr)",
-            value=float(hh.txn_price_growth.default_rate * 100),
-            step=0.5,
-            format="%.2f",
-        )
-        st.session_state[_GROWTH_RATE_KEY] = growth_pct
-        if not st.session_state.get("_suppress_snapshot_autoload"):
-            save_user_defaults({"txn_price_growth_rate": float(growth_pct)})
-
-    effective_growth = replace(hh.txn_price_growth, default_rate=growth_pct / 100)
-    effective_base = st.session_state.get(_QUOTE_PRICE_KEY, hh.txn_price_now)
-
-    # --- 1. Per-year TXN price row ---
-    st.markdown("### Assumed TXN Price by Year")
-    price_by_year: dict[int, float] = {}
-    price_cols = st.columns(len(years))
-    for col, year in zip(price_cols, years, strict=True):
-        with col:
-            is_assumed = year not in explicit_price_years
-            default_price = (
-                explicit_schedule.price(year)
-                if explicit_schedule is not None and year in explicit_price_years
-                else project_price(effective_base, hh.base_year, effective_growth, year)
-            )
-            price_by_year[year] = st.number_input(
-                str(year),
-                value=float(default_price),
-                step=1.0,
-                format="%.2f",
-                key=_price_key(year),
-            )
-            if is_assumed:
-                st.caption("assumed")
+    price_by_year, effective_base, effective_growth = render_price_basis_partial(
+        hh, years, explicit_schedule, explicit_price_years
+    )
 
     # --- 2. Editable exercise grid ---
     st.markdown("### Exercise Schedule (shares)")
