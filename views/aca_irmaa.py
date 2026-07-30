@@ -31,6 +31,7 @@ from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
+from views._shared import render_completeness_badge
 
 
 def render(hh: Household):
@@ -49,6 +50,7 @@ def render(hh: Household):
         f"ACA: {aca_status} · IRMAA lookback: 2 years · "
         f"Enhanced subsidies: {'Active' if hh.aca_enhanced_subsidies_active else 'Expired (pre-ARP rules)'}"
     )
+    render_completeness_badge(hh)
 
     # --- Interactive MAGI slider ---
     st.markdown("### Explore: Cost of Additional Income")

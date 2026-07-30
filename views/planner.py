@@ -27,6 +27,7 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct
+from views._shared import render_completeness_badge
 
 PHASE_COLORS = {
     "options": "#7c3aed",  # purple
@@ -190,6 +191,7 @@ def render(hh: Household) -> None:
         "Set conversion amounts per year. Watch bracket room, taxes, and IRA balances update in real-time."
     )
     st.caption(FORM_8606_CAPTION)
+    render_completeness_badge(hh)
 
     # --- Auto-fill buttons ---
     col_btn1, col_btn2 = st.columns(2)

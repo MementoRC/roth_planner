@@ -13,6 +13,7 @@ from engine.portfolio_sync import EXPECTED_RETURNS, EquityGrant
 from models.grants import StockGrant
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
+from views._shared import render_completeness_badge
 
 
 def _pair_grants(
@@ -82,6 +83,7 @@ def render(hh: Household):
         "Cached data from FinExtract ingestion server. "
         "Go to **⚙️ Setup → 💼 Portfolio** and click **Sync from FinExtract** to refresh."
     )
+    render_completeness_badge(hh)
 
     snap = st.session_state.get("portfolio_snapshot")
 

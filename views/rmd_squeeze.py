@@ -25,6 +25,7 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
+from views._shared import render_completeness_badge
 
 
 def render(hh: Household):
@@ -34,6 +35,7 @@ def render(hh: Household):
         "trigger IRMAA, and overflow into taxable brokerage accounts."
     )
     st.caption(FORM_8606_CAPTION)
+    render_completeness_badge(hh)
 
     # --- Scenario selection ---
     _is_mfj = hh.filing_status == "MFJ"

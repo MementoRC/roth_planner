@@ -47,6 +47,11 @@ from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.data_sources.snapshot_ingest import record_snapshot_candidates
+from engine.data_status import (
+    SETUP_STEP_GROUPS,
+    compute_data_completeness,
+    governed_fields_for_step,
+)
 from models.household import Household
 from models.sourced import Source
 
@@ -256,3 +261,41 @@ def sync_everything(hh: Household) -> SyncEverythingResult:
         ss=_sync_ss_source(),
         scan=_sync_scan_source(),
     )
+
+
+def _all_governed_fields(hh: Household) -> list[str]:
+    """Every governed field across all 5 Setup steps (the same universe
+    Dashboard's original badge iterated) -- not step-scoped, since this
+    badge is a whole-household completeness signal, not a per-step one.
+    """
+    fields: list[str] = []
+    for step_key, _label, _f in SETUP_STEP_GROUPS:
+        fields.extend(governed_fields_for_step(hh, step_key))
+    return fields
+
+
+def render_completeness_badge(hh: Household) -> None:
+    """Caption-only data-completeness badge, reusing the Setup validator.
+
+    Byte-for-byte the same caption shape as Dashboard's original inline
+    badge (see the Phase 4 design spec's Track 1 architecture section):
+    a percent-complete line when fully populated, an issue-count line
+    otherwise. MVP simplification carried over unchanged from Dashboard's
+    original: pending Command Center candidates are not surfaced here
+    (only missing/stale) -- the Contextual shell's status bar already
+    covers pending conflicts separately.
+    """
+    completeness = compute_data_completeness(
+        hh,
+        _all_governed_fields(hh),
+        pending_candidates=set(),
+        now=datetime.now(),
+    )
+    pct = round(completeness.fraction * 100)
+    if completeness.is_complete:
+        st.caption(f"Data completeness: {pct}% -- all key inputs present")
+    else:
+        st.caption(
+            f"Data completeness: {pct}% -- "
+            f"{len(completeness.issues)} item(s) need attention"
+        )
