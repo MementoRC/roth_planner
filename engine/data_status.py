@@ -251,3 +251,44 @@ def compute_ytd_completeness(snapshot: YTDSnapshot, *, now: datetime) -> DataCom
         return DataCompleteness(total=1, ok=0, issues=(item,))
 
     return DataCompleteness(total=1, ok=1, issues=())
+
+
+def compute_exercise_completeness(hh: Household) -> DataCompleteness:
+    """Flag each non-expired StockGrant with unallocated shares.
+
+    Setup-style presence/allocation check, not YTD-style staleness:
+    ExerciseSchedule carries no timestamp field, so "is it fully allocated"
+    is the only meaningful signal. Reads hh.exercise_schedule directly
+    (NOT hh.effective_schedule()) -- the default_at_expiry() fallback that
+    effective_schedule() applies for a missing/empty schedule is always
+    100%-allocated by construction, which would mask exactly the "nothing
+    confirmed yet" case this validator exists to flag.
+    """
+    non_expired = [g for g in hh.grants if g.expiry_year >= hh.base_year]
+    if not non_expired:
+        return DataCompleteness(total=0, ok=0, issues=())
+
+    schedule = hh.exercise_schedule
+    if schedule is None:
+        item = DataStatusItem(
+            field="exercise_schedule",
+            label="Exercise schedule",
+            severity="missing",
+            detail="No exercise plan confirmed -- using default hold-to-expiry allocation.",
+        )
+        return DataCompleteness(total=len(non_expired), ok=0, issues=(item,))
+
+    issues: list[DataStatusItem] = []
+    for grant in non_expired:
+        remaining = schedule.remaining(grant)
+        if remaining > 0:
+            issues.append(
+                DataStatusItem(
+                    field=grant.key(),
+                    label=f"{grant.year} grant (${grant.strike:g})",
+                    severity="missing",
+                    detail=f"{remaining:,} shares not yet allocated to an exercise year.",
+                )
+            )
+    ok = len(non_expired) - len(issues)
+    return DataCompleteness(total=len(non_expired), ok=ok, issues=tuple(issues))
