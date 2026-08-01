@@ -181,8 +181,9 @@ def render(hh: Household) -> None:
     # Add bracket boundary lines
     bracket_boundaries = []
     for ceil, rate in indexed_brackets[:-1]:
-        boundary_conv = bracket_boundary_conversion(base, ceil)
-        # Adjust for the fact that conversion changes taxable SS
+        # SS-taxability nonlinearity is folded in via binary search inside
+        # bracket_boundary_conversion (audit finding 1 fix).
+        boundary_conv = bracket_boundary_conversion(hh, base, ceil)
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
             fig_m.add_vline(

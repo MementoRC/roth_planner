@@ -27,6 +27,7 @@ from engine.sweet_spot_compute import (
     base_income_for_year,
     estimate_brokerage_income,
     estimate_ltcg_eligible,
+    estimate_rmd_income,
 )
 from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
@@ -179,6 +180,159 @@ class TestRmdYearBaseIncomeParity:
         assert base.rmd_income == pytest.approx(oracle.taxable_rmd, abs=1.0)
         assert base.base_gross == pytest.approx(oracle.combined_gross, abs=1.0)
         assert result.magi == pytest.approx(oracle.magi, abs=1.0)
+
+
+class TestRmdYtdNettingParity:
+    """Audit findings 2+3 (HIGH, 2026-08): estimate_rmd_income does not net out
+    RMD already taken/distributed year-to-date before adding the projected RMD,
+    double-counting the YTD portion: once via ytd.magi_ytd (which includes
+    ira_distributions_ytd) and again via the full un-netted forecast RMD.
+    Mirrors engine.scenario's C2/scenario-1 reduction (ytd_year.ira_distributions_ytd
+    netted against yr.taxable_rmd/yr.spouse_taxable_rmd) -- see scenario.py's
+    "base-year RMD net-of-YTD reconciliation" block.
+
+    Both households below are RMD-active in base_year (age == your_rmd_start_age)
+    with no SS/option income, isolating the RMD double-count from any SS-taxability
+    interaction (that compounding is exercised separately by finding 1's tests).
+    """
+
+    def _hh(self, *, your_ira: float, spouse_ira: float) -> Household:
+        return _no_ss_no_option_household(
+            your_age=75, spouse_age=75, your_ira=your_ira, spouse_ira=spouse_ira
+        )
+
+    def test_magi_matches_oracle_with_ytd_distributions(self) -> None:
+        """Finding 2: base.rmd_income / result.magi must agree with scenario.py's
+        oracle once YTD IRA distributions are netted out of the forecast RMD."""
+        hh = self._hh(your_ira=1_700_000.0, spouse_ira=1_700_000.0)
+        year = hh.base_year
+        # your_age=75 in base_year 2026 -> birth year 1951 -> 1951-1959 cohort -> 73.
+        assert hh.your_rmd_start_age == 73  # sanity: RMD active this year
+
+        ytd_dist = 8_000.0
+        ytd = YTDSnapshot(tax_year=year, ira_distributions_ytd=ytd_dist)
+        oracle = _oracle_year(hh, year, ytd=ytd)
+
+        base = base_income_for_year(hh, year, ytd=ytd)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        # oracle.taxable_rmd is "your" side only -- base.rmd_income combines
+        # both spouses (+ inherited IRAs, 0 here), so compare against the sum.
+        oracle_combined_rmd = oracle.taxable_rmd + oracle.spouse_taxable_rmd
+        assert base.rmd_income == pytest.approx(oracle_combined_rmd, abs=1.0), (
+            f"base.rmd_income ({base.rmd_income:.2f}) must equal the oracle's "
+            f"YTD-netted combined taxable RMD ({oracle_combined_rmd:.2f})"
+        )
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0), (
+            f"result.magi ({result.magi:.2f}) must equal the oracle's magi "
+            f"({oracle.magi:.2f}) -- pre-fix it is inflated by the double-counted "
+            f"YTD distribution"
+        )
+
+    def test_niit_no_phantom_charge_from_double_counted_rmd(self) -> None:
+        """Finding 3 (INDEPENDENT of finding 2's magi assertion): a large YTD RMD
+        distribution must not manufacture a phantom NIIT charge. Sized so the
+        correct (oracle) MAGI sits just under the $250K MFJ NIIT threshold, but
+        the un-netted double-count pushes the buggy MAGI over it."""
+        # Combined RMD at age 73 (divisor 26.5) on $6M combined IRA balance
+        # ~= $226,415 -- just under the $250K NIIT threshold on its own.
+        hh = self._hh(your_ira=3_000_000.0, spouse_ira=3_000_000.0)
+        year = hh.base_year
+        # your_age=75 in base_year 2026 -> birth year 1951 -> 1951-1959 cohort -> 73.
+        assert hh.your_rmd_start_age == 73  # sanity: RMD active this year
+
+        ytd_dist = 47_000.0
+        ytd = YTDSnapshot(tax_year=year, ira_distributions_ytd=ytd_dist)
+        oracle = _oracle_year(hh, year, ytd=ytd)
+        assert oracle.niit_magi < 250_000.0, (
+            "precondition: oracle (correct) niit_magi must sit under the MFJ "
+            f"NIIT threshold, got {oracle.niit_magi:.2f}"
+        )
+
+        net_inv_income = 50_000.0  # manual NII override -- makes NIIT sensitive to magi
+        oracle_niit = niit(oracle.niit_magi, net_inv_income, filing_status=hh.filing_status)
+        assert oracle_niit == pytest.approx(0.0), (
+            "precondition: oracle must show zero NIIT (magi below threshold)"
+        )
+
+        base = base_income_for_year(hh, year, ytd=ytd)
+        result = all_in_at_conversion(hh, base, 0.0, net_inv_income=net_inv_income)
+
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0), (
+            f"result.niit_magi ({result.niit_magi:.2f}) must equal the oracle's "
+            f"niit_magi ({oracle.niit_magi:.2f}); pre-fix it is inflated by the "
+            "double-counted YTD RMD, pushing it over the NIIT threshold"
+        )
+        sweet_spot_niit = niit(
+            result.niit_magi, net_inv_income, filing_status=hh.filing_status
+        )
+        assert sweet_spot_niit == pytest.approx(0.0), (
+            f"sweet_spot must NOT manufacture a phantom NIIT charge; got "
+            f"{sweet_spot_niit:.2f} (oracle correctly shows $0.00)"
+        )
+
+
+class TestQcdNettingOutOfNiitMagi:
+    """Audit finding 4 (MEDIUM, 2026-08): Sweet Spot Finder is unaware of a
+    household's QCD election and doesn't net it out of niit_magi (or magi),
+    overstating both by the full QCD amount. Mirrors
+    engine.scenario_compute.compute_rmds' netting:
+        taxable_rmd = max(your_rmd - min(qcd, qcd_limit, your_rmd), 0)
+    gated on age >= QCD_MIN_AGE, applied per-spouse (not pooled, unlike the
+    YTD-distribution netting in findings 2+3)."""
+
+    def _hh(self) -> Household:
+        return _no_ss_no_option_household(
+            your_age=75, spouse_age=75, your_ira=1_700_000.0, spouse_ira=1_700_000.0
+        )
+
+    def test_qcd_nets_out_of_magi_and_niit_magi_matches_oracle(self) -> None:
+        from engine.scenario_compute import QCD_MIN_AGE
+
+        hh = self._hh()
+        year = hh.base_year
+        assert hh.your_age >= QCD_MIN_AGE  # sanity: QCD-eligible this year
+
+        qcd_amount = 40_000.0
+        plan = ConversionPlan(qcds={year: qcd_amount})
+        oracle_result = run_scenario(hh, plan, "oracle", end_age=hh.your_age, ytd=None)
+        oracle = next(yr for yr in oracle_result.years if yr.year == year)
+        assert oracle.qcd == pytest.approx(qcd_amount), (
+            "precondition: oracle must record the full QCD election"
+        )
+
+        base = base_income_for_year(hh, year, ytd=None, your_qcd=qcd_amount)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0), (
+            f"result.niit_magi ({result.niit_magi:.2f}) must equal the oracle's "
+            f"QCD-netted niit_magi ({oracle.niit_magi:.2f}); pre-fix it is "
+            f"overstated by the full ${qcd_amount:,.0f} QCD"
+        )
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0), (
+            f"result.magi ({result.magi:.2f}) must equal the oracle's QCD-netted "
+            f"magi ({oracle.magi:.2f})"
+        )
+
+    def test_qcd_ignored_below_qcd_min_age(self) -> None:
+        """A QCD amount supplied for a spouse below QCD_MIN_AGE must have no
+        effect (mirrors compute_rmds' age gate)."""
+        from engine.scenario_compute import QCD_MIN_AGE
+
+        hh = _no_ss_no_option_household(
+            your_age=QCD_MIN_AGE - 1,
+            spouse_age=QCD_MIN_AGE - 1,
+            your_ira=1_700_000.0,
+            spouse_ira=1_700_000.0,
+        )
+        year = hh.base_year
+
+        no_qcd = estimate_rmd_income(hh, year)
+        with_qcd = estimate_rmd_income(hh, year, your_qcd=40_000.0, spouse_qcd=40_000.0)
+
+        assert with_qcd == pytest.approx(no_qcd), (
+            "QCD below QCD_MIN_AGE must not reduce estimated RMD income"
+        )
 
 
 class TestEstimateLtcgEligibleBaseYearSuppression:
