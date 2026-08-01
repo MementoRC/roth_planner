@@ -40,6 +40,14 @@ _RECORDED_AT = datetime(2026, 7, 17, 9, 0, 0)
 _GOLDEN_MAGI = 290_000.0
 _GOLDEN_YEAR = 2024
 
+# audit HIGH fix: the prior_year_magi CANDIDATE recorded by scan_and_record is
+# compute_irmaa_magi(agi, tax_exempt_interest) = 280_000.0 + 1_000.0, NOT the
+# record's own (FEIE-inclusive, Roth/ACA-flavor) .magi field above — feie=0.0
+# in this fixture so this only differs from the old (buggy) 290_000.0 answer
+# because .magi was deliberately set as an independent sentinel, not derived
+# from agi + tax_exempt_interest + feie.
+_GOLDEN_IRMAA_MAGI = 281_000.0
+
 _FORM_1040 = Form1040Record(
     tax_year=_GOLDEN_YEAR,
     agi=280_000.0,
@@ -178,7 +186,7 @@ class TestA0CurrentScanHandlerGolden:
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         candidate = candidates[0]
-        assert candidate.value == _GOLDEN_MAGI
+        assert candidate.value == _GOLDEN_IRMAA_MAGI
         assert candidate.prov.source == Source.PDF
         assert candidate.prov.detail == "Form 1040 PDF"
 
@@ -223,7 +231,7 @@ class TestA1ScanAndRecordPureHelper:
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
-        assert candidates[0].value == _GOLDEN_MAGI
+        assert candidates[0].value == _GOLDEN_IRMAA_MAGI
         assert candidates[0].prov.source == Source.PDF
         assert candidates[0].prov.detail == "Form 1040 PDF"
 
@@ -271,6 +279,63 @@ class TestA1ScanAndRecordPureHelper:
         assert not store.has_candidates(f"prior_year_magi.{_GOLDEN_YEAR}")
 
 
+class TestAuditHighIrmaaFeieScope:
+    """Audit HIGH: prior_year_magi (IRMAA-scoped) must not receive the
+    FEIE-inclusive Roth/ACA-flavor MAGI. End-to-end through scan_and_record
+    -> resolver -> irmaa_surcharge for the audit's concrete AGI=$200,000 +
+    FEIE=$20,000 case (pre-fix: fabricated a $2,296.80/year surcharge).
+    """
+
+    _FEIE_YEAR = 2025
+    _FEIE_FORM_1040 = Form1040Record(
+        tax_year=_FEIE_YEAR,
+        agi=200_000.0,
+        tax_exempt_interest=0.0,
+        taxable_ss=0.0,
+        qualified_dividends=0.0,
+        ordinary_dividends=0.0,
+        feie=20_000.0,
+        magi=220_000.0,  # FEIE-inclusive Roth/ACA-flavor (compute_magi output)
+        filing_status=None,
+        captured_at="2026-07-17T00:00:00+00:00",
+    )
+
+    def test_recorded_candidate_excludes_feie(self, tmp_path, clean_candidate_store):
+        feie_result = PdfImportResult(form_1040_records={self._FEIE_YEAR: self._FEIE_FORM_1040})
+        with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
+            result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
+
+        assert result.magi_candidates_recorded == 1
+        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        candidates = store.candidates_for(f"prior_year_magi.{self._FEIE_YEAR}")
+        assert len(candidates) == 1
+        # Correct IRMAA MAGI = AGI + tax_exempt_interest only ($200,000), NOT
+        # the FEIE-inclusive $220,000 that the record's own .magi field carries.
+        assert candidates[0].value == 200_000.0
+
+    def test_resolved_household_irmaa_surcharge_matches_correct_magi(
+        self, tmp_path, clean_candidate_store
+    ):
+        from engine.data_sources.choices import ChoiceMap
+        from engine.data_sources.resolver import resolve
+        from engine.irmaa import irmaa_surcharge
+
+        feie_result = PdfImportResult(form_1040_records={self._FEIE_YEAR: self._FEIE_FORM_1040})
+        with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
+            scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
+
+        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        result = resolve(Household(), store, ChoiceMap())
+        resolved_magi = result.household.prior_year_magi[self._FEIE_YEAR]
+
+        assert resolved_magi == 200_000.0
+        # Fixed: no surcharge (below the 2026 Tier-1 $218,000 MFJ threshold).
+        assert irmaa_surcharge(resolved_magi) == 0.0
+        # Pre-fix (FEIE-inclusive $220,000) would have fabricated this exact
+        # $2,296.80/year surcharge -- confirms the discrepancy the audit found.
+        assert irmaa_surcharge(220_000.0) == pytest.approx(2_296.80, abs=0.01)
+
+
 class TestA2RewiredYtdIncomeView:
     """views/ytd_income.py's "Scan folder" now routes through run_folder_scan --
     reruns the exact same fixture + mock_st harness as TestA0 (proving the
@@ -284,7 +349,7 @@ class TestA2RewiredYtdIncomeView:
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
-        assert candidates[0].value == _GOLDEN_MAGI
+        assert candidates[0].value == _GOLDEN_IRMAA_MAGI
         assert candidates[0].prov.source == Source.PDF
         assert candidates[0].prov.detail == "Form 1040 PDF"
 

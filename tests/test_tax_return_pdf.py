@@ -9,10 +9,12 @@ from typing import Any
 
 import pytest
 
+from engine.irmaa import irmaa_surcharge
 from engine.tax_return_pdf import (
     ANCHORS,
     Form1040ParseError,
     Form1040Record,
+    compute_irmaa_magi,
     compute_magi,
     load_pdf_tax_records,
     parse_form_1040_text,
@@ -112,6 +114,52 @@ class TestComputeMagi:
 
     def test_zero_adds(self) -> None:
         assert compute_magi(50_000.0, 0.0, 0.0) == 50_000.0
+
+
+# ---------------------------------------------------------------------------
+# TestComputeIrmaaMagi — audit HIGH: prior_year_magi (IRMAA-scoped) must NOT
+# receive the FEIE-inclusive Roth/ACA-flavor MAGI.
+# ---------------------------------------------------------------------------
+
+
+class TestComputeIrmaaMagi:
+    def test_excludes_feie(self) -> None:
+        """Unlike compute_magi, FEIE must NOT be added back (42 U.S.C. §1395r(i)(4))."""
+        assert compute_irmaa_magi(100_000.0, 0.0) == 100_000.0
+
+    def test_signature_has_no_feie_param(self) -> None:
+        sig = inspect.signature(compute_irmaa_magi)
+        assert list(sig.parameters) == ["agi", "tax_exempt_interest"]
+
+    def test_tax_exempt_interest_still_added(self) -> None:
+        assert compute_irmaa_magi(100_000.0, 2_000.0) == 102_000.0
+
+    def test_diverges_from_compute_magi_when_feie_present(self) -> None:
+        """The whole point of the fix: the two flavors diverge when FEIE != 0."""
+        agi, tei, feie = 200_000.0, 0.0, 20_000.0
+        assert compute_magi(agi, tei, feie) == 220_000.0
+        assert compute_irmaa_magi(agi, tei) == 200_000.0
+
+    def test_concrete_2296_80_surcharge_discrepancy(self) -> None:
+        """AGI=$200,000 + FEIE=$20,000: the audit's concrete failure case.
+
+        Feeding the FEIE-inclusive flavor (compute_magi -> $220,000) into the
+        IRMAA slot crosses the 2026 Tier-1 MFJ threshold ($218,000) and
+        fabricates a $2,296.80/year surcharge. The IRMAA-correct flavor
+        (compute_irmaa_magi -> $200,000) stays below Tier 1 -> $0 surcharge.
+        """
+        agi, feie = 200_000.0, 20_000.0
+        wrong_magi = compute_magi(agi, 0.0, feie)
+        correct_magi = compute_irmaa_magi(agi, 0.0)
+
+        assert wrong_magi == 220_000.0
+        assert correct_magi == 200_000.0
+
+        wrong_surcharge = irmaa_surcharge(wrong_magi)
+        correct_surcharge = irmaa_surcharge(correct_magi)
+
+        assert wrong_surcharge == pytest.approx(2_296.80, abs=0.01)
+        assert correct_surcharge == 0.0
 
 
 # ---------------------------------------------------------------------------

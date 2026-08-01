@@ -15,7 +15,7 @@ from datetime import datetime  # noqa: E402
 from config.loader import load_defaults  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
-from engine.tax_return_pdf import load_pdf_tax_records  # noqa: E402
+from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
 from models.sourced import Source  # noqa: E402
 from views import (  # noqa: E402
@@ -145,10 +145,17 @@ if "ssa_snapshot_spouse" not in st.session_state:
 # Center review (Wave 5 — replaces the old merge_pdf_magi gap-fill directly
 # into session_state["prior_year_magi"], which the reconcile step would have
 # wrongly promoted to a MANUAL entry; audit defect #2).
+# prior_year_magi is the IRMAA-scoped slot, so the recorded value is
+# compute_irmaa_magi(agi, tax_exempt_interest) — NOT rec.magi (the
+# FEIE-inclusive Roth/ACA flavor); feeding rec.magi here fabricated an IRMAA
+# surcharge for filers with a foreign earned income exclusion (audit HIGH).
 _pdf_records = load_pdf_tax_records()
 if _pdf_records:
     record_magi_candidates(
-        {yr: rec.magi for yr, rec in _pdf_records.items()},
+        {
+            yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest)
+            for yr, rec in _pdf_records.items()
+        },
         Source.PDF,
         "1040 PDF cache",
         datetime.now(),
