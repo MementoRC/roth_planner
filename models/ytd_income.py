@@ -203,11 +203,14 @@ class YTDSnapshot:
 
     @property
     def niit_magi_ytd(self) -> float:
-        """MAGI variant for NIIT (IRC §1411(d)(3)): excludes tax-exempt interest.
+        """MAGI variant for NIIT (IRC §1411(d) modified AGI): excludes tax-exempt interest.
 
         NIIT MAGI differs from IRMAA MAGI in one respect: tax-exempt (muni bond)
-        interest is excluded per §1411(d)(3). Use this when computing NIIT liability;
-        use magi_ytd for IRMAA/ACA threshold checks.
+        interest is excluded. Not because §1411(d) carves it out, but because
+        it is excluded from gross income entirely under IRC §103 -- it was
+        never in AGI (and therefore never in §1411(d)'s MAGI) to begin with.
+        Use this when computing NIIT liability; use magi_ytd for IRMAA/ACA
+        threshold checks.
         """
         return self.magi_ytd - self.tax_exempt_interest_ytd
 

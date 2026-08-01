@@ -108,7 +108,7 @@ class ConversionResult:
     ltcg_delta: float
     all_in: float
     magi: float
-    niit_magi: float = 0.0  # NIIT MAGI per IRC §1411(d)(3): magi minus tax-exempt muni interest
+    niit_magi: float = 0.0  # NIIT-relevant MAGI: magi minus tax-exempt muni interest (excluded from gross income under IRC §103, so it was never in AGI/MAGI)
     taxable_inc: float = 0.0
     room_12: float = 0.0
     room_22: float = 0.0
@@ -365,7 +365,7 @@ def base_income_for_year(
     # niit_magi, taxable_ss, and the senior-bonus phaseout by nqo_exercise_ytd.)
     _nqo_ytd = ytd.nqo_exercise_ytd if ytd is not None else 0.0
     ytd_magi = (ytd.magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # base-year realized YTD (niit-5)
-    ytd_niit_magi = (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # IRC §1411(d)(3)
+    ytd_niit_magi = (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # muni-exclusive NIIT MAGI (see YTDSnapshot.niit_magi_ytd)
     # MU8-F1: ordinary-income portion of YTD for the bracket/LTCG-stack base.
     # Mirrors scenario.py combined_gross YTD injection (lines 394-407): wages, NEC, STCG,
     # ordinary dividends, interest, ira_conversions_ytd, spouse_ira_conversions_ytd,
@@ -405,10 +405,11 @@ def base_income_for_year(
     # are all MAGI items, mirroring engine.scenario's compute_magi + realized_gains fold.
     base_magi = opt + tss + magi_addl
 
-    # Senior bonus deduction — phaseout uses NIIT-MAGI (excludes tax-exempt muni
-    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5. R1/R3: also
-    # includes the forecast/RMD MAGI additions (muni-exclusive, so ytd_niit_magi
-    # is used in place of ytd_magi).
+    # Senior bonus deduction — phaseout uses NIIT-relevant MAGI (excludes
+    # tax-exempt muni interest, which is excluded from gross income under
+    # IRC §103 and so was never in AGI/MAGI), mirroring headroom.py FIX #5.
+    # R1/R3: also includes the forecast/RMD MAGI additions (muni-exclusive,
+    # so ytd_niit_magi is used in place of ytd_magi).
     senior_bonus = senior_bonus_deduction(
         ya,
         sa,
@@ -509,9 +510,10 @@ def all_in_at_conversion(
     gross = base.opt + conv + tss + ordinary_addl
     magi = base.opt + conv + tss + magi_addl
 
-    # Recalculate senior bonus deduction at new NIIT-MAGI (excludes tax-exempt muni
-    # interest per IRC §1411(d)(3)), mirroring headroom.py FIX #5. R1/R3: also
-    # includes the forecast/RMD MAGI additions.
+    # Recalculate senior bonus deduction at new NIIT-relevant MAGI (excludes
+    # tax-exempt muni interest, excluded from gross income under IRC §103),
+    # mirroring headroom.py FIX #5. R1/R3: also includes the forecast/RMD
+    # MAGI additions.
     senior_bonus = senior_bonus_deduction(
         ya,
         sa,
@@ -590,8 +592,10 @@ def all_in_at_conversion(
         else 0.0
     )
 
-    # NIIT — use NIIT-MAGI which excludes tax-exempt interest (IRC §1411(d)(3)).
-    # R1/R3: niit_magi mirrors `magi` but with ytd_niit_magi in place of ytd_magi
+    # NIIT — use NIIT-relevant MAGI, which excludes tax-exempt interest (muni
+    # interest is excluded from gross income under IRC §103, so it was never
+    # in AGI/MAGI to begin with). R1/R3: niit_magi mirrors `magi` but with
+    # ytd_niit_magi in place of ytd_magi
     # (muni-exclusive); forecast div/gains and RMD/inherited income are the same
     # in both since neither is muni interest.
     niit_magi = (

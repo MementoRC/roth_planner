@@ -547,3 +547,36 @@ class TestSweetSpotProvisionalIncomeYtd:
         assert res_with_ytd.magi > res_no_ytd.magi, (
             f"magi with ytd ({res_with_ytd.magi:.0f}) must exceed magi without ytd ({res_no_ytd.magi:.0f})"
         )
+
+
+class TestNoFabricatedNiitCitation:
+    """Audit finding 5 (MEDIUM, doc-only, 2026-08): 7 sites (5 in
+    engine/sweet_spot_compute.py, 2 in models/ytd_income.py) cited a
+    nonexistent "IRC §1411(d)(3)" as authority for excluding tax-exempt
+    municipal-bond interest from NIIT. No such subsection supports this --
+    municipal interest is excluded from NIIT because it is excluded from
+    gross income entirely under IRC §103 (so it never enters AGI/MAGI in the
+    first place), not because §1411(d)(3) carves it out of NIIT-MAGI.
+    No functional impact; this is a citation-only regression guard."""
+
+    def test_sweet_spot_compute_has_no_bogus_citation(self) -> None:
+        import inspect
+
+        import engine.sweet_spot_compute as mod
+
+        src = inspect.getsource(mod)
+        assert "1411(d)(3)" not in src, (
+            "engine/sweet_spot_compute.py still cites the nonexistent "
+            "IRC §1411(d)(3) as NIIT-MAGI muni-exclusion authority"
+        )
+
+    def test_ytd_income_has_no_bogus_citation(self) -> None:
+        import inspect
+
+        import models.ytd_income as mod
+
+        src = inspect.getsource(mod)
+        assert "1411(d)(3)" not in src, (
+            "models/ytd_income.py still cites the nonexistent IRC §1411(d)(3) "
+            "as NIIT-MAGI muni-exclusion authority"
+        )
