@@ -283,6 +283,77 @@ class TestCostCurvesNontaxableSsField:
         )
 
 
+class TestNontaxableSsMagiInclusion:
+    """IRC §36B(d)(2)(B)(iii): ACA MAGI must include the FULL non-taxable SS
+    portion. The old one-shot `taxable_ss(combined_ss, other_income=base_magi,
+    ...)` computation over-counted §86 provisional income whenever base_magi
+    already embedded taxable SS, understating the add-back inside the SS
+    taxability phase-in band (disproven "immaterial" audit finding).
+    """
+
+    def test_mfj_40k_ss_phase_in_band_understated_by_2000(self) -> None:
+        """MFJ, combined SS = $40,000, SS-inclusive base MAGI = $24,000.
+
+        Hand-solved fixed point: true non-SS income x solves
+        x = 24_000 - taxable_ss(40_000, x, "MFJ"); x = 20_000, taxable = 4_000,
+        so the correct non-taxable add-back is 40_000 - 4_000 = $36,000.
+        The old one-shot computation used other_income=24_000 directly, landing
+        exactly on the tier-2 boundary (provisional=44_000) and computing
+        taxable=6_000 -> nontaxable=34_000 -- understated by $2,000 (5.6% of
+        the correct $36,000).
+        """
+        hh = Household(
+            your_age=62,
+            spouse_age=60,
+            filing_status="MFJ",
+            your_ss_start_age=62,
+            your_ss_fra=40_000.0 / 12,  # claiming exactly at FRA -> combined_ss == 40_000/yr
+            your_fra_age=62,
+            spouse_ss_fra=0.0,
+            ss_cola=0.0,
+            your_aca_enrolled=True,
+        )
+        result = _nontaxable_ss(
+            hh,
+            62,
+            60,
+            other_income=24_000.0,
+            filing_status="MFJ",
+        )
+        assert result == pytest.approx(36_000.0, abs=1.0), (
+            f"expected the full $36,000 non-taxable SS add-back "
+            f"(disproven-immaterial understatement would give ~$34,000), got {result}"
+        )
+
+    def test_ss_taxability_fully_capped_band_still_correct(self) -> None:
+        """Control: at high SS-inclusive base MAGI, taxable SS is pinned at the
+        85% cap regardless of the other_income proxy's exact value -- this is
+        the genuinely-immaterial case referenced in the (now-corrected) comment.
+        Non-taxable SS must equal exactly 15% of combined SS here.
+        """
+        hh = Household(
+            your_age=62,
+            spouse_age=60,
+            filing_status="MFJ",
+            your_ss_start_age=62,
+            your_ss_fra=40_000.0 / 12,
+            your_fra_age=62,
+            spouse_ss_fra=0.0,
+            ss_cola=0.0,
+            your_aca_enrolled=True,
+        )
+        result = _nontaxable_ss(
+            hh,
+            62,
+            60,
+            other_income=300_000.0,  # deep into the 85%-cap band
+            filing_status="MFJ",
+        )
+        assert result == pytest.approx(0.15 * 40_000.0, abs=1.0), (
+            f"expected the fully-capped 15% floor (0.15 * $40,000 = $6,000), got {result}"
+        )
+
+
 class TestScenarioIrmaaRoomPaymentYear:
     """F5 regression: yr.irmaa_room must index thresholds to the payment year (income+2).
 
