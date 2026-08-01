@@ -201,7 +201,7 @@ def estimate_brokerage_income(
     return qual_div, ord_div, realized_gains
 
 
-def estimate_rmd_income(hh: Household, year: int) -> float:
+def estimate_rmd_income(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> float:
     """Estimate combined taxable RMD (both spouses) + inherited-IRA distributions
     for `year`, mirroring engine.scenario's compute_rmds + inherited_ira_drain.
 
@@ -210,7 +210,16 @@ def estimate_rmd_income(hh: Household, year: int) -> float:
     per-year snapshot, not a multi-year balance projection, so year-over-year
     RMD/growth compounding is not modeled (same simplification pattern as
     estimate_ltcg_eligible / estimate_brokerage_income). QCDs are not modeled
-    here (no ConversionPlan is available in this module)."""
+    here (no ConversionPlan is available in this module).
+
+    Audit findings 2+3 (HIGH, 2026-08): `ytd` (base year only, per caller
+    convention) nets already-distributed YTD IRA withdrawals out of the
+    forecast RMD -- mirroring engine.scenario's "base-year RMD net-of-YTD
+    reconciliation" (ytd_year.ira_distributions_ytd reduces yr.taxable_rmd,
+    yours first then spouse's). Without this, ytd.ira_distributions_ytd is
+    already folded into ytd_magi/ytd_ordinary upstream in base_income_for_year,
+    so the un-netted forecast RMD double-counts the already-taken portion in
+    both MAGI and NIIT-MAGI."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
     # M3 (audit-0720): beneficiary is the OTHER spouse, only passed when the
@@ -233,6 +242,19 @@ def estimate_rmd_income(hh: Household, year: int) -> float:
         prior_year_balance=hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0,
         beneficiary_age=ya if _bene_gate else None,
     )
+
+    # Findings 2+3: net out YTD IRA distributions already taken (yours first,
+    # then spouse's), mirroring scenario.py's C2/scenario-1 reduction. Only
+    # non-conversion distributions count -- ytd.ira_distributions_ytd is
+    # exactly that ("non-conversion IRA withdrawals").
+    if ytd is not None and ytd.ira_distributions_ytd > 0:
+        dist_remaining = ytd.ira_distributions_ytd
+        your_reduction = min(your_rmd, dist_remaining)
+        your_rmd -= your_reduction
+        dist_remaining -= your_reduction
+        spouse_reduction = min(spouse_rmd, dist_remaining)
+        spouse_rmd -= spouse_reduction
+
     inherited = 0.0
     for iira in hh.inherited_iras:
         if year < iira.inherited_year:
@@ -316,7 +338,7 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     forecast_qual_div, forecast_ord_div, forecast_realized_gains = estimate_brokerage_income(
         hh, year, ytd
     )
-    rmd_income = estimate_rmd_income(hh, year)
+    rmd_income = estimate_rmd_income(hh, year, ytd)
     magi_addl = ytd_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income
     ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income
 
