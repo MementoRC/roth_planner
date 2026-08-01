@@ -50,26 +50,43 @@ def compute_phase(
     """Return the phase label for the current year/age combination.
 
     Phases: "options", "clean", "ss_conv", "squeeze", "rmd".
+
+    'rmd' takes precedence over every other label, including 'options':
+    once every planner in the household has reached RMD age, distributions
+    are mandatory for the rest of the projection, so the year is an RMD year
+    regardless of any concurrent option/NQO exercise income (someone can
+    still have unexercised options after RMD age begins — that does not
+    make the year any less RMD-driven). This mirrors compute_rmds(), which
+    is already gated purely on age and runs unconditionally every year —
+    the phase LABEL was the only thing out of step with that behavior.
+    'options' still outranks 'clean' / 'ss_conv' / 'squeeze', which are all
+    pre-mandatory-RMD phases where a chunk of option income is the more
+    salient story for that year.
     """
-    # 'options' = any year with scheduled option income > 0. No hardcoded
-    # window: ExerciseSchedule.income_for() already caps at expiry_year.
-    if hh.option_income(year) > 0:
-        return "options"
     rmd_yours = hh.your_rmd_start_age
     rmd_spouse = hh.spouse_rmd_start_age
     if ya < rmd_yours and ya < 70:
-        return "clean"
-    if ya < rmd_yours and ya >= 70:
-        return "ss_conv"
-    if ya >= rmd_yours:
+        age_phase = "clean"
+    elif ya < rmd_yours and ya >= 70:
+        age_phase = "ss_conv"
+    elif ya >= rmd_yours:
         # A single filer has no spouse; squeeze applies only to a married
         # household whose spouse has not yet reached rmd_spouse. Gating on
         # filing_status (rather than sa == 0) keeps this correct in every
         # projected year, not just the base year — sa increments with
         # yr_idx even for single filers (whose spouse_age is seeded at 0).
         is_married = hh.filing_status != "Single"
-        return "squeeze" if (is_married and sa < rmd_spouse) else "rmd"
-    return "clean"
+        age_phase = "squeeze" if (is_married and sa < rmd_spouse) else "rmd"
+    else:
+        age_phase = "clean"
+
+    if age_phase == "rmd":
+        return "rmd"
+    # 'options' = any year with scheduled option income > 0. No hardcoded
+    # window: ExerciseSchedule.income_for() already caps at expiry_year.
+    if hh.option_income(year) > 0:
+        return "options"
+    return age_phase
 
 
 # ---------------------------------------------------------------------------

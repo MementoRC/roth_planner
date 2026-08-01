@@ -262,6 +262,33 @@ class TestAuditF7ComputePhaseRmdStartAge:
             f"Expected 'squeeze' when your_age==rmd_start_age but spouse below theirs, got '{phase}'"
         )
 
+    def test_rmd_phase_takes_priority_over_options_past_rmd_age(self):
+        """MEDIUM audit fix: 'rmd' must win over 'options' once BOTH spouses are
+        past RMD age, even with concurrent nonzero option/NQO exercise income.
+
+        RMD computation itself (compute_rmds) is age-gated independently of the
+        phase label, so this was a display/label bug, not a functional one — but
+        the label must still be correct.
+        """
+        from engine.scenario_compute import compute_phase
+        from models.grants import StockGrant
+
+        year = 2026
+        hh = Household(
+            your_age=76,
+            spouse_age=76,
+            base_year=year,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            grants=[StockGrant(year=2019, strike=104, shares=1000, expiry_year=year, grant_id="")],
+            txn_price_now=200.0,
+        )
+        assert hh.option_income(year) > 0, "setup: grant must produce nonzero option income"
+        phase = compute_phase(ya=76, sa=76, year=year, hh=hh)
+        assert phase == "rmd", (
+            f"Both spouses past RMD age with concurrent option income must be 'rmd', got '{phase}'"
+        )
+
     def test_f7_rmd_phase_at_75_with_default_rmd_start_age(self):
         """F7: default rmd_start_age=75 — phase must be 'rmd'/'squeeze' only at age 75+.
 
