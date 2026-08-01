@@ -51,10 +51,31 @@ def _nontaxable_ss(
     household claims at 70, after the ACA window closes at 65 — so this is a
     no-op for households not drawing SS during the ACA years.
 
-    ``other_income`` is the non-SS provisional-income proxy (the Explorer's base
-    MAGI). At ACA-relevant incomes SS inclusion is pinned at the 85% cap, so the
-    proxy's slight over-count of provisional income is immaterial. Mirrors the
-    canonical add-back in engine/scenario_compute.compute_aca and
+    ``other_income`` is the caller's SS-inclusive base/swept MAGI (e.g. the
+    Explorer's "base MAGI" input) — every call site adds only this function's
+    return value back on top (``magi + nontaxable_ss``), so ``other_income``
+    already embeds ``combined_ss``'s taxable portion whenever SS is being
+    drawn. IRC §86 taxable SS is a function of income OTHER than SS, so
+    feeding the SS-inclusive ``other_income`` straight into ``taxable_ss()``
+    over-counts §86 provisional income by that already-embedded taxable-SS
+    amount.
+
+    That over-count used to be dismissed here as "immaterial" on the theory
+    that ACA-relevant incomes pin SS inclusion at the 85% cap — true only
+    once ``other_income`` is comfortably above the SS taxability phase-in
+    band, where the cap absorbs the perturbation. Inside the phase-in band
+    (50%/85% marginal taxability) the over-count is NOT immaterial: an MFJ
+    household with $40,000 combined SS and a $24,000 SS-inclusive base MAGI
+    understated the add-back by $2,000 (5.6% of the correct $36,000) under
+    the old one-shot computation. Fixed-point iterate instead to solve
+    ``x = other_income - taxable_ss(combined_ss, x)`` for the true
+    non-SS income ``x`` (contraction mapping, Lipschitz <= 0.85 — converges
+    to sub-cent precision well within the fixed iteration budget below).
+    This keeps the add-back exact across the whole SS taxability curve, not
+    just the phase-in band, without touching the (already-correct) IRMAA
+    MAGI path, which never adds this value back.
+
+    Mirrors the canonical add-back in engine/scenario_compute.compute_aca and
     engine/sweet_spot_compute. The SSA survivor step-up (survivor keeps the
     larger benefit) is not separately modeled here — a second-order effect on
     the already-narrow SS-while-on-ACA case, tracked under the deferred
@@ -80,7 +101,16 @@ def _nontaxable_ss(
     combined_ss = your_ss + spouse_ss
     if combined_ss <= 0:
         return 0.0
-    taxable = taxable_ss(combined_ss, other_income, filing_status=filing_status)
+    # Solve x = other_income - taxable_ss(combined_ss, x) by fixed-point
+    # iteration (see docstring) instead of the one-shot
+    # taxable_ss(combined_ss, other_income, ...) that double-counted the
+    # taxable-SS portion already embedded in other_income.
+    non_ss_income = other_income
+    for _ in range(50):
+        non_ss_income = other_income - taxable_ss(
+            combined_ss, non_ss_income, filing_status=filing_status
+        )
+    taxable = taxable_ss(combined_ss, non_ss_income, filing_status=filing_status)
     return max(combined_ss - taxable, 0.0)
 
 
