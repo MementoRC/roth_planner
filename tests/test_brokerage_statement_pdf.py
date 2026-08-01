@@ -944,6 +944,13 @@ class TestFolderPathConfig:
         monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "missing.json")
         assert mod.load_statement_folder_path() is None
 
+    def test_save_and_load_empty_folder_path_roundtrips_as_empty_string(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "folder.json")
+        mod.save_statement_folder_path("")
+        assert mod.load_statement_folder_path() == ""
+
 
 class TestExtractOwnerKeySchwab:
     def test_extracts_account_holder_name(self) -> None:

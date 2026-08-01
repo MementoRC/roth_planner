@@ -854,7 +854,7 @@ def load_statement_folder_path() -> str | None:
     except (json.JSONDecodeError, OSError):
         return None
     folder = raw.get("folder")
-    return str(folder) if folder else None
+    return str(folder) if folder is not None else None
 
 
 def validate_local_folder(raw: str) -> tuple[Path | None, str | None]:
