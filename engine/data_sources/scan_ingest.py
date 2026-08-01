@@ -28,7 +28,12 @@ from pathlib import Path
 from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.record import record_magi_candidates
 from engine.pdf_import import PdfImportResult
-from engine.tax_return_pdf import Form1040Record, load_pdf_tax_records, save_pdf_tax_records
+from engine.tax_return_pdf import (
+    Form1040Record,
+    compute_irmaa_magi,
+    load_pdf_tax_records,
+    save_pdf_tax_records,
+)
 from models.sourced import Source
 
 
@@ -111,6 +116,13 @@ def scan_and_record(
     cache and record one ``prior_year_magi.<year>`` candidate (``Source.PDF``,
     detail "Form 1040 PDF") per year via ``record_magi_candidates`` — only
     when the scan found at least one Form 1040 this pass.
+
+    The recorded candidate value is ``compute_irmaa_magi(rec.agi,
+    rec.tax_exempt_interest)``, NOT ``rec.magi`` — ``prior_year_magi`` is the
+    IRMAA-scoped 2-year-lookback slot (engine/scenario.py), and ``rec.magi``
+    is the FEIE-inclusive Roth/ACA-flavor MAGI. Feeding the wrong flavor here
+    was an audit HIGH finding (fabricated IRMAA surcharge for filers with a
+    foreign earned income exclusion).
     """
     from engine.pdf_import import scan_pdf_folder
 
@@ -122,7 +134,10 @@ def scan_and_record(
     if result.form_1040_records:
         pdf_cache = _merge_and_persist_pdf_cache(result.form_1040_records, pdf_cache_path)
         magi_candidates_recorded = record_magi_candidates(
-            {yr: rec.magi for yr, rec in result.form_1040_records.items()},
+            {
+                yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest)
+                for yr, rec in result.form_1040_records.items()
+            },
             Source.PDF,
             "Form 1040 PDF",
             when,

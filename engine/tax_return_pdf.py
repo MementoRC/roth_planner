@@ -218,11 +218,32 @@ def compute_magi(
     taxable_ss is already inside AGI — do NOT add it again.
 
     Scope note — this MAGI matches Roth/ACA MAGI (IRC §408A / §36B).
-    IRMAA MAGI (42 U.S.C. §1395r) uses AGI + tax_exempt_interest only; FEIE
-    is NOT added back for IRMAA purposes.  The FEIE term is safe here because
-    this household has FEIE = 0; callers that need IRMAA MAGI must omit feie.
+    IRMAA MAGI (42 U.S.C. §1395r(i)(4)) uses AGI + tax_exempt_interest only;
+    FEIE is NOT added back for IRMAA purposes. Callers that need IRMAA MAGI
+    (e.g. anything landing in ``Household.prior_year_magi``, the IRMAA-scoped
+    2-year-lookback slot) must call ``compute_irmaa_magi`` instead — see that
+    function's docstring for the fix history (audit HIGH finding).
     """
     return agi + tax_exempt_interest + feie
+
+
+def compute_irmaa_magi(agi: float, tax_exempt_interest: float) -> float:
+    """Compute MAGI for IRMAA purposes per 42 U.S.C. §1395r(i)(4).
+
+    IRMAA MAGI = AGI + tax-exempt interest ONLY — unlike ``compute_magi``'s
+    Roth/ACA-flavor formula (IRC §408A / §36B), the foreign earned income
+    exclusion (FEIE) is deliberately NOT added back here.
+
+    This is the correct source for any value that lands in
+    ``Household.prior_year_magi`` (consumed by engine/scenario.py's IRMAA
+    2-year lookback). Before this fix, ``record_magi_candidates`` call sites
+    fed ``Form1040Record.magi`` (the FEIE-inclusive Roth/ACA flavor) directly
+    into that IRMAA-scoped slot — for AGI=$200,000 + FEIE=$20,000 that
+    wrongly pushed MAGI from $200,000 to $220,000, crossing the 2026 Tier-1
+    IRMAA threshold ($218,000 MFJ) and fabricating a $2,296.80/year surcharge
+    that should not exist.
+    """
+    return agi + tax_exempt_interest
 
 
 # ---------------------------------------------------------------------------
