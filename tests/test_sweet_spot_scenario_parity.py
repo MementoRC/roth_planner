@@ -27,6 +27,7 @@ from engine.sweet_spot_compute import (
     base_income_for_year,
     estimate_brokerage_income,
     estimate_ltcg_eligible,
+    estimate_rmd_income,
 )
 from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
@@ -268,6 +269,69 @@ class TestRmdYtdNettingParity:
         assert sweet_spot_niit == pytest.approx(0.0), (
             f"sweet_spot must NOT manufacture a phantom NIIT charge; got "
             f"{sweet_spot_niit:.2f} (oracle correctly shows $0.00)"
+        )
+
+
+class TestQcdNettingOutOfNiitMagi:
+    """Audit finding 4 (MEDIUM, 2026-08): Sweet Spot Finder is unaware of a
+    household's QCD election and doesn't net it out of niit_magi (or magi),
+    overstating both by the full QCD amount. Mirrors
+    engine.scenario_compute.compute_rmds' netting:
+        taxable_rmd = max(your_rmd - min(qcd, qcd_limit, your_rmd), 0)
+    gated on age >= QCD_MIN_AGE, applied per-spouse (not pooled, unlike the
+    YTD-distribution netting in findings 2+3)."""
+
+    def _hh(self) -> Household:
+        return _no_ss_no_option_household(
+            your_age=75, spouse_age=75, your_ira=1_700_000.0, spouse_ira=1_700_000.0
+        )
+
+    def test_qcd_nets_out_of_magi_and_niit_magi_matches_oracle(self) -> None:
+        from engine.scenario_compute import QCD_MIN_AGE
+
+        hh = self._hh()
+        year = hh.base_year
+        assert hh.your_age >= QCD_MIN_AGE  # sanity: QCD-eligible this year
+
+        qcd_amount = 40_000.0
+        plan = ConversionPlan(qcds={year: qcd_amount})
+        oracle_result = run_scenario(hh, plan, "oracle", end_age=hh.your_age, ytd=None)
+        oracle = next(yr for yr in oracle_result.years if yr.year == year)
+        assert oracle.qcd == pytest.approx(qcd_amount), (
+            "precondition: oracle must record the full QCD election"
+        )
+
+        base = base_income_for_year(hh, year, ytd=None, your_qcd=qcd_amount)
+        result = all_in_at_conversion(hh, base, 0.0, 0.0)
+
+        assert result.niit_magi == pytest.approx(oracle.niit_magi, abs=1.0), (
+            f"result.niit_magi ({result.niit_magi:.2f}) must equal the oracle's "
+            f"QCD-netted niit_magi ({oracle.niit_magi:.2f}); pre-fix it is "
+            f"overstated by the full ${qcd_amount:,.0f} QCD"
+        )
+        assert result.magi == pytest.approx(oracle.magi, abs=1.0), (
+            f"result.magi ({result.magi:.2f}) must equal the oracle's QCD-netted "
+            f"magi ({oracle.magi:.2f})"
+        )
+
+    def test_qcd_ignored_below_qcd_min_age(self) -> None:
+        """A QCD amount supplied for a spouse below QCD_MIN_AGE must have no
+        effect (mirrors compute_rmds' age gate)."""
+        from engine.scenario_compute import QCD_MIN_AGE
+
+        hh = _no_ss_no_option_household(
+            your_age=QCD_MIN_AGE - 1,
+            spouse_age=QCD_MIN_AGE - 1,
+            your_ira=1_700_000.0,
+            spouse_ira=1_700_000.0,
+        )
+        year = hh.base_year
+
+        no_qcd = estimate_rmd_income(hh, year)
+        with_qcd = estimate_rmd_income(hh, year, your_qcd=40_000.0, spouse_qcd=40_000.0)
+
+        assert with_qcd == pytest.approx(no_qcd), (
+            "QCD below QCD_MIN_AGE must not reduce estimated RMD income"
         )
 
 

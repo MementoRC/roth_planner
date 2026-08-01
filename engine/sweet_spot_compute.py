@@ -11,6 +11,7 @@ from engine.aca import aca_applies, aca_subsidy_loss, effective_benchmark_premiu
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
+from engine.scenario_compute import QCD_MIN_AGE
 from engine.tax import (
     BRACKETS_SINGLE,
     LTCG_RATES_MFJ,
@@ -201,7 +202,14 @@ def estimate_brokerage_income(
     return qual_div, ord_div, realized_gains
 
 
-def estimate_rmd_income(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> float:
+def estimate_rmd_income(
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None = None,
+    *,
+    your_qcd: float = 0.0,
+    spouse_qcd: float = 0.0,
+) -> float:
     """Estimate combined taxable RMD (both spouses) + inherited-IRA distributions
     for `year`, mirroring engine.scenario's compute_rmds + inherited_ira_drain.
 
@@ -209,8 +217,7 @@ def estimate_rmd_income(hh: Household, year: int, ytd: YTDSnapshot | None = None
     (hh.your_ira / hh.spouse_ira) as a static proxy -- Sweet Spot Finder is a
     per-year snapshot, not a multi-year balance projection, so year-over-year
     RMD/growth compounding is not modeled (same simplification pattern as
-    estimate_ltcg_eligible / estimate_brokerage_income). QCDs are not modeled
-    here (no ConversionPlan is available in this module).
+    estimate_ltcg_eligible / estimate_brokerage_income).
 
     Audit findings 2+3 (HIGH, 2026-08): `ytd` (base year only, per caller
     convention) nets already-distributed YTD IRA withdrawals out of the
@@ -219,7 +226,18 @@ def estimate_rmd_income(hh: Household, year: int, ytd: YTDSnapshot | None = None
     yours first then spouse's). Without this, ytd.ira_distributions_ytd is
     already folded into ytd_magi/ytd_ordinary upstream in base_income_for_year,
     so the un-netted forecast RMD double-counts the already-taken portion in
-    both MAGI and NIIT-MAGI."""
+    both MAGI and NIIT-MAGI.
+
+    Audit finding 4 (MEDIUM, 2026-08): `your_qcd`/`spouse_qcd` (the household's
+    planned QCD election for this year -- no ConversionPlan is available in
+    this module, so the caller supplies the amount directly) net a Qualified
+    Charitable Distribution out of the taxable RMD per-spouse, mirroring
+    engine.scenario_compute.compute_rmds:
+        taxable_rmd = max(rmd - min(qcd, qcd_limit, rmd), 0), gated on
+        age >= QCD_MIN_AGE. QCD nets BEFORE the YTD-distribution reduction
+    above (same order as compute_rmds, which nets QCD when it computes
+    taxable_rmd, then the separate YTD-reconciliation block reduces it
+    further)."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
     # M3 (audit-0720): beneficiary is the OTHER spouse, only passed when the
@@ -242,6 +260,18 @@ def estimate_rmd_income(hh: Household, year: int, ytd: YTDSnapshot | None = None
         prior_year_balance=hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0,
         beneficiary_age=ya if _bene_gate else None,
     )
+
+    # Finding 4: net QCD out of each spouse's own RMD (per-spouse, not pooled
+    # -- unlike the YTD reduction below), gated on QCD_MIN_AGE and capped at
+    # the inflation-indexed per-person qcd_limit.
+    if your_qcd > 0 or spouse_qcd > 0:
+        _qcd_limit = _index_value(hh.qcd_limit, year, hh.cpi_assumption)
+        if ya >= QCD_MIN_AGE:
+            _your_qcd_eff = min(your_qcd, _qcd_limit)
+            your_rmd = max(your_rmd - min(_your_qcd_eff, your_rmd), 0.0)
+        if sa >= QCD_MIN_AGE:
+            _spouse_qcd_eff = min(spouse_qcd, _qcd_limit)
+            spouse_rmd = max(spouse_rmd - min(_spouse_qcd_eff, spouse_rmd), 0.0)
 
     # Findings 2+3: net out YTD IRA distributions already taken (yours first,
     # then spouse's), mirroring scenario.py's C2/scenario-1 reduction. Only
@@ -282,8 +312,23 @@ def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = N
     return realized_gains + qual_div
 
 
-def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> BaseIncome:
-    """Compute fixed income components for a given year (no conversion)."""
+def base_income_for_year(
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None = None,
+    *,
+    your_qcd: float = 0.0,
+    spouse_qcd: float = 0.0,
+) -> BaseIncome:
+    """Compute fixed income components for a given year (no conversion).
+
+    Audit finding 4 (MEDIUM, 2026-08): `your_qcd`/`spouse_qcd` are the
+    household's planned QCD election for `year` (no ConversionPlan is
+    available in this module, so the caller -- e.g. views/sweet_spot.py, once
+    wired to a QCD source -- supplies the dollar amount directly). Threaded
+    through to estimate_rmd_income() to net the QCD out of taxable RMD before
+    it enters magi/niit_magi. Defaults to 0.0 (no behavior change for callers
+    that don't supply a QCD election)."""
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
     cpi = hh.cpi_assumption
@@ -338,7 +383,9 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     forecast_qual_div, forecast_ord_div, forecast_realized_gains = estimate_brokerage_income(
         hh, year, ytd
     )
-    rmd_income = estimate_rmd_income(hh, year, ytd)
+    rmd_income = estimate_rmd_income(
+        hh, year, ytd, your_qcd=your_qcd, spouse_qcd=spouse_qcd
+    )
     magi_addl = ytd_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income
     ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income
 
