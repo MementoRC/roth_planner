@@ -271,14 +271,14 @@ class TestIRMAA:
         """
         from engine.irmaa import irmaa_for_year
 
-        # income_year ages: 63/55 → medicare-year ages 65/57; 1 person on Medicare
-        surcharge, medicare_year = irmaa_for_year(
+        # income_year ages: 63/55 → payment-year ages 65/57; 1 person on Medicare
+        surcharge, medicare_age = irmaa_for_year(
             150_000,
             your_age_income_year=63,
             spouse_age_income_year=55,
             filing_status="Single",
         )
-        assert medicare_year == 65
+        assert medicare_age == 65
         assert surcharge == approx((405.80 - 202.90) * 12 + 37.50 * 12)
 
         # Same MAGI under MFJ: $150K < Tier-1 MFJ threshold $218K → no surcharge
@@ -289,6 +289,27 @@ class TestIRMAA:
             filing_status="MFJ",
         )
         assert mfj_surcharge == 0.0
+
+    def test_irmaa_for_year_second_element_is_age_not_calendar_year(self):
+        """Docstring/naming regression (audit MEDIUM finding).
+
+        irmaa_for_year's second tuple element is your_age_income_year + 2 — an
+        AGE — not the payment calendar year (income_year + 2). Pin an income
+        year (2026) whose payment year would be 2028: the returned value must
+        be the age (65), never the calendar year (2028), and no caller in the
+        codebase relies on it as a year (all real call sites discard it via `_`).
+        """
+        from engine.irmaa import irmaa_for_year
+
+        _, second_element = irmaa_for_year(
+            250_000,
+            your_age_income_year=63,
+            spouse_age_income_year=63,
+            filing_status="MFJ",
+            year=2028,
+        )
+        assert second_element == 65
+        assert second_element != 2028
 
 
 class TestIRMAATier5Frozen:

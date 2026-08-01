@@ -162,10 +162,14 @@ def irmaa_for_year(
     Calculate IRMAA that will be charged 2 years AFTER the income year.
 
     Returns:
-        (annual_surcharge, medicare_year)
+        (annual_surcharge, your_medicare_age)
 
-    The surcharge applies in medicare_year = income_year + 2.
-    Only counts people who are 65+ in the medicare_year.
+    your_medicare_age is your_age_income_year + 2 — an AGE (your age in the
+    payment year), NOT a calendar year. All current callers discard this
+    second element; it exists only as a convenience echo of the age math
+    below, not a payment-year identifier.
+    The surcharge is charged in the payment year (income_year + 2).
+    Only counts people who are 65+ in that payment year.
     year/cpi: index MAGI thresholds to the payment year (income_year + 2), matching CMS published thresholds.
     """
     medicare_your_age = your_age_income_year + 2
