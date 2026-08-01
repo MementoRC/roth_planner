@@ -86,8 +86,10 @@ class BaseIncome:
     def net_investment_income_addl(self) -> float:
         """Year-level net-investment-income additions for NIIT: forecast realized
         gains + forecast qual/ord dividends + YTD investment income. Mirrors
-        engine.scenario's net_investment_income assembly (scenario.py:643-646).
-        Excludes rmd_income (RMDs are not investment income)."""
+        engine.scenario's `net_investment_income = realized_gains +
+        qual_div_this_year + ord_div_this_year` assembly in compute_scenario
+        (grep for that assignment rather than a line number -- it has moved
+        before). Excludes rmd_income (RMDs are not investment income)."""
         return (
             self.forecast_realized_gains
             + self.forecast_qual_div
@@ -607,7 +609,9 @@ def all_in_at_conversion(
         + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
     )
     # R2: net investment income = realized gains + qual/ord dividends + YTD investment
-    # income, mirroring scenario.py's net_investment_income (scenario.py:643-646).
+    # income, mirroring scenario.py's `net_investment_income = realized_gains +
+    # qual_div_this_year + ord_div_this_year` assembly in compute_scenario (grep
+    # for that assignment rather than a line number -- it has moved before).
     # Added to the caller-supplied net_inv_income, a manual estimate/override for NII
     # not otherwise modeled by this module (e.g. non-brokerage taxable accounts).
     total_net_inv_income = net_inv_income + base.net_investment_income_addl
@@ -617,8 +621,11 @@ def all_in_at_conversion(
 
     # LTCG bracket-stacking (C1): a conversion lifts ordinary taxable income, raising
     # the start of the preferential-rate stack and pushing realized LTCG + qualified
-    # dividends into higher 0%/15%/20% bands. Mirror engine.scenario:564-576. LTCG
-    # thresholds index to the INCOME year (same-year tax — NOT the IRMAA +2 payment year).
+    # dividends into higher 0%/15%/20% bands. Mirrors the "=== LTCG tax ==="
+    # stack-walk block in engine.scenario.compute_scenario (grep for that
+    # header rather than a line number -- it has moved before, same pattern
+    # as _ltcg_stack_tax's docstring above). LTCG thresholds index to the
+    # INCOME year (same-year tax — NOT the IRMAA +2 payment year).
     _base_ltcg_thr = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
     _ltcg_thr = (
         _index_value(_base_ltcg_thr[0], year, cpi, round50=True),

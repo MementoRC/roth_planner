@@ -580,3 +580,28 @@ class TestNoFabricatedNiitCitation:
             "models/ytd_income.py still cites the nonexistent IRC §1411(d)(3) "
             "as NIIT-MAGI muni-exclusion authority"
         )
+
+
+class TestNoStaleScenarioLineNumberPointers:
+    """Audit finding 6 (LOW, doc-only, 2026-08): 3 comments in
+    engine/sweet_spot_compute.py said "mirrors scenario.py:LINE" with stale
+    line numbers (the formulas themselves are still correct -- only the
+    pointers rotted as scenario.py evolved). Fixed by replacing brittle
+    line-number references with function/section-name references (the same
+    grep-friendly style already used elsewhere in this module, e.g.
+    _ltcg_stack_tax's docstring: "grep for that header rather than a line
+    number -- it has moved before")."""
+
+    def test_no_stale_line_pointers(self) -> None:
+        import inspect
+
+        import engine.sweet_spot_compute as mod
+
+        src = inspect.getsource(mod)
+        # The two specific stale pointers audit finding 6 flagged.
+        assert "scenario.py:643-646" not in src, (
+            "stale scenario.py:643-646 line-number pointer still present"
+        )
+        assert "engine.scenario:564-576" not in src, (
+            "stale engine.scenario:564-576 line-number pointer still present"
+        )
