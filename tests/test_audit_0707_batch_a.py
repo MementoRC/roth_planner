@@ -175,8 +175,8 @@ class TestSweetSpotYtdOrdinaryBase:
         b_with_ytd = base_income_for_year(hh, 2026, ytd=ytd)
 
         ceiling = 300_000.0
-        conv_no = bracket_boundary_conversion(b_no_ytd, ceiling)
-        conv_with = bracket_boundary_conversion(b_with_ytd, ceiling)
+        conv_no = bracket_boundary_conversion(hh, b_no_ytd, ceiling)
+        conv_with = bracket_boundary_conversion(hh, b_with_ytd, ceiling)
 
         # With ytd_ordinary, need less conversion to reach ceiling
         assert conv_with < conv_no, (

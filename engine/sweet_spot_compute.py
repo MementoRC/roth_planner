@@ -372,18 +372,42 @@ def base_income_for_year(hh: Household, year: int, ytd: YTDSnapshot | None = Non
     )
 
 
-def bracket_boundary_conversion(base: BaseIncome, bracket_ceiling: float) -> float:
-    """Conversion amount that lifts taxable income to the given bracket ceiling."""
-    # all_in_at_conversion uses taxable_inc = (opt + conv + tss + ordinary_addl) - total_ded,
-    # and base.base_gross == opt + tss + ordinary_addl (R3/R4: ordinary_addl already
-    # folds ytd_ordinary + forecast_ord_div + rmd_income into base_gross -- do NOT
-    # subtract ytd_ordinary again here, or it is double-counted), so solving
-    # taxable_inc == ceiling gives
-    #   conv = ceiling + total_ded - opt - tss - ordinary_addl
-    #        = ceiling + total_ded - base_gross.
-    # MU8-F1: ytd_ordinary (folded into base_gross via ordinary_addl) shifts the
-    # base up, narrowing the remaining conversion room.
-    return max(base.total_ded + bracket_ceiling - base.base_gross, 0.0)
+def bracket_boundary_conversion(
+    hh: Household, base: BaseIncome, bracket_ceiling: float
+) -> float:
+    """Conversion amount that lifts taxable income to the given bracket ceiling.
+
+    Audit finding 1 (HIGH, 2026-07): the closed-form
+    `total_ded + ceiling - base_gross` assumes taxable Social Security is
+    conversion-invariant. It is not: once provisional income (IRC §86(b))
+    enters the 50%/85% partial-taxability zone, each extra dollar of
+    conversion also raises taxable SS, so taxable income grows FASTER than
+    1-per-1 with conv -- the naive formula overshoots the true conversion
+    needed to reach `bracket_ceiling`, sometimes by 50%+.
+    Fix: binary-search using all_in_at_conversion as the oracle -- the same
+    fully-recomputed-taxable-SS approach already used by this module's
+    irmaa_safe_max, and mirroring engine.scenario's SS "tax torpedo" handling
+    (see conversion_ss_delta in compute_scenario, which also fully recomputes
+    taxable SS with/without the conversion rather than assuming linearity).
+    net_inv_income is irrelevant to taxable_inc (only affects NIIT), so 0.0
+    is used for the oracle calls.
+    """
+    # The naive linear estimate is a valid UPPER bound: taxable_inc grows at
+    # >= $1 per $1 of conv (taxable SS is non-decreasing in conv), so any conv
+    # above this naive value is guaranteed to overshoot the ceiling.
+    upper = max(base.total_ded + bracket_ceiling - base.base_gross, 0.0)
+    if upper <= 0:
+        return 0.0
+
+    lo, hi = 0.0, upper
+    for _ in range(60):  # bisection to well under a cent of precision
+        mid = (lo + hi) / 2
+        result = all_in_at_conversion(hh, base, mid, 0.0)
+        if result.taxable_inc <= bracket_ceiling:
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 def all_in_at_conversion(

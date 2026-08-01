@@ -24,7 +24,12 @@ def _base(opt: float, tss: float, total_ded: float) -> BaseIncome:
         year=2026,
         cpi=0.0,
         opt=opt,
-        combined_ss=40_000.0,
+        # 0.0 (not a fixed nonzero constant): bracket_boundary_conversion now
+        # recomputes taxable SS via all_in_at_conversion for each candidate
+        # conv (finding 1 fix), so a nonzero combined_ss here would make
+        # taxable income nonlinear in conv -- these two tests intentionally
+        # exercise the pure-linear case (tss passed in as a fixed component).
+        combined_ss=0.0,
         base_gross=base_gross,
         base_magi=base_gross,
         total_ded=total_ded,
@@ -33,24 +38,104 @@ def _base(opt: float, tss: float, total_ded: float) -> BaseIncome:
     )
 
 
+def _no_ss_household() -> Household:
+    # No SS at all (both claim at an age never reached in these tests) so
+    # taxable SS stays 0 across the whole conversion sweep -- taxable income
+    # is exactly linear in conv, matching the _base() helper's fixed tss.
+    return Household(
+        your_age=66,
+        spouse_age=64,
+        base_year=2026,
+        your_ss_start_age=99,
+        spouse_ss_start_age=99,
+        filing_status="MFJ",
+        cpi_assumption=0.0,
+        ss_cola=0.0,
+        grants=[],
+    )
+
+
 def test_bracket_boundary_conversion_hits_ceiling() -> None:
-    # At the returned conversion, linear taxable income equals the ceiling.
-    base = _base(opt=200_000.0, tss=30_000.0, total_ded=31_500.0)
+    # With no SS in play, taxable income is linear in conv, so the boundary
+    # search must still land exactly on the ceiling.
+    hh = _no_ss_household()
+    base = _base(opt=200_000.0, tss=0.0, total_ded=31_500.0)
     ceiling = 400_000.0
-    conv = bracket_boundary_conversion(base, ceiling)
-    tss = base.base_gross - base.opt
-    taxable_at_conv = base.opt + conv + tss - base.total_ded
-    assert taxable_at_conv == pytest.approx(ceiling)
+    conv = bracket_boundary_conversion(hh, base, ceiling)
+    taxable_at_conv = base.opt + conv - base.total_ded
+    assert taxable_at_conv == pytest.approx(ceiling, abs=0.01)
 
 
 def test_bracket_boundary_conversion_no_double_option_subtraction() -> None:
     # Regression: the old formula subtracted base.opt a second time, drawing every
     # bracket marker low by exactly the option-income amount.
-    base = _base(opt=200_000.0, tss=30_000.0, total_ded=31_500.0)
+    hh = _no_ss_household()
+    base = _base(opt=200_000.0, tss=0.0, total_ded=31_500.0)
     ceiling = 400_000.0
-    fixed = bracket_boundary_conversion(base, ceiling)
+    fixed = bracket_boundary_conversion(hh, base, ceiling)
     buggy = max(base.total_ded + ceiling - base.base_gross - base.opt, 0.0)
-    assert fixed - buggy == pytest.approx(base.opt)
+    assert fixed - buggy == pytest.approx(base.opt, abs=0.01)
+
+
+class TestBracketBoundarySsTaxabilityNonlinearity:
+    """Audit finding 1 (HIGH): bracket_boundary_conversion() must fold Social
+    Security taxability nonlinearity into the boundary search. The naive
+    closed-form (total_ded + ceiling - base_gross) assumes taxable SS is
+    conversion-invariant; in reality, once provisional income sits in the
+    50%/85% partial-taxability zone (IRC §86(b)), each extra dollar of
+    conversion raises taxable SS too, so taxable income rises FASTER than
+    1-per-1 -- the naive formula therefore overshoots the true conversion
+    needed to reach a given taxable-income ceiling.
+    """
+
+    def _make_household(self) -> Household:
+        # MFJ, ages 66/64, SS claimed by both already so combined_ss > 0 and
+        # sized (~$30K/yr) so that a $0-$52K conversion sweep passes through
+        # the SS partial-taxability transition zone (tier1=$32K, tier2=$44K
+        # provisional income) rather than starting already-saturated at 85%.
+        return Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            your_ss_start_age=62,
+            spouse_ss_start_age=62,
+            your_ss_fra=1_500.0,  # $/month at FRA
+            spouse_ss_fra=1_000.0,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            grants=[],
+        )
+
+    def test_bracket_boundary_overshoots_without_ss_nonlinearity(self) -> None:
+        """The naive linear estimate must overshoot the true SS-aware boundary."""
+        hh = self._make_household()
+        year = 2026
+        base = base_income_for_year(hh, year)
+        assert base.combined_ss > 0, "precondition: SS must be active"
+
+        ceiling = 40_000.0
+        # Old (buggy) closed-form, reproduced inline so this regression stays
+        # meaningful even after the production formula changes.
+        naive = max(base.total_ded + ceiling - base.base_gross, 0.0)
+
+        fixed = bracket_boundary_conversion(hh, base, ceiling)
+
+        assert fixed < naive - 1_000, (
+            f"fixed boundary ({fixed:.0f}) should be materially below the naive "
+            f"SS-invariant estimate ({naive:.0f}) once SS taxability nonlinearity "
+            "is folded in"
+        )
+
+        # Oracle check: at the returned conversion, all_in_at_conversion's own
+        # (SS-nonlinearity-aware) taxable_inc must actually equal the ceiling.
+        result = all_in_at_conversion(hh, base, fixed, 0.0)
+        assert result.taxable_inc == pytest.approx(ceiling, abs=1.0), (
+            f"taxable_inc at fixed boundary ({result.taxable_inc:.2f}) must equal "
+            f"the target ceiling ({ceiling:.0f})"
+        )
 
 
 class TestAcaMagiSsAddback:
