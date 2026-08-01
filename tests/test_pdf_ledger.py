@@ -91,6 +91,30 @@ class TestKoinlyOverrideFixed:
         assert totals["stcg"] == pytest.approx(105.0)
 
 
+class TestKoinlyProvenancePreservedOnMerge:
+    """Provenance/owner_key must survive a subsequent write from the OTHER
+    owner (last-write-wins across owners must not discard the earlier
+    owner's data-quality warnings)."""
+
+    def test_provenance_and_owner_key_survive_second_owner_write(self) -> None:
+        ledger: dict = {}
+        you_report = KoinlyReport(
+            tax_year=2026,
+            crypto_stcg=100.0,
+            crypto_ltcg=200.0,
+            crypto_income=50.0,
+            captured_at="2026-07-13T00:00:00+00:00",
+            provenance={"income_total_mismatch": "reported $500 != summed $450"},
+            owner_key="you@example.com",
+        )
+        ledger = write_koinly_contribution(ledger, "you", you_report)
+        ledger = write_koinly_contribution(ledger, "spouse", _koinly(10.0, 20.0, 5.0))
+        assert ledger["koinly"]["you"]["provenance"] == {
+            "income_total_mismatch": "reported $500 != summed $450"
+        }
+        assert ledger["koinly"]["you"]["owner_key"] == "you@example.com"
+
+
 class TestKoinlyEmptyLedger:
     def test_empty_ledger_returns_zeros(self) -> None:
         assert derive_koinly_totals({}) == {"stcg": 0.0, "ltcg": 0.0, "income": 0.0}

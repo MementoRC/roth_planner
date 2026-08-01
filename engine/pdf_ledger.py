@@ -32,7 +32,9 @@ from engine.secure_io import read_pii_json, write_pii_json
 # Ledger shape:
 # {
 #   "koinly": {"<owner>": {"stcg": float, "ltcg": float, "income": float,
-#                            "captured_at": str, "source": str}},
+#                            "captured_at": str, "source": str,
+#                            "parser_version": str, "provenance": dict,
+#                            "owner_key": str | None}},
 #   "brokerage": {"<owner>": {"<account_number>": {...record.to_dict()...}}},
 # }
 PdfLedger = dict[str, dict[str, Any]]
@@ -64,6 +66,9 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
         "income": float(report.crypto_income),
         "captured_at": report.captured_at,
         "source": report.source,
+        "parser_version": report.parser_version,
+        "provenance": report.provenance,
+        "owner_key": report.owner_key,
     }
     return updated
 
