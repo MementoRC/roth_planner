@@ -27,23 +27,18 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.pdf_import import PdfImportResult
 from views._shared import PortfolioSyncSummary, ScanSyncSummary, SsSyncSummary, SyncEverythingResult
 
-_CACHE_FILES = [CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH, COMMITTED_PATH]
-
-
-@pytest.fixture
-def clean_command_center_caches():
-    """Delete the 3 Command Center cache files after the test (repo-root-anchored)."""
-    yield
-    for p in _CACHE_FILES:
-        p.unlink(missing_ok=True)
+# clean_command_center_caches fixture is provided by tests/conftest.py (cleans
+# up the 3 Command Center cache files BEFORE and AFTER each test) -- do not
+# redeclare it here with the same name. A same-named local fixture silently
+# shadows the conftest one for every test in this module, and this file's
+# prior copy only cleaned up AFTER, leaking stale cache state into whichever
+# test ran next when a full-suite run was interrupted mid-test.
 
 
 def test_command_center_no_pending_shows_reconciled_message(
