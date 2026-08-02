@@ -114,7 +114,11 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
 @pytest.fixture
 def clean_candidate_store():
     """CANDIDATE_STORE_PATH is repo-root-anchored (engine.data_sources.paths) --
-    same isolation approach as tests/test_pdf_magi_candidate_flow.py."""
+    same isolation approach as tests/test_pdf_magi_candidate_flow.py. Cleans up
+    BEFORE (not just after) to guard against a leftover file from a prior
+    interrupted suite run (mirrors tests/conftest.py's
+    clean_command_center_caches pattern)."""
+    CANDIDATE_STORE_PATH.unlink(missing_ok=True)
     yield
     CANDIDATE_STORE_PATH.unlink(missing_ok=True)
 
