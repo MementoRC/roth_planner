@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import views._shared as shared_mod
 import views.setup._partials._accounts as partials_mod
 import views.setup.portfolio as portfolio_mod
@@ -38,6 +36,15 @@ from models.ytd_income import YTDSnapshot
 
 _SCAN_YEAR = 2023
 _SCAN_MAGI = 210_000.0
+
+# clean_command_center_caches fixture is provided by tests/conftest.py (cleans
+# up the 3 Command Center cache files -- CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH,
+# COMMITTED_PATH -- BEFORE and AFTER each test) -- do not redeclare a narrower
+# local fixture here. This file previously had a same-purpose but differently
+# -named ``clean_candidate_caches`` fixture that only cleaned up 2 of the 3
+# cache files, omitting TRUST_CHOICES_PATH; nothing in this module writes to
+# trust_choices.json today, but the gap was inconsistent with the sibling
+# fixture and a latent risk if that ever changes.
 
 _FORM_1040 = Form1040Record(
     tax_year=_SCAN_YEAR,
@@ -80,16 +87,6 @@ def _stub_portfolio_snapshot() -> PortfolioSnapshot:
         equity_grants=[],
         server_available=True,
     )
-
-
-@pytest.fixture
-def clean_candidate_caches():
-    """CANDIDATE_STORE_PATH / COMMITTED_PATH are repo-root-anchored (paths.py)."""
-    CANDIDATE_STORE_PATH.unlink(missing_ok=True)
-    COMMITTED_PATH.unlink(missing_ok=True)
-    yield
-    CANDIDATE_STORE_PATH.unlink(missing_ok=True)
-    COMMITTED_PATH.unlink(missing_ok=True)
 
 
 def _mock_st(**session_overrides) -> MagicMock:
@@ -207,7 +204,7 @@ def _patch_scan(tmp_path, monkeypatch):
 
 
 def test_sync_everything_fans_out_and_every_value_lands_pending(
-    clean_candidate_caches, tmp_path, monkeypatch
+    clean_command_center_caches, tmp_path, monkeypatch
 ):
     hh = _stub_hh()
     mock_st = _mock_st()
@@ -251,7 +248,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
 
 
 def test_sync_everything_isolates_a_raising_portfolio_fetch(
-    clean_candidate_caches, tmp_path, monkeypatch
+    clean_command_center_caches, tmp_path, monkeypatch
 ):
     """A raising FinExtract portfolio fetch must not prevent SS/scan from recording."""
     hh = _stub_hh()
@@ -287,7 +284,7 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
 
 
 def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
-    clean_candidate_caches, tmp_path, monkeypatch
+    clean_command_center_caches, tmp_path, monkeypatch
 ):
     """Reproduces the production crash: a fetched snapshot with a REAL
     outstanding ``EquityGrant`` (merged into a REAL ``StockGrant``) must
