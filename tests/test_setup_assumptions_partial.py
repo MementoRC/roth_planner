@@ -274,3 +274,34 @@ def test_inherited_iras_remove_round_trip(clean_command_center_caches) -> None:
     at.button(key="iira_remove_0").click().run()
     assert not at.exception
     assert at.session_state["inherited_iras"] == []
+
+
+def test_inherited_iras_remove_preserves_survivor_values(clean_command_center_caches) -> None:
+    """audit-0802 F6: removing an early inherited-IRA row must not corrupt the
+    surviving rows with the removed row's stale position-keyed widget values."""
+    at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
+    at.run()
+    assert not at.exception
+
+    at.button(key="iira_add").click().run()
+    at.button(key="iira_add").click().run()
+    at.button(key="iira_add").click().run()
+    assert len(at.session_state["inherited_iras"]) == 3
+
+    at.number_input(key="iira_balance_0").set_value(100_000).run()
+    at.number_input(key="iira_balance_1").set_value(250_000).run()
+    at.number_input(key="iira_balance_2").set_value(300_000).run()
+    assert [e["balance"] for e in at.session_state["inherited_iras"]] == [
+        100_000.0,
+        250_000.0,
+        300_000.0,
+    ]
+
+    # remove the FIRST row
+    at.button(key="iira_remove_0").click().run()
+    assert not at.exception
+
+    assert [e["balance"] for e in at.session_state["inherited_iras"]] == [
+        250_000.0,
+        300_000.0,
+    ], "removing row 0 corrupted survivor balances via stale position-keyed widget state"

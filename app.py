@@ -304,14 +304,9 @@ def get_household() -> Household:
         filing_status=st.session_state.get("filing_status", "MFJ"),
         survivor=_build_survivor_scenario(),
         inherited_iras=[
-            InheritedIRA(
-                balance=float(e["balance"]),
-                inherited_year=int(e["inherited_year"]),
-                owner=str(e["owner"]),
-                growth_rate=float(e.get("growth_rate", 0.07)),
-            )
+            iira
             for e in st.session_state.get("inherited_iras", [])
-            if e.get("balance", 0) > 0
+            if (iira := InheritedIRA.from_dict(e)) is not None
         ],
     )
 

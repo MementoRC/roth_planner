@@ -241,6 +241,14 @@ def _render_inherited_iras(container, base_year: int) -> None:
         if to_remove is not None:
             iiras.pop(to_remove)
             st.session_state["inherited_iras"] = iiras
+            # Row widgets are keyed by list position (iira_*_{idx}); after a pop the
+            # surviving rows shift down but Streamlit's per-key widget state persists,
+            # so each survivor would inherit the removed/shifted row's cached value
+            # and overwrite its own on the next render. Purge the position-keyed
+            # widget state so every row re-seeds from value= (audit-0802 F6).
+            for _i in range(len(iiras) + 1):
+                for _prefix in ("iira_balance_", "iira_year_", "iira_rate_", "iira_owner_"):
+                    st.session_state.pop(f"{_prefix}{_i}", None)
             st.rerun()
 
         if st.button("Add inherited IRA", key="iira_add"):
