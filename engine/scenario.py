@@ -43,6 +43,7 @@ def run_scenario(
     name: str = "Scenario",
     end_age: int = 95,
     ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
 ) -> ScenarioResult:
     """
     Run a full projection from base_year through end_age.
@@ -669,6 +670,13 @@ def run_scenario(
         # YTD: add realized gains, dividends, interest to investment income
         if ytd_year is not None:
             net_investment_income += ytd_year.total_investment_income
+        # Manual additional NII not otherwise modeled (e.g. interest, off-portfolio
+        # gains). Applied uniformly to every projected year, matching the "$/yr"
+        # Additional-NII input already consumed by Sweet Spot Finder
+        # (all_in_at_conversion) and the ACA+IRMAA Explorer (compute_cost_curves);
+        # the Conversion Planner previously had no channel for it, silently
+        # omitting NIIT on this income (audit-0802 F1).
+        net_investment_income += net_inv_income
         # IRC §1411: realized capital gains belong in NIIT MAGI with no exclusion.
         # yr.magi already includes realized_gains (folded in the MAGI ordering block),
         # so niit_magi only needs to strip muni interest per IRC §1411(d)(3).

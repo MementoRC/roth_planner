@@ -225,6 +225,19 @@ def render(hh: Household) -> None:
                     del st.session_state[_k]
             st.rerun()
 
+    net_inv_income = st.number_input(
+        "Additional net investment income ($/yr)",
+        value=0,
+        step=5_000,
+        format="%d",
+        key="net_inv_income",
+        help=(
+            "Manual NII not otherwise modeled -- on top of forecast dividends/gains "
+            "and YTD investment income (if applied). Shared with the Sweet Spot "
+            "Finder and ACA + IRMAA Explorer. Used to estimate NIIT impact."
+        ),
+    )
+
     # --- Build and run scenario ---
     plan = ConversionPlan(
         your_conversions=dict(st.session_state.conv_plan_your),
@@ -238,7 +251,7 @@ def render(hh: Household) -> None:
     # no effect on this page. run_scenario itself narrows ytd to the base year.
     _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
     _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
-    result = run_scenario(hh, plan, "Custom", end_age=95, ytd=_ytd)
+    result = run_scenario(hh, plan, "Custom", end_age=95, ytd=_ytd, net_inv_income=net_inv_income)
 
     # Filter to the conversion window (WINDOW_YEARS years from the starting age)
     conv_window = [yr for yr in result.years if yr.your_age <= hh.your_age + WINDOW_YEARS - 1]

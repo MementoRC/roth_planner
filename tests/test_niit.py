@@ -183,3 +183,36 @@ class TestNIIT:
             f"niit_cost={yr.niit_cost:,.2f} exceeds 3.8% × "
             f"(niit_magi − threshold) = {0.038 * (yr.niit_magi - NIIT_THRESHOLD_MFJ):,.2f}"
         )
+
+
+def test_run_scenario_applies_manual_net_inv_income() -> None:
+    """audit-0802 F1: run_scenario must accept manual additional NII and levy
+    NIIT on it, mirroring Sweet Spot Finder / ACA+IRMAA. With no brokerage the
+    forecast NII is zero, so any NIIT in the manual run is attributable solely to
+    the injected net_inv_income."""
+    hh = Household(
+        your_age=75,
+        spouse_age=75,
+        your_ira=4_000_000.0,
+        spouse_ira=4_000_000.0,
+        your_rmd_start_age=75,
+        spouse_rmd_start_age=75,
+        living_expenses=20_000.0,
+        growth_rate=0.05,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+    )
+    plan = ConversionPlan()
+    base = run_scenario(hh, plan, "base", end_age=76)
+    manual = run_scenario(hh, plan, "manual", end_age=76, net_inv_income=50_000.0)
+
+    yr_base = base.years[0]
+    yr_manual = manual.years[0]
+
+    # Precondition: RMD-driven MAGI is >$50K above the $250K MFJ NIIT threshold,
+    # yet with no brokerage the baseline NII (hence NIIT) is zero.
+    assert yr_base.niit_magi > 300_000.0
+    assert yr_base.niit_cost == 0.0
+    # Manual $50K NII sits fully within the excess above the threshold -> 3.8%*50K.
+    assert yr_manual.niit_cost == pytest.approx(1_900.0, abs=1.0)
+    assert manual.total_niit > base.total_niit
