@@ -14,27 +14,31 @@ from collections.abc import Sequence
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
 # 2026 IRMAA thresholds (MFJ).
-# Tiers 1-4 are CPI-indexed annually; Tier 5 ($750K) is FROZEN by statute since TY2019
-# (created by the Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109).
+# Tiers 1-4 are CPI-indexed annually. Tier 5 ($750K) is FROZEN for TY2020-2027
+# (Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109) and then resumes
+# CPI indexing for TY2028+ per 42 U.S.C. §1395r(i)(5)(C) (audit-0802 F2 —
+# corrects the prior "frozen forever" model). See _index_irmaa_tiers.
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_MFJ = [
     (218_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
     (274_000, 405.80 * 12, 37.50 * 12),  # Tier 2 — CPI-indexed
     (342_000, 527.50 * 12, 60.40 * 12),  # Tier 3 — CPI-indexed
     (410_000, 649.20 * 12, 83.30 * 12),  # Tier 4 — CPI-indexed
-    (750_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — FROZEN (not indexed)
+    (750_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — frozen 2020-2027, indexed 2028+
 ]
 
 # 2026 IRMAA thresholds (Single) — each threshold is roughly half of MFJ.
-# Tiers 1-4 are CPI-indexed annually; Tier 5 ($500K) is FROZEN by statute since TY2019
-# (created by the Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109).
+# Tiers 1-4 are CPI-indexed annually. Tier 5 ($500K) is FROZEN for TY2020-2027
+# (Bipartisan Budget Act of 2018, Pub. L. 115-123, §53109) and then resumes
+# CPI indexing for TY2028+ per 42 U.S.C. §1395r(i)(5)(C) (audit-0802 F2 —
+# corrects the prior "frozen forever" model). See _index_irmaa_tiers.
 # (magi_threshold, annual_part_b_total_per_person, annual_part_d_surcharge_per_person)
 IRMAA_TIERS_SINGLE = [
     (109_000, 284.10 * 12, 14.50 * 12),  # Tier 1 — CPI-indexed
     (137_000, 405.80 * 12, 37.50 * 12),  # Tier 2 — CPI-indexed
     (171_000, 527.50 * 12, 60.40 * 12),  # Tier 3 — CPI-indexed
     (205_000, 649.20 * 12, 83.30 * 12),  # Tier 4 — CPI-indexed
-    (500_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — FROZEN (not indexed)
+    (500_000, 689.90 * 12, 91.00 * 12),  # Tier 5 — frozen 2020-2027, indexed 2028+
 ]
 
 # Base premiums (no surcharge)
@@ -58,26 +62,36 @@ def _index_irmaa_tiers(
     year: int,
     cpi: float,
 ) -> list[tuple[float, float, float]]:
-    """Return tiers with MAGI thresholds CPI-indexed, except the last (frozen) tier.
+    """Return tiers with MAGI thresholds CPI-indexed, including the last tier.
 
     Tiers 1-4 are inflation-adjusted annually per CMS rulemaking.
-    Tier 5 ($750K MFJ / $500K Single) has been frozen by statute since 2020
-    and must never be indexed forward. Indexed tiers are additionally clamped to
-    the frozen final tier so the returned thresholds are always monotonically
-    non-decreasing (audit C5).
+    Tier 5 ($750K MFJ / $500K Single) is FROZEN by statute for TY2020-2027
+    (BBA 2018, Pub. L. 115-123, §53109), then resumes CPI indexing for
+    TY2028+ off an Aug-2026-effective base per 42 U.S.C. §1395r(i)(5)(C):
+    top(year) = base_top * (1+cpi) ** (year - 2027). (audit-0802 F2 —
+    corrects the prior "frozen forever" model.) Indexed lower tiers are
+    additionally clamped to the (possibly still-indexed) top tier so the
+    returned thresholds are always monotonically non-decreasing (audit C5).
     """
     if not base_tiers:
         return []
     last_t, last_pb, last_pd = base_tiers[-1]
-    # Index tiers 1-4; clamp each to the frozen final tier so the threshold list
-    # stays monotonically non-decreasing. In out-years an indexed tier-4 can
-    # overtake the frozen tier-5 ceiling (e.g. year=2042, cpi=0.04: indexed
-    # tier-4 ~= 767_922 > 750_000), which would desync the forward scans
-    # (irmaa_tier / irmaa_next_threshold) from the reverse scan (irmaa_surcharge)
-    # and report positive room to an already-crossed tier.
-    indexed = [(min(index_value(t, year, cpi), last_t), pb, pd) for t, pb, pd in base_tiers[:-1]]
-    # Last tier: preserve base threshold exactly (frozen)
-    indexed.append((last_t, last_pb, last_pd))
+    # index_value(last_t, year - 1, cpi) reproduces top(year) exactly:
+    # index_value freezes for year <= BASE_YEAR (2026), so year - 1 <= 2026
+    # (i.e. year <= 2027) keeps the top tier at its base value; for year >=
+    # 2028 it scales by (1+cpi) ** ((year-1) - 2026) == (1+cpi) ** (year-2027).
+    # No $50 rounding is applied here (round50 defaults to False), matching
+    # the unrounded treatment already used for Tiers 1-4 below.
+    top_threshold = index_value(last_t, year - 1, cpi)
+    # Index tiers 1-4; clamp each to the top tier so the threshold list stays
+    # monotonically non-decreasing. In extreme out-years/CPI an indexed lower
+    # tier can otherwise overtake the top tier, which would desync the
+    # forward scans (irmaa_tier / irmaa_next_threshold) from the reverse scan
+    # (irmaa_surcharge) and report positive room to an already-crossed tier.
+    indexed = [
+        (min(index_value(t, year, cpi), top_threshold), pb, pd) for t, pb, pd in base_tiers[:-1]
+    ]
+    indexed.append((top_threshold, last_pb, last_pd))
     return indexed
 
 
@@ -108,7 +122,8 @@ def irmaa_surcharge(
         Total annual surcharge above base premiums.
     """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
-    # Index MAGI thresholds (Tiers 1-4 only); Tier 5 is frozen — see _index_irmaa_tiers
+    # Index MAGI thresholds; Tier 5 is frozen through 2027, indexed 2028+ —
+    # see _index_irmaa_tiers.
     tiers = _index_irmaa_tiers(base_tiers, year, cpi)
     for threshold, part_b_annual, part_d_annual in reversed(tiers):
         if magi > threshold:
@@ -137,7 +152,8 @@ def irmaa_tier(
         cpi: annual CPI rate for indexing (default 2.5%).
 
     Tiers 1-4 are CPI-indexed; Tier 5 ($750K MFJ / $500K Single) is frozen
-    by statute since 2020 and is never indexed forward.
+    by statute for 2020-2027 and resumes CPI indexing for 2028+ (see
+    _index_irmaa_tiers).
     """
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     tiers = _index_irmaa_tiers(base_tiers, year, cpi)

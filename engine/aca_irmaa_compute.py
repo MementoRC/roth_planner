@@ -538,7 +538,8 @@ def index_irmaa_tier_thresholds(
 ) -> list[tuple[float, float, float]]:
     """CPI-index IRMAA tier thresholds (first tuple slot) to a target year.
 
-    Delegates to _index_irmaa_tiers so the frozen Tier 5 threshold is never
-    inflated (Tiers 1-4 indexed; Tier 5 preserved at statute-frozen base value).
+    Delegates to _index_irmaa_tiers: Tiers 1-4 are indexed every year; Tier 5
+    is frozen at its base value for 2020-2027, then resumes CPI indexing for
+    2028+ (audit-0802 F2).
     """
     return _index_irmaa_tiers(tiers, year=year, cpi=cpi)
