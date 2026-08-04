@@ -298,6 +298,51 @@ class TestAssetLocation:
         )
 
 
+class TestDeferredFirstRmdSeeding:
+    """audit-0802 F7: prev_your_ira_bal/prev_spouse_ira_bal must seed from
+    hh.your_ira/hh.spouse_ira when your/spouse_defer_first_rmd is elected, so
+    the doubled RMD year (base_year age == rmd_start_age + 1) includes the
+    deferred prior-year RMD term. Without this, the seed stays 0.0 and
+    calc_rmd's prior_year_balance > 0 guard (ira.py) silently suppresses the
+    deferred term, understating the first-year (doubled) RMD by ~48%.
+    Mirrors engine/scenario.py's existing prev_your_ira_begin seeding
+    (ira-rmd-1)."""
+
+    def test_deferred_first_rmd_seeds_prior_year_balance(self) -> None:
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+        from engine.ira import calc_rmd
+
+        hh = replace(
+            Household(),
+            your_age=74,  # base_year age == your_rmd_start_age + 1 (doubled year)
+            your_ira=2_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=99,
+            your_defer_first_rmd=True,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        assert yr0.your_age == 74
+
+        # Oracle: calc_rmd fed with the balance correctly seeded (as fixed
+        # engine/asset_location.py must do).
+        expected_rmd = calc_rmd(
+            2_000_000.0, 74, 73, first_year_deferred=True, prior_year_balance=2_000_000.0
+        )
+        # Sanity: the doubled term is present (~153,903, not just the ~78,431
+        # single-year RMD).
+        assert expected_rmd == pytest.approx(153_903.07, abs=1.0)
+
+        assert yr0.rmd == pytest.approx(expected_rmd, abs=1.0), (
+            f"Expected doubled first-year RMD {expected_rmd:.2f} (deferred "
+            f"prior-year term included), got {yr0.rmd:.2f} — prev_your_ira_bal "
+            "not seeded from hh.your_ira when your_defer_first_rmd=True"
+        )
+
+
 class TestIraAtAgeMilestoneUsesEndBalance:
     """M6: ira_at_75 / ira_at_85 must report the END-of-year IRA balance.
 

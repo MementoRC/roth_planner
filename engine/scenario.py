@@ -679,7 +679,9 @@ def run_scenario(
         net_investment_income += net_inv_income
         # IRC §1411: realized capital gains belong in NIIT MAGI with no exclusion.
         # yr.magi already includes realized_gains (folded in the MAGI ordering block),
-        # so niit_magi only needs to strip muni interest per IRC §1411(d)(3).
+        # so niit_magi only needs to strip tax-exempt muni interest -- excluded not
+        # by a §1411(d) carve-out but because IRC §103 keeps it out of gross income
+        # (hence out of AGI and §1411(d)'s MAGI) entirely.
         yr.niit_magi = yr.magi - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
         yr.niit_cost = niit(
             yr.niit_magi, net_investment_income, filing_status=current_filing_status

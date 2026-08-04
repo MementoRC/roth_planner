@@ -338,6 +338,26 @@ class TestMigrateKeys:
         assert "2019:104" in sched.shares_by_grant_year
 
 
+class TestNegativeSharesLowerBoundGuard:
+    """audit-0802 F8: a negative share count must never produce negative
+    option income or persist unclamped through from_dict deserialization."""
+
+    def test_income_for_clamps_negative_shares_to_zero(self) -> None:
+        grants = make_grants()
+        sched = ExerciseSchedule()
+        # bypass set_shares' auto-prune to inject a malformed negative value directly
+        sched.shares_by_grant_year["g19"] = {2026: -500}
+        sched.set_price(2026, 154.0)
+        assert sched.income_for(2026, grants) == approx(0.0)
+
+    def test_from_dict_clamps_negative_shares_to_zero(self) -> None:
+        d = {"shares_by_grant_year": {"g19": {"2026": -500}}, "price_by_year": {}}
+        restored = ExerciseSchedule.from_dict(d)
+        for years in restored.shares_by_grant_year.values():
+            for n in years.values():
+                assert n >= 0
+
+
 class TestDefaultAtExpiry:
     def test_distinct_year_grants_map_to_their_expiry_years(self):
         grants = make_grants()

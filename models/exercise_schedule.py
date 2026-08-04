@@ -96,7 +96,9 @@ class ExerciseSchedule:
                 sum(n for yr, n in years_data.items() if yr < year), grant.shares
             )
             cumulative_upto = min(cumulative_before + years_data.get(year, 0), grant.shares)
-            exercised = cumulative_upto - cumulative_before
+            # audit-0802 F8: clamp the lower bound too -- a negative share cell
+            # (malformed/stale cache) must not fabricate negative option income.
+            exercised = max(cumulative_upto - cumulative_before, 0)
             total += grant.per_share_spread(price) * exercised
         return total
 
@@ -216,8 +218,10 @@ class ExerciseSchedule:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ExerciseSchedule:
         # JSON object keys are always strings — int-cast the year keys back.
+        # audit-0802 F8: clamp negative share counts to 0 on deserialization so
+        # a malformed/stale cache cannot resurrect a negative share cell.
         shares_by_grant_year = {
-            key: {int(year): int(n) for year, n in years.items()}
+            key: {int(year): max(int(n), 0) for year, n in years.items()}
             for key, years in d.get("shares_by_grant_year", {}).items()
         }
         price_by_year = {int(year): float(p) for year, p in d.get("price_by_year", {}).items()}

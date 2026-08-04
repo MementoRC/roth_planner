@@ -216,3 +216,28 @@ def test_run_scenario_applies_manual_net_inv_income() -> None:
     # Manual $50K NII sits fully within the excess above the threshold -> 3.8%*50K.
     assert yr_manual.niit_cost == pytest.approx(1_900.0, abs=1.0)
     assert manual.total_niit > base.total_niit
+
+
+class TestNoFabricatedNiitCitationInScenario:
+    """Audit finding (doc-only, audit-0802): engine/scenario.py's niit_magi
+    comment cited a nonexistent "IRC §1411(d)(3)" as authority for excluding
+    tax-exempt municipal-bond interest from NIIT-MAGI. No such subsection
+    supports this -- municipal interest is excluded from NIIT because it is
+    excluded from gross income entirely under IRC §103 (so it never enters
+    AGI/MAGI in the first place), not because §1411(d)(3) carves it out of
+    NIIT-MAGI. PR #412 already corrected the same fabricated citation in
+    engine/sweet_spot_compute.py and models/ytd_income.py (see
+    TestNoFabricatedNiitCitation in test_sweet_spot_compute.py); this guards
+    the matching fix in engine/scenario.py. No functional impact -- citation
+    only."""
+
+    def test_scenario_has_no_bogus_citation(self) -> None:
+        import inspect
+
+        import engine.scenario as mod
+
+        src = inspect.getsource(mod)
+        assert "1411(d)(3)" not in src, (
+            "engine/scenario.py still cites the nonexistent IRC §1411(d)(3) "
+            "as NIIT-MAGI muni-exclusion authority"
+        )

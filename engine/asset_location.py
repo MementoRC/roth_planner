@@ -86,8 +86,13 @@ def project_asset_location(
 
     years = []
     total_conv = 0.0
-    prev_your_ira_bal = 0.0
-    prev_spouse_ira_bal = 0.0
+    # audit-0802 F7 (mirrors engine/scenario.py's ira-rmd-1 seeding): seed the
+    # prior-year balance with the owner's IRA when defer_first_rmd is elected.
+    # Without this, prev_*_ira_bal stays 0.0 when base_year age ==
+    # rmd_start_age + 1 (the doubled year), and calc_rmd's prior_year_balance
+    # > 0 guard (ira.py) silently suppresses the deferred prior-year RMD term.
+    prev_your_ira_bal = hh.your_ira if hh.your_defer_first_rmd else 0.0
+    prev_spouse_ira_bal = hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0
 
     # Survivor scenario: mirror scenario.py canonical rollover logic.
     surv = hh.survivor
