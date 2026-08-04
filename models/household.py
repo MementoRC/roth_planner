@@ -62,6 +62,38 @@ class InheritedIRA:
     owner: Literal["you", "spouse"]
     growth_rate: float = 0.07
 
+    @classmethod
+    def from_dict(cls, data: dict) -> InheritedIRA | None:
+        """Build from a session/upload dict, tolerating malformed entries.
+
+        Returns None (skip, don't crash) when the entry lacks a positive balance
+        or a usable owner, or carries a non-numeric year — a malformed upload_merge
+        entry must not raise KeyError on every render (audit-0802 F9).
+        """
+        try:
+            balance = float(data.get("balance", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if balance <= 0:
+            return None
+        owner = data.get("owner")
+        if owner not in ("you", "spouse"):
+            return None
+        try:
+            inherited_year = int(data["inherited_year"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        try:
+            growth_rate = float(data.get("growth_rate", 0.07))
+        except (TypeError, ValueError):
+            growth_rate = 0.07
+        return cls(
+            balance=balance,
+            inherited_year=inherited_year,
+            owner=owner,
+            growth_rate=growth_rate,
+        )
+
 
 @dataclass
 class SurvivorScenario:

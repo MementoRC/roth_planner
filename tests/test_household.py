@@ -508,6 +508,45 @@ class TestInheritedIRA:
         assert yr2.your_inherited_distribution == pytest.approx(10_000.0 + 5_000.0)
 
 
+class TestInheritedIraFromDict:
+    """audit-0802 F9: InheritedIRA.from_dict tolerates malformed upload entries
+    instead of raising KeyError during get_household()."""
+
+    def test_missing_owner_returns_none(self) -> None:
+        assert InheritedIRA.from_dict({"balance": 100_000, "inherited_year": 2024}) is None
+
+    def test_missing_year_returns_none(self) -> None:
+        assert InheritedIRA.from_dict({"balance": 100_000, "owner": "you"}) is None
+
+    def test_zero_or_missing_balance_returns_none(self) -> None:
+        assert InheritedIRA.from_dict({"inherited_year": 2024, "owner": "you"}) is None
+        assert (
+            InheritedIRA.from_dict({"balance": 0, "inherited_year": 2024, "owner": "you"})
+            is None
+        )
+
+    def test_bad_owner_returns_none(self) -> None:
+        assert (
+            InheritedIRA.from_dict(
+                {"balance": 100_000, "inherited_year": 2024, "owner": "nobody"}
+            )
+            is None
+        )
+
+    def test_valid_entry_builds(self) -> None:
+        iira = InheritedIRA.from_dict(
+            {"balance": 100_000, "inherited_year": 2024, "owner": "spouse", "growth_rate": 0.05}
+        )
+        assert iira == InheritedIRA(
+            balance=100_000.0, inherited_year=2024, owner="spouse", growth_rate=0.05
+        )
+
+    def test_growth_rate_defaults_when_absent(self) -> None:
+        iira = InheritedIRA.from_dict({"balance": 100_000, "inherited_year": 2024, "owner": "you"})
+        assert iira is not None
+        assert iira.growth_rate == 0.07
+
+
 class TestSurvivorScenario:
     """PR6b: SurvivorScenario dataclass + run_scenario survivor wiring."""
 
