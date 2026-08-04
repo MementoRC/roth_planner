@@ -5,6 +5,8 @@ Closes F15/F16/F17/F24/F29/F31/F34/F40/F47/F55.
 
 from __future__ import annotations
 
+import pytest
+
 from engine.aca_irmaa_compute import index_irmaa_tier_thresholds
 from engine.irmaa import (
     BASE_YEAR,
@@ -63,14 +65,17 @@ class TestIrmaaTierIndexing:
 
 
 class TestFrozenTier5NotIndexed:
-    """Root Fix B (F16/F17/F34/F40/F55): Tier 5 must never be CPI-inflated."""
+    """Root Fix B (F16/F17/F34/F40/F55): Tier 5 is not CPI-inflated through
+    2027 (BBA 2018 freeze). See TestIrmaaTopTierResumesIndexing2028 for the
+    2028+ behavior, corrected by audit-0802 F2.
+    """
 
     def test_index_irmaa_tiers_freezes_last_tier(self) -> None:
-        """_index_irmaa_tiers preserves the frozen Tier-5 threshold exactly."""
+        """_index_irmaa_tiers preserves the frozen Tier-5 threshold exactly through 2027."""
         base_t5_threshold = IRMAA_TIERS_MFJ[-1][0]  # 750_000
 
-        # At year=2028 cpi=0.025, Tier 5 must remain at base value
-        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2028, cpi=0.025)
+        # At year=2027 (last frozen year) cpi=0.025, Tier 5 must remain at base value
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2027, cpi=0.025)
         assert indexed[-1][0] == base_t5_threshold, (
             f"Tier 5 was inflated: expected {base_t5_threshold}, got {indexed[-1][0]}"
         )
@@ -85,19 +90,19 @@ class TestFrozenTier5NotIndexed:
         )
 
     def test_index_irmaa_tier_thresholds_freezes_tier5(self) -> None:
-        """F55: index_irmaa_tier_thresholds (used by views/aca_irmaa.py) also freezes Tier 5."""
+        """F55: index_irmaa_tier_thresholds (used by views/aca_irmaa.py) also freezes Tier 5 through 2027."""
         base_t5_threshold = IRMAA_TIERS_MFJ[-1][0]
 
-        indexed = index_irmaa_tier_thresholds(IRMAA_TIERS_MFJ, year=2028, cpi=0.025)
+        indexed = index_irmaa_tier_thresholds(IRMAA_TIERS_MFJ, year=2027, cpi=0.025)
         assert indexed[-1][0] == base_t5_threshold, (
             f"index_irmaa_tier_thresholds inflated Tier 5: "
             f"expected {base_t5_threshold}, got {indexed[-1][0]}"
         )
 
     def test_index_irmaa_tiers_single_freezes_last_tier(self) -> None:
-        """Single filing Tier-5 ($500K) is also frozen."""
+        """Single filing Tier-5 ($500K) is also frozen through 2027."""
         base_t5_single = IRMAA_TIERS_SINGLE[-1][0]  # 500_000
-        indexed = _index_irmaa_tiers(IRMAA_TIERS_SINGLE, year=2030, cpi=0.03)
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_SINGLE, year=2027, cpi=0.03)
         assert indexed[-1][0] == base_t5_single
 
     def test_index_irmaa_tiers_empty_input(self) -> None:
@@ -108,4 +113,52 @@ class TestFrozenTier5NotIndexed:
         """Single-item tier list: the only tier is treated as frozen (last tier rule)."""
         single = [(100_000, 1000.0, 200.0)]
         indexed = _index_irmaa_tiers(single, year=2028, cpi=0.025)
-        assert indexed[0][0] == 100_000
+        assert indexed[0][0] > 100_000, (
+            "audit-0802 F2: the (last-tier) threshold resumes indexing in 2028"
+        )
+
+
+class TestIrmaaTopTierResumesIndexing2028:
+    """audit-0802 F2: BBA 2018 (Pub. L. 115-123, §53109) / 42 U.S.C.
+    §1395r(i)(5)(C) freezes the top IRMAA tier ($500K Single / $750K MFJ)
+    only for years 2020-2027. Years 2028+ resume CPI indexing off an
+    Aug-2026-effective base: top(year) = base_top * (1+cpi) ** (year - 2027).
+    Corrects the prior "frozen forever" model asserted by
+    TestFrozenTier5NotIndexed above (that class now only covers <=2027).
+    """
+
+    _MFJ_TOP = IRMAA_TIERS_MFJ[-1][0]  # 750_000
+
+    def test_year_2027_still_frozen_at_base(self) -> None:
+        """2027 is the last year of the statutory freeze — top stays at base."""
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2027, cpi=0.03)
+        assert indexed[-1][0] == pytest.approx(self._MFJ_TOP)
+
+    def test_year_2028_resumes_indexing(self) -> None:
+        """2028 is the first post-freeze year: top = base * (1+cpi)^1."""
+        cpi = 0.03
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2028, cpi=cpi)
+        expected = self._MFJ_TOP * (1.0 + cpi) ** 1
+        assert indexed[-1][0] == pytest.approx(expected)
+        assert indexed[-1][0] > self._MFJ_TOP
+
+    def test_year_2030_indexes_three_factors(self) -> None:
+        """2030: top = base * (1+cpi)^3 (exponent counts from the 2027 anchor)."""
+        cpi = 0.03
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2030, cpi=cpi)
+        expected = self._MFJ_TOP * (1.0 + cpi) ** 3
+        assert indexed[-1][0] == pytest.approx(expected)
+
+    def test_year_2028_zero_cpi_no_change(self) -> None:
+        """cpi=0.0 -> (1+0)^n == 1, so the top stays at base even post-freeze."""
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2028, cpi=0.0)
+        assert indexed[-1][0] == pytest.approx(self._MFJ_TOP)
+
+    def test_lower_tier_still_clamped_to_indexed_top_far_future(self) -> None:
+        """A lower tier's indexed value must never exceed the (now-indexed) top."""
+        cpi = 0.025
+        indexed = _index_irmaa_tiers(IRMAA_TIERS_MFJ, year=2050, cpi=cpi)
+        top_threshold = indexed[-1][0]
+        assert top_threshold > self._MFJ_TOP  # sanity: it did index
+        for threshold, _, _ in indexed[:-1]:
+            assert threshold <= top_threshold

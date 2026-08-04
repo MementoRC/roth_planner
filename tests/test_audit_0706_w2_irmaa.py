@@ -162,12 +162,19 @@ class TestIrmaaNextThresholdAboveTopTier:
         assert math.isinf(above_top)
 
     def test_above_frozen_top_in_inversion_year_returns_inf(self) -> None:
-        """In the inversion year (2042, cpi=0.04), above-frozen-floor must return inf."""
+        """Above the (still-frozen, year<=2027) top tier must return inf.
+
+        audit-0802 F2: the top tier resumes CPI indexing for 2028+, so the
+        original year=2042/cpi=0.04 scenario no longer inverts (both tier-4
+        and the top tier grow together past that MAGI). Pinned to year=2027
+        (last frozen year) with an extreme cpi=1.0 (100%; not economically
+        realistic, chosen only to force the historical min()-clamp regression
+        this test guards: unclamped tier-4 = 410_000*2 = 820_000 > frozen
+        $750K top within a single year of compounding).
+        """
         import math
 
-        # year=2042, cpi=0.04: unclamped indexed tier-4 would overtake $750K frozen tier-5.
-        # $755K and $760K are above the frozen $750K floor.
-        result_755 = irmaa_next_threshold(755_000, "MFJ", year=2042, cpi=0.04)
-        result_760 = irmaa_next_threshold(760_000, "MFJ", year=2042, cpi=0.04)
+        result_755 = irmaa_next_threshold(755_000, "MFJ", year=2027, cpi=1.0)
+        result_760 = irmaa_next_threshold(760_000, "MFJ", year=2027, cpi=1.0)
         assert math.isinf(result_755), f"Expected inf for 755K above top, got {result_755}"
         assert math.isinf(result_760), f"Expected inf for 760K above top, got {result_760}"
