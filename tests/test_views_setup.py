@@ -707,6 +707,95 @@ class TestResetToDemoClearsAllKeys:
         assert not leaked, f"Keys still present after reset: {leaked}"
 
 
+class TestPersistenceRoundTripAudit0802:
+    """audit-0802 F3/F4/F5: clearing personal state must be *persisted*, not
+    silently resurrected from a stale .user_defaults.json on the next startup.
+
+    Root cause: save_user_defaults merges incoming data ON TOP of whatever is on
+    disk ({**existing, **data}), so a key that _user_defaults_from_session omits
+    (because the cleared value is falsy) leaves the stale on-disk value intact.
+    """
+
+    def test_reset_to_demo_deletes_disk_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """F3: _clear_personal_session_state must remove the on-disk personal
+        file, or an autosave-before-reset is reseeded on the next startup."""
+        import views.setup._state as state_mod
+        from config.loader import DEFAULTS, load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        # Autosave wrote personal data to disk before the user clicked Reset.
+        save_user_defaults({"your_ira": 1_700_000})
+        assert (tmp_path / ".user_defaults.json").exists()
+
+        monkeypatch.setattr(state_mod.st, "session_state", {})
+        state_mod._clear_personal_session_state()
+
+        assert not (tmp_path / ".user_defaults.json").exists(), (
+            "Reset-to-demo left .user_defaults.json on disk; restart will reseed "
+            "personal data (your_ira=$1.7M) instead of the demo default"
+        )
+        assert load_defaults()["your_ira"] == DEFAULTS["your_ira"]
+
+    def test_cleared_survivor_not_resurrected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """F4: unchecking the survivor scenario (survivor=None) must overwrite the
+        on-disk value, not leave the prior scenario to be reseeded on restart."""
+        import views.setup._state as state_mod
+        from config.loader import load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        # 1. user configures a survivor scenario; autosave persists it
+        monkeypatch.setattr(
+            state_mod.st,
+            "session_state",
+            {"survivor": {"who_dies": "you", "death_year": 2035}},
+        )
+        save_user_defaults(state_mod._user_defaults_from_session())
+        assert load_defaults()["survivor"] == {"who_dies": "you", "death_year": 2035}
+
+        # 2. user unchecks it -> survivor=None; autosave runs again
+        monkeypatch.setattr(state_mod.st, "session_state", {"survivor": None})
+        save_user_defaults(state_mod._user_defaults_from_session())
+
+        # 3. restart: the cleared scenario must NOT come back
+        assert load_defaults().get("survivor") is None, (
+            "cleared survivor scenario resurrected from stale .user_defaults.json"
+        )
+
+    def test_cleared_inherited_iras_not_resurrected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """F5: removing the last inherited IRA (inherited_iras=[]) must overwrite
+        the on-disk list, not leave the distributions to be reseeded on restart."""
+        import views.setup._state as state_mod
+        from config.loader import load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        iras = [{"balance": 50_000.0, "inherited_year": 2024, "owner": "you"}]
+        monkeypatch.setattr(state_mod.st, "session_state", {"inherited_iras": iras})
+        save_user_defaults(state_mod._user_defaults_from_session())
+        assert load_defaults()["inherited_iras"] == iras
+
+        monkeypatch.setattr(state_mod.st, "session_state", {"inherited_iras": []})
+        save_user_defaults(state_mod._user_defaults_from_session())
+
+        assert load_defaults().get("inherited_iras") == [], (
+            "removed inherited IRA resurrected from stale .user_defaults.json"
+        )
+
+
 class TestApplySingleFiler:
     """C9 / ui-streamlit-4: Single-filer zeroing happens on the derived Household,
     not in session_state, so MFJ round-trips keep real spouse balances."""
