@@ -147,6 +147,23 @@ def save_user_defaults(data: dict) -> None:
         path.chmod(0o600)
 
 
+def clear_user_defaults() -> None:
+    """Delete the on-disk ``.user_defaults.json`` (best-effort).
+
+    The write-side complement to a "Reset to demo": :func:`save_user_defaults`
+    merges incoming data on top of whatever is already on disk, so clearing
+    session_state alone cannot neutralise a file that autosave wrote before the
+    reset — on the next startup :func:`load_defaults` would reseed the stale
+    personal data. Removing the file makes ``load_defaults`` fall through to the
+    demo ``DEFAULTS``.
+
+    Best-effort: a failed unlink must never raise or break page rendering.
+    """
+    path = Path(".user_defaults.json")
+    with contextlib.suppress(OSError):
+        path.unlink(missing_ok=True)
+
+
 def load_defaults() -> dict:
     """Return DEFAULTS overlaid with user overrides if present."""
     env_path_str = os.environ.get("ROTH_PLANNER_DEFAULTS")

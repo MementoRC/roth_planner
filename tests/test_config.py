@@ -256,6 +256,42 @@ class TestSaveUserDefaults:
         save_user_defaults({"your_age": 63})  # must not raise
 
 
+class TestClearUserDefaults:
+    """clear_user_defaults deletes the on-disk personal file so a Reset-to-demo
+    is not silently undone on the next startup (audit-0802 F3).
+
+    save_user_defaults merges incoming data ON TOP of whatever is on disk, so
+    session-only clearing cannot neutralise a stale file — the file itself must
+    be removed.
+    """
+
+    def test_deletes_existing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from config.loader import clear_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+        save_user_defaults({"your_ira": 1_700_000})
+        assert (tmp_path / ".user_defaults.json").exists()
+
+        clear_user_defaults()
+
+        assert not (tmp_path / ".user_defaults.json").exists()
+        # load_defaults now falls through to demo DEFAULTS
+        assert load_defaults()["your_ira"] == DEFAULTS["your_ira"]
+
+    def test_missing_file_is_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deleting when no file exists must be a silent no-op, not an error."""
+        from config.loader import clear_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        clear_user_defaults()  # must not raise
+
+
 class TestSyntheticGrantStrikes:
     """DEFAULTS exposes grant_strikes mirroring the synthetic grants."""
 

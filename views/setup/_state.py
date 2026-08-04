@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from config.loader import clear_user_defaults
 from engine.portfolio_sync import (
     AccountSummary,
     EquityGrant,
@@ -56,12 +57,14 @@ def _user_defaults_from_session() -> dict:
     prior_magi = st.session_state.get("prior_year_magi")
     if prior_magi:
         payload["prior_year_magi"] = {str(k): v for k, v in prior_magi.items()}
-    survivor = st.session_state.get("survivor")
-    if survivor:
-        payload["survivor"] = survivor
-    inherited_iras = st.session_state.get("inherited_iras")
-    if inherited_iras:
-        payload["inherited_iras"] = inherited_iras
+    # Emit survivor / inherited_iras whenever the session knows about them, even
+    # when cleared (None / []). save_user_defaults merges onto the existing file,
+    # so a truthy-only guard lets a stale on-disk value survive a clear and be
+    # resurrected on the next startup (audit-0802 F4/F5).
+    if "survivor" in st.session_state:
+        payload["survivor"] = st.session_state["survivor"]
+    if "inherited_iras" in st.session_state:
+        payload["inherited_iras"] = st.session_state["inherited_iras"]
     return payload
 
 
@@ -165,3 +168,7 @@ def _clear_personal_session_state() -> None:
     # the reset is not silently undone by the app.py startup guard.  An
     # explicit sync/upload clears this via _apply_portfolio_snapshot().
     st.session_state["_suppress_snapshot_autoload"] = True
+    # Also remove the on-disk personal file. Session-only clearing is undone on
+    # the next startup because save_user_defaults merges onto whatever autosave
+    # left on disk before the reset (audit-0802 F3).
+    clear_user_defaults()
