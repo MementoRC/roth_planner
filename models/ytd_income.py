@@ -9,8 +9,9 @@ Key distinction: LTCG affects MAGI (IRMAA/NIIT) but NOT ordinary bracket room.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
+from typing import Any
 
 
 @dataclass
@@ -218,3 +219,25 @@ class YTDSnapshot:
         """Set snapshot_date to today (in place) and return self for chaining."""
         self.snapshot_date = date.today().isoformat()
         return self
+
+    def overlay(self, **fields: Any) -> YTDSnapshot:
+        """Return a NEW snapshot equal to ``self`` except for ``fields``.
+
+        Every write site (manual entry, FinExtract sync, PDF-folder scan,
+        etc.) should start from the previously-persisted snapshot and call
+        ``prev.overlay(**computed_fields)`` instead of constructing a fresh
+        ``YTDSnapshot(...)`` from scratch. Fields NOT passed are carried
+        forward unchanged from ``self`` -- including list fields
+        (income_events/gain_events) and the metadata fields (tax_year,
+        snapshot_date, manually_entered) when a site does not touch them.
+
+        A field passed explicitly is ALWAYS applied, even when the value is
+        the type's zero/default (e.g. ``wages_ytd=0.0``) -- this method must
+        never fall back to "if computed value == default, keep self's"
+        semantics, since that would make it impossible for a user to
+        legitimately zero out a field they cleared on the form (audit-0805
+        C42/C32/C96: the recurring bug this helper replaces was exactly the
+        opposite failure mode -- a fresh ``YTDSnapshot()`` silently dropping
+        fields the call site never touched).
+        """
+        return replace(self, **fields)

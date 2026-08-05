@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import requests
+
+import engine.portfolio_sync.ytd as ytd_mod
 import views._shared as shared_mod
 import views.setup._partials._accounts as partials_mod
 import views.setup.portfolio as portfolio_mod
@@ -332,6 +335,90 @@ def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
     assert grants[0].year == 2020
     assert grants[0].strike == 130.0
     assert grants[0].shares == 600
+
+
+class TestYtdSyncPreservation:
+    """C32 (audit-0805, HIGH): sync_portfolio_from_finextract must not replace
+    the persisted YTD snapshot with an all-zero fresh YTDSnapshot(), and the
+    /status-unreachable case must not be reported as synced."""
+
+    def test_successful_sync_preserves_prior_manual_fields(self, clean_command_center_caches):
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            ltcg_ytd=50_000.0,
+            crypto_income_ytd=1_000.0,
+            nqo_exercise_ytd=20_000.0,
+        )
+        mock_st = _mock_st(ytd_snapshot=prior_ytd)
+
+        patches = _patch_portfolio_fetches() + [
+            patch.object(portfolio_mod, "st", mock_st),
+        ]
+        # Override the NQO-only defaults from _patch_portfolio_fetches: a
+        # real successful sync (server reachable) + a fresh exercise total.
+        patches = [
+            p
+            for p in patches
+            if getattr(p, "attribute", None) not in ("fetch_ytd_snapshot", "fetch_option_exercises_with_cache")
+        ]
+        patches += [
+            patch.object(
+                portfolio_mod,
+                "fetch_ytd_snapshot",
+                return_value=YTDSnapshot(manually_entered=False, snapshot_date="2026-08-01"),
+            ),
+            patch.object(
+                portfolio_mod,
+                "fetch_option_exercises_with_cache",
+                return_value=OptionExercisesSnapshot(server_available=True, total_spread=45_000.0),
+            ),
+        ]
+
+        with _ApplyAll(patches):
+            outcome = portfolio_mod.sync_portfolio_from_finextract(hh)
+
+        assert outcome.ytd_synced is True
+        result = mock_st.session_state.ytd_snapshot
+        assert result.wages_ytd == 80_000.0, (
+            f"Expected prior wages_ytd=80000 preserved; got {result.wages_ytd}"
+        )
+        assert result.ltcg_ytd == 50_000.0, (
+            f"Expected prior ltcg_ytd=50000 preserved; got {result.ltcg_ytd}"
+        )
+        assert result.crypto_income_ytd == 1_000.0
+        assert result.nqo_exercise_ytd == 45_000.0, (
+            f"Expected freshly-computed nqo_exercise_ytd=45000; got {result.nqo_exercise_ytd}"
+        )
+
+    def test_unreachable_status_does_not_mark_synced_or_zero_prior_data(self, clean_command_center_caches):
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            ltcg_ytd=50_000.0,
+            nqo_exercise_ytd=30_000.0,
+        )
+        mock_st = _mock_st(ytd_snapshot=prior_ytd)
+
+        patches = _patch_portfolio_fetches() + [
+            patch.object(portfolio_mod, "st", mock_st),
+            # Exercise the REAL fetch_ytd_snapshot (not mocked) with its
+            # /status ping forced to fail, reproducing the actual bug site.
+            patch.object(ytd_mod, "_get", side_effect=requests.RequestException("down")),
+        ]
+        patches = [p for p in patches if getattr(p, "attribute", None) != "fetch_ytd_snapshot"]
+
+        with _ApplyAll(patches):
+            outcome = portfolio_mod.sync_portfolio_from_finextract(hh)
+
+        assert outcome.ytd_synced is False, (
+            "ytd_synced must be False when the /status ping is unreachable"
+        )
+        assert mock_st.session_state.ytd_snapshot is prior_ytd, (
+            "A failed /status ping must not overwrite the persisted YTD snapshot"
+        )
 
 
 class _ApplyAll:

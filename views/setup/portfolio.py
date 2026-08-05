@@ -34,6 +34,7 @@ from engine.portfolio_sync import (
 )
 from models.household import Household
 from models.sourced import Source
+from models.ytd_income import YTDSnapshot
 from views.setup._partials import render_options_partial, render_portfolio_partial
 
 
@@ -105,15 +106,29 @@ def sync_portfolio_from_finextract(hh: Household) -> PortfolioSyncOutcome:
     except Exception:  # noqa: BLE001 — sync is best-effort, never block on MAGI failure
         pass
 
-    # Also sync YTD income data
-    ytd_snap = fetch_ytd_snapshot()
+    # Also sync YTD income data. fetch_ytd_snapshot only pings /status for
+    # freshness/manually_entered metadata (investment income is
+    # brokerage-PDF-sourced, not FinExtract-sourced -- see ytd.py docstring).
+    # Overlay that metadata onto the PREVIOUSLY-PERSISTED snapshot instead of
+    # starting from a fresh all-zero YTDSnapshot() (audit-0805 C32) -- a
+    # fresh snapshot silently wiped every manually-entered/statement-sourced
+    # field on every sync.
+    ytd_status = fetch_ytd_snapshot()
+    prev_ytd = st.session_state.get("ytd_snapshot") or YTDSnapshot()
+    ytd_snap = prev_ytd.overlay(
+        manually_entered=ytd_status.manually_entered,
+        snapshot_date=ytd_status.snapshot_date,
+    )
     # Phase: option exercises — prefer cache equity_sales, fall back to /query
     exercises = fetch_option_exercises_with_cache(snap)
     if exercises.server_available:
         ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
         if exercises.captured_at:
             st.session_state["exercises_captured_at"] = exercises.captured_at
-    ytd_synced = bool(ytd_snap.snapshot_date)
+    # ytd_status.snapshot_date (not ytd_snap's, which now also reflects the
+    # exercises merge) is the one true signal of whether /status actually
+    # responded -- ytd.py only stamps it on a successful ping.
+    ytd_synced = bool(ytd_status.snapshot_date)
     if ytd_synced:
         st.session_state.ytd_snapshot = ytd_snap
         save_ytd_snapshot(ytd_snap)

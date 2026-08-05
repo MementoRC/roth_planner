@@ -823,7 +823,17 @@ _ACCOUNT_TYPE_OVERRIDES_PATH = Path(__file__).resolve().parent.parent / ".statem
 
 
 def save_statement_records(records: dict[str, BrokerageStatementRecord]) -> None:
-    write_pii_json(_STATEMENT_CACHE_PATH, {k: v.to_dict() for k, v in records.items()})
+    """Merge *records* onto the existing on-disk cache (per-account slot), then persist.
+
+    Mirrors engine.pdf_ledger.write_brokerage_contribution's per-slot merge
+    semantics -- a full-file overwrite here meant scanning a folder with no
+    brokerage PDFs (records={}) silently wiped every previously-confirmed
+    account (audit-0805 C101). An empty *records* is therefore a no-op;
+    a non-empty *records* updates only the account_number keys it contains,
+    leaving every other cached account untouched.
+    """
+    merged = {**load_statement_records(), **records}
+    write_pii_json(_STATEMENT_CACHE_PATH, {k: v.to_dict() for k, v in merged.items()})
 
 
 def load_statement_records() -> dict[str, BrokerageStatementRecord]:

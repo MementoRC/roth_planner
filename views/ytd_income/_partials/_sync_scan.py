@@ -47,39 +47,28 @@ def render_sync_scan_partial(hh: Household) -> None:
                 fetch_ytd_snapshot,
             )
 
-            ytd_snap = fetch_ytd_snapshot()
+            ytd_status = fetch_ytd_snapshot()
+            # Overlay the freshly-fetched metadata (manually_entered,
+            # snapshot_date) onto the PREVIOUSLY-PERSISTED snapshot instead of
+            # a hand-rolled field-by-field preserve allowlist (audit-0805
+            # C96) -- that allowlist omitted federal_withholding_ytd and will
+            # rot again the next time a field is added. wages_ytd,
+            # nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
+            # spouse_ira_conversions_ytd, and ira_distributions_ytd are
+            # manual-entry-only; interest_ytd, tax_exempt_interest_ytd,
+            # ordinary_dividends_ytd, ltcg_ytd, stcg_ytd, and gain_events are
+            # brokerage-statement-sourced (see the section below) — none of
+            # these are touched by fetch_ytd_snapshot, so overlay() preserves
+            # every one of them automatically.
+            prev = st.session_state.get("ytd_snapshot") or YTDSnapshot()
+            ytd_snap = prev.overlay(
+                manually_entered=ytd_status.manually_entered,
+                snapshot_date=ytd_status.snapshot_date,
+            )
             exercises = fetch_option_exercises()
             if exercises.server_available:
                 ytd_snap = apply_option_exercises(ytd_snap, exercises, hh)
-            if ytd_snap.snapshot_date:
-                # wages_ytd, nec_income_ytd, qualified_dividends_ytd, ira_conversions_ytd,
-                # spouse_ira_conversions_ytd, and ira_distributions_ytd are
-                # manual-entry-only. interest_ytd, tax_exempt_interest_ytd,
-                # ordinary_dividends_ytd, ltcg_ytd, stcg_ytd, and gain_events are now
-                # sourced from brokerage statement PDFs (see the section below), not
-                # FinExtract — fetch_ytd_snapshot no longer populates any of these.
-                # Preserve whatever was already recorded instead of letting this
-                # NQO-only sync silently zero them out.
-                prev = st.session_state.get("ytd_snapshot")
-                if prev is not None:
-                    ytd_snap.wages_ytd = prev.wages_ytd
-                    ytd_snap.nec_income_ytd = prev.nec_income_ytd
-                    ytd_snap.qualified_dividends_ytd = prev.qualified_dividends_ytd
-                    ytd_snap.ira_conversions_ytd = prev.ira_conversions_ytd
-                    ytd_snap.spouse_ira_conversions_ytd = prev.spouse_ira_conversions_ytd
-                    ytd_snap.ira_distributions_ytd = prev.ira_distributions_ytd
-                    ytd_snap.interest_ytd = prev.interest_ytd
-                    ytd_snap.tax_exempt_interest_ytd = prev.tax_exempt_interest_ytd
-                    ytd_snap.ordinary_dividends_ytd = prev.ordinary_dividends_ytd
-                    ytd_snap.ltcg_ytd = prev.ltcg_ytd
-                    ytd_snap.stcg_ytd = prev.stcg_ytd
-                    ytd_snap.gain_events = prev.gain_events
-                    ytd_snap.hsa_contribution_ytd = prev.hsa_contribution_ytd
-                    ytd_snap.deductible_ira_contribution_ytd = prev.deductible_ira_contribution_ytd
-                    ytd_snap.crypto_stcg_ytd = prev.crypto_stcg_ytd
-                    ytd_snap.crypto_ltcg_ytd = prev.crypto_ltcg_ytd
-                    ytd_snap.crypto_income_ytd = prev.crypto_income_ytd
-                    ytd_snap.income_events = prev.income_events
+            if ytd_status.snapshot_date:
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:

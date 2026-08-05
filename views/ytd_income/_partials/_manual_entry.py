@@ -149,7 +149,11 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
         spouse_conversions_done = sum_income_events(income_events, kind="conversion", owner="spouse")
         distributions_done = sum_income_events(income_events, kind="distribution")
 
-        ytd = YTDSnapshot(
+        # Overlay only the fields this widget set actually computed onto the
+        # previously-persisted snapshot (audit-0805 C42) -- a fresh
+        # YTDSnapshot(...) here would silently drop any field this form does
+        # not have a widget for (e.g. nqo_exercise_ytd, synced separately).
+        ytd = ytd.overlay(
             tax_year=hh.base_year,
             wages_ytd=float(wages),
             nec_income_ytd=float(nec_income),
@@ -169,7 +173,6 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
             crypto_stcg_ytd=float(crypto_stcg),
             crypto_ltcg_ytd=float(crypto_ltcg),
             crypto_income_ytd=float(crypto_income),
-            gain_events=ytd.gain_events,
             manually_entered=True,
         ).with_snapshot_date()
 
