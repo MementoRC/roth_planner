@@ -158,6 +158,28 @@ def test_workplace_plan_session_state_flows_to_household(clean_command_center_ca
     assert "### No" in joined
 
 
+def test_ytd_snapshot_autoload_respects_suppress_flag(clean_command_center_caches) -> None:
+    """C111 (audit-0805, MEDIUM): app.py's ytd_snapshot autoload guard lacks
+    the ``_suppress_snapshot_autoload`` check present on the portfolio_snapshot
+    autoload immediately above it, so a stale on-disk ``.ytd_cache.json``
+    repopulates session_state even when the reset-to-demo flow explicitly set
+    the suppress sentinel."""
+    from engine.portfolio_sync import save_ytd_snapshot
+    from models.ytd_income import YTDSnapshot
+
+    save_ytd_snapshot(YTDSnapshot(wages_ytd=250_000.0, nqo_exercise_ytd=96_000.0))
+
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["_suppress_snapshot_autoload"] = True
+    at.run()
+
+    assert not at.exception
+    assert "ytd_snapshot" not in at.session_state, (
+        "Stale on-disk YTD snapshot repopulated session_state despite "
+        "_suppress_snapshot_autoload=True"
+    )
+
+
 def test_finextract_sync_snapshot_does_not_bypass_the_gate(
     clean_command_center_caches,
 ) -> None:

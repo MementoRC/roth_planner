@@ -45,10 +45,14 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
         resp = _get("/status", timeout=3)
         resp.raise_for_status()
         ytd.manually_entered = False
+        # Only stamp snapshot_date when the ping actually succeeded (audit-0805
+        # C32) -- calling this unconditionally made every caller's
+        # `if ytd.snapshot_date:` "was this sync actually reachable?" check
+        # always true, even when FinExtract was down.
+        ytd.with_snapshot_date()
     except requests.RequestException:
         pass
 
-    ytd.with_snapshot_date()
     return ytd
 
 

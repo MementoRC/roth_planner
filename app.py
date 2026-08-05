@@ -94,7 +94,7 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_s
         # defect: FinExtract sync/autoload bypassed the candidate gate).
         st.session_state.portfolio_snapshot = _cached
 
-if "ytd_snapshot" not in st.session_state:
+if "ytd_snapshot" not in st.session_state and not st.session_state.get("_suppress_snapshot_autoload"):
     from engine.portfolio_sync import load_ytd_snapshot
 
     _cached_ytd = load_ytd_snapshot()

@@ -507,6 +507,74 @@ class TestManualEntryAutoDeselect:
         assert result.ordinary_dividends_ytd == 3_000.0
         assert result.interest_ytd == 600.0
 
+    def test_federal_withholding_survives_sync(self):
+        """C96 (audit-0805): the sync-button preserve allowlist omits
+        federal_withholding_ytd, silently zeroing it on every FinExtract sync."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            federal_withholding_ytd=42_000.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = False
+
+        synced_ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-12")
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.federal_withholding_ytd == 42_000.0, (
+            "Expected federal_withholding_ytd=42000 preserved through NQO-only "
+            f"sync; got {result.federal_withholding_ytd}"
+        )
+
+
+class TestManualEntryPreservesNqoExerciseYtd:
+    """C42 (audit-0805, HIGH): _manual_entry.py's fresh-YTDSnapshot rebuild
+    omits nqo_exercise_ytd -- the ONLY true field omission (tax_year is
+    intentionally re-derived). Merely loading the YTD page with the Manual
+    entry checkbox on (default checked) destroys a synced NQO exercise."""
+
+    def test_nqo_exercise_ytd_survives_manual_entry_render(self):
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0, wages_ytd=50_000.0)
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.checkbox.return_value = True  # manual entry ON (the default)
+        mock_st.number_input.return_value = 0
+        mock_st.button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.nqo_exercise_ytd == 96_000.0, (
+            "Expected nqo_exercise_ytd=96000 preserved through manual-entry "
+            f"render; got {result.nqo_exercise_ytd}"
+        )
+
 
 class TestTaxBracketAndSafeHarborSections:
     """Smoke tests for the new tax-bracket, estimated-tax, and safe-harbor sections."""

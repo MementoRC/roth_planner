@@ -929,6 +929,25 @@ class TestCacheRoundTrip:
         monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "missing.json")
         assert mod.load_statement_records() == {}
 
+    def test_empty_scan_does_not_wipe_existing_cache(self, tmp_path, monkeypatch):
+        """C101 (audit-0805, LOW-but-real): save_statement_records is a
+        full-file overwrite, so scanning a folder with no brokerage PDFs
+        (by_account={}) silently wipes every previously confirmed account."""
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "cache.json")
+        rec = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0)
+        mod.save_statement_records({"111-1111": rec})
+
+        # A later scan of a folder with no brokerage PDFs produces {}.
+        mod.save_statement_records({})
+
+        loaded = mod.load_statement_records()
+        assert "111-1111" in loaded, (
+            "An empty-dict save_statement_records() call wiped the confirmed "
+            f"account cache; loaded={loaded}"
+        )
+
 
 class TestFolderPathConfig:
     def test_save_and_load_folder_path(self, tmp_path, monkeypatch):
