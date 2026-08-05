@@ -413,6 +413,24 @@ def compute_year_by_year_timeline(
                 # spouse's actual age (sa is None here because is_mfj is False)
                 on_medicare_you = False
                 on_medicare_sp = hh.spouse_age_in(year) >= 65
+
+        # audit-0805 C3: mirror the Medicare gate above for ACA. Without this,
+        # is_mfj=False forces sa=None every survivor year regardless of who
+        # died, so sp_on_aca was unconditionally False (denying a subsidy to a
+        # genuinely enrolled, under-65 surviving spouse) while you_on_aca kept
+        # reading the deceased "you"'s continuing age/enrollment flag (crediting
+        # a subsidy to someone who died years earlier). Only the SURVIVOR's ACA
+        # enrollment may count in survivor years.
+        if survivor_active and surv is not None:
+            if surv.who_dies == "spouse":
+                # survivor is "you" — deceased spouse can't be on ACA
+                sp_on_aca = False
+            else:
+                # survivor is the spouse — base ACA eligibility on the surviving
+                # spouse's actual age (sa is None here because is_mfj is False),
+                # not the deceased primary's continuing age/enrollment flag.
+                you_on_aca = False
+                sp_on_aca = aca_applies(hh.spouse_age_in(year), hh.spouse_aca_enrolled)
         medicare_count = (1 if on_medicare_you else 0) + (1 if on_medicare_sp else 0)
 
         # Determine system per person

@@ -332,6 +332,66 @@ def test_timeline_survivor_who_dies_you_medicare_follows_spouse() -> None:
         assert r.irmaa_tier == expected_single
 
 
+def test_timeline_survivor_who_dies_you_aca_follows_spouse() -> None:
+    """audit-0805 C3: who_dies='you' — the surviving SPOUSE's ACA enrollment must
+    still count after death.
+
+    Regression for the bug where is_mfj=False forced sa=None in survivor years,
+    so sp_on_aca was unconditionally False even when the surviving spouse was
+    actually under 65 and enrolled on the marketplace. your_aca_enrolled is
+    False so the deceased primary's continuing (bug-prone) age/flag cannot
+    accidentally satisfy the assertion.
+    """
+    base_year = 2026
+    death_year = 2028
+    hh = Household()
+    hh.base_year = base_year
+    # Primary dies; surviving spouse is 58 at base_year, under 65 for years after.
+    hh.your_age = 60
+    hh.spouse_age = 58
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = False
+    hh.spouse_aca_enrolled = True
+    hh.survivor = SurvivorScenario(who_dies="you", death_year=death_year)
+
+    base_magi = 60_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=6, cpi=0.0)
+
+    after = [r for r in rows if r.year > death_year]
+    assert len(after) > 0
+    for r in after:
+        assert r.aca_subsidy is not None, (
+            f"Surviving spouse enrolled + under 65 must keep ACA subsidy active in {r.year}"
+        )
+
+
+def test_timeline_survivor_who_dies_spouse_aca_does_not_credit_deceased() -> None:
+    """audit-0805 C3 mirror: who_dies='spouse' — a deceased spouse enrolled on
+    ACA must not keep receiving a subsidy in survivor years, even though the
+    deceased's age (sa) continues to advance internally.
+    """
+    base_year = 2026
+    death_year = 2028
+    hh = Household()
+    hh.base_year = base_year
+    hh.your_age = 60
+    hh.spouse_age = 58
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = False
+    hh.spouse_aca_enrolled = False
+    hh.survivor = SurvivorScenario(who_dies="spouse", death_year=death_year)
+
+    base_magi = 60_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=6, cpi=0.0)
+
+    after = [r for r in rows if r.year > death_year]
+    assert len(after) > 0
+    for r in after:
+        assert r.aca_subsidy is None, (
+            f"Neither survivor nor deceased is ACA-enrolled — subsidy must be None in {r.year}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fix 1 regression (superseded 2026-07-13): Single filer gets the FULL benchmark
 # ---------------------------------------------------------------------------

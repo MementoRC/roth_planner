@@ -300,7 +300,38 @@ def compute_social_security(
             )
             claim_age = max(60, onset_age)
             survivor_fra = hh.spouse_fra_age if who_dies == "you" else hh.your_fra_age
-            deceased_benefit = your_ss if who_dies == "you" else spouse_ss
+            # audit-0805 C7: a survivor benefit is based on the DECEASED worker's
+            # earned benefit (PIA), NOT on whether the decedent had actually begun
+            # claiming (SSA §202(e)/(f) widow(er) benefit). your_ss/spouse_ss above
+            # are gated to 0.0 until the worker's own PLANNED claim age is reached,
+            # so reusing them unconditionally as deceased_benefit silently zeroed
+            # the entire survivor benefit whenever the decedent died before that
+            # age. Determine whether the decedent had already reached their
+            # planned claim age by the time they died; if so, the already-claiming
+            # (and already-COLA'd) your_ss/spouse_ss value is correct and unchanged.
+            # If not, base the survivor benefit on 100% of the decedent's PIA (the
+            # FRA-equivalent benefit -- no early/delayed adjustment applies to an
+            # unclaimed benefit), COLA-grown the same way your_ss/spouse_ss are
+            # (years since the benefit "starts"; PIA is defined at FRA, so that
+            # is years since FRA).
+            deceased_death_age = (hh.your_age if who_dies == "you" else hh.spouse_age) + (
+                death_year - hh.base_year
+            )
+            deceased_claim_age = (
+                hh.your_ss_start_age if who_dies == "you" else hh.spouse_ss_start_age
+            )
+            if deceased_death_age >= deceased_claim_age:
+                deceased_benefit = your_ss if who_dies == "you" else spouse_ss
+            else:
+                deceased_monthly_fra = hh.your_ss_fra if who_dies == "you" else hh.spouse_ss_fra
+                deceased_fra_age = hh.your_fra_age if who_dies == "you" else hh.spouse_fra_age
+                deceased_current_age = ya if who_dies == "you" else sa
+                deceased_pia = ss_benefit_at_age(
+                    deceased_monthly_fra, deceased_fra_age, deceased_fra_age
+                )
+                deceased_benefit = ss_with_cola(
+                    deceased_pia, max(deceased_current_age - deceased_fra_age, 0), hh.ss_cola
+                )
             survivor_own = spouse_ss if who_dies == "you" else your_ss
 
             if survivor_current_age < 60:
@@ -531,8 +562,14 @@ def compute_aca(
         aca_loss = 0.0
 
     # P.L. 119-21 eliminated the IRC §36B(f)(2)(B) repayment cap for TY 2026+.
-    # Only applies when household elected advance APTC payments.
-    if advance_aptc_annual > 0:
+    # Only applies when household elected advance APTC payments AND someone is
+    # actually enrolled on the ACA marketplace that year (audit-0805 C11: this
+    # gate previously checked only advance_aptc_annual > 0, unlike the sibling
+    # aca_loss gate above which correctly checks num_on_aca > 0. advance_aptc_annual
+    # is a flat Household-level assumption applied to every projected year, so
+    # without this check a stale value fired a clawback even in years when both
+    # spouses are 65+ and on Medicare, with no ACA enrollment at all.
+    if advance_aptc_annual > 0 and num_on_aca > 0:
         aca_clawback = aca_excess_aptc_repayment(
             advance_aptc_annual=advance_aptc_annual,
             actual_magi=aca_magi,
