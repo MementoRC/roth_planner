@@ -21,7 +21,6 @@ from streamlit.testing.v1 import AppTest
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from models.sourced import Provenance, Source, SourcedValue
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -29,6 +28,10 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.7M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
+    # audit-0805 W1: re-import at call time (not the module-level binding
+    # frozen at collection) to see tests/conftest.py's per-test redirect.
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+
     committed_json = {
         "your_ira": SourcedValue(1_700_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
@@ -97,6 +100,8 @@ def test_accounts_partial_confirm_button_commits_chosen_source_and_syncs_session
 
     assert not at.exception
     assert at.session_state["your_ira"] == 2_000_000.0
+
+    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
 
     committed_json = load_committed(COMMITTED_PATH)
     assert committed_json is not None

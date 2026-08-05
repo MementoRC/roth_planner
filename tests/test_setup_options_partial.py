@@ -24,7 +24,6 @@ from streamlit.testing.v1 import AppTest
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from models.grants import StockGrant
 from models.sourced import Provenance, Source, SourcedValue
@@ -34,6 +33,10 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_txn_price_now() -> None:
     """Committed txn_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
+    # audit-0805 W1: re-import at call time (not the module-level binding
+    # frozen at collection) to see tests/conftest.py's per-test redirect.
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+
     committed_json = {
         "txn_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
@@ -49,6 +52,8 @@ def _seed_pending_txn_price_now() -> None:
 
 def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+
     committed_grant = StockGrant(year=2020, strike=130.0, shares=100, expiry_year=2030)
     committed_json = {
         GRANTS_KEY: {
@@ -137,6 +142,8 @@ def test_options_partial_confirm_txn_price_now_syncs_the_aliased_session_key(
     assert at.session_state["txn_price"] == 250.0
     assert "txn_price_now" not in at.session_state
 
+    from engine.data_sources.paths import COMMITTED_PATH
+
     committed_json = load_committed(COMMITTED_PATH)
     assert committed_json is not None
     assert committed_json["txn_price_now"]["value"] == 250.0
@@ -183,6 +190,8 @@ def test_options_partial_confirm_grants_commits_candidate_list(
     at.button(key="confirm_grants").click().run()
 
     assert not at.exception
+    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
+
     committed_json = load_committed(COMMITTED_PATH)
     assert committed_json is not None
     assert len(committed_json[GRANTS_KEY]["data"]) == 2

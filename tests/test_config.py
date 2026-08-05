@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import config.loader as _loader_mod
 from config.defaults import DEFAULTS
 from config.loader import load_defaults, save_user_defaults
 
@@ -103,6 +104,7 @@ class TestJsonOverrideLoader:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.json").write_text(
@@ -118,6 +120,7 @@ class TestJsonOverrideLoader:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         strikes = {"2019": 104.41, "2020": 130.52, "2021": 169.23}
@@ -142,6 +145,7 @@ class TestJsonOverrideLoader:
     def test_json_preferred_over_py(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When both .user_defaults.json and .user_defaults.py exist, JSON wins."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         (tmp_path / ".user_defaults.json").write_text(json.dumps({"your_age": 99}))
@@ -239,6 +243,7 @@ class TestSaveUserDefaults:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         save_user_defaults({"your_age": 63})
         path = tmp_path / ".user_defaults.json"
         assert path.exists()
@@ -271,6 +276,7 @@ class TestClearUserDefaults:
         from config.loader import clear_user_defaults
 
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
         save_user_defaults({"your_ira": 1_700_000})

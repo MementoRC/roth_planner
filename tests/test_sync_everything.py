@@ -17,7 +17,6 @@ import views.setup._partials._accounts as partials_mod
 import views.setup.portfolio as portfolio_mod
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.committed import load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
 from engine.data_sources.resolver import magi_field_key
 from engine.pdf_import import PdfImportResult
 from engine.portfolio_sync import (
@@ -238,6 +237,10 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
 
     # Freeze invariant: every produced value is PENDING (a candidate exists),
     # and nothing was ever committed.
+    # audit-0805 W1: re-import at test-run time (not the module-level binding
+    # frozen at collection) to see tests/conftest.py's per-test redirect.
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
+
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     assert store.has_candidates("your_ira")
     assert store.has_candidates("your_ss_fra")
@@ -275,6 +278,8 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
     assert result.ss.candidates_recorded == 2
     assert result.scan.result is not None
     assert result.scan.result.magi_candidates_recorded == 1
+
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     assert not store.has_candidates("your_ira")

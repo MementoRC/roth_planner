@@ -87,8 +87,14 @@ class TestPdfTaxCachePath:
 
         assert _PDF_TAX_CACHE_PATH.name == ".tax_pdf_cache.json"
 
-    def test_lands_at_project_root(self):
-        """Parent directory must be the repo root (same level as engine/)."""
+    def test_lands_at_project_root(self, monkeypatch):
+        """Parent directory must be the repo root (same level as engine/).
+
+        audit-0805 W1: tests/conftest.py's autouse cache-path redirect
+        fixture patches this same attribute to a tmp dir for every test, so
+        undo it first to inspect the true, untouched production default.
+        """
+        monkeypatch.undo()
         import engine.tax_return_pdf as _m
         from engine.tax_return_pdf import _PDF_TAX_CACHE_PATH
 

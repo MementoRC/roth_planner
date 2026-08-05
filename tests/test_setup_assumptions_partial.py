@@ -31,7 +31,6 @@ from streamlit.testing.v1 import AppTest
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from models.sourced import Provenance, Source
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -39,6 +38,10 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
+    # audit-0805 W1: re-import at call time (not the module-level binding
+    # frozen at collection) to see tests/conftest.py's per-test redirect.
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+
     committed_json = {
         "prior_year_magi": {
             "data": {"2024": 200_000.0},
@@ -130,6 +133,8 @@ def test_assumptions_partial_confirm_prior_year_magi_syncs_session_state(
     assert not at.exception
     assert at.session_state["prior_year_magi"][2024] == 290_000.0
     assert "prior_year_magi.2024" not in at.session_state["_pending_review"]
+
+    from engine.data_sources.paths import COMMITTED_PATH
 
     committed_json = load_committed(COMMITTED_PATH)
     assert committed_json is not None
