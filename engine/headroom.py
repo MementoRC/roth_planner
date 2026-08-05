@@ -16,8 +16,11 @@ from dataclasses import dataclass
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, irmaa_for_year, irmaa_tier
 from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.tax import (
+    BRACKETS_MFJ,
+    BRACKETS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
+    bisect_conversion_for_ceiling,
     deductions,
     room_to_12,
     room_to_22,
@@ -174,12 +177,27 @@ def compute_headroom(
     # from brackets per IRC §1(h)); conversions are ordinary income and stay in.
     locked_gross = ytd.total_ordinary_income + locked_tss
 
-    result.room_to_12pct = room_to_12(
-        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
-    )
-    result.room_to_22pct = room_to_22(
-        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
-    )
+    # C81 (audit-0805 W5): room_to_12/room_to_22 assume taxable SS is
+    # conversion-invariant. Once provisional income (locked_other + conv) enters
+    # the 50%/85% partial-taxability band (IRC §86(b)), each dollar of the
+    # "room" itself pushes MORE Social Security into taxability, so converting
+    # the naive room amount lands taxable income past the ceiling. Bisect
+    # against the actual (non-linear) taxable-income function instead, mirroring
+    # engine.sweet_spot_compute.bracket_boundary_conversion (same class of bug,
+    # audit C14/C23). Deductions stay fixed at the locked MAGI (already a
+    # deliberate, documented conservative choice above) -- only taxable SS is
+    # re-derived per candidate conversion here.
+    def _locked_taxable_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, locked_other + conv, filing_status=filing_status)
+        return max(ytd.total_ordinary_income + conv + tss_c - ded, 0.0)
+
+    _brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+    _ceiling_12 = index_value(_brackets[1][0], _year, _cpi, round50=True)
+    _ceiling_22 = index_value(_brackets[2][0], _year, _cpi, round50=True)
+    _naive_room_12 = room_to_12(locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status)
+    _naive_room_22 = room_to_22(locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status)
+    result.room_to_12pct = bisect_conversion_for_ceiling(_locked_taxable_at, _ceiling_12, _naive_room_12)
+    result.room_to_22pct = bisect_conversion_for_ceiling(_locked_taxable_at, _ceiling_22, _naive_room_22)
     base_irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     # FIX #6: IRMAA 2-year lookback — the threshold that applies is for the PAYMENT year
     # (income year + 2), not the income year itself.
@@ -209,11 +227,25 @@ def compute_headroom(
         ya, sa, planned_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
 
-    result.room_to_12pct_with_planned = room_to_12(
+    # C81 (planned path): same SS-torpedo bisection as the locked path above.
+    def _planned_taxable_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, planned_other + conv, filing_status=filing_status)
+        return max(
+            ytd.total_ordinary_income + result.planned_option_income + conv + tss_c - ded_planned,
+            0.0,
+        )
+
+    _naive_room_12_planned = room_to_12(
         planned_gross, ded_planned, year=_year, cpi=_cpi, filing_status=filing_status
     )
-    result.room_to_22pct_with_planned = room_to_22(
+    _naive_room_22_planned = room_to_22(
         planned_gross, ded_planned, year=_year, cpi=_cpi, filing_status=filing_status
+    )
+    result.room_to_12pct_with_planned = bisect_conversion_for_ceiling(
+        _planned_taxable_at, _ceiling_12, _naive_room_12_planned
+    )
+    result.room_to_22pct_with_planned = bisect_conversion_for_ceiling(
+        _planned_taxable_at, _ceiling_22, _naive_room_22_planned
     )
     result.room_to_irmaa_t1_with_planned = max(irmaa_t1 - planned_magi, 0.0)
     result.room_to_niit_with_planned = max(niit_threshold - planned_niit_magi, 0.0)

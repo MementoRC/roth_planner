@@ -13,6 +13,7 @@ from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers
 from engine.niit import niit
 from engine.scenario_compute import QCD_MIN_AGE
 from engine.tax import (
+    BRACKETS_MFJ,
     BRACKETS_SINGLE,
     LTCG_RATES_MFJ,
     LTCG_THRESHOLDS_MFJ,
@@ -810,9 +811,20 @@ def compute_multi_year_summary(
         _yr_ytd = ytd if yr == hh.base_year else None
         b = base_income_for_year(hh, yr, ytd=_yr_ytd)
         _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
-        b_result = all_in_at_conversion(hh, b, 0, net_inv_income, ltcg_eligible=_le)
-        r12 = b_result.room_12
-        r22 = b_result.room_22
+
+        # C23 (audit-0805): route fill_12/fill_22 through bracket_boundary_conversion
+        # -- the module's own SS-torpedo-aware oracle (finding 1 / TestBracketBoundarySsTaxabilityNonlinearity)
+        # -- instead of the closed-form room_12/room_22 (documented as GROSS-INCOME
+        # room, valid only when taxable SS is conversion-invariant) fed back as a
+        # CONVERSION amount. Feeding gross-income room in as a conversion double-counts
+        # the SS-torpedo effect the closed form already ignored once, overshooting the
+        # ceiling. bracket_boundary_conversion bisects against the real (non-linear)
+        # taxable_inc, landing exactly on the ceiling.
+        _year_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+        _ceiling_12 = _index_value(_year_brackets[1][0], yr, cpi, round50=True)
+        _ceiling_22 = _index_value(_year_brackets[2][0], yr, cpi, round50=True)
+        r12 = bracket_boundary_conversion(hh, b, _ceiling_12)
+        r22 = bracket_boundary_conversion(hh, b, _ceiling_22)
 
         tier1_threshold = irmaa_tiers[0][0]
         # Binary search for the largest STEP-aligned conversion where magi <= tier1_threshold.

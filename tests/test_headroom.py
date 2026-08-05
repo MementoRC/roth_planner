@@ -687,6 +687,91 @@ class TestHeadroomSSMAGIFixes:
         )
 
 
+class TestHeadroomBracketRoomSsTorpedo:
+    """Audit C81 (MEDIUM, 2026-08-05 W5): room_to_12pct/room_to_22pct use an
+    SS-blind closed form (room_to_12/room_to_22) that assumes taxable Social
+    Security is conversion-invariant. Once provisional income enters the
+    50%/85% partial-taxability band (IRC §86(b)), converting the stated room
+    itself pushes MORE SS into taxability, so taxable income after the
+    "safe" conversion lands past the ceiling. Same class of bug as
+    engine.sweet_spot_compute.bracket_boundary_conversion's finding 1
+    (audit C14/C23 -- one family, one shared bisection primitive).
+    """
+
+    def _ss_torpedo_hh(self) -> Household:
+        # MFJ, ages 66/64, SS claimed by both, sized so a $0-$100K provisional
+        # income sweep crosses the tier1/tier2 partial-taxability transition
+        # zone rather than starting already-saturated at 85%.
+        return Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            your_ss_start_age=62,
+            spouse_ss_start_age=62,
+            your_ss_fra=1_500.0,
+            spouse_ss_fra=1_000.0,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            grants=[],
+        )
+
+    def test_room_to_12pct_lands_on_ceiling_not_naive_gross_room(self) -> None:
+        from engine.headroom import compute_headroom
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import deductions, room_to_12, senior_bonus_deduction, taxable_ss
+        from models.ytd_income import YTDSnapshot
+
+        hh = self._ss_torpedo_hh()
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=10_000.0)
+
+        your_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        spouse_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
+        combined_ss = your_base + spouse_base
+        assert combined_ss > 0, "precondition: SS must be active"
+
+        hr = compute_headroom(hh, ytd, filing_status="MFJ")
+
+        # Reconstruct the exact `ded` compute_headroom uses on the locked path
+        # (deductions() + senior_bonus_deduction() at locked_niit_magi) so the
+        # oracle/naive comparison below is apples-to-apples.
+        locked_tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="MFJ")
+        locked_niit_magi = ytd.niit_magi_ytd + locked_tss
+        ded = deductions(
+            hh.your_age, hh.spouse_age, hh.std_deduction, hh.senior_extra,
+            filing_status="MFJ", year=2026, cpi=hh.cpi_assumption,
+        )
+        ded += senior_bonus_deduction(
+            hh.your_age, hh.spouse_age, locked_niit_magi,
+            year=2026, cpi=hh.cpi_assumption, filing_status="MFJ",
+        )
+        locked_gross = ytd.total_ordinary_income + locked_tss
+        # Pre-fix (naive) closed-form value: exactly what room_to_12pct equaled
+        # before the fix.
+        naive_room_12 = room_to_12(locked_gross, ded, year=2026, cpi=hh.cpi_assumption, filing_status="MFJ")
+
+        # Oracle: converting room_to_12pct must land taxable income AT the 12%
+        # ceiling ($100,800 unindexed 2026 MFJ), not past it. Deductions stay
+        # fixed at `ded` (headroom's deliberate conservative choice); only
+        # taxable SS is re-derived at the post-conversion provisional income.
+        tss_at_room = taxable_ss(combined_ss, ytd.magi_ytd + hr.room_to_12pct, filing_status="MFJ")
+        taxable_inc_at_room = ytd.total_ordinary_income + hr.room_to_12pct + tss_at_room - ded
+        assert taxable_inc_at_room == pytest.approx(100_800.0, abs=1.0), (
+            f"room_to_12pct={hr.room_to_12pct:.0f} produced taxable_inc={taxable_inc_at_room:.0f}, "
+            "must equal the 12% ceiling ($100,800) -- pre-fix this overshot because the "
+            "naive room formula ignores the conversion's own SS-torpedo effect"
+        )
+
+        # RED assertion: pre-fix, room_to_12pct equaled naive_room_12 exactly.
+        assert hr.room_to_12pct < naive_room_12 - 1_000, (
+            f"room_to_12pct ({hr.room_to_12pct:.0f}) should be materially below the "
+            f"naive SS-invariant room_to_12 ({naive_room_12:.0f}) once the SS-torpedo "
+            "effect is folded in"
+        )
+
+
 class TestHeadroomACACliffMAGI:
     """Regression tests for audit C7 / headroom-2: ACA MAGI uses FULL SS benefit.
 
