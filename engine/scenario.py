@@ -313,6 +313,16 @@ def run_scenario(
         # SS survivor step-up: survivor keeps max(your_ss, spouse_ss); implemented in compute_social_security.
         # D-1: MAGI uses taxable SS, not full SS (computed here, before MAGI block).
         # F3/F4: qual_div_this_year and realized_gains are now passed in for provisional income.
+        # audit-0805 C12/N1: yr.option_income is the SCHEDULED (forecast) option income
+        # for the full year. When realized YTD NQO exercises exceed that schedule (a plan
+        # can under-forecast, or the household exercised more than planned), the raw
+        # scheduled value understates gross income, SS provisional income, AND MAGI's
+        # option-income term. Bound it to the realized amount (mirroring headroom.py's
+        # max(0.0, opt - realized) treatment, which nets ON TOP of the unreduced
+        # ytd.magi_ytd) so realized income is never lost. For realized <= scheduled this
+        # is a no-op (max(opt, nqo_ytd) == opt).
+        _nqo_ytd = ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
+        option_income_bounded = max(yr.option_income, _nqo_ytd)
         yr.your_ss, yr.spouse_ss, yr.combined_ss, yr.taxable_ss_amt = compute_social_security(
             hh,
             ya,
@@ -326,7 +336,7 @@ def run_scenario(
             yr.spouse_taxable_rmd,
             yr.extra_withdrawal,
             yr.spouse_extra_withdrawal,
-            yr.option_income,
+            option_income_bounded,
             yr.your_inherited_distribution,
             yr.spouse_inherited_distribution,
             ord_div_this_year,
@@ -338,12 +348,14 @@ def run_scenario(
 
         # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
         # D-1: use taxable_ss_amt (up to 85% of SS) not full combined_ss — per §1395r(i)(4)
-        # C-7: subtract nqo_exercise_ytd from option_income contribution when ytd is present.
+        # C-7/audit-0805 C12: subtract nqo_exercise_ytd from the BOUNDED option-income
+        # contribution when ytd is present. Deriving this from option_income_bounded
+        # (rather than raw yr.option_income) gives max(0.0, opt - nqo_ytd) — a floor at
+        # zero — instead of the unfloored (and potentially negative) opt - nqo_ytd that
+        # silently erased realized income exceeding the schedule.
         # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
         # NOTE: realized_gains excluded here; folded into yr.magi in the MAGI ordering block below.
-        option_income_for_magi = yr.option_income - (
-            ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
-        )
+        option_income_for_magi = option_income_bounded - _nqo_ytd
         yr.magi = compute_magi(
             option_income_for_magi,
             yr.your_conversion,
@@ -368,8 +380,10 @@ def run_scenario(
 
         # === Combined gross (for tax) ===
         # Includes ordinary income only — LTCG taxed separately at preferential rate
+        # audit-0805 N1: use the bounded option-income value (see above) so realized
+        # YTD NQO exercises in excess of the schedule are not lost from gross income.
         yr.combined_gross = (
-            yr.option_income
+            option_income_bounded
             + yr.your_conversion
             + yr.spouse_conversion
             + yr.taxable_rmd
@@ -461,7 +475,7 @@ def run_scenario(
             yr.spouse_taxable_rmd,
             yr.extra_withdrawal,
             yr.spouse_extra_withdrawal,
-            yr.option_income,
+            option_income_bounded,
             yr.your_inherited_distribution,
             yr.spouse_inherited_distribution,
             ord_div_this_year,

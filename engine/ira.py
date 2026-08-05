@@ -278,3 +278,33 @@ def inherited_ira_drain(balance: float, years_remaining: int) -> float:
     if years_remaining <= 0:
         return 0.0
     return balance / years_remaining
+
+
+def inherited_ira_drain_for_year(
+    balance: float, inherited_year: int, target_year: int, growth_rate: float = 0.0
+) -> float:
+    """Stateless drain for an arbitrary `target_year`, replaying the same
+    year-by-year recurrence engine.scenario.run_scenario tracks with a running
+    balance (balance = max(balance - drain, 0.0) * (1 + growth_rate)).
+
+    Needed by callers that compute one year at a time (e.g.
+    engine.sweet_spot_compute.estimate_rmd_income) and therefore cannot carry
+    a running balance across calls the way run_scenario's per-year loop does.
+    Passing the ORIGINAL `balance` unconditionally (as the buggy call site
+    did) drains the full original balance in the final window year instead of
+    the true balance-of-record; this replays growth/drain from year 0 so the
+    result matches run_scenario's stateful loop exactly.
+
+    Returns 0.0 before `inherited_year` or once the 10-year window has elapsed.
+    """
+    if target_year < inherited_year:
+        return 0.0
+    years_in = target_year - inherited_year
+    years_remaining = 10 - years_in
+    if years_remaining <= 0:
+        return 0.0
+    running_balance = balance
+    for n in range(years_in):
+        drain = inherited_ira_drain(running_balance, 10 - n)
+        running_balance = max(running_balance - drain, 0.0) * (1 + growth_rate)
+    return inherited_ira_drain(running_balance, years_remaining)
