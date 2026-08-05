@@ -335,6 +335,41 @@ class TestACAExcessAPTCRepayment:
         assert yr_no.aca_clawback == 0.0
         assert yr_with.federal_tax_amt == pytest.approx(yr_no.federal_tax_amt + advance, abs=1.0)
 
+    def test_clawback_zero_when_nobody_on_aca(self):
+        """audit-0805 C11: the clawback gate must check enrollment/age like the
+        sibling aca_loss gate directly above it does (`if num_on_aca > 0`).
+
+        Both spouses are 65+ (on Medicare; aca_applies' <65 gate makes them
+        ineligible for ACA regardless of the enrolled flag). A stale
+        advance_aptc_annual assumption > 0 must NOT trigger a clawback when
+        nobody is actually on the ACA marketplace that year.
+        """
+        from engine.scenario_compute import compute_aca
+
+        _aca_magi, aca_loss, aca_clawback = compute_aca(
+            magi=200_000.0,
+            combined_ss=0.0,
+            taxable_ss_amt=0.0,
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            ya=66,
+            sa=65,
+            your_aca_enrolled=True,  # stale flag -- irrelevant once 65+
+            spouse_aca_enrolled=True,
+            aca_benchmark_premium_annual=21_600.0,
+            aca_enhanced_subsidies_active=False,
+            advance_aptc_annual=8_000.0,  # stale leftover advance-APTC assumption
+            current_filing_status="MFJ",
+            year=2026,
+            cpi=0.0,
+        )
+        assert aca_loss == 0.0  # sanity: the sibling gate already zeroes this correctly
+        assert aca_clawback == 0.0, (
+            f"aca_clawback was {aca_clawback:.2f}; expected 0.0 -- nobody is on "
+            "ACA (both 65+, on Medicare), so a stale advance_aptc_annual must "
+            "not fire a clawback."
+        )
+
 
 class TestACA2026:
     """Regression tests locking in 2026 IRS values from Rev. Proc. 2025-25 (IRB 2025-32)."""

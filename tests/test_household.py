@@ -1232,6 +1232,79 @@ class TestSurvivorScenario:
         assert spouse_ss_out == approx(0.0)
         assert combined_ss == approx(your_ss_out)
 
+    def test_survivor_benefit_nonzero_when_decedent_dies_before_claim_age(self):
+        """audit-0805 C7: survivor benefit must be nonzero when the decedent died
+        BEFORE reaching their own planned SS claim age.
+
+        SSA rule (§202(e)/(f)): a widow(er)'s survivor benefit is based on the
+        deceased worker's PRIMARY INSURANCE AMOUNT (the FRA-equivalent benefit),
+        not on whether the worker had actually begun collecting. The bug reused
+        your_ss/spouse_ss (gated to 0.0 before the worker's own planned claim
+        age) as the survivor base, silently zeroing the survivor benefit
+        whenever the decedent died before that age.
+
+        Setup: spouse dies at age 60, 7 years before their planned claim age of
+        67. Survivor (you) has zero own SS (your_ss_fra=0) so any nonzero
+        combined_ss in survivor years must come entirely from the (correctly
+        computed) deceased-spouse survivor benefit.
+        """
+        from engine.scenario_compute import compute_social_security
+
+        surv = SurvivorScenario(who_dies="spouse", death_year=2026)
+        hh = Household(
+            your_age=66,
+            spouse_age=60,
+            base_year=2026,
+            your_ira=500_000,
+            spouse_ira=400_000,
+            your_ss_fra=0.0,  # survivor's own SS is zero -> isolates deceased benefit
+            spouse_ss_fra=3_000.0,  # deceased's PIA: $3,000/mo -> $36,000/yr at FRA
+            your_ss_start_age=70,
+            spouse_ss_start_age=67,  # deceased's PLANNED claim age -- never reached (died at 60)
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            growth_rate=0.0,
+            living_expenses=50_000,
+            ss_cola=0.0,
+            survivor=surv,
+        )
+        # First survivor year: 2027. ya=67 (onset_age=66+(2027-2026)=67 >= fra 67 -> full factor).
+        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+            hh=hh,
+            ya=67,
+            sa=61,
+            survivor_active=True,
+            who_dies="spouse",
+            current_filing_status="Single",
+            your_conversion=0.0,
+            spouse_conversion=0.0,
+            taxable_rmd=0.0,
+            spouse_taxable_rmd=0.0,
+            extra_withdrawal=0.0,
+            spouse_extra_withdrawal=0.0,
+            option_income=0.0,
+            your_inherited_distribution=0.0,
+            spouse_inherited_distribution=0.0,
+            ord_div_this_year=0.0,
+            ytd_year=None,
+            qual_div_this_year=0.0,
+            realized_gains=0.0,
+            death_year=2026,
+        )
+        assert spouse_ss_out == approx(0.0)
+        # Deceased (spouse) died at age 60, 7 years before their planned claim age
+        # of 67 -> survivor benefit must be based on 100% of PIA ($3,000/mo * 12 =
+        # $36,000/yr, full factor since onset_age == FRA), NOT zero.
+        assert your_ss_out == approx(36_000.0), (
+            f"Survivor benefit was {your_ss_out:.0f}; expected $36,000 (100% of "
+            "decedent's PIA) -- decedent died before reaching their own planned "
+            "SS claim age, so the SSA widow(er) benefit is based on PIA, not on "
+            "whether they had actually claimed."
+        )
+        assert combined_ss == approx(your_ss_out)
+
 
 class TestRMDStartAge:
     """rmd-1: default_rmd_age helper and Household.__post_init__ derivation.
