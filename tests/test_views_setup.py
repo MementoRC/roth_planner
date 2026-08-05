@@ -721,10 +721,16 @@ class TestPersistenceRoundTripAudit0802:
     ) -> None:
         """F3: _clear_personal_session_state must remove the on-disk personal
         file, or an autosave-before-reset is reseeded on the next startup."""
+        import config.loader as loader_mod
         import views.setup._state as state_mod
         from config.loader import DEFAULTS, load_defaults, save_user_defaults
 
         monkeypatch.chdir(tmp_path)
+        # audit-0805 W1: tests/conftest.py's autouse cache-path redirect
+        # fixture already patches this to a DIFFERENT tmp dir than this
+        # test's own `tmp_path` -- re-target it so chdir + the relative
+        # ".user_defaults.json" assertions below land in the same place.
+        monkeypatch.setattr(loader_mod, "_USER_DEFAULTS_PATH", tmp_path / ".user_defaults.json")
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
 

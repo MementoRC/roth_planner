@@ -38,6 +38,12 @@ from .defaults import DEFAULTS
 
 _log = logging.getLogger(__name__)
 
+# cwd-relative, exactly as the 3 inline literals this replaces were (see
+# audit-0805 W1) -- a single seam so tests can redirect it via
+# monkeypatch.setattr(config.loader, "_USER_DEFAULTS_PATH", tmp_path) instead
+# of every call site re-deriving the same literal.
+_USER_DEFAULTS_PATH = Path(".user_defaults.json")
+
 
 def _warn_if_insecure_permissions(path: Path) -> None:
     """Warn (do not modify) if *path* is group/world-accessible.
@@ -124,7 +130,7 @@ def save_user_defaults(data: dict) -> None:
     On success, the file is chmod'd to 0o600 (best-effort) since we are the
     writer this time and can proactively enforce safe permissions.
     """
-    path = Path(".user_defaults.json")
+    path = _USER_DEFAULTS_PATH
     # Preserve manually-added override keys the app doesn't manage (e.g.
     # grant_strikes): merge the incoming managed data ON TOP of whatever is
     # already on disk rather than overwriting the whole file. Without this the
@@ -159,7 +165,7 @@ def clear_user_defaults() -> None:
 
     Best-effort: a failed unlink must never raise or break page rendering.
     """
-    path = Path(".user_defaults.json")
+    path = _USER_DEFAULTS_PATH
     with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
 
@@ -182,7 +188,7 @@ def load_defaults() -> dict:
     # Test isolation: skip implicit local override files when set (see tests/conftest.py).
     if not os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
         # 2. .user_defaults.json (preferred local file)
-        json_path = Path(".user_defaults.json")
+        json_path = _USER_DEFAULTS_PATH
         if json_path.exists():
             _warn_if_insecure_permissions(json_path)
             overrides = dict(_load_overrides_from_json(json_path))

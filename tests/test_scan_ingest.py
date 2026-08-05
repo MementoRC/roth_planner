@@ -186,6 +186,11 @@ class TestA0CurrentScanHandlerGolden:
     def test_records_magi_candidate_for_scanned_1040(self, tmp_path, monkeypatch, clean_candidate_store):
         _run_ytd_scan(tmp_path, monkeypatch)
 
+        # audit-0805 W1: re-import at test-run time (not the module-level
+        # binding frozen at collection) to see tests/conftest.py's per-test
+        # cache-path redirect.
+        from engine.data_sources.paths import CANDIDATE_STORE_PATH
+
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
@@ -231,6 +236,8 @@ class TestA1ScanAndRecordPureHelper:
 
         assert isinstance(result, ScanIngestResult)
         assert result.magi_candidates_recorded == 1
+
+        from engine.data_sources.paths import CANDIDATE_STORE_PATH
 
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
@@ -310,6 +317,8 @@ class TestAuditHighIrmaaFeieScope:
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert result.magi_candidates_recorded == 1
+        from engine.data_sources.paths import CANDIDATE_STORE_PATH
+
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{self._FEIE_YEAR}")
         assert len(candidates) == 1
@@ -327,6 +336,8 @@ class TestAuditHighIrmaaFeieScope:
         feie_result = PdfImportResult(form_1040_records={self._FEIE_YEAR: self._FEIE_FORM_1040})
         with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
             scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
+
+        from engine.data_sources.paths import CANDIDATE_STORE_PATH
 
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         result = resolve(Household(), store, ChoiceMap())
@@ -349,6 +360,8 @@ class TestA2RewiredYtdIncomeView:
     def test_golden_unchanged_after_rewire(self, tmp_path, monkeypatch, clean_candidate_store):
         """Same assertions as TestA0 -- run against the (now rewired) view."""
         mock_st, persisted = _run_ytd_scan(tmp_path, monkeypatch)
+
+        from engine.data_sources.paths import CANDIDATE_STORE_PATH
 
         store = CandidateStore.load(CANDIDATE_STORE_PATH)
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")

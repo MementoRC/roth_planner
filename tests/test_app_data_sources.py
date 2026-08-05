@@ -81,6 +81,8 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
     default numerically unchanged — the "migration is a numeric no-op"
     invariant resolve_for_app relies on.
     """
+    from engine.data_sources.paths import COMMITTED_PATH
+
     for p in _NEW_CACHE_FILES:
         p.unlink(missing_ok=True)
 
@@ -90,7 +92,7 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
 
     assert not at.exception
 
-    committed_path = REPO_ROOT / ".committed_household.json"
+    committed_path = COMMITTED_PATH
     assert committed_path.exists()
 
     committed_json = load_committed(committed_path)
@@ -108,6 +110,8 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     the only writer left — its edits must stick, not get clobbered back to
     the frozen committed value).
     """
+    from engine.data_sources.paths import COMMITTED_PATH
+
     for p in _NEW_CACHE_FILES:
         p.unlink(missing_ok=True)
 
@@ -116,7 +120,7 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     at.run()
     assert not at.exception
 
-    committed_path = REPO_ROOT / ".committed_household.json"
+    committed_path = COMMITTED_PATH
     committed_json = load_committed(committed_path)
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
@@ -173,12 +177,14 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
     seeded-config-default-vs-committed-baseline gap that exists for a
     never-before-seen browser session.
     """
+    from engine.data_sources.paths import COMMITTED_PATH
+
     for p in _NEW_CACHE_FILES:
         p.unlink(missing_ok=True)
     _PORTFOLIO_CACHE_PATH.unlink(missing_ok=True)
 
     try:
-        committed_path = REPO_ROOT / ".committed_household.json"
+        committed_path = COMMITTED_PATH
         committed_json = {
             "your_ira": SourcedValue(
                 1_700_000.0, Provenance(Source.UNKNOWN, datetime(2026, 1, 1))
@@ -252,13 +258,13 @@ def test_command_center_txn_price_confirm_sticks_and_next_render_does_not_revert
     """
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 
     for p in _NEW_CACHE_FILES:
         p.unlink(missing_ok=True)
 
     recorded_at = datetime(2026, 1, 1)
-    committed_path = REPO_ROOT / ".committed_household.json"
+    committed_path = COMMITTED_PATH
     committed_path.write_text(
         json.dumps(
             {"txn_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, recorded_at)).to_json()}
