@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from engine.aca import aca_applies, aca_subsidy_loss, effective_benchmark_premium
-from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
+from engine.ira import calc_rmd, inherited_ira_drain_for_year, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
 from engine.scenario_compute import QCD_MIN_AGE
@@ -287,14 +287,17 @@ def estimate_rmd_income(
         spouse_reduction = min(spouse_rmd, dist_remaining)
         spouse_rmd -= spouse_reduction
 
-    inherited = 0.0
-    for iira in hh.inherited_iras:
-        if year < iira.inherited_year:
-            continue
-        years_remaining = 10 - (year - iira.inherited_year)
-        if years_remaining <= 0:
-            continue
-        inherited += inherited_ira_drain(iira.balance, years_remaining)
+    # audit-0805 C21: inherited_ira_drain_for_year replays the shrinking,
+    # growth-compounded running balance year-by-year from iira.inherited_year up
+    # to `year` -- mirroring engine.scenario.run_scenario's stateful per-year
+    # balance tracking. Passing the STATIC iira.balance directly (the prior code)
+    # drains the entire ORIGINAL balance in the final window year instead of the
+    # true (much smaller) balance-of-record, a ~10x overstatement in the balloon
+    # year for a 10-year window.
+    inherited = sum(
+        inherited_ira_drain_for_year(iira.balance, iira.inherited_year, year, iira.growth_rate)
+        for iira in hh.inherited_iras
+    )
     return your_rmd + spouse_rmd + inherited
 
 
@@ -366,6 +369,17 @@ def base_income_for_year(
     # the ordinary path dedup'd it but this MAGI path did not, overstating base_magi,
     # niit_magi, taxable_ss, and the senior-bonus phaseout by nqo_exercise_ytd.)
     _nqo_ytd = ytd.nqo_exercise_ytd if ytd is not None else 0.0
+    # audit-0805 C22/N1: `opt` above is the SCHEDULED (forecast) option income for the
+    # full year. When realized YTD NQO exercises exceed that schedule, bounding `opt`
+    # itself -- mirroring headroom.py's max(0.0, opt - realized) treatment -- is required
+    # BEFORE it feeds tss/base_gross/base_magi/senior_bonus below (and every downstream
+    # BaseIncome.opt consumer in all_in_at_conversion). The prior code subtracted
+    # _nqo_ytd only from the already-netted ytd_magi/ytd_niit_magi/ytd_ordinary terms
+    # (below) but left raw `opt` unbounded everywhere else, silently losing realized
+    # income in excess of the schedule (unlike scenario.py, which at least attempted a
+    # netting subtraction, albeit an unfloored one -- see C12). For realized <= scheduled
+    # this is a no-op (max(opt, nqo_ytd) == opt).
+    opt = max(opt, _nqo_ytd)
     ytd_magi = (ytd.magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # base-year realized YTD (niit-5)
     ytd_niit_magi = (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # muni-exclusive NIIT MAGI (see YTDSnapshot.niit_magi_ytd)
     # MU8-F1: ordinary-income portion of YTD for the bracket/LTCG-stack base.
