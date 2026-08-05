@@ -2,7 +2,7 @@
 
 import pytest
 
-from engine.scenario_autofill import auto_fill_12, auto_fill_22, auto_fill_irmaa_safe
+from engine.scenario_autofill import auto_fill_12, auto_fill_22, auto_fill_aca, auto_fill_irmaa_safe
 from models.household import Household, SurvivorScenario
 
 
@@ -206,6 +206,432 @@ class TestAutoFillCoreBaseMagiTaxableSS:
         assert reduction == approx(expected_tss, tol=100), (
             f"IRMAA room reduction should equal tss={expected_tss:.0f}, "
             f"got {reduction:.0f} (gross-SS bug would give ~{combined_ss:.0f})"
+        )
+
+
+class TestAutoFillDeferredRmdSeeding:
+    """C16 (audit-0805 W5, mirrors engine/scenario.py's ira-rmd-1 seeding and
+    engine/asset_location.py's identical audit-0802 F7 fix): _auto_fill_core
+    must seed prev_your_ira/prev_spouse_ira from the household's current IRA
+    balance at iteration 0 when defer_first_rmd is elected. Without this, the
+    deferred prior-year RMD term (calc_rmd's ``first_year_deferred and age ==
+    rmd_start_age + 1 and prior_year_balance > 0`` branch) is silently
+    suppressed in the base year -- prior_year_balance stayed 0.0 -- so the
+    base-year RMD is understated and auto-fill offers bracket room that does
+    not actually exist.
+    """
+
+    def test_base_year_doubled_rmd_year_uses_seeded_prior_balance(self) -> None:
+        from dataclasses import replace
+
+        from engine.ira import calc_rmd
+        from engine.tax import deductions, room_to_12, senior_bonus_deduction
+
+        # base-year age = 76 == your_rmd_start_age(75) + 1: the "doubled" RMD
+        # year (deferred age-75 RMD + normal age-76 RMD both due). Keep the
+        # IRA modest so combined RMD stays well under the $150K OBBBA senior-
+        # bonus phaseout start (isolates this test from C18's ded/room
+        # iteration).
+        hh = replace(
+            Household(),
+            your_age=76,
+            your_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            your_defer_first_rmd=True,
+            spouse_age=55,
+            spouse_ira=5_000_000.0,  # large + unconstrained; absorbs all room
+            spouse_ss_fra=0,
+            your_ss_fra=0,
+            grants=[],
+            brokerage_start=0.0,
+        )
+        base_year = hh.base_year
+
+        # Correct (seeded) base-year RMD: includes the deferred age-75 term.
+        expected_rmd = calc_rmd(
+            hh.your_ira, hh.your_age, hh.your_rmd_start_age,
+            first_year_deferred=True, prior_year_balance=hh.your_ira,
+        )
+        # Buggy (unseeded) RMD: deferred term suppressed (prior_year_balance=0).
+        buggy_rmd = calc_rmd(
+            hh.your_ira, hh.your_age, hh.your_rmd_start_age,
+            first_year_deferred=True, prior_year_balance=0.0,
+        )
+        assert expected_rmd > buggy_rmd, (
+            f"precondition: seeded RMD ({expected_rmd:.0f}) must exceed the "
+            f"buggy unseeded RMD ({buggy_rmd:.0f})"
+        )
+        assert expected_rmd < 150_000.0, (
+            "precondition: keep MAGI under the OBBBA phaseout start so ded is "
+            "constant (isolates this test from the C18 iteration)"
+        )
+
+        # your_age(76) >= your_rmd_start_age -> your IRA is RMD-only (not
+        # conversion-eligible); spouse (55) is pre-RMD and absorbs 100% of the
+        # shared bracket room since spouse_ira is effectively unconstrained.
+        ded = deductions(
+            76, 55, hh.std_deduction, hh.senior_extra,
+            filing_status="MFJ", year=base_year, cpi=hh.cpi_assumption,
+        )
+        ded += senior_bonus_deduction(
+            76, 55, expected_rmd, year=base_year, cpi=hh.cpi_assumption, filing_status="MFJ",
+        )
+        expected_room = room_to_12(
+            expected_rmd, ded, year=base_year, cpi=hh.cpi_assumption, filing_status="MFJ"
+        )
+
+        plan = auto_fill_12(hh)
+        actual = plan.spouse_conversions.get(base_year, 0.0)
+
+        assert actual == approx(expected_room, tol=25.0), (
+            f"base-year spouse conversion ({actual:.0f}) must equal the room implied "
+            f"by the CORRECTLY SEEDED (doubled) RMD ({expected_room:.0f}) -- pre-fix, "
+            "the unseeded RMD understated ordinary income and overstated this room"
+        )
+
+
+class TestAutoFillSpouseRmdBalanceBeneficiaryAge:
+    """C17 (audit-0805 W5): the balance-side spouse RMD recompute in
+    _auto_fill_core (used to roll spouse_ira forward each year) omitted
+    beneficiary_age, so it used the Uniform Lifetime Table III divisor while
+    the income-side spouse_taxable_rmd (this year's bracket-room math)
+    correctly used the Joint & Last Survivor Table II divisor whenever the
+    household's mutual sole-beneficiary election applies and the age gap
+    exceeds 10 years (26 CFR 1.401(a)(9)-5 Q&A-4). Fixing the balance side to
+    match the income side changes the spousal IRA balance carried into year 2,
+    which changes year 2's recognized spouse RMD income and therefore "your"
+    bracket room that year.
+    """
+
+    def _hh(self) -> Household:
+        from dataclasses import replace
+
+        return replace(
+            Household(),
+            your_age=65,
+            your_ira=20_000_000.0,  # never the binding constraint
+            your_rmd_start_age=75,
+            spouse_age=80,
+            spouse_ira=2_000_000.0,
+            spouse_rmd_start_age=73,  # already active from year 0
+            spouse_is_sole_beneficiary=True,
+            your_ss_fra=0,
+            spouse_ss_fra=0,
+            grants=[],
+            brokerage_start=0.0,
+            growth_rate=0.0,  # zero IRA growth simplifies the hand-trace below
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+        )
+
+    def test_year2_room_reflects_joint_survivor_balance_not_uniform_lifetime(self) -> None:
+        from engine.ira import calc_rmd, rmd_divisor
+        from engine.tax import deductions, room_to_12, senior_bonus_deduction
+
+        hh = self._hh()
+        base_year = hh.base_year
+
+        # Precondition: the >10yr gap actually engages a DIFFERENT (larger)
+        # Table II divisor than Table III at these ages (26 CFR 1.401(a)(9)-9(d)).
+        d2 = rmd_divisor(80, 65)
+        d3 = rmd_divisor(80, None)
+        assert d2 > d3, f"precondition: Table II ({d2}) must exceed Table III ({d3}) at (80,65)"
+
+        # --- Year 1 (yr_idx=0): ya=65, sa=80 ---
+        # Income-side RMD (unaffected by this bug -- already correct pre-fix).
+        rmd_income_yr1 = calc_rmd(hh.spouse_ira, 80, hh.spouse_rmd_start_age, beneficiary_age=65)
+        # Balance-side, CORRECT (post-fix): same divisor as the income side.
+        spouse_ira_yr2_fixed = hh.spouse_ira - rmd_income_yr1
+        # Balance-side, BUGGY (pre-fix): Table III, no beneficiary_age.
+        rmd_balance_yr1_buggy = calc_rmd(hh.spouse_ira, 80, hh.spouse_rmd_start_age)
+        spouse_ira_yr2_buggy = hh.spouse_ira - rmd_balance_yr1_buggy
+
+        assert spouse_ira_yr2_fixed != pytest.approx(spouse_ira_yr2_buggy, abs=1.0), (
+            "precondition: buggy and fixed year-2 spousal balances must differ"
+        )
+
+        # --- Year 2 (yr_idx=1): ya=66, sa=81 ---
+        rmd_income_yr2_fixed = calc_rmd(
+            spouse_ira_yr2_fixed, 81, hh.spouse_rmd_start_age, beneficiary_age=66
+        )
+        rmd_income_yr2_buggy = calc_rmd(
+            spouse_ira_yr2_buggy, 81, hh.spouse_rmd_start_age, beneficiary_age=66
+        )
+        assert rmd_income_yr2_fixed != pytest.approx(rmd_income_yr2_buggy, abs=1.0), (
+            "precondition: year-2 recognized spouse RMD income must differ between "
+            "the fixed and buggy balance trajectories"
+        )
+
+        year2 = base_year + 1
+        ded_yr2 = deductions(
+            66, 81, hh.std_deduction, hh.senior_extra, filing_status="MFJ", year=year2, cpi=0.0
+        )
+        ded_yr2 += senior_bonus_deduction(
+            66, 81, rmd_income_yr2_fixed, year=year2, cpi=0.0, filing_status="MFJ"
+        )
+        expected_room_yr2_fixed = room_to_12(
+            rmd_income_yr2_fixed, ded_yr2, year=year2, cpi=0.0, filing_status="MFJ"
+        )
+
+        ded_yr2_buggy = deductions(
+            66, 81, hh.std_deduction, hh.senior_extra, filing_status="MFJ", year=year2, cpi=0.0
+        )
+        ded_yr2_buggy += senior_bonus_deduction(
+            66, 81, rmd_income_yr2_buggy, year=year2, cpi=0.0, filing_status="MFJ"
+        )
+        naive_room_yr2_buggy = room_to_12(
+            rmd_income_yr2_buggy, ded_yr2_buggy, year=year2, cpi=0.0, filing_status="MFJ"
+        )
+        assert expected_room_yr2_fixed != pytest.approx(naive_room_yr2_buggy, abs=1.0), (
+            "precondition: fixed vs buggy year-2 room must differ once the spousal "
+            "balance trajectories diverge"
+        )
+
+        plan = auto_fill_12(hh)
+        actual_conversion_yr2 = plan.your_conversions.get(year2, 0.0)
+
+        assert actual_conversion_yr2 == pytest.approx(expected_room_yr2_fixed, abs=25.0), (
+            f"year-2 'your' conversion ({actual_conversion_yr2:.0f}) must match the "
+            f"CORRECT (Table-II-consistent balance) room ({expected_room_yr2_fixed:.0f}), "
+            f"not the buggy Table-III-balance-drift room ({naive_room_yr2_buggy:.0f})"
+        )
+
+
+class TestAutoFillIrmaaSafeSsTorpedo:
+    """C14 (HIGH, audit-0805 W5): auto_fill_irmaa_safe's _irmaa_room computed
+    irmaa_room from a base_magi built BEFORE this room's own conversion pushes
+    additional Social Security into taxability (IRC §86(b)). The naive
+    `threshold - base_magi` subtraction assumes taxable SS is
+    conversion-invariant; once the conversion crosses the 50%/85% partial-
+    taxability transition, actual post-conversion MAGI permanently sits above
+    the naive linear projection by the extra SS pulled into taxability during
+    the crossing, so converting the naive room overshoots the IRMAA tier-1
+    ceiling. Same bug family as C81 (headroom.py) / C23 (sweet_spot_compute.py).
+    """
+
+    def _hh(self) -> Household:
+        return Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            your_ss_start_age=62,
+            spouse_ss_start_age=62,
+            your_ss_fra=1_500.0,
+            spouse_ss_fra=1_000.0,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            grants=[],
+            brokerage_start=0.0,
+            your_ira=5_000_000.0,
+            spouse_ira=5_000_000.0,
+            your_rmd_start_age=90,
+            spouse_rmd_start_age=90,
+        )
+
+    def test_irmaa_safe_conversion_does_not_overshoot_tier1_threshold(self) -> None:
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+
+        hh = self._hh()
+        base_year = hh.base_year
+
+        your_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        spouse_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
+        combined_ss = your_base + spouse_base
+        assert combined_ss > 0, "precondition: SS must be active"
+
+        threshold = 218_000.0  # IRMAA_TIERS_MFJ[0][0], unindexed (cpi=0)
+        # Pre-conversion base_magi: opt=0, no RMD, no ytd -> other_fixed=0.
+        base_tss = taxable_ss(combined_ss, 0.0, filing_status="MFJ")
+        base_magi = base_tss  # other_fixed(0) + tss
+        naive_room = max(threshold - base_magi, 0.0)
+
+        # RED precondition: converting the naive room overshoots the threshold,
+        # because SS taxability keeps climbing as the conversion rises.
+        naive_tss = taxable_ss(combined_ss, naive_room, filing_status="MFJ")
+        naive_magi = naive_room + naive_tss
+        assert naive_magi > threshold + 1_000.0, (
+            f"precondition: naive room ({naive_room:.0f}) must overshoot the "
+            f"threshold ({threshold:.0f}) once SS torpedo is folded in -- got "
+            f"magi={naive_magi:.0f}"
+        )
+
+        plan = auto_fill_irmaa_safe(hh)
+        actual_conv = plan.your_conversions.get(base_year, 0.0) + plan.spouse_conversions.get(
+            base_year, 0.0
+        )
+
+        actual_tss = taxable_ss(combined_ss, actual_conv, filing_status="MFJ")
+        actual_magi = actual_conv + actual_tss
+        assert actual_magi <= threshold + 1.0, (
+            f"conversion={actual_conv:.0f} produced magi={actual_magi:.0f}, must not "
+            f"exceed the IRMAA tier-1 threshold ({threshold:.0f})"
+        )
+        assert actual_conv < naive_room - 1_000.0, (
+            f"actual conversion ({actual_conv:.0f}) must be materially below the "
+            f"naive SS-invariant room ({naive_room:.0f})"
+        )
+
+
+class TestAutoFillAcaMagiFullSsAddback:
+    """C15 (HIGH, audit-0805 W5): auto_fill_aca's _aca_room compared the ACA
+    cliff against IRMAA-basis MAGI (which carries only the TAXABLE portion of
+    Social Security), omitting the non-taxable portion. Per IRC
+    §36B(d)(2)(B)(iii), ACA MAGI MUST add back the FULL Social Security
+    benefit (taxable + non-taxable). Reuses the same basis identity already
+    proven correct in engine/headroom.py's aca_magi computation (audit
+    C7/headroom-2): ACA MAGI = other_fixed (SS-exclusive income) + combined_ss
+    (full benefit) -- independent of the conversion amount, since the taxable/
+    non-taxable SS split cancels out identically.
+    """
+
+    def _hh(self) -> Household:
+        return Household(
+            your_age=62,
+            spouse_age=55,
+            base_year=2026,
+            your_aca_enrolled=True,
+            your_ss_fra=500.0,
+            your_ss_start_age=62,
+            your_fra_age=67,
+            spouse_ss_fra=0.0,
+            spouse_ss_start_age=70,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            your_ira=5_000_000.0,
+            spouse_ira=5_000_000.0,
+            your_rmd_start_age=90,
+            spouse_rmd_start_age=90,
+            grants=[],
+            brokerage_start=0.0,
+        )
+
+    def test_aca_room_uses_full_ss_not_taxable_only(self) -> None:
+        from engine.aca import aca_ceiling_magi
+        from engine.ira import ss_benefit_at_age
+        from engine.tax import taxable_ss
+
+        hh = self._hh()
+        base_year = hh.base_year
+
+        combined_ss = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
+        assert combined_ss > 0, "precondition: SS must be active"
+
+        base_tss = taxable_ss(combined_ss, 0.0, filing_status="MFJ")
+        assert base_tss < combined_ss, (
+            "precondition: a non-taxable SS portion must exist (partial/zero taxability)"
+        )
+
+        ceiling = aca_ceiling_magi("MFJ", base_year, hh.cpi_assumption)
+        naive_room = max(ceiling - base_tss, 0.0)  # pre-fix: base_magi = other_fixed(0) + base_tss
+        expected_room = max(ceiling - combined_ss, 0.0)  # post-fix: other_fixed(0) + combined_ss
+
+        assert naive_room - expected_room == pytest.approx(combined_ss, abs=1.0), (
+            "precondition: naive vs correct room must differ by exactly the "
+            "non-taxable SS omission"
+        )
+
+        plan = auto_fill_aca(hh)
+        actual = plan.your_conversions.get(base_year, 0.0)
+
+        assert actual == approx(expected_room, tol=10.0), (
+            f"base-year conversion ({actual:.0f}) must equal the FULL-SS-addback room "
+            f"({expected_room:.0f}), not the naive taxable-SS-only room ({naive_room:.0f})"
+        )
+
+
+class TestAutoFillSeniorBonusPostConversionMagi:
+    """C18 (LOW, audit-0805 W5): _auto_fill_core evaluated the OBBBA senior-
+    bonus deduction at PRE-conversion base_magi when sizing room, but
+    run_scenario evaluates the same deduction at POST-conversion MAGI (see
+    engine/scenario.py's yr.magi, which folds in yr.your_conversion /
+    yr.spouse_conversion before feeding senior_bonus_deduction). Once the
+    post-conversion MAGI crosses into the $150K-$350K OBBBA phaseout band
+    (dual-eligible MFJ), the deduction actually available is smaller than the
+    pre-conversion snapshot assumed, so the naive one-shot room overshoots the
+    22% bracket ceiling.
+    """
+
+    def _hh(self) -> Household:
+        return Household(
+            your_age=67,
+            spouse_age=65,
+            base_year=2026,
+            your_ss_fra=0,
+            spouse_ss_fra=0,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            your_ira=5_000_000.0,
+            spouse_ira=5_000_000.0,
+            your_rmd_start_age=90,
+            spouse_rmd_start_age=90,
+            grants=[],
+            brokerage_start=0.0,
+        )
+
+    def test_auto_fill_22_does_not_overshoot_via_stale_senior_bonus(self) -> None:
+        from engine.tax import room_to_22, senior_bonus_deduction
+
+        hh = self._hh()
+        base_year = hh.base_year
+
+        # No SS/RMD/options -> fixed_gross = base_magi = 0 in the base year, both
+        # spouses 65+ (eligible for the full $12,000 aggregate OBBBA bonus).
+        fixed_gross = 0.0
+        ded_no_senior = hh.std_deduction + 2 * hh.senior_extra  # both spouses 65+, MFJ
+        ceiling_22 = 211_400.0  # BRACKETS_MFJ[2][0], unindexed (cpi=0)
+
+        # Naive (buggy) one-shot room: senior bonus frozen at PRE-conversion
+        # MAGI (0) -> full $12,000, never re-evaluated at the resulting MAGI.
+        naive_senior = senior_bonus_deduction(
+            67, 65, 0.0, year=base_year, cpi=0.0, filing_status="MFJ"
+        )
+        naive_room = ded_no_senior + naive_senior + ceiling_22 - fixed_gross
+
+        # Closed-form fixed point: room* = ded_no_senior + senior_bonus(room*) +
+        # ceiling - fixed_gross, with senior_bonus linear in the phaseout band:
+        # senior_bonus(magi) = 12_000 - 0.06*(magi-150_000) for magi in [150K,350K].
+        total_bonus = 12_000.0
+        phaseout_rate = 0.06
+        phaseout_start = 150_000.0
+        expected_room = (
+            ded_no_senior + total_bonus + phaseout_rate * phaseout_start + ceiling_22 - fixed_gross
+        ) / (1.0 + phaseout_rate)
+
+        # Precondition: the fixed point actually sits inside the linear phaseout
+        # band (not clamped at $0 or the full $12,000).
+        assert 150_000.0 < expected_room < 350_000.0, (
+            f"precondition: expected_room ({expected_room:.0f}) must sit inside the "
+            "OBBBA phaseout band for the linear closed form above to apply"
+        )
+        assert naive_room > expected_room + 1_000.0, (
+            f"precondition: naive one-shot room ({naive_room:.0f}) must materially "
+            f"exceed the converged fixed-point room ({expected_room:.0f})"
+        )
+
+        # Self-consistency oracle: senior bonus AT the converged room must
+        # reproduce that same room via room_to_22.
+        senior_at_room = senior_bonus_deduction(
+            67, 65, expected_room, year=base_year, cpi=0.0, filing_status="MFJ"
+        )
+        oracle_room = room_to_22(
+            fixed_gross, ded_no_senior + senior_at_room, year=base_year, cpi=0.0, filing_status="MFJ"
+        )
+        assert oracle_room == pytest.approx(expected_room, abs=1.0), (
+            "self-consistency check failed: expected_room is not a fixed point"
+        )
+
+        plan = auto_fill_22(hh)
+        actual = plan.your_conversions.get(base_year, 0.0)
+
+        assert actual == approx(expected_room, tol=5.0), (
+            f"base-year conversion ({actual:.0f}) must equal the converged "
+            f"post-conversion-MAGI room ({expected_room:.0f}), not the naive "
+            f"pre-conversion room ({naive_room:.0f})"
         )
 
 

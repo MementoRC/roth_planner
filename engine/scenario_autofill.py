@@ -18,6 +18,7 @@ from engine.tax import (
     BRACKETS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
+    bisect_conversion_for_ceiling,
     deductions,
     room_to_12,
     room_to_22,
@@ -33,29 +34,44 @@ from models.ytd_income import YTDSnapshot
 def _auto_fill_core(
     hh: Household,
     ytd: YTDSnapshot | None,
-    room_fn: Callable[[float, float, float, int, float, str], float],
+    room_fn: Callable[[float, float, float, float, float, int, float, str], float],
 ) -> ConversionPlan:
     """Shared body of auto_fill_12 / auto_fill_22 / auto_fill_irmaa_safe.
 
     The only difference between those three is how ``room`` is computed each
     year. This core does everything else identically; the room calculation is
     delegated to
-    ``room_fn(fixed_gross, ded, base_magi, year, cpi, filing_status) -> float``.
-    The ``filing_status`` argument is the PER-YEAR status (it flips to "Single"
-    in survivor years), so each room fn must resolve its brackets/tiers from it
-    rather than from the household's static ``hh.filing_status``.
+    ``room_fn(fixed_gross, ded, base_magi, combined_ss, other_fixed, year, cpi,
+    filing_status) -> float``. The ``filing_status`` argument is the PER-YEAR
+    status (it flips to "Single" in survivor years), so each room fn must
+    resolve its brackets/tiers from it rather than from the household's
+    static ``hh.filing_status``.
 
     ``base_magi`` is always computed and passed (cheap; identical expression in
     all three originals). The 12% and 22% variants ignore it; the IRMAA-safe
     variant uses it to enforce the joint-MAGI ceiling.
+
+    ``combined_ss`` and ``other_fixed`` (audit C14/C15, 2026-08-05 W5) are the
+    pre-conversion taxable-SS inputs -- ``other_fixed`` is the SS-exclusive,
+    conversion-exclusive income base (``other_fixed + tss == base_magi``).
+    They let a room fn recompute taxable SS at a CANDIDATE conversion amount
+    (the IRMAA-safe variant needs this to fold in the SS-torpedo effect; the
+    ACA variant needs ``combined_ss`` alone, since ACA MAGI adds back the FULL
+    benefit regardless of taxability). The 12%/22%/24% variants ignore both.
     """
     plan = ConversionPlan()
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
     brokerage = hh.brokerage_start
     _cpi = hh.cpi_assumption
-    prev_your_ira = 0.0
-    prev_spouse_ira = 0.0
+    # C16 (audit-0805 W5, mirrors engine/scenario.py's ira-rmd-1 seeding and
+    # engine/asset_location.py's identical audit-0802 F7 fix): seed the prior-
+    # year balance with the owner's IRA when defer_first_rmd is elected.
+    # Without this, prev_*_ira stays 0.0 at iteration 0, and calc_rmd's
+    # prior_year_balance > 0 guard silently suppresses the deferred prior-year
+    # RMD term the first time age == rmd_start_age + 1 is reached.
+    prev_your_ira = hh.your_ira if hh.your_defer_first_rmd else 0.0
+    prev_spouse_ira = hh.spouse_ira if hh.spouse_defer_first_rmd else 0.0
     # Mutable copies of inherited IRA balances (SECURE Act 10-year drains), mirroring
     # engine/scenario.py:76. Their annual distributions are ordinary income and must
     # consume bracket room, else auto-fill over-converts for households with inherited IRAs.
@@ -292,12 +308,14 @@ def _auto_fill_core(
             sa_eff = 0 if surv.who_dies == "spouse" else sa
         else:
             ya_eff, sa_eff = ya, sa
-        ded = deductions(ya_eff, sa_eff, _af_std, _af_senior, filing_status=current_filing_status, year=year, cpi=_cpi)
+        _ded_no_senior = deductions(
+            ya_eff, sa_eff, _af_std, _af_senior, filing_status=current_filing_status, year=year, cpi=_cpi
+        )
         # OBBBA senior-bonus phase-out is measured on AGI (muni-excluded), matching
         # scenario.py:366/377 and estimate_ytd_federal_tax. base_magi carries muni
         # interest via ytd magi_ytd, so strip it here (audit C3 / autofill-2).
         _phaseout_muni = ytd_year.tax_exempt_interest_ytd if ytd_year is not None else 0.0
-        ded += senior_bonus_deduction(
+        ded = _ded_no_senior + senior_bonus_deduction(
             ya_eff,
             sa_eff,
             base_magi - _phaseout_muni,
@@ -308,7 +326,32 @@ def _auto_fill_core(
 
         # Room — delegated to caller's room_fn (per-year filing status flips to Single
         # in survivor years so the ceiling/tier is resolved correctly each year).
-        room = room_fn(fixed_gross, ded, base_magi, year, _cpi, current_filing_status)
+        room = room_fn(fixed_gross, ded, base_magi, combined_ss, other_fixed, year, _cpi, current_filing_status)
+        # C18 (audit-0805 W5): the OBBBA senior-bonus deduction phases out with
+        # MAGI, and MAGI includes the very conversion being sized here -- `ded`
+        # above was priced at the PRE-conversion base_magi, so it stayed fixed
+        # regardless of how large the resulting room/conversion turned out to
+        # be, understating the phaseout for a large conversion. run_scenario,
+        # by contrast, evaluates this deduction at POST-conversion MAGI (see
+        # engine/scenario.py's yr.magi, which folds in yr.your_conversion /
+        # yr.spouse_conversion, feeding senior_bonus_deduction). Iterate:
+        # re-price the deduction at the MAGI implied by the previous room
+        # estimate and re-solve room. senior_bonus_deduction's phaseout slope
+        # is bounded at 0.06 ($0.06 per $1 of MAGI), so this fixed point is a
+        # contraction and converges in a couple of passes.
+        for _ in range(5):
+            _magi_est = base_magi + room
+            _senior_est = senior_bonus_deduction(
+                ya_eff, sa_eff, _magi_est - _phaseout_muni, year=year, cpi=_cpi, filing_status=current_filing_status
+            )
+            _ded_est = _ded_no_senior + _senior_est
+            _new_room = room_fn(
+                fixed_gross, _ded_est, base_magi, combined_ss, other_fixed, year, _cpi, current_filing_status
+            )
+            if abs(_new_room - room) < 1.0:
+                room = _new_room
+                break
+            room = _new_room
 
         # Allocate room
         # Symmetric allocation: older pre-RMD person first (drains the IRA closest to RMD).
@@ -348,12 +391,20 @@ def _auto_fill_core(
         your_withdrawal = yc + rmd
         your_ira = max(your_ira - your_withdrawal, 0) * (1 + hh.your_ira_rate(year))
 
+        # C17 (audit-0805 W5): pass beneficiary_age here too, matching the
+        # income-side spouse_taxable_rmd call above. Without it, this balance-
+        # side recompute uses the Uniform Lifetime divisor while the income
+        # side uses the (larger) Joint & Last Survivor divisor whenever the
+        # sole-beneficiary election applies, understating the spouse RMD used
+        # to roll the IRA balance forward and overstating conversion room in
+        # every subsequent year.
         spouse_rmd = calc_rmd(
             spouse_ira,
             sa,
             hh.spouse_rmd_start_age,
             first_year_deferred=hh.spouse_defer_first_rmd,
             prior_year_balance=prev_spouse_ira,
+            beneficiary_age=ya if _bene_gate else None,
         )
         spouse_ira = max(spouse_ira - sc - spouse_rmd, 0) * (1 + hh.spouse_ira_rate(year))
 
@@ -380,7 +431,7 @@ def auto_fill_12(
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_12(
+        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_12(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
@@ -397,7 +448,7 @@ def auto_fill_22(
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_22(
+        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_22(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
@@ -412,7 +463,14 @@ def auto_fill_irmaa_safe(
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
     """
     def _irmaa_room(
-        fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float, filing_status: str
+        fixed_gross: float,
+        ded: float,
+        base_magi: float,
+        combined_ss: float,
+        other_fixed: float,
+        yr: int,
+        cpi: float,
+        filing_status: str,
     ) -> float:
         # tier-1 MAGI ceiling — resolve tiers from the PER-YEAR filing status so a
         # survivor year uses the (lower) single tier-1 threshold, not the MFJ one.
@@ -423,7 +481,27 @@ def auto_fill_irmaa_safe(
         # (yr + 2), matching sweet_spot_compute._index_irmaa_tiers(yr + 2) and
         # all_in_at_conversion. Income year `yr` under-indexed the ceiling by 2 CPI-years.
         irmaa_threshold = _iv(irmaa_base_threshold, yr + 2, cpi)
-        irmaa_room = max(irmaa_threshold - base_magi, 0.0)
+        # C14 (audit-0805 W5): the naive `threshold - base_magi` subtraction
+        # assumes taxable SS is conversion-invariant. base_magi was built
+        # BEFORE this room's own conversion is added, so once provisional
+        # income (other_fixed + conv) enters the 50%/85% partial-taxability
+        # band, converting the naive room amount pushes MORE SS into
+        # taxability than base_magi accounted for, landing actual MAGI past
+        # the threshold. Bisect against the real (non-linear) post-conversion
+        # MAGI instead, mirroring sweet_spot_compute.irmaa_safe_max /
+        # bracket_boundary_conversion (same bug family, audit C81/C23) via the
+        # shared engine.tax.bisect_conversion_for_ceiling primitive. The naive
+        # value remains a valid (non-decreasing-in-conv) upper bound for the
+        # search.
+        naive_room = max(irmaa_threshold - base_magi, 0.0)
+        if naive_room <= 0.0:
+            irmaa_room = 0.0
+        else:
+            def _magi_at(conv: float) -> float:
+                tss_c = taxable_ss(combined_ss, other_fixed + conv, filing_status=filing_status)
+                return other_fixed + conv + tss_c
+
+            irmaa_room = bisect_conversion_for_ceiling(_magi_at, irmaa_threshold, naive_room)
         return min(
             irmaa_room,
             room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
@@ -440,7 +518,7 @@ def auto_fill_24(
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, yr, cpi, fs: room_to_24(
+        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_24(
             fg, ded, year=yr, cpi=cpi, filing_status=fs
         ),
     )
@@ -454,10 +532,27 @@ def auto_fill_aca(
     at that MAGI). Mirrors auto_fill_irmaa_safe's MAGI-ceiling-minus-base_magi
     room, but with the ACA ceiling and no lookback (ACA uses same-year MAGI)."""
     def _aca_room(
-        fixed_gross: float, ded: float, base_magi: float, yr: int, cpi: float, filing_status: str
+        fixed_gross: float,
+        ded: float,
+        base_magi: float,
+        combined_ss: float,
+        other_fixed: float,
+        yr: int,
+        cpi: float,
+        filing_status: str,
     ) -> float:
         ceiling = aca_ceiling_magi(filing_status, yr, cpi)
-        return max(ceiling - base_magi, 0.0)
+        # C15 (audit-0805 W5): ACA MAGI (IRC §36B(d)(2)(B)(iii)) adds back the
+        # FULL Social Security benefit (taxable + non-taxable), whereas
+        # base_magi is IRMAA-basis MAGI and carries only the taxable portion.
+        # Using base_magi here dropped the non-taxable SS, understating ACA
+        # MAGI and overstating cliff room. other_fixed excludes SS entirely,
+        # so other_fixed + combined_ss is EXACTLY ACA MAGI (the taxable/non-
+        # taxable SS split cancels out identically -- see headroom.py's
+        # aca_magi for the same identity, audit C7/headroom-2), independent of
+        # the conversion amount, so no bisection is needed here (unlike C14).
+        aca_magi = other_fixed + combined_ss
+        return max(ceiling - aca_magi, 0.0)
 
     return _auto_fill_core(hh, ytd, room_fn=_aca_room)
 

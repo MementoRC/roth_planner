@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -280,6 +281,47 @@ def room_to_bracket(current_gross: float, total_deductions: float, bracket_ceili
     Returns gross income room (can be converted at current or lower rate).
     """
     return max(total_deductions + bracket_ceiling - current_gross, 0)
+
+
+def bisect_conversion_for_ceiling(
+    measure_at: Callable[[float], float],
+    ceiling: float,
+    upper_bound: float,
+    *,
+    iterations: int = 60,
+) -> float:
+    """Binary-search the largest conversion amount ``c`` in ``[0, upper_bound]``
+    such that ``measure_at(c) <= ceiling``.
+
+    Closed-form "room" formulas (room_to_bracket / room_to_12 / room_to_22, or
+    a bare ``ceiling - base_magi`` subtraction) implicitly assume the measured
+    quantity (taxable ordinary income or MAGI) grows exactly $1-per-$1 with the
+    conversion. That assumption is false whenever the conversion pushes
+    additional Social Security into taxability (IRC §86(b) provisional-income
+    tiers): each dollar converted can raise the measured quantity by up to
+    $1.85 while provisional income sits in the 50%/85% partial-taxability
+    band, so a room sized by simple subtraction silently overshoots the true
+    ceiling. Bisecting against the ACTUAL (non-linear) ``measure_at`` function
+    avoids that overshoot -- mirrors the binary-search oracle pattern already
+    used by engine.sweet_spot_compute.bracket_boundary_conversion /
+    irmaa_safe_max (audit C14/C81/C23 -- one family of closed-form-overshoot
+    bugs, one shared primitive).
+
+    Requires ``measure_at`` to be monotonically non-decreasing in ``c`` (true
+    for any measure built from taxable_ss, since taxable Social Security is
+    non-decreasing in provisional income). Returns 0.0 if ``upper_bound`` is
+    non-positive (no room to search).
+    """
+    if upper_bound <= 0:
+        return 0.0
+    lo, hi = 0.0, upper_bound
+    for _ in range(iterations):
+        mid = (lo + hi) / 2
+        if measure_at(mid) <= ceiling:
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 # Filing statuses with a modeled bracket/std-deduction/senior-extra table in

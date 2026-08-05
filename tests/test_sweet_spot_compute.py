@@ -138,6 +138,72 @@ class TestBracketBoundarySsTaxabilityNonlinearity:
         )
 
 
+class TestComputeMultiYearSummaryFillBoundarySsTorpedo:
+    """Audit C23 (MEDIUM, 2026-08-05 W5): compute_multi_year_summary's
+    fill_12/fill_22 fed the closed-form room_12/room_22 (documented in
+    ConversionResult as GROSS-INCOME room, valid only when taxable SS is
+    conversion-invariant) back in as a CONVERSION amount, instead of routing
+    through the module's own SS-torpedo-aware bracket_boundary_conversion
+    oracle (same class of bug as finding 1 /
+    TestBracketBoundarySsTaxabilityNonlinearity above -- see that class's
+    docstring for the IRC §86(b) mechanics).
+    """
+
+    def _make_household(self) -> Household:
+        # Same fixture as TestBracketBoundarySsTaxabilityNonlinearity: SS
+        # claimed by both spouses, sized so the sweep crosses the 50%/85%
+        # partial-taxability transition zone.
+        return Household(
+            your_age=66,
+            spouse_age=64,
+            base_year=2026,
+            your_ss_start_age=62,
+            spouse_ss_start_age=62,
+            your_ss_fra=1_500.0,
+            spouse_ss_fra=1_000.0,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            filing_status="MFJ",
+            cpi_assumption=0.0,
+            ss_cola=0.0,
+            grants=[],
+        )
+
+    def test_fill_12_lands_on_ceiling_not_naive_gross_room(self) -> None:
+        hh = self._make_household()
+        year = hh.base_year
+        b = base_income_for_year(hh, year)
+        assert b.combined_ss > 0, "precondition: SS must be active"
+
+        rows = compute_multi_year_summary(hh)
+        row = next(r for r in rows if r.year == year)
+
+        ceiling_12 = 100_800.0  # BRACKETS_MFJ[1][0], unindexed at base_year 2026
+
+        # Reconstruct the pre-fix (naive) value directly: the closed-form
+        # room_12 field from all_in_at_conversion at conv=0, fed back in as a
+        # conversion -- exactly what compute_multi_year_summary used to do.
+        naive_result = all_in_at_conversion(hh, b, 0, 0.0)
+        naive_fill_12 = naive_result.room_12
+
+        # Oracle check: converting row.fill_12 must land taxable income exactly
+        # AT the ceiling, not past it.
+        actual = all_in_at_conversion(hh, b, row.fill_12, 0.0)
+        assert actual.taxable_inc == pytest.approx(ceiling_12, abs=1.0), (
+            f"fill_12={row.fill_12:.0f} produced taxable_inc={actual.taxable_inc:.0f}, "
+            f"must equal the 12% ceiling ({ceiling_12:.0f}) -- pre-fix this overshot "
+            "because the naive room formula ignores the conversion's own SS-torpedo effect"
+        )
+
+        # RED assertion: pre-fix, row.fill_12 equaled naive_fill_12 exactly and
+        # this would fail (they must now differ materially).
+        assert row.fill_12 < naive_fill_12 - 1_000, (
+            f"fill_12 ({row.fill_12:.0f}) should be materially below the naive "
+            f"SS-invariant room_12 ({naive_fill_12:.0f}) once the conversion's own "
+            "SS-torpedo effect is folded in via bracket_boundary_conversion"
+        )
+
+
 class TestAcaMagiSsAddback:
     """ACA MAGI must include non-taxable SS per IRC §36B(d)(2)(B)(iii)."""
 
