@@ -615,12 +615,17 @@ def all_in_at_conversion(
     # ytd_niit_magi in place of ytd_magi
     # (muni-exclusive); forecast div/gains and RMD/inherited income are the same
     # in both since neither is muni interest.
+    # audit-0805 C10: net_inv_income (the manual "Additional NII $/yr" estimate)
+    # is real declared income -- add it here too, not just to total_net_inv_income
+    # below, so the excess-over-threshold niit() charges against isn't understated.
+    # Applied identically to both the with- and without-conversion MAGI so the
+    # manual figure is measured consistently on both sides of niit_delta.
     niit_magi = (
-        base.opt + conv + tss + base.ytd_niit_magi
+        base.opt + conv + tss + base.ytd_niit_magi + net_inv_income
         + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
     )
     niit_base_magi = (
-        base.opt + base_tss + base.ytd_niit_magi
+        base.opt + base_tss + base.ytd_niit_magi + net_inv_income
         + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
     )
     # R2: net investment income = realized gains + qual/ord dividends + YTD investment

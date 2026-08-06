@@ -112,9 +112,13 @@ class TestSweetSpotNiitMagi:
 
         base = base_income_for_year(hh, year, ytd=ytd)
         # Small conversion: niit_magi stays below $200K
-        result = all_in_at_conversion(hh, base, 5_000.0, net_inv_income=10_000.0)
+        # net_inv_income lowered 10_000 -> 2_000.0 (audit-0805 C10): manual
+        # net_inv_income now counts toward niit_magi, so the original 10K value
+        # pushed niit_magi to 190+5+10=205K, crossing the Single threshold for
+        # an unrelated reason and destroying this test's discrimination.
+        result = all_in_at_conversion(hh, base, 5_000.0, net_inv_income=2_000.0)
 
-        # opt ~0, tss ~0, conv=5K, ytd_niit_magi=190K → niit_magi ~$195K < $200K
+        # opt ~0, tss ~0, conv=5K, ytd_niit_magi=190K, nii=2K → niit_magi ~$197K < $200K
         # niit_base_magi ~$190K → both below threshold → niit_delta = 0
         assert result.niit_delta == approx(0.0), (
             f"F2: niit_delta should be 0 (niit_magi<threshold), got {result.niit_delta}. "

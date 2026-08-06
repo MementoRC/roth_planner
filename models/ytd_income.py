@@ -54,6 +54,40 @@ def sum_income_events(events: list[IncomeEvent], *, kind: str, owner: str | None
     return sum(e.amount for e in events if e.kind == kind and (owner is None or e.owner == owner))
 
 
+def _net_capital_gain_split(short_term: float, long_term: float) -> tuple[float, float]:
+    """audit-0805 C2: IRC §1222 short/long netting + IRC §1211(b) $3,000 loss cap.
+
+    Nets the short-term and long-term capital positions against each other
+    (§1222(11) defines "net capital gain" as the excess of net long-term
+    gain over net short-term loss; the mirror-image case -- a net short-term
+    gain surviving a net long-term loss -- follows the same Schedule D
+    cross-netting mechanics). If the netted result is an overall capital
+    LOSS, only $3,000 of it may offset ordinary income for the year
+    (§1211(b)); the disallowed excess is simply DROPPED here -- there is no
+    carryforward field on YTDSnapshot (a single-tax-year object), so this
+    intentionally does NOT persist the excess to a future year.
+
+    Returns (ordinary_portion, preferential_portion):
+      - Both legs are gains (short_term >= 0 and long_term >= 0): no
+        cross-netting needed -- each keeps its own character.
+      - Opposite signs, net result >= 0: the loss leg is fully absorbed;
+        the surviving gain keeps the character of whichever leg was
+        positive.
+      - Net result < 0 (an overall net capital loss, from any combination
+        of signs): only the ordinary side is nonzero, capped at -$3,000.
+    """
+    total = short_term + long_term
+    if total < 0:
+        return max(total, -3_000.0), 0.0
+    if short_term >= 0 and long_term >= 0:
+        return short_term, long_term
+    if short_term < 0:
+        # short-term loss absorbed into a long-term gain -- surviving gain is long-term
+        return 0.0, total
+    # long-term loss absorbed into a short-term gain -- surviving gain is short-term
+    return total, 0.0
+
+
 @dataclass
 class YTDSnapshot:
     """Aggregate year-to-date income actuals.
@@ -120,6 +154,40 @@ class YTDSnapshot:
         return self.qualified_dividends_ytd + self.ordinary_dividends_ytd
 
     @property
+    def net_short_term_capital_ytd(self) -> float:
+        """IRC §1222(1)/(2): net short-term capital gain or loss, before
+        cross-netting against the long-term position."""
+        return self.stcg_ytd + self.crypto_stcg_ytd
+
+    @property
+    def net_long_term_capital_ytd(self) -> float:
+        """IRC §1222(3)/(4): net long-term capital gain or loss, before
+        cross-netting against the short-term position."""
+        return self.ltcg_ytd + self.crypto_ltcg_ytd
+
+    @property
+    def ordinary_capital_gain_ytd(self) -> float:
+        """audit-0805 C2: short-term-character portion of YTD realized
+        capital gain/loss after IRC §1222 netting and the IRC §1211(b)
+        $3,000 loss cap -- this is what stacks into ORDINARY tax brackets
+        (see ``_net_capital_gain_split``)."""
+        return _net_capital_gain_split(
+            self.net_short_term_capital_ytd, self.net_long_term_capital_ytd
+        )[0]
+
+    @property
+    def preferential_capital_gain_ytd(self) -> float:
+        """audit-0805 C2: long-term-character portion of YTD realized
+        capital gain after IRC §1222 netting -- this is what reaches the
+        PREFERENTIAL (0/15/20%) rate stack. Never negative: a net capital
+        LOSS is entirely characterized as the (capped) ordinary portion
+        above, since §1211(b)'s cap applies to the ordinary-income offset,
+        not to a preferential-rate amount."""
+        return _net_capital_gain_split(
+            self.net_short_term_capital_ytd, self.net_long_term_capital_ytd
+        )[1]
+
+    @property
     def above_the_line_adjustments_ytd(self) -> float:
         """HSA + deductible-IRA contributions; above-the-line, reduce AGI (hence MAGI and ordinary bracket base)."""
         return self.hsa_contribution_ytd + self.deductible_ira_contribution_ytd
@@ -136,18 +204,25 @@ class YTDSnapshot:
         the ordinary bracket walk, since those deductions apply before brackets are computed.
         Crypto STCG and crypto income (staking/DeFi/airdrops, Sch 1 8z) are ordinary income
         and stack into brackets; crypto LTCG does not (preferential rate, see magi_ytd).
+
+        audit-0805 C2: the STCG/crypto-STCG contribution is ``ordinary_capital_gain_ytd``
+        (IRC §1222-netted against the long-term position, then IRC §1211(b)-capped at
+        -$3,000 if the net result is a loss) -- NOT the raw ``stcg_ytd + crypto_stcg_ytd``
+        sum. Without netting, a short-term GAIN would hit ordinary brackets undiminished
+        even when a same-size (or larger) long-term LOSS exists to offset it; without the
+        cap, a large net capital loss would be free to wipe out ordinary income far beyond
+        the $3,000/year statutory ceiling.
         """
         return (
             self.wages_ytd
             + self.nec_income_ytd
-            + self.stcg_ytd
+            + self.ordinary_capital_gain_ytd
             + self.ira_conversions_ytd
             + self.spouse_ira_conversions_ytd
             + self.ira_distributions_ytd
             + self.ordinary_dividends_ytd
             + self.interest_ytd
             + self.nqo_exercise_ytd
-            + self.crypto_stcg_ytd
             + self.crypto_income_ytd
             - self.above_the_line_adjustments_ytd
         )
@@ -183,21 +258,28 @@ class YTDSnapshot:
         therefore subtracted here too.
         Crypto STCG, crypto LTCG, and crypto income (staking/DeFi/airdrops) are all
         included in MAGI regardless of their bracket/NIIT treatment.
+
+        audit-0805 C2: the STCG+LTCG contribution is
+        ``ordinary_capital_gain_ytd + preferential_capital_gain_ytd`` (IRC §1222-netted,
+        IRC §1211(b)-capped at -$3,000 if the net result is a loss) rather than the
+        raw ``stcg_ytd + ltcg_ytd + crypto_*_ytd`` sum. For any net capital GAIN this is
+        numerically identical to the raw sum (netting a gain against nothing is a no-op);
+        it only differs -- correctly -- when a net capital LOSS exceeds the $3,000
+        statutory cap, mirroring how the capped (not raw) loss is what actually reaches
+        AGI/MAGI on Form 1040.
         """
         return (
             self.wages_ytd
             + self.nec_income_ytd
-            + self.stcg_ytd
+            + self.ordinary_capital_gain_ytd
             + self.ira_conversions_ytd
             + self.spouse_ira_conversions_ytd
             + self.ira_distributions_ytd
-            + self.ltcg_ytd
+            + self.preferential_capital_gain_ytd
             + self.dividends_ytd
             + self.interest_ytd
             + self.tax_exempt_interest_ytd
             + self.nqo_exercise_ytd
-            + self.crypto_stcg_ytd
-            + self.crypto_ltcg_ytd
             + self.crypto_income_ytd
             - self.above_the_line_adjustments_ytd
         )

@@ -519,7 +519,13 @@ def estimate_ytd_federal_tax(
     # see YTDSnapshot.total_investment_income) and belongs in the same §1(h)
     # preferential-rate stack as ltcg_ytd/qualified_dividends_ytd -- omitting it
     # let crypto LTCG escape preferential-rate tax entirely.
-    ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd + ytd.crypto_ltcg_ytd
+    # audit-0805 C2: ytd.preferential_capital_gain_ytd is ltcg_ytd + crypto_ltcg_ytd
+    # AFTER IRC §1222 short/long netting and the IRC §1211(b) $3,000 loss cap (see
+    # models/ytd_income.py::_net_capital_gain_split) -- not the raw ltcg_ytd +
+    # crypto_ltcg_ytd sum. A net capital LOSS is entirely dropped from the
+    # preferential stack (it has no business raising preferential-rate tax); any
+    # surviving long-term gain net of a short-term loss lands here undiminished.
+    ltcg_taxable = ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
 
     # Step 5: taxable ordinary income + preferential-stack floor (IRC §63(a) / §1(h)).
     # audit-0805 C1: taxable income is TOTAL income (ordinary + LTCG) minus ALL

@@ -33,10 +33,24 @@ from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
 
 
-def _oracle_year(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> YearResult:
-    """Run engine.scenario for `hh` through `year` and return that year's YearResult."""
+def _oracle_year(
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> YearResult:
+    """Run engine.scenario for `hh` through `year` and return that year's YearResult.
+
+    net_inv_income defaults to 0.0 (audit-0805 C10): most callers don't pass a
+    manual net_inv_income, so the default keeps them unaffected. Callers that
+    compare against a sweet_spot_compute result computed WITH a manual
+    net_inv_income must pass the same value here, or the oracle's niit_magi
+    will silently omit it while the sweet_spot side includes it.
+    """
     end_age = hh.your_age + (year - hh.base_year)
-    result = run_scenario(hh, ConversionPlan(), "oracle", end_age=end_age, ytd=ytd)
+    result = run_scenario(
+        hh, ConversionPlan(), "oracle", end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
+    )
     for yr in result.years:
         if yr.year == year:
             return yr
@@ -234,8 +248,9 @@ class TestRmdYtdNettingParity:
         distribution must not manufacture a phantom NIIT charge. Sized so the
         correct (oracle) MAGI sits just under the $250K MFJ NIIT threshold, but
         the un-netted double-count pushes the buggy MAGI over it."""
-        # Combined RMD at age 73 (divisor 26.5) on $6M combined IRA balance
-        # ~= $226,415 -- just under the $250K NIIT threshold on its own.
+        # Combined RMD at age 75 (divisor 24.6, per-spouse) on $6M combined IRA
+        # balance = 2 * (3,000,000 / 24.6) = $243,902.44 -- just under the $250K
+        # NIIT threshold on its own.
         hh = self._hh(your_ira=3_000_000.0, spouse_ira=3_000_000.0)
         year = hh.base_year
         # your_age=75 in base_year 2026 -> birth year 1951 -> 1951-1959 cohort -> 73.
@@ -243,13 +258,21 @@ class TestRmdYtdNettingParity:
 
         ytd_dist = 47_000.0
         ytd = YTDSnapshot(tax_year=year, ira_distributions_ytd=ytd_dist)
-        oracle = _oracle_year(hh, year, ytd=ytd)
+        # net_inv_income lowered 50_000 -> 5_000.0 (audit-0805 C10): manual
+        # net_inv_income now counts toward niit_magi (threaded through
+        # _oracle_year below too), so the original 50K pushed the oracle's
+        # niit_magi to ~243,902+50,000=~294K, clearing the $250K MFJ threshold
+        # and destroying this test's "correct answer is $0 NIIT" premise. 5K
+        # keeps headroom under the threshold (243,902.44+5,000=248,902.44)
+        # while staying non-zero so NIIT would still fire if the threshold
+        # were crossed.
+        net_inv_income = 5_000.0  # manual NII override -- makes NIIT sensitive to magi
+        oracle = _oracle_year(hh, year, ytd=ytd, net_inv_income=net_inv_income)
         assert oracle.niit_magi < 250_000.0, (
             "precondition: oracle (correct) niit_magi must sit under the MFJ "
             f"NIIT threshold, got {oracle.niit_magi:.2f}"
         )
 
-        net_inv_income = 50_000.0  # manual NII override -- makes NIIT sensitive to magi
         oracle_niit = niit(oracle.niit_magi, net_inv_income, filing_status=hh.filing_status)
         assert oracle_niit == pytest.approx(0.0), (
             "precondition: oracle must show zero NIIT (magi below threshold)"
