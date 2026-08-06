@@ -696,7 +696,13 @@ def run_scenario(
         # so niit_magi only needs to strip tax-exempt muni interest -- excluded not
         # by a §1411(d) carve-out but because IRC §103 keeps it out of gross income
         # (hence out of AGI and §1411(d)'s MAGI) entirely.
-        yr.niit_magi = yr.magi - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
+        # audit-0805 C10: net_inv_income was already folded into net_investment_income
+        # above (the NII side of niit()) but was missing from the MAGI side, so a
+        # user-declared manual NII understated the excess-over-threshold and therefore
+        # the tax. It is real declared income, so it belongs in MAGI too.
+        yr.niit_magi = (
+            yr.magi + net_inv_income - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
+        )
         yr.niit_cost = niit(
             yr.niit_magi, net_investment_income, filing_status=current_filing_status
         )
