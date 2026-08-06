@@ -733,10 +733,22 @@ class TestEstimateYtdFederalTax:
         """User scenario: $27K ordinary + $283K LTCG + $2,977 qual-div.
 
         Rev. Proc. 2025-32 §3.03: 0%/15% threshold = $98,900 (MFJ).
-        std_ded = $32,200 (MFJ, no seniors). taxable_ordinary = max(27K - 32.2K, 0) = $0.
-        ltcg_start = $0, ltcg_end = $285,977.
-        ltcg_at_15 = min($285,977, $613,700) - max($0, $98,900) = $285,977 - $98,900 = $187,077.
-        ltcg_tax = $187,077 x 0.15 = $28,061.55.
+        std_ded = $32,200 (MFJ, no seniors). Wages ($27K) only absorb $27K of
+        std_ded, leaving $5,200 unused. Per IRC §1(h) (audit-0805 C1), unused
+        standard deduction offsets capital gain, not just ordinary income —
+        it does NOT get stacked as taxable gain.
+        taxable_ordinary = max(27K - 32.2K, 0) = $0.
+        ltcg_start = $0.
+        ltcg_end = (27K + 283K + 2,977) - 32.2K = $280,777
+            (stack total $285,977 less the $5,200 unused std_ded absorbed
+            by the gain, per C1).
+        ltcg_at_15 = min($280,777, $613,700) - max($0, $98,900) = $280,777 - $98,900 = $181,877.
+        ltcg_tax = $181,877 x 0.15 = $27,281.55.
+
+        Reconciliation vs. pre-fix (defective) golden: the old code stacked
+        the $5,200 unused deduction as taxable 15%-band gain instead of
+        letting it offset the gain, overstating tax by
+        $5,200 x 0.15 = $780.00 ($28,061.55 -> $27,281.55).
         """
         from engine.tax import estimate_ytd_federal_tax
         from models.ytd_income import YTDSnapshot
@@ -747,7 +759,7 @@ class TestEstimateYtdFederalTax:
             qualified_dividends_ytd=2_977.0,
         )
         result = estimate_ytd_federal_tax(ytd, self._hh())
-        assert result.ltcg_tax == pytest.approx(187_077.0 * 0.15, abs=1.0)
+        assert result.ltcg_tax == pytest.approx(181_877.0 * 0.15, abs=1.0)
 
     def test_ltcg_tax_all_in_0pct_bracket(self):
         """Stack entirely under $96,700 threshold → LTCG tax = $0."""
