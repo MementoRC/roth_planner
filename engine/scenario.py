@@ -821,13 +821,29 @@ def run_scenario(
 
         total_div = qual_div_this_year + ord_div_this_year
 
-        brokerage = (
+        # audit-0805 C8: yr.income_needed and yr.excess_rmd are two halves of the
+        # SAME quantity (living-expense shortfall vs. surplus vs. available_income)
+        # split at :769-770, but only the surplus half (excess_rmd) was ever applied
+        # here -- a deficit year silently cost nothing. available_income already
+        # subtracts yr.federal_tax_amt, so a Roth conversion raises income_needed;
+        # without this debit the conversion's real cash cost never depleted any
+        # balance, making conversions appear costless in the headline comparison.
+        # Debit the shortfall from the same running balance that credits the
+        # surplus, floored at 0 (a taxable brokerage account cannot go negative).
+        _brokerage_before_expense_debit = (
             brokerage
             + yr.brokerage_growth
             - yr.brokerage_gain_tax
             + total_div  # dividends reinvested (taxable event already captured in income stacks)
             + yr.excess_rmd
         )
+        # DELIBERATELY OUT OF SCOPE: falling back to an IRA withdrawal when the
+        # brokerage cannot cover the shortfall. An IRA withdrawal is itself a
+        # taxable draw that would raise the need it's meant to cover -- a fixed
+        # point this engine does not (yet) solve. Surface the unfunded remainder
+        # instead of silently absorbing it (e.g. by letting brokerage go negative).
+        yr.unfunded_need = max(yr.income_needed - _brokerage_before_expense_debit, 0.0)
+        brokerage = max(_brokerage_before_expense_debit - yr.income_needed, 0.0)
 
         # === IRA end of year ===
         # QCD distributions leave the IRA: a QCD exceeding the RMD pulls an extra

@@ -88,6 +88,11 @@ class YearResult:
     living_expenses: float = 0.0
     income_needed: float = 0.0
     excess_rmd: float = 0.0
+    # audit-0805 C8: the portion of income_needed that the brokerage balance
+    # could NOT cover this year (shortfall > available brokerage). Falling
+    # back to an IRA withdrawal is DELIBERATELY out of scope -- see the debit
+    # comment in engine/scenario.py's brokerage-update block.
+    unfunded_need: float = 0.0
     brokerage_balance: float = 0.0
     brokerage_growth: float = 0.0
     brokerage_gain_tax: float = 0.0
