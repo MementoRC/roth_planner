@@ -83,8 +83,13 @@ class TestViewFilingStatusThreading:
         base_mfj = base_income_for_year(hh_mfj, hh_mfj.base_year)
         base_single = base_income_for_year(hh_single, hh_single.base_year)
 
-        # $210K conversion puts MAGI above Single threshold ($200K) but below MFJ ($250K)
-        conv = 210_000.0
+        # $160K conversion + $50K NII puts niit_magi above Single threshold
+        # ($200K) but below MFJ ($250K).
+        # conv lowered 210_000 -> 160_000.0 (audit-0805 C10): manual
+        # net_inv_income now counts toward niit_magi, so the original 210K
+        # conversion plus 50K NII summed to 260K, crossing BOTH thresholds and
+        # destroying the Single-vs-MFJ contrast.
+        conv = 160_000.0
         nii = 50_000.0
         r_mfj = all_in_at_conversion(hh_mfj, base_mfj, conv, nii)
         r_single = all_in_at_conversion(hh_single, base_single, conv, nii)
