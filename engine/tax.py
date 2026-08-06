@@ -508,23 +508,41 @@ def estimate_ytd_federal_tax(
         cpi=_cpi,
         filing_status=hh.filing_status,
     )
-    # Taxable ordinary income: gross (including taxable SS) minus deductions (IRC §63(a)).
-    taxable_ordinary = max(ordinary_income_with_ss - std_ded, 0.0)
+    # Step 4: LTCG + qualified dividends taxed at preferential rate. Computed
+    # BEFORE taxable_ordinary because IRC §1(h)'s Qualified Dividends and
+    # Capital Gain Tax Worksheet floors TOTAL taxable income (ordinary + LTCG)
+    # minus ALL deductions, not ordinary income alone -- see audit-0805 C1 below.
+    _ltcg_thresholds = index_tuple(
+        LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi, round50=True
+    )
+    # audit-0805 C78: crypto_ltcg_ytd is long-term capital gain (Koinly-sourced;
+    # see YTDSnapshot.total_investment_income) and belongs in the same §1(h)
+    # preferential-rate stack as ltcg_ytd/qualified_dividends_ytd -- omitting it
+    # let crypto LTCG escape preferential-rate tax entirely.
+    ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd + ytd.crypto_ltcg_ytd
 
-    # Step 4: ordinary income tax on TAXABLE ordinary income (not gross).
+    # Step 5: taxable ordinary income + preferential-stack floor (IRC §63(a) / §1(h)).
+    # audit-0805 C1: taxable income is TOTAL income (ordinary + LTCG) minus ALL
+    # deductions, floored at 0 -- not ordinary income minus deductions floored at
+    # 0, with the full LTCG amount stacked on top unadjusted. A standard deduction
+    # unused by ordinary income must offset LTCG too (Qualified Dividends and
+    # Capital Gain Tax Worksheet, Form 1040 Instructions, lines 1/6/7/9: the
+    # preferential amount actually taxed is capped at total taxable income, and
+    # ordinary taxable income is whatever total taxable income remains).
+    taxable_total = max(ordinary_income_with_ss + ltcg_taxable - std_ded, 0.0)
+    ltcg_preferential = min(ltcg_taxable, taxable_total)
+    taxable_ordinary = taxable_total - ltcg_preferential
+
+    # Step 6: ordinary income tax on TAXABLE ordinary income (not gross).
     ordinary_tax = (federal_tax_single if is_single else federal_tax)(
         taxable_ordinary, year=_year, cpi=_cpi
     )
 
-    # Step 5: LTCG + qualified dividends taxed at preferential rate.
-    # LTCG stacks ON TOP of taxable ordinary income; walk the stack across brackets.
-    _ltcg_thresholds = index_tuple(
-        LTCG_THRESHOLDS_SINGLE if is_single else LTCG_THRESHOLDS_MFJ, _year, _cpi, round50=True
-    )
-    ltcg_taxable = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
+    # Step 7: LTCG stacks ON TOP of taxable ordinary income; walk the stack
+    # across brackets. 0%-rate portion (below threshold[0]) contributes $0 tax;
+    # 15% and 20% portions taxed.
     ltcg_start = taxable_ordinary
-    ltcg_end = taxable_ordinary + ltcg_taxable
-    # 0%-rate portion (below threshold[0]) contributes $0 tax; 15% and 20% portions taxed
+    ltcg_end = taxable_total
     ltcg_at_15 = max(
         0.0,
         min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
@@ -533,7 +551,7 @@ def estimate_ytd_federal_tax(
     _ltcg_rates = LTCG_RATES_SINGLE if is_single else LTCG_RATES_MFJ
     ltcg_tax = ltcg_at_15 * _ltcg_rates[1] + ltcg_at_20 * _ltcg_rates[2]
 
-    # Step 6: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
+    # Step 8: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
     # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
     # Use the YTDSnapshot property (not a hand-summed subset) so crypto STCG/LTCG
     # are included in the NII base per §1411(c)(1) — audit 2026-07-13 R1/R2.
@@ -549,12 +567,12 @@ def estimate_ytd_federal_tax(
     _rate_base = niit_magi_with_ss
     effective_rate = total / _rate_base if _rate_base > 0 else 0.0
 
-    # Step 7: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).
+    # Step 9: marginal bracket rate — derived from TAXABLE ordinary income (IRC §1).
     marginal = (marginal_rate_single if is_single else marginal_rate)(
         taxable_ordinary, year=_year, cpi=_cpi
     )
 
-    # Step 8: room to next bracket ceiling — measured from TAXABLE ordinary income
+    # Step 10: room to next bracket ceiling — measured from TAXABLE ordinary income
     # against the taxable-income bracket ceilings (not from gross income).
     _indexed_brackets = index_bracket_list(
         BRACKETS_SINGLE if is_single else BRACKETS_MFJ, _year, _cpi, round50=True
