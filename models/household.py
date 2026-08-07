@@ -219,6 +219,11 @@ class Household:
 
     # Brokerage assumptions
     brokerage_start: float = 0.0  # beginning-of-base-year taxable brokerage balance
+    # Cost basis of brokerage_start. None means "full basis, no embedded gain" --
+    # i.e. it resolves to brokerage_start. The tool cannot know a real account's
+    # embedded gain, so it does not invent one; set this explicitly if the opening
+    # balance holds unrealized gains. Immaterial while brokerage_start defaults to 0.0.
+    brokerage_start_basis: float | None = None
     brok_turnover: float = 0.30  # 30% annual turnover
     ltcg_rate: float = 0.15
 

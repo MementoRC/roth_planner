@@ -93,11 +93,34 @@ class YearResult:
     # back to an IRA withdrawal is DELIBERATELY out of scope -- see the debit
     # comment in engine/scenario.py's brokerage-update block.
     unfunded_need: float = 0.0
+    # brokerage_balance is the OPENING (begin-of-year) balance -- set before
+    # this year's growth, reinvested dividends, excess_rmd contribution, and
+    # the living-expense debit are applied (engine/scenario.py:824).
     brokerage_balance: float = 0.0
+    # brokerage_balance_end is the CLOSING (end-of-year) balance -- after
+    # this year's growth, reinvested dividends, excess_rmd contribution, and
+    # the living-expense debit (engine/scenario.py, set alongside
+    # brokerage_basis). brokerage_basis is ALSO a closing-of-year quantity,
+    # so it must be compared against brokerage_balance_end, never against
+    # brokerage_balance -- comparing basis to the opening balance is an
+    # apples-to-oranges footgun this field exists to remove.
+    brokerage_balance_end: float = 0.0
+    brokerage_basis: float = 0.0  # derived cost basis of brokerage_balance_end (bookkeeping only; see Household.brokerage_start_basis)
     brokerage_growth: float = 0.0
     brokerage_gain_tax: float = 0.0
     brokerage_qual_div: float = 0.0  # qualified dividends (MAGI-only / LTCG rate)
     brokerage_ord_div: float = 0.0  # ordinary dividends (ordinary income stack)
+
+    # IRA-withdrawal-waterfall (stage 3a plumbing only -- not yet activated;
+    # engine/withdrawal_waterfall.py solves the fixed-point, wiring lands in
+    # stage 3b). All default to inert no-op values.
+    forced_brokerage_draw: float = 0.0
+    forced_your_ira_draw: float = 0.0
+    forced_spouse_ira_draw: float = 0.0
+    forced_your_roth_draw: float = 0.0
+    forced_spouse_roth_draw: float = 0.0
+    forced_early_withdrawal_penalty: float = 0.0
+    waterfall_converged: bool = True
 
     # Inherited IRA distributions (SECURE Act 10-year rule)
     your_inherited_distribution: float = 0.0
