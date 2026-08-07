@@ -260,8 +260,23 @@ def compute_social_security(
     qual_div_this_year: float = 0.0,
     realized_gains: float = 0.0,
     death_year: int | None = None,
+    forced_your_ira_draw: float = 0.0,
+    forced_spouse_ira_draw: float = 0.0,
 ) -> tuple[float, float, float, float]:
-    """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt)."""
+    """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt).
+
+    forced_*_ira_draw are the IRA-withdrawal-waterfall legs that fund living
+    expenses. They are ordinary distributions under IRC §408(d)(1), so they are
+    AGI items and belong in the IRC §86(b)(2) provisional-income base exactly
+    like the sibling extra_withdrawal quantities. Defaulted to 0.0 so callers
+    that predate the waterfall are unaffected.
+
+    Deliberately EXCLUDED from provisional income: the Roth leg (a qualified
+    Roth distribution is not includible), the brokerage leg (its realized gain
+    already reaches provisional income via realized_gains — adding the draw
+    itself would double-count return of basis), and the §72(t) early-withdrawal
+    penalty (an additional tax, not income).
+    """
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
     spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
     your_ss = (
@@ -359,6 +374,15 @@ def compute_social_security(
         + spouse_taxable_rmd
         + extra_withdrawal
         + spouse_extra_withdrawal
+        # Waterfall living-expense draws: ordinary IRA distributions (IRC §408(d)(1)),
+        # hence AGI, hence provisional income (IRC §86(b)(2)). Omitting them understated
+        # the taxable portion of SS (the "tax torpedo") in every year where a draw and a
+        # benefit coincide. NOTE this omission was invisible to the
+        # `combined_gross - magi == draw` check that caught the parallel MAGI defect,
+        # because taxable_ss_amt feeds BOTH aggregates — so both were understated equally
+        # and the gap test still passed.
+        + forced_your_ira_draw
+        + forced_spouse_ira_draw
     )
     # YTD ordinary income affects SS taxation.
     # Includes wages, NEC, STCG, ordinary dividends, conversions already
@@ -418,6 +442,8 @@ def compute_magi(
     qual_div_this_year: float,
     ord_div_this_year: float,
     ytd_year: YTDSnapshot | None,
+    forced_your_ira_draw: float = 0.0,
+    forced_spouse_ira_draw: float = 0.0,
 ) -> float:
     """Return partial MAGI (for IRMAA/ACA) BEFORE adding realized_gains.
 
@@ -428,6 +454,20 @@ def compute_magi(
     D-1: use taxable_ss_amt (up to 85% of SS) not full combined_ss — per §1395r(i)(4).
     QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
     C-7: option_income_for_magi has already had nqo_exercise_ytd subtracted by caller.
+
+    forced_*_ira_draw are the IRA-withdrawal-waterfall legs funding living expenses.
+    They are ordinary IRA distributions includible in gross income under IRC §408(d)(1),
+    hence in AGI, hence in MAGI for IRMAA (42 U.S.C. §1395r(i)), ACA (IRC §36B(d)(2)(B))
+    and NIIT (IRC §1411) — exactly like the sibling extra_withdrawal quantities above.
+    They were added to combined_gross when the waterfall was wired in but omitted here,
+    so 23 of 41 projected years reported a MAGI short by the whole draw.
+
+    NOT included, deliberately: the waterfall's Roth leg (tax-free, not includible), the
+    brokerage leg (its realized GAIN already reaches MAGI via realized_gains — adding the
+    draw itself would double-count), and the 10% early-withdrawal penalty (an additional
+    TAX under IRC §72(t), not income).
+
+    Defaulted to 0.0 so callers that do not model a waterfall draw are unaffected.
     """
     magi = (
         option_income_for_magi
@@ -440,6 +480,8 @@ def compute_magi(
         + taxable_ss_amt
         + your_inherited_distribution
         + spouse_inherited_distribution
+        + forced_your_ira_draw
+        + forced_spouse_ira_draw
     )
     # YTD: add all MAGI components via the canonical magi_ytd property.
     # Using the property ensures parity with _auto_fill_core and avoids

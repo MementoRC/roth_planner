@@ -120,7 +120,17 @@ class YearResult:
     forced_your_roth_draw: float = 0.0
     forced_spouse_roth_draw: float = 0.0
     forced_early_withdrawal_penalty: float = 0.0
+    # False ONLY when the tax gross-up iteration failed to settle (it
+    # oscillated, or pinned against the IRA ceiling and still left the
+    # household short). It is NOT a resource-exhaustion signal: test
+    # `unfunded_need > 0` for that.
     waterfall_converged: bool = True
+    # The IRA leg hit its ceiling and the waterfall moved on to the Roth.
+    # Routine and informational -- true in every year funded partly from the
+    # Roth, which for a decumulating household is most late years. Kept
+    # separate from `waterfall_converged`, which previously conflated the two
+    # and made 17 fully-funded years report solver failure.
+    waterfall_ira_leg_saturated: bool = False
 
     # Inherited IRA distributions (SECURE Act 10-year rule)
     your_inherited_distribution: float = 0.0

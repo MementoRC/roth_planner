@@ -136,12 +136,22 @@ class TestOrdering:
         assert result.spouse_ira_draw > 0
 
     def test_roth_drawn_only_after_both_iras_exhausted(self):
+        # Both owners are penalty-free here, so the draw order is a TIE. Ties split
+        # PRO-RATA by balance rather than sequentially "yours first": a sequential
+        # split is label-dependent, so a household and its mirror image would drain
+        # a different person's IRA (at a different growth rate) and diverge. The
+        # pro-rata split is what makes the test_parity.py me/spouse invariants hold.
         accounts = make_accounts(
             your_ira=10_000, spouse_ira=10_000, your_roth=50_000, spouse_roth=50_000
         )
         result = solve_waterfall(15_000, accounts, no_tax, your_age=61, spouse_age=61)
-        assert result.your_ira_draw == pytest.approx(10_000, abs=1.0)
-        assert result.spouse_ira_draw == pytest.approx(5_000, abs=1.0)
+        assert result.your_ira_draw == pytest.approx(7_500, abs=1.0)
+        assert result.spouse_ira_draw == pytest.approx(7_500, abs=1.0)
+        # total drawn from the IRAs is unchanged by the split
+        assert result.your_ira_draw + result.spouse_ira_draw == pytest.approx(
+            15_000, abs=1.0
+        )
+        # Roth is still untouched while IRA money remains
         assert result.roth_draw == pytest.approx(0, abs=1.0)
 
         accounts2 = make_accounts(
