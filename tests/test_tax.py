@@ -61,7 +61,7 @@ class TestDeductions:
 class TestSafeHarborPayment:
     """Tests for engine.tax.safe_harbor_payment."""
 
-    def test_no_prior_year_uses_current_estimate(self):
+    def test_no_prior_year_uses_the_current_estimate(self):
         """prior=0 → uses current estimate as target."""
         from engine.tax import safe_harbor_payment
 
@@ -540,7 +540,7 @@ class TestBrokerageGainTaxStackWalk:
         )
         assert result > buggy_result, "Fix must increase LTCG tax vs buggy formula"
 
-    def test_qual_div_included_in_ltcg_stack_mfj(self):
+    def test_qual_div_included_in_the_ltcg_stack_mfj(self):
         """C-5 regression: qualified dividends taxed at LTCG preferential rates (IRC §1(h)(11)).
 
         MFJ ordinary taxable $100K, realized_gains $0, qual_div $10K.
@@ -758,7 +758,7 @@ class TestSSCapAndBracketEdges:
 
         assert taxable_ss(40000, 13000, "MFJ") == 500.0
 
-    def test_marginal_rate_strict_at_ceiling_mfj(self) -> None:
+    def test_marginal_rate_is_strict_at_ceiling_mfj(self) -> None:
         from engine.tax import BRACKETS_MFJ, index_bracket_list, marginal_rate
         from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI
 

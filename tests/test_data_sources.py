@@ -291,7 +291,7 @@ class TestSourcedDeepcopy:
 
 
 class TestCandidateStore:
-    def test_record_candidate_and_candidates_for(self) -> None:
+    def test_record_candidate_and_candidates_for_key(self) -> None:
         store = CandidateStore()
         prov = Provenance(source=Source.MANUAL, recorded_at=FIXED_DT)
         store.record_candidate("your_ira", 1_700_000.0, prov)
@@ -1480,7 +1480,7 @@ class TestRecordTxnQuoteCandidate:
         assert result.household.txn_price_now == 210.0
         assert result.household.txn_price_now.prov.source == Source.MARKET_QUOTE
 
-    def test_round_trips_through_store_save_load(self, tmp_path: Path) -> None:
+    def test_round_trips_through_store_save_and_load(self, tmp_path: Path) -> None:
         store_path = tmp_path / "candidate_store.json"
         record_txn_quote_candidate(199.99, recorded_at=FIXED_DT, store_path=store_path)
 

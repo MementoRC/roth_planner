@@ -251,7 +251,7 @@ class TestHeadroomOptionIncomeSubtract:
         assert result.realized_option_income_ytd == approx(50_000)
         assert result.planned_option_income == approx(192_000 - 50_000)
 
-    def test_with_planned_room_nets_realized_nqo(self):
+    def test_with_planned_room_nets_the_realized_nqo(self):
         """C2/headroom-1: the WITH-PLANNED headroom path must add only the
         still-to-realize option income (planned_option_income), NOT the full opt
         on top of magi_ytd / niit_magi_ytd / total_ordinary_income — all of which

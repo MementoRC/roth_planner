@@ -93,7 +93,7 @@ class TestMeSpouseParity:
     # test 2: federal_tax symmetric under no-conversion (MFJ combined)
     # ------------------------------------------------------------------
 
-    def test_no_conversion_federal_tax_symmetric(self) -> None:
+    def test_no_conversion_federal_tax_is_symmetric(self) -> None:
         """Federal tax is a single MFJ number — must be symmetric after swap."""
         hh = self._baseline_hh()
         hh_swapped = self._swap(hh)
@@ -134,7 +134,7 @@ class TestMeSpouseParity:
     # test 4: combined SS symmetric under no-conversion
     # ------------------------------------------------------------------
 
-    def test_no_conversion_combined_ss_symmetric(self) -> None:
+    def test_no_conversion_combined_ss_is_symmetric(self) -> None:
         """With single ss_start_age and swapped FRA amounts, combined SS must match."""
         hh = self._baseline_hh()
         hh_swapped = self._swap(hh)

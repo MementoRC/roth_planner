@@ -30,7 +30,7 @@ class TestObbbaSeniorDeduction:
         # sanity: 2025 is the first active year
         assert senior_bonus_deduction(66, 66, 100_000, year=2025) > 0
 
-    def test_estimate_applies_obbba_to_ltcg_base(self):
+    def test_estimate_applies_obbba_to_the_ltcg_base(self):
         """A1 (tax-core-4): estimate_ytd_federal_tax must fold the OBBBA bonus into the
         std-deduction used for the LTCG stack-walk base, lowering LTCG tax for 65+.
 

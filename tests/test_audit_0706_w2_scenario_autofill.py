@@ -192,7 +192,7 @@ class TestNQONoDoubleCountMAGI:
             f"  Difference={abs(conv_no_ytd-conv_with_ytd):.0f} should be <500."
         )
 
-    def test_forecast_year_unaffected_by_ytd_nqo(self) -> None:
+    def test_forecast_year_is_unaffected_by_ytd_nqo(self) -> None:
         """Forecast year conversions are identical with or without base-year YTD NQO.
 
         In forecast years ytd_year is None so nqo_ytd=0 and the fix is a no-op.

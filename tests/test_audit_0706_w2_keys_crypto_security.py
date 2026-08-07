@@ -127,7 +127,7 @@ class TestWriteKeypairExclusiveAtomicity:
         _write_keyfile(existing, "new content\n", 0o600, exclusive=False)
         assert existing.read_text() == "new content\n"
 
-    def test_write_keypair_force_true_overwrites(
+    def test_write_keypair_force_true_overwrites_it(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """force=True must overwrite both files."""
@@ -260,7 +260,7 @@ class TestOpenUploadedPayloadCorruption:
         with pytest.raises((ValueError, DataBridgeCryptoError)):
             open_uploaded_payload(corrupted, None)
 
-    def test_valid_v2_payload_decrypts_correctly(self) -> None:
+    def test_valid_v2_payload_decrypts_as_expected(self) -> None:
         """Well-formed V2 payload decrypts correctly (regression guard)."""
         pub, priv = generate_keypair()
         plaintext = b'{"test": 1}'

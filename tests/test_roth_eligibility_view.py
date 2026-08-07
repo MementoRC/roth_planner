@@ -120,7 +120,7 @@ def test_filing_status_is_read_only_no_selectbox():
 # --- Step 3: ages are read-only -----------------------------------------------
 
 
-def test_ages_are_read_only_no_number_inputs():
+def test_ages_are_read_only_with_no_number_inputs():
     at = AppTest.from_function(_render_canonical)
     at.run()
     assert not at.exception

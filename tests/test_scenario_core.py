@@ -375,7 +375,7 @@ class TestRothBalanceTracking:
     #         then compounds each year at the roth rate with no conversions
     # ------------------------------------------------------------------
 
-    def test_starting_roth_balance_flows_through(self):
+    def test_starting_roth_balance_flows_through_run(self):
         """BEHAVIORAL: year-0 begin equals hh.your_roth / hh.spouse_roth.
 
         INVARIANT: balances grow monotonically at growth_rate when there

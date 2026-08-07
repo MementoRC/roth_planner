@@ -272,7 +272,7 @@ class TestSurvivorYearTaxBrokerageIncome:
         )
         assert tax_brok > tax_zero, "Ordinary brokerage income must raise federal tax"
 
-    def test_ltcg_brokerage_not_in_ordinary_base(self) -> None:
+    def test_ltcg_brokerage_is_not_in_ordinary_base(self) -> None:
         """LTCG-rate brokerage income (qualified divs) raises SS-provisional and
         senior-bonus MAGI, but must NOT enter the ordinary taxable return value.
 
@@ -459,7 +459,7 @@ class TestComputeSurvivorSnapshotBrokerage:
             f"zero-brokerage ({tax_zero:,.0f})"
         )
 
-    def test_qualified_divs_not_in_ordinary_base(self) -> None:
+    def test_qualified_divs_are_not_in_ordinary_base(self) -> None:
         """Active: purely-qualified brokerage income raises MAGI / SS-provisional
         but must NOT add to the ordinary taxable base.
 

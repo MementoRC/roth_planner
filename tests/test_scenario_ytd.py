@@ -252,7 +252,7 @@ class TestAutoFillCoreOrdinaryDividendsYTD:
         # ordinary income = wages only; muni interest is excluded
         assert ytd.total_ordinary_income == approx(80_000)
 
-    def test_interest_ytd_reduces_room_base_year(self):
+    def test_interest_ytd_reduces_room_in_base_year(self):
         """Regression C-4: interest_ytd must reduce base-year bracket room and conversion amount.
 
         Prior to the fix, _auto_fill_core omitted interest_ytd from both other_fixed

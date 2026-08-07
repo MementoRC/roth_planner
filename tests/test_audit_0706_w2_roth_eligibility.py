@@ -66,7 +66,7 @@ class TestTradDeductionPhaseoutForYear:
         assert lower == 129_000
         assert upper == 149_000
 
-    def test_2025_single_returns_2025_thresholds(self):
+    def test_2025_single_returns_2025_tax_thresholds(self):
         from views.roth_eligibility import trad_deduction_phaseout_for_year
 
         lower, upper = trad_deduction_phaseout_for_year(2025, "Single")

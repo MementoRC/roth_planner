@@ -118,7 +118,7 @@ class TestEngineConstantsCharacterization:
         # OBBBA §70103 sunsets after 2028 → 0.0 regardless of age or MAGI
         assert senior_bonus_deduction(70, 70, magi=50_000, year=2029) == approx(0.0)
 
-    def test_senior_bonus_year_2028_still_active(self):
+    def test_senior_bonus_year_2028_is_still_active(self):
         # 2028 is the last active year; full bonus at MAGI below threshold
         assert senior_bonus_deduction(70, 70, magi=100_000, year=2028) == approx(12_000)
 
@@ -267,7 +267,7 @@ class TestYRMAGIRegion:
         # And the delta must equal exactly realized_gains
         assert yr.magi - magi_without_realized == pytest.approx(realized_gains, rel=1e-9)
 
-    def test_yr_magi_uses_taxable_ss_not_full_ss(self):
+    def test_yr_magi_uses_taxable_ss_and_not_full_ss(self):
         """D-1: yr.magi must include taxable SS (≤85%) not full combined_ss.
 
         Household at 70+ with high-enough income so SS is 85% taxable.

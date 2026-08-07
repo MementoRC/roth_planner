@@ -70,7 +70,7 @@ class TestFrozenTier5NotIndexed:
     2028+ behavior, corrected by audit-0802 F2.
     """
 
-    def test_index_irmaa_tiers_freezes_last_tier(self) -> None:
+    def test_index_irmaa_tiers_freezes_the_last_tier(self) -> None:
         """_index_irmaa_tiers preserves the frozen Tier-5 threshold exactly through 2027."""
         base_t5_threshold = IRMAA_TIERS_MFJ[-1][0]  # 750_000
 

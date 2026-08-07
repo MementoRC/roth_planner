@@ -55,7 +55,7 @@ class TestBearerTransportGuard:
 
 
 class TestRedirectHardening:
-    def test_redirect_response_raises_http_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_redirect_response_raises_an_http_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get() must raise HTTPError on any 3xx — never silently follow."""
         captured: dict[str, object] = {}
 

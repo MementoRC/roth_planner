@@ -360,7 +360,7 @@ class TestIRMAATier5Frozen:
             f"Single Tier 5 must stay frozen at {self._SGL_TOP}, got {top_threshold:.0f}"
         )
 
-    def test_forecast_year_lower_tier_does_drift(self):
+    def test_forecast_year_lower_tier_does_drift_up(self):
         """2028: MFJ Tier 4 ($410K base) DOES drift up with CPI — confirms indexing is active."""
         from engine.irmaa import _index_irmaa_tiers
         from engine.tax_indexing import DEFAULT_CPI
@@ -548,7 +548,7 @@ class TestIrmaaBeneficiaryGate:
         assert phantom > 0  # actually in a surcharge tier
         assert phantom == pytest.approx(baseline)  # spouse age must not affect a Single filer
 
-    def test_mfj_still_counts_both_beneficiaries(self):
+    def test_mfj_still_counts_both_beneficiary_ages(self):
         """Regression: MFJ must still count both spouses (fix must not break the MFJ path)."""
         import pytest
 

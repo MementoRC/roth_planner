@@ -151,7 +151,7 @@ class TestSingleFilerIrmaaNoPhantoSpouse:
             "phantom spouse is being counted (on_medicare=2 bug)."
         )
 
-    def test_single_filer_base_irmaa_not_doubled(self) -> None:
+    def test_single_filer_base_irmaa_is_not_doubled(self) -> None:
         """base_irmaa (hoisted outside loop) must also use 1-person count for Single."""
         from engine.irmaa import irmaa_surcharge
 

@@ -99,7 +99,7 @@ class TestPerAccountGrowth:
         assert gp.rate_for(2027) == -0.05
         assert gp.rate_for(2028) == 0.07  # falls back to default
 
-    def test_household_falls_back_to_growth_rate(self):
+    def test_household_falls_back_to_the_growth_rate(self):
         hh = Household(growth_rate=0.06)
         assert hh.your_ira_rate(2026) == 0.06
         assert hh.spouse_ira_rate(2026) == 0.06
@@ -171,7 +171,7 @@ class TestProjectedTxnPrice:
         hh = Household(base_year=2026, txn_price_now=100.0)
         assert hh.txn_price_growth.default_rate == pytest.approx(0.07)
 
-    def test_one_year_out_compounds_default_rate(self):
+    def test_one_year_out_compounds_the_default_rate(self):
         hh = Household(base_year=2026, txn_price_now=100.0)
         assert hh.projected_txn_price(2027) == pytest.approx(107.0)
 
@@ -347,7 +347,7 @@ class TestInheritedIRA:
     # a) Regression guard: empty inherited_iras changes nothing
     # ------------------------------------------------------------------
 
-    def test_no_inherited_iras_default_unchanged(self):
+    def test_no_inherited_iras_default_is_unchanged(self):
         hh_base = self._base_hh()
         hh_with_empty = self._base_hh(inherited_iras=[])
         plan = ConversionPlan()

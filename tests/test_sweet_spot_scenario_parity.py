@@ -403,7 +403,7 @@ class TestMU8F1LtcgStackRegression:
         # classes' zeroed-out household): the default option income is what lifts
         # taxable_inc close enough to the LTCG threshold for a modest conversion
         # to be the deciding factor, mirroring test_audit_0707_batch_a.py's
-        # TestSweetSpotYtdOrdinaryBase.test_ytd_ordinary_shifts_ltcg_stack_base.
+        # TestSweetSpotYtdOrdinaryBase.test_ytd_ordinary_shifts_the_ltcg_stack_base.
         #
         # The hold-to-expiration exercise-schedule default (PR #373 follow-up)
         # no longer lands the first TXN grant's spread in base_year on its own

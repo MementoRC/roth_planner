@@ -87,7 +87,7 @@ class TestF19F1StdDeductionApplied:
 class TestF13MarginalRateFromTaxableIncome:
     """F13 — marginal_bracket_pct must reflect the taxable-income bracket, not gross."""
 
-    def test_gross_in_22pct_but_taxable_in_12pct(self) -> None:
+    def test_gross_in_22pct_but_taxable_in_the_12pct(self) -> None:
         """MFJ $103K gross, $32,200 std ded → taxable $70,800 (12% bracket, ceil $100,800).
         Pre-fix code reported 22%; correct is 12%.
         """
@@ -154,7 +154,7 @@ class TestF14RoomToNextBracketFromTaxableIncome:
 class TestF20TaxableSocialSecurity:
     """F20 — taxable SS must be included in the ordinary income base."""
 
-    def test_ss_above_tier2_adds_to_ordinary_tax(self) -> None:
+    def test_ss_above_tier2_adds_to_the_ordinary_tax(self) -> None:
         """$40K SS + $100K other → provisional $120K > $44K MFJ tier2 → taxable SS ≈ $34K.
         ordinary_tax must exceed the no-SS case.
         """

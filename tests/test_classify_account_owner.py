@@ -115,7 +115,7 @@ class TestOwnerHint:
         _, owner = _classify_account("Rollover IRA233813501", owner_hint="primary")
         assert owner == "you"
 
-    def test_owner_hint_secondary_maps_to_spouse(self) -> None:
+    def test_owner_hint_secondary_maps_to_the_spouse(self) -> None:
         from engine.portfolio_sync import _classify_account
 
         _, owner = _classify_account("Rollover IRA233813501", owner_hint="secondary")

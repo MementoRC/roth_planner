@@ -142,7 +142,7 @@ class TestFplSelectionLogic:
                 f"filing_status={filing_status}: expected {expected_fpl}, got {cliff_fpl}"
             )
 
-    def test_f21_magi_le_column_single_uses_fpl1(self):
+    def test_f21_magi_le_column_single_uses_fpl_one(self):
         """ACA table MAGI≤ column must use FPL_1 for Single filing status."""
         upper_fpl = 1.5  # 150% FPL bracket
         for filing_status, expected_base in [("Single", FPL_1), ("MFJ", FPL_2)]:
@@ -384,7 +384,7 @@ class TestSweetSpotBracketSelection:
     extends well beyond what is legally meaningful.
     """
 
-    def test_single_35pct_ceiling_lower_than_mfj(self):
+    def test_single_35pct_ceiling_is_lower_than_mfj(self):
         """BRACKETS_SINGLE[-2][0] must be lower than BRACKETS_MFJ[-2][0].
 
         Confirms the fix is meaningful: the old MFJ-only code would overstate

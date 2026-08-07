@@ -206,7 +206,7 @@ class TestA0CurrentScanHandlerGolden:
         assert persisted[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
         assert persisted[_GOLDEN_YEAR].tax_year == _GOLDEN_YEAR
 
-    def test_writes_pdf_1040_scanned_session_key(self, tmp_path, monkeypatch, clean_candidate_store):
+    def test_writes_the_pdf_1040_scanned_session_key(self, tmp_path, monkeypatch, clean_candidate_store):
         mock_st, _persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
         setitem_calls = [

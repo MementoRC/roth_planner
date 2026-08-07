@@ -353,7 +353,7 @@ class TestDetectIbkrAccountType:
 
 
 class TestSplitIbkrSections:
-    def test_splits_into_one_section_per_account(self):
+    def test_splits_into_one_section_for_each_account(self):
         from engine.brokerage_statement_pdf import _split_ibkr_sections
 
         full_text = IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT + IBKR_ACCOUNT_3_TEXT
@@ -687,7 +687,7 @@ class TestDetectFidelityAccountType:
 
 
 class TestSplitFidelitySections:
-    def test_splits_into_one_section_per_account(self):
+    def test_splits_into_one_section_for_each_account(self):
         from engine.brokerage_statement_pdf import _split_fidelity_sections
 
         full_text = FIDELITY_ROLLOVER_IRA_TEXT + FIDELITY_HSA_TEXT
@@ -844,7 +844,7 @@ def _rec(account: str, period_end: str, account_type: str = "taxable", **overrid
 
 
 class TestPickLatestPerAccount:
-    def test_keeps_latest_period_end_per_account(self):
+    def test_keeps_the_latest_period_end_per_account(self):
         from engine.brokerage_statement_pdf import pick_latest_per_account
 
         older = _rec("111-1111", "2026-05-31", dividends_taxable_ytd=100.0)
@@ -852,7 +852,7 @@ class TestPickLatestPerAccount:
         result = pick_latest_per_account([older, newer])
         assert result["111-1111"].dividends_taxable_ytd == 200.0
 
-    def test_keeps_separate_accounts_independent(self):
+    def test_keeps_separate_accounts_fully_independent(self):
         from engine.brokerage_statement_pdf import pick_latest_per_account
 
         acct_a = _rec("111-1111", "2026-06-30")
@@ -889,7 +889,7 @@ class TestPartitionByAccountType:
         rec = _rec("178-734462", "2026-06-30", account_type="hsa")
         assert rec.account_type == "hsa"
 
-    def test_hsa_excluded_from_taxable_partition(self):
+    def test_hsa_is_excluded_from_taxable_partition(self):
         from engine.brokerage_statement_pdf import partition_by_account_type
 
         hsa_acct = _rec("178-734462", "2026-06-30", account_type="hsa", dividends_taxable_ytd=100.0)

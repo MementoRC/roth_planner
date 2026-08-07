@@ -33,7 +33,7 @@ class TestACA:
     def test_high_income_subsidy(self):
         aca_subsidy(300_000)  # just verify no error
 
-    def test_benchmark_premium_default_unchanged(self):
+    def test_benchmark_premium_default_is_unchanged(self):
         """Default benchmark (21600) must produce same subsidy loss as the old hardcoded constant."""
         base_magi = 60_000.0
         new_magi = 80_000.0
@@ -147,7 +147,7 @@ class TestACA:
         # Enhanced: subsidy(new)>0 (8.5% cap partial, new<127K break-even) → smaller loss.
         assert loss_pre_arp > loss_enhanced
 
-    def test_pre_arp_below_100pct_fpl_no_subsidy(self):
+    def test_pre_arp_below_100pct_fpl_has_no_subsidy(self):
         """Pre-ARP: below 100% FPL the household is PTC-ineligible (audit E1).
 
         IRC §36B(c)(1)(A) limits the PTC to 100%-400% FPL. The pre-ARP first
@@ -187,7 +187,7 @@ class TestACAMedicareSplit:
             spouse_ss_start_age=61,  # spouse claims now so SS flows in the base year
         )
 
-    def test_solo_aca_benchmark_halved_vs_couple(self):
+    def test_solo_aca_benchmark_is_halved_vs_couple(self):
         """ages 65/61: you on Medicare, spouse on ACA — benchmark halved, subsidy ~50% of couple."""
         # Couple household (both pre-Medicare): ages 61/61
         hh_couple = self._make_hh(your_age=61, spouse_age=61)
@@ -284,7 +284,7 @@ class TestACAExcessAPTCRepayment:
         )
         assert result == pytest.approx(-1_000.0, abs=1.0)
 
-    def test_pre_2026_raises_notimplementederror(self):
+    def test_pre_2026_raises_not_implemented_error(self):
         """year=2025 → NotImplementedError (cap table not modeled, base_year=2026)."""
         with pytest.raises(NotImplementedError, match="2025"):
             aca_excess_aptc_repayment(

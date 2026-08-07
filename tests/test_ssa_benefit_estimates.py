@@ -130,7 +130,7 @@ class TestSsaCache:
         monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "missing.json")
         assert load_ssa_snapshot(owner="you") is None
 
-    def test_load_missing_owner_key_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_owner_key_returns_none_value(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
         save_ssa_snapshot(SSASnapshot(server_available=True), owner="you")
         assert load_ssa_snapshot(owner="spouse") is None
@@ -143,7 +143,7 @@ class TestSsaCache:
 
 
 class TestPackageReexport:
-    def test_ssa_symbols_importable_from_package(self) -> None:
+    def test_ssa_symbols_are_importable_from_package(self) -> None:
         from engine.portfolio_sync import (
             SSABenefitEstimate,
             SSASnapshot,

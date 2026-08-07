@@ -99,7 +99,7 @@ class TestSweetSpotYtdOrdinaryBase:
             f"without ytd ({res_no.conv_tax:.0f})"
         )
 
-    def test_ytd_ordinary_shifts_ltcg_stack_base(self) -> None:
+    def test_ytd_ordinary_shifts_the_ltcg_stack_base(self) -> None:
         """LTCG stacking cost must be higher when ytd_ordinary pushes the ordinary
         base above the 0%/15% LTCG threshold. Confirms MU8-F1 defect scenario."""
         from engine.sweet_spot_compute import all_in_at_conversion, base_income_for_year
@@ -134,7 +134,7 @@ class TestSweetSpotYtdOrdinaryBase:
             f"got {res_with.ltcg_delta}"
         )
 
-    def test_ytd_ordinary_excludes_ltcg_and_muni(self) -> None:
+    def test_ytd_ordinary_excludes_ltcg_and_muni_int(self) -> None:
         """ytd_ordinary must not include LTCG or muni interest (MAGI-only items)."""
         from engine.sweet_spot_compute import base_income_for_year
         from models.ytd_income import YTDSnapshot

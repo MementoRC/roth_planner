@@ -106,7 +106,7 @@ class TestPdf1040ImportHelper:
             "head_of_household",
         }
 
-    def test_pdf_1040_import_called_in_joint_sub(self):
+    def test_pdf_1040_import_called_in_the_joint_sub(self):
         """_render_pdf_1040_import must be called inside render() (joint sub-tab context)."""
         import inspect
 
@@ -267,7 +267,7 @@ class TestAppFilingStatusWiring:
 
         return (Path(__file__).resolve().parent.parent / "app.py").read_text()
 
-    def test_get_household_threads_filing_status(self):
+    def test_get_household_threads_the_filing_status(self):
         text = self._app_source()
         assert 'filing_status=st.session_state.get("filing_status"' in text, (
             "get_household must thread filing_status from session_state into Household"
@@ -561,7 +561,7 @@ class TestNoDataMsg:
     namespace.
     """
 
-    def test_pyodide_true_returns_upload_message(self, monkeypatch: pytest.MonkeyPatch):
+    def test_pyodide_true_returns_the_upload_message(self, monkeypatch: pytest.MonkeyPatch):
         import views.setup._partials._portfolio as mod
 
         monkeypatch.setattr(mod, "is_pyodide", lambda: True)
@@ -625,7 +625,7 @@ class TestClampWidgetBounds:
         assert isinstance(r, float)
         assert r == 2434.80
 
-    def test_legitimate_large_magi_not_corrupted(self) -> None:
+    def test_legitimate_large_magi_is_not_corrupted(self) -> None:
         # $2.5M filed MAGI is legitimate for a large-IRA household; the widened bound
         # keeps it intact (a pure clamp-to-$2M would corrupt the IRMAA anchor).
         from views.setup._partials._assumptions import _clamp

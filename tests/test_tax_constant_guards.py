@@ -139,7 +139,7 @@ class TestNoLiteralBracketCeilings:
 class TestNoLiteralLTCGRatesInViews:
     """G3 source-level guard: LTCG rate literals must not appear in views/ytd_income.py."""
 
-    def test_no_literal_ltcg_rates_in_ytd_income(self):
+    def test_no_literal_ltcg_rates_in_the_ytd_income(self):
         """views/ytd_income.py must not contain hardcoded LTCG rate strings."""
         text = _file_text("views/ytd_income/__init__.py")
         assert "15%/20%" not in text, (

@@ -53,7 +53,7 @@ class TestSingleFilerAcaIrmaa:
         """aca-1: single-person FPL must be the 2025 figure (15,650), not the stale 2024 15,060."""
         assert FPL_1 == 15_650
 
-    def test_filing_status_flows_into_aca_curves(self):
+    def test_filing_status_flows_into_the_aca_curves(self):
         """aca-3: filing_status must reach the ACA calls in compute_cost_curves.
 
         At MAGI 70k a single filer is above the 400% FPL cliff (4 x 15,650 = 62,600)

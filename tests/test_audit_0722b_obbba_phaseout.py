@@ -40,7 +40,7 @@ class TestObbbaAggregatePhaseoutMfj:
         # Aggregate endpoint: $150,000 + $12,000/0.06 = $350,000
         assert senior_bonus_deduction(70, 70, magi=350_000, year=2026) == pytest.approx(0.0)
 
-    def test_mfj_dual_below_threshold_full_bonus(self) -> None:
+    def test_mfj_dual_below_threshold_gets_full_bonus(self) -> None:
         # magi <= phaseout_start ($150,000) -> full aggregate $12,000
         assert senior_bonus_deduction(70, 70, magi=150_000, year=2026) == pytest.approx(12_000.0)
 

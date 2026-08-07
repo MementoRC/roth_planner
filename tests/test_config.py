@@ -167,7 +167,7 @@ class TestJsonOverrideLoader:
 class TestPyOverrideIsTrusted:
     """SEC-04: _py_override_is_trusted must reject group/world-writable .py overrides."""
 
-    def test_group_writable_py_override_not_exec(self, tmp_path, monkeypatch):
+    def test_group_writable_py_override_is_not_exec(self, tmp_path, monkeypatch):
         """A group-writable .py override must not be exec'd (returns {})."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
@@ -180,7 +180,7 @@ class TestPyOverrideIsTrusted:
         result = _load_overrides_from_py(override)
         assert result == {}
 
-    def test_world_writable_py_override_not_exec(self, tmp_path, monkeypatch):
+    def test_world_writable_py_override_is_not_exec(self, tmp_path, monkeypatch):
         """A world-writable .py override must not be exec'd (returns {})."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)

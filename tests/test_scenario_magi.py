@@ -461,7 +461,7 @@ class TestAuditF5BaseYearQualDivLTCGWalk:
             spouse_ira=0,
         )
 
-    def test_f5_qual_div_only_gets_ltcg_rate_tax(self):
+    def test_f5_qual_div_only_gets_the_ltcg_rate_tax(self):
         """F5: When ltcg_ytd==0 but qualified_dividends_ytd>0, ytd_ltcg_tax must be > 0.
 
         Pre-fix: guard was `ltcg_ytd > 0` so qual-divs-only skipped the stack walk entirely

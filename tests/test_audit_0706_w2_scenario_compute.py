@@ -83,7 +83,7 @@ class TestComputePhaseSingleFilerRmd:
             f"Expected 'rmd' for single-filer (sa=0) in RMD year, got {phase!r}"
         )
 
-    def test_mfj_filer_pre_spouse_rmd_is_squeeze(self) -> None:
+    def test_mfj_filer_pre_spouse_rmd_is_a_squeeze(self) -> None:
         """MFJ: ya >= rmd_yours but sa < rmd_spouse must still produce 'squeeze'."""
         hh = _base_hh(
             your_age=75,

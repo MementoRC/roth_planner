@@ -112,7 +112,7 @@ class TestOptionCashBrokerageCarryForward:
             f"non-option year ({available_no_option:,.0f}) by the after-tax option proceeds"
         )
 
-    def test_brokerage_accumulates_option_excess(self) -> None:
+    def test_brokerage_accumulates_option_income_excess(self) -> None:
         """Excess RMD from the option year must flow into the brokerage balance.
 
         If living_expenses < available_income in the option year, the surplus

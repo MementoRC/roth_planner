@@ -59,7 +59,7 @@ def test_optimized_plan_round_trips_fields() -> None:
     assert optimized.over_ceiling_years == [2030]
 
 
-def test_optimizer_result_round_trips_fields() -> None:
+def test_optimizer_result_round_trips_all_fields() -> None:
     sched = _make_schedule()
     plan = _make_plan()
     optimized = OptimizedPlan(
@@ -363,7 +363,7 @@ def test_optimize_exercises_does_not_mutate_household() -> None:
     assert hh.base_year == original_base_year
 
 
-def test_optimize_exercises_is_deterministic() -> None:
+def test_optimize_exercises_stays_deterministic() -> None:
     grant = StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2030, grant_id="g1")
     hh = Household(
         your_age=61,

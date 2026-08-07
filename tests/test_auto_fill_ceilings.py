@@ -88,7 +88,7 @@ def test_auto_fill_24_converts_more_than_22() -> None:
     )
 
 
-def test_auto_fill_aca_converts_less_than_22() -> None:
+def test_auto_fill_aca_converts_less_than_22pct() -> None:
     """auto_fill_aca caps conversions at the ACA 400%-FPL MAGI cliff (~$80K
     MFJ), far below the 22% bracket ceiling, so it must convert strictly less
     in total than auto_fill_22 while still converting something in at least

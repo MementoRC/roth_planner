@@ -148,7 +148,7 @@ class TestOptionExercisesFetchAndApply:
         assert snap.total_spread > 0.0
         assert snap.by_grant_id == {}
 
-    def test_404_empty_snapshot_server_available(self, monkeypatch):
+    def test_404_empty_snapshot_when_server_available(self, monkeypatch):
         import requests as req
 
         from engine.portfolio_sync import fetch_option_exercises
@@ -312,7 +312,7 @@ class TestOptionExercisesFetchAndApply:
         assert exercises.warnings == []
         assert ytd_snap.nqo_exercise_ytd == 96_000.0
 
-    def test_grant_id_match_strips_special_chars(self):
+    def test_grant_id_match_strips_special_characters(self):
         """Household grant_id 'GR-2019'; UBS sends 'GR2019' (no dash) — normalized match."""
         from engine.portfolio_sync import (
             OptionExercisesSnapshot,

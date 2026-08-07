@@ -222,7 +222,7 @@ class TestC15KoinlyMultiYearScanKeepsLatestYear:
         totals = derive_koinly_totals(ledger)
         assert totals == {"stcg": 100.0, "ltcg": 200.0, "income": 50.0}
 
-    def test_same_tax_year_rescan_still_replaces(self) -> None:
+    def test_same_tax_year_rescan_still_replaces_row(self) -> None:
         """Non-regression: same-year re-scan (idempotent correction) still replaces."""
         first = KoinlyReport(
             tax_year=2026,

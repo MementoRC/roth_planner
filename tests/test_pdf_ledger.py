@@ -204,7 +204,7 @@ class TestOwnerSlice:
     def test_extract_owner_missing_owner_yields_empty_sections(self):
         assert extract_owner({"koinly": {}, "brokerage": {}}, "you") == {"koinly": {}, "brokerage": {}}
 
-    def test_extract_owner_does_not_mutate_input(self):
+    def test_extract_owner_does_not_mutate_its_input(self):
         led = self._ledger()
         snapshot = copy.deepcopy(led)
         extract_owner(led, "you")
@@ -227,7 +227,7 @@ class TestOwnerSlice:
         assert "spouse" not in out["brokerage"]
         assert "you" in out["koinly"]
 
-    def test_replace_owner_does_not_mutate_input(self):
+    def test_replace_owner_does_not_mutate_its_input(self):
         led = self._ledger()
         snapshot = copy.deepcopy(led)
         replace_owner(led, "spouse", {"koinly": {}, "brokerage": {}})

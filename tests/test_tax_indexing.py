@@ -9,7 +9,7 @@ class TestIndexValue:
     def test_base_year_returns_base_value(self):
         assert index_value(100_000, BASE_YEAR) == 100_000.0
 
-    def test_year_before_base_returns_base_value(self):
+    def test_year_before_base_returns_the_base_value(self):
         assert index_value(50_000, BASE_YEAR - 5) == 50_000.0
 
     def test_year_equals_base_year_boundary(self):

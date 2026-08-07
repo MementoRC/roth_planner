@@ -247,7 +247,7 @@ class TestDeriveIraBalances:
             ],
         )
 
-    def test_current_pretax_total_is_owner_blind(self):
+    def test_current_pretax_total_is_owner_agnostic(self):
         """Documents existing behavior — pretax_total sums both owners.
 
         This assertion PASSES today. It acts as a guard: if it ever fails,
@@ -804,7 +804,7 @@ class TestFilingStatusRoundTrip:
         upd = build_user_defaults_session_updates(data, as_spouse=False)
         assert upd["filing_status"] == "MFJ"
 
-    def test_filing_status_absent_is_not_emitted(self):
+    def test_filing_status_when_absent_is_not_emitted(self):
         data = {"your_age": 61}
         upd = build_user_defaults_session_updates(data, as_spouse=False)
         assert "filing_status" not in upd

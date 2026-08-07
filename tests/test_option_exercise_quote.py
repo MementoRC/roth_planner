@@ -170,7 +170,7 @@ class TestProjectPriceReusable:
         assert quote_projection == pytest.approx(250.0 * 1.07**2)
         assert quote_projection != pytest.approx(committed_projection)
 
-    def test_at_base_year_returns_base_unchanged(self) -> None:
+    def test_at_base_year_returns_base_value_unchanged(self) -> None:
         assert project_price(123.45, 2026, GrowthProfile(), 2026) == 123.45
 
     def test_honors_custom_growth_rate(self) -> None:
