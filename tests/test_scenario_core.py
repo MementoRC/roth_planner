@@ -1,12 +1,23 @@
-"""Tests for engine.scenario core — no-conversion baseline, auto-fill strategies, Roth balance tracking."""
+"""Tests for engine.scenario core — no-conversion baseline, auto-fill strategies, Roth balance tracking.
+
+NAMING CONSTRAINT -- test function names in this file must NOT have exactly 35
+characters after the `test_` prefix. TruffleHog's Lob API-key detector matches
+`(live|test)_` followed by 35 characters and its verifier stamps any
+test_-prefixed candidate as Verified=true, so such a name is reported as a
+verified leaked secret. CI runs with fail-on-secrets: true, which makes that a
+HARD BLOCK on a pure false positive. One name here was renamed for exactly
+this reason (see git history); renaming it back to a 35-character suffix will
+silently break CI.
+"""
 
 import pytest
 
 from config.defaults import DEFAULTS
-from engine.aca import aca_subsidy_loss
+from engine.aca import aca_ceiling_magi, aca_subsidy_loss
 from engine.ira import (
     project_ira,
 )
+from engine.irmaa import irmaa_next_threshold
 from engine.scenario import (
     ConversionPlan,
     run_no_conversion,
@@ -16,6 +27,7 @@ from engine.scenario_autofill import (
     add_bracket_fill_withdrawals,
     auto_fill_12,
     auto_fill_22,
+    auto_fill_aca,
     auto_fill_irmaa_safe,
 )
 from engine.tax import federal_tax
@@ -802,6 +814,144 @@ class TestZeroConversionTaxInvariant:
                 f"year {yr.year} (age {yr.your_age}): expected conversion_tax == 0.0 "
                 f"under run_no_conversion, got {yr.conversion_tax!r}"
             )
+
+
+class TestMagiCeilingWaterfallActivation:
+    """Waterfall-activation follow-up: conversion_cap must enforce the MAGI
+    ceiling INCLUDING the forced IRA draw for irmaa_safe/aca_safe plans (not
+    just the room_22 bracket ceiling) -- see engine/scenario.py's
+    _strategy_magi_ceiling / _solve_waterfall_year MAGI-ceiling block.
+
+    Scoped to years the strategy PLANNED to convert in (auto_fill_irmaa_safe/
+    auto_fill_aca's own dict, not the achieved amount -- a year the plan
+    shrank to 0 is exactly the case under test, so scoping on achieved>0
+    would silently hide it). It is NOT a claim that a household's other,
+    mandatory income (RMDs alone, once conversions have stopped post-RMD-age)
+    always stays under the ceiling too -- no conversion_cap can suppress a
+    forced RMD, so a household with a large enough IRA can legitimately
+    breach IRMAA/ACA in a pure-RMD year with zero conversion offered. That is
+    real and unavoidable, not a defect this cap closes.
+
+    Within a planned year, the guarantee is: EITHER the achieved MAGI is
+    under the ceiling, OR `magi_ceiling_converged` is False -- i.e. even a
+    ZERO conversion could not fund that year's living expenses without
+    breaching it (verified empirically for ACA-safe: default/large_brokerage/
+    single_filer/pre_ss_young all hit this in mid-life pre-RMD years, because
+    the 400%-FPL cliff ($84,600 MFJ / $62,600 Single, 2026) is far below the
+    IRMAA tier-1 ceiling and a taxable IRA draw funding living expenses alone
+    can exceed it; irmaa_safe never hits it for any of these 7 shapes).
+    """
+
+    HOUSEHOLD_SHAPES = [
+        pytest.param(Household(), id="default"),
+        pytest.param(Household(brokerage_start=2_000_000.0), id="large_brokerage"),
+        pytest.param(Household(your_ira=0.0, spouse_ira=0.0), id="zero_ira"),
+        pytest.param(
+            Household(
+                your_ira=5_000.0,
+                spouse_ira=5_000.0,
+                your_roth=0.0,
+                spouse_roth=0.0,
+            ),
+            id="low_ira",
+        ),
+        pytest.param(Household(filing_status="Single", your_age=61, spouse_age=61), id="single_filer"),
+        pytest.param(Household(your_age=76, spouse_age=74), id="ss_and_rmd_active"),
+        pytest.param(Household(your_age=45, spouse_age=43), id="pre_ss_young"),
+    ]
+
+    @staticmethod
+    def _planned_totals(plan: ConversionPlan) -> dict[int, float]:
+        """Per-year PLANNED conversion (not achieved) -- the strategy's own
+        claim for that year, independent of whatever the waterfall/MAGI cap
+        ultimately allows. Scoping the guarantee tests on this (rather than
+        the achieved amount) is deliberate: a year the strategy planned to
+        convert in but the cap shrank to 0 is EXACTLY the case this feature
+        must be verified against, and scoping on achieved>0 would silently
+        skip it."""
+        years = set(plan.your_conversions) | set(plan.spouse_conversions)
+        return {
+            y: plan.your_conversions.get(y, 0.0) + plan.spouse_conversions.get(y, 0.0)
+            for y in years
+        }
+
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    def test_irmaa_safe_magi_never_exceeds_ceiling(self, hh: Household) -> None:
+        plan = auto_fill_irmaa_safe(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "IRMAA-Safe", end_age=95)
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue  # strategy offered nothing this year -- not its claim
+            ceiling = irmaa_next_threshold(
+                0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+            )
+            if yr.magi_ceiling_converged:
+                assert yr.magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi {yr.magi:.2f} exceeds "
+                    f"IRMAA tier-1 ceiling {ceiling:.2f}"
+                )
+            else:
+                # Explicitly-flagged, accepted outcome (see class docstring):
+                # even a zero conversion could not fund this year's living
+                # expenses under the ceiling. Verify the flag is HONEST --
+                # it must correspond to a genuine breach, not a false alarm.
+                assert yr.magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but magi {yr.magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
+                )
+
+    # NAME LENGTH IS LOAD-BEARING: a `test_` prefix followed by EXACTLY 35
+    # characters matches TruffleHog's Lob API-key detector, which stamps any
+    # test_-prefixed candidate as Verified=true. CI sets fail-on-secrets: true,
+    # so such a name HARD-BLOCKS the pipeline on a false positive. This test was
+    # renamed for exactly that reason (see git history); do not rename it back to
+    # a 35-character suffix. Note the old name cannot even be quoted here -- the
+    # detector matches it inside a comment just as readily as in code.
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    def test_aca_safe_magi_never_exceeds_its_ceiling(self, hh: Household) -> None:
+        plan = auto_fill_aca(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "ACA-Safe", end_age=95)
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue  # strategy offered nothing this year -- not its claim
+            ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+            if yr.magi_ceiling_converged:
+                assert yr.aca_magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): aca_magi {yr.aca_magi:.2f} "
+                    f"exceeds the 400% FPL ceiling {ceiling:.2f}"
+                )
+            else:
+                # Explicitly-flagged, accepted outcome (see class docstring):
+                # even a zero conversion could not fund this year's living
+                # expenses under the ceiling. Verify the flag is HONEST --
+                # it must correspond to a genuine breach, not a false alarm.
+                assert yr.aca_magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
+                )
+
+    def test_22pct_fill_conversions_unchanged_by_magi_ceiling_work(self) -> None:
+        """Regression guard: a plan with magi_strategy=None (12/22/24-bracket
+        fill) never enters the MAGI-ceiling block added by this change, so
+        its per-year achieved conversion stays governed by _base_headroom
+        alone (the room_22 bracket ceiling), unaffected by the
+        zero_conv_outcome computation being reordered earlier in
+        _solve_waterfall_year. Total captured against this fix (branch
+        feat/ira-waterfall-activation) -- any future change that lets the
+        MAGI-ceiling block (or the reorder) leak into a magi_strategy=None
+        plan's cap will move this number.
+        """
+        hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
+        plan = auto_fill_22(hh)
+        assert plan.magi_strategy is None
+        result = run_scenario(hh, plan, "22%", end_age=95)
+        total_achieved = round(
+            sum(yr.your_conversion + yr.spouse_conversion for yr in result.years)
+        )
+        assert total_achieved > 0, "precondition: the 22%-fill plan must convert something"
+        assert total_achieved == approx(3_895_700, tol=1)
 
 
 class TestWaterfallMarginalBaselineC8Followup:

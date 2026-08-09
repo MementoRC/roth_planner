@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from engine.aca import aca_ceiling_magi
 from engine.ira import inherited_ira_drain
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
@@ -1102,6 +1103,40 @@ def _project_year(
     )
 
 
+def _strategy_magi_ceiling(strategy: str, filing_status: str, year: int, cpi: float) -> float:
+    """MAGI ceiling for a `ConversionPlan.magi_strategy`-governed plan.
+
+    Mirrors the SAME ceiling each auto_fill_* room_fn in
+    engine/scenario_autofill.py targets, so the waterfall-activation
+    conversion_cap enforces exactly what the plan claims:
+    - "irmaa_safe": the tier-1 IRMAA threshold, indexed to the PAYMENT year
+      (income year + 2 -- the 2-year lookback), matching auto_fill_irmaa_safe.
+    - "aca_safe": the 400%-FPL cliff, same-year (no lookback), matching
+      auto_fill_aca.
+
+    `irmaa_next_threshold(0.0, ...)` returns "room from $0 MAGI to the first
+    un-crossed tier" -- since the tier-1 threshold is always > 0, that IS the
+    tier-1 threshold itself, without reaching into IRMAA_TIERS_MFJ/SINGLE (or
+    its leading-underscore _index_irmaa_tiers helper) a second time.
+    """
+    if strategy == "irmaa_safe":
+        return irmaa_next_threshold(0.0, filing_status, year=year + 2, cpi=cpi)
+    if strategy == "aca_safe":
+        return aca_ceiling_magi(filing_status, year, cpi)
+    raise ValueError(f"unknown ConversionPlan.magi_strategy: {strategy!r}")
+
+
+def _magi_for_strategy(strategy: str, outcome: _YearOutcome) -> float:
+    """The MAGI figure `strategy`'s ceiling is measured against.
+
+    irmaa_safe uses yr.magi (IRMAA-basis MAGI); aca_safe uses yr.aca_magi
+    (adds back the non-taxable SS portion per IRC §36B(d)(2)(B)(iii) --
+    yr.magi alone would understate it, same identity auto_fill_aca's
+    _aca_room relies on).
+    """
+    return outcome.yr.magi if strategy == "irmaa_safe" else outcome.yr.aca_magi
+
+
 def _solve_waterfall_year(
     yr_idx: int,
     hh: Household,
@@ -1138,6 +1173,7 @@ def _solve_waterfall_year(
     only the FINAL re-run's drain is committed back into the caller's list.
     """
     planned_conversion = baseline.yr.your_conversion + baseline.yr.spouse_conversion
+    year = hh.base_year + yr_idx
 
     def _no_draw_outcome(conversion_cap: float | None) -> _YearOutcome:
         """This year's projection with NO waterfall draw, at a given conversion cap.
@@ -1291,7 +1327,11 @@ def _solve_waterfall_year(
         and the engine does NOT suppress that -- suppressing it is precisely the
         self-throttling excluded above. Any overshoot carries IRMAA (2-year
         lookback) and ACA (same-year, cliff) exposure that the UI should
-        surface. Measured on the default household it never actually binds
+        surface -- UNLESS `plan.magi_strategy` is set (irmaa_safe/aca_safe),
+        in which case the MAGI-ceiling block below applies a SECOND, separate
+        cap that DOES enforce the relevant threshold (that plan explicitly
+        claims the guarantee; a bare bracket-fill plan never did). Measured
+        on the default household it never actually binds
         (0 of 41 years for both a 22k/yr and a 90k/yr plan, peak taxable
         $157,364 against a $211,400 ceiling), because the IRA is exhausted by
         the draws before the ceiling is reached -- but a household with larger
@@ -1304,6 +1344,50 @@ def _solve_waterfall_year(
         outcome as the seed for the marginal-baseline waterfall solve below.
         """
         return zero_conv_nd.yr.room_22
+
+    def _probe_magi(conversion_cap: float, strategy: str) -> float:
+        """Achieved MAGI (per `strategy`) from a FULL solve at a candidate
+        conversion cap -- draw included, not just the conversion.
+
+        Used only by the MAGI-ceiling shrink-and-resolve loop below to verify
+        a candidate cap actually lands under the ceiling once the draw its
+        own conversion tax provokes is accounted for. Isolated (dict/list
+        copies), like every other speculative probe in this function -- only
+        the FINAL draw/outcome computed after the loop is committed to the
+        caller's shared magi_history/inherited_balances.
+        """
+        _nd = _no_draw_outcome(conversion_cap)
+        _pdraw = _solve_draw(_nd, conversion_cap)
+        _pr_your_roth = min(_pdraw.roth_draw, _nd.yr.your_roth_begin)
+        _pr_spouse_roth = _pdraw.roth_draw - _pr_your_roth
+        _probe = _project_year(
+            yr_idx,
+            hh,
+            plan,
+            cpi,
+            ytd,
+            net_inv_income,
+            surv,
+            your_ira,
+            spouse_ira,
+            your_roth,
+            spouse_roth,
+            prev_your_ira_begin,
+            prev_spouse_ira_begin,
+            brokerage,
+            rollover_done,
+            dict(magi_history),
+            list(inherited_balances),
+            brokerage_basis=brokerage_basis,
+            forced_brokerage_draw=_pdraw.brokerage_draw,
+            forced_your_ira_draw=_pdraw.your_ira_draw,
+            forced_spouse_ira_draw=_pdraw.spouse_ira_draw,
+            forced_your_roth_draw=_pr_your_roth,
+            forced_spouse_roth_draw=_pr_spouse_roth,
+            forced_early_withdrawal_penalty=_pdraw.early_withdrawal_penalty,
+            conversion_cap=conversion_cap,
+        )
+        return _magi_for_strategy(strategy, _probe)
 
     # === Draw/conversion solve ===
     # The dependency is ONE-WAY, so a SINGLE solve is exact. A conversion's tax
@@ -1319,6 +1403,7 @@ def _solve_waterfall_year(
     # tolerance test -- leaving the "did not stabilise" branch unreachable.
     # Removing it halves the solver calls in a conversion year and moves no
     # projected figure.
+    magi_ceiling_converged = True
     if planned_conversion <= 0.0:
         # Nothing to convert, so the two do not interact at all.
         conversion_cap: float | None = None
@@ -1340,10 +1425,15 @@ def _solve_waterfall_year(
         # conversion, no draw) is reused for both the headroom check AND as
         # the seed for this baseline solve -- one `_project_year` call, two
         # uses, same reuse discipline as the rest of this function.
+        #
+        # Computed BEFORE conversion_cap (moved up from its original position
+        # after the draw solve): neither zero_conv_draw nor zero_conv_outcome
+        # depends on conversion_cap (both are solved/projected at a HARD 0.0
+        # cap), so this reorder changes no value -- it only lets the MAGI-
+        # ceiling block below reuse zero_conv_outcome as its baseline MAGI
+        # instead of paying for a third, otherwise-identical _project_year
+        # call (waterfall-activation follow-up, see conversion_cap below).
         zero_conv_nd = _no_draw_outcome(0.0)
-        conversion_cap = min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
-        draw = _solve_draw(_no_draw_outcome(conversion_cap), conversion_cap)
-
         zero_conv_draw = _solve_draw(zero_conv_nd, 0.0)
         _zc_your_roth_draw = min(zero_conv_draw.roth_draw, zero_conv_nd.yr.your_roth_begin)
         _zc_spouse_roth_draw = zero_conv_draw.roth_draw - _zc_your_roth_draw
@@ -1382,6 +1472,66 @@ def _solve_waterfall_year(
         waterfall_baseline_magi = zero_conv_outcome.yr.magi
         waterfall_baseline_aca_magi = zero_conv_outcome.yr.aca_magi
         waterfall_baseline_taxable = zero_conv_outcome.yr.taxable_income
+
+        conversion_cap = min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
+
+        # === MAGI-ceiling enforcement (irmaa_safe / aca_safe plans ONLY) ===
+        # `plan.magi_strategy` (set by auto_fill_irmaa_safe/auto_fill_aca) is
+        # the strategy-identity channel: applying this to a 12/22/24-bracket
+        # plan (magi_strategy is None) would be a behaviour regression --
+        # those strategies never claimed an IRMAA/ACA guarantee and are
+        # correctly bounded by _base_headroom (the bracket ceiling) alone.
+        #
+        # THE DEFECT THIS CLOSES: conversion_cap above enforces only the
+        # bracket ceiling, never the IRMAA/ACA MAGI ceiling -- the guarantee
+        # was previously carried SOLELY by auto_fill_irmaa_safe/auto_fill_aca
+        # sizing the plan against a draw-blind base_magi, so once the
+        # waterfall activated a real, materially larger draw, the achieved
+        # yr.magi (base + conversion + draw) could sail past the ceiling the
+        # plan claimed to respect.
+        #
+        # AVOIDING CIRCULARITY: capping conversion against `ceiling -
+        # yr.magi` from the year's OWN outcome is circular (that MAGI already
+        # includes the conversion's own draw). Cap instead against the
+        # zero-conversion baseline (`zero_conv_outcome`, already solved
+        # above) -- its MAGI includes the draw needed to fund living expenses
+        # at ZERO conversion, which is NOT itself a function of the
+        # conversion being sized.
+        #
+        # A nonzero conversion still raises this year's tax and therefore the
+        # draw beyond the zero-conversion baseline, so the first-pass cap can
+        # undershoot the truth. Verify the ACHIEVED MAGI against a full solve
+        # at the candidate cap and shrink-and-resolve if it still breaches,
+        # bounded at 3 extra passes; the loop's `else` (no `break` reached)
+        # marks non-convergence EXPLICITLY via `magi_ceiling_converged`
+        # rather than silently leaving the household over the ceiling.
+        if plan.magi_strategy is not None:
+            _ceiling = _strategy_magi_ceiling(
+                plan.magi_strategy, zero_conv_nd.yr.filing_status, year, cpi
+            )
+            _baseline_magi = _magi_for_strategy(plan.magi_strategy, zero_conv_outcome)
+            conversion_cap = min(conversion_cap, max(0.0, _ceiling - _baseline_magi))
+            _magi_tol = 1.0
+            for _ in range(3):
+                _achieved = (
+                    _baseline_magi
+                    if conversion_cap <= 0.0
+                    else _probe_magi(conversion_cap, plan.magi_strategy)
+                )
+                if _achieved <= _ceiling + _magi_tol:
+                    break
+                if conversion_cap <= 0.0:
+                    # Already at the floor and still over the ceiling: even a
+                    # ZERO conversion cannot fund this year's living expenses
+                    # without crossing it. Nothing left to shrink -- accepted
+                    # per the approved design, but must be surfaced.
+                    magi_ceiling_converged = False
+                    break
+                conversion_cap = max(0.0, conversion_cap - (_achieved - _ceiling))
+            else:
+                magi_ceiling_converged = False
+
+        draw = _solve_draw(_no_draw_outcome(conversion_cap), conversion_cap)
 
     # solve_waterfall returns a single combined roth_draw; split it against
     # the two Roth balances (your first, spouse absorbs the remainder) since
@@ -1427,6 +1577,7 @@ def _solve_waterfall_year(
     outcome.yr.unfunded_need = draw.unfunded
     outcome.yr.waterfall_converged = draw.converged
     outcome.yr.waterfall_ira_leg_saturated = draw.ira_leg_saturated
+    outcome.yr.magi_ceiling_converged = magi_ceiling_converged
     inherited_balances[:] = final_inherited
     return outcome
 

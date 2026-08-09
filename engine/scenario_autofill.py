@@ -507,7 +507,9 @@ def auto_fill_irmaa_safe(
             room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
         )
 
-    return _auto_fill_core(hh, ytd, room_fn=_irmaa_room)
+    plan = _auto_fill_core(hh, ytd, room_fn=_irmaa_room)
+    plan.magi_strategy = "irmaa_safe"
+    return plan
 
 
 def auto_fill_24(
@@ -554,7 +556,9 @@ def auto_fill_aca(
         aca_magi = other_fixed + combined_ss
         return max(ceiling - aca_magi, 0.0)
 
-    return _auto_fill_core(hh, ytd, room_fn=_aca_room)
+    plan = _auto_fill_core(hh, ytd, room_fn=_aca_room)
+    plan.magi_strategy = "aca_safe"
+    return plan
 
 
 def add_bracket_fill_withdrawals(
@@ -599,6 +603,7 @@ def add_bracket_fill_withdrawals(
         spouse_conversions=dict(base_plan.spouse_conversions),
         qcds=dict(base_plan.qcds),
         spouse_qcds=dict(base_plan.spouse_qcds),
+        magi_strategy=base_plan.magi_strategy,
     )
 
     for yr in result.years:
