@@ -3,6 +3,7 @@
 import pytest
 
 from config.defaults import DEFAULTS
+from engine.aca import aca_subsidy_loss
 from engine.ira import (
     project_ira,
 )
@@ -11,6 +12,7 @@ from engine.scenario import (
     run_no_conversion,
     run_scenario,
 )
+from engine.tax import federal_tax
 from engine.scenario_autofill import (
     add_bracket_fill_withdrawals,
     auto_fill_12,
@@ -743,38 +745,278 @@ class TestConversionTaxIncludesSsTorpedo:
             f"torpedo minimum ({min_extra:.0f}); torpedo_delta={torpedo_delta:.0f}"
         )
 
-        # F12 specific: run the same household with SS zeroed out to get a pure
-        # no-torpedo baseline.  The SS household's conversion_tax must exceed the
-        # no-SS household's conversion_tax by at least the torpedo contribution.
-        hh_no_ss = Household(
-            your_age=68,
-            spouse_age=66,
-            base_year=2026,
-            your_ira=200_000.0,
-            spouse_ira=200_000.0,
-            your_roth=0.0,
-            spouse_roth=0.0,
-            growth_rate=0.05,
-            grants=[],
-            your_ss_fra=0.0,   # SS zeroed → no torpedo
-            spouse_ss_fra=0.0,
-            your_ss_start_age=68,
-            spouse_ss_start_age=66,
-            your_fra_age=67,
-            spouse_fra_age=67,
-            ss_cola=0.0,
-            cpi_assumption=0.0,
-            filing_status="MFJ",
-        )
-        result_no_ss = run_scenario(hh_no_ss, ConversionPlan(your_conversions={2026: conv}), end_age=70)
-        yr_no_ss = next(yr for yr in result_no_ss.years if yr.year == 2026)
 
-        assert yr_no_ss.taxable_ss_amt == pytest.approx(0.0), (
-            "precondition: no-SS household must have zero taxable SS"
+class TestZeroConversionTaxInvariant:
+    """Waterfall arg-mismatch regression: run_no_conversion must produce zero
+    conversion_tax in EVERY year, for ANY household shape.
+
+    engine/scenario.py's two compute_social_security calls (the actual-taxable-SS
+    call and the no-conversion baseline call used to derive conversion_ss_delta)
+    must pass the same forced_your_ira_draw/forced_spouse_ira_draw. If the
+    baseline call omits them (they silently default to 0.0 per
+    scenario_compute.py's signature), conversion_ss_delta captures the forced
+    IRA draw's effect on SS taxability instead of the conversion's — producing a
+    nonzero conversion_tax under a plan with ZERO conversions.
+    """
+
+    @pytest.mark.parametrize(
+        "hh",
+        [
+            pytest.param(Household(), id="default"),
+            pytest.param(Household(brokerage_start=2_000_000.0), id="large_brokerage"),
+            pytest.param(
+                Household(your_ira=0.0, spouse_ira=0.0),
+                id="zero_ira",
+            ),
+            pytest.param(
+                Household(
+                    your_ira=5_000.0,
+                    spouse_ira=5_000.0,
+                    your_roth=0.0,
+                    spouse_roth=0.0,
+                ),
+                id="low_ira",
+            ),
+            pytest.param(
+                Household(filing_status="Single", your_age=61, spouse_age=61),
+                id="single_filer",
+            ),
+            pytest.param(
+                Household(your_age=76, spouse_age=74),
+                id="ss_and_rmd_active",
+            ),
+            pytest.param(
+                Household(your_age=45, spouse_age=43),
+                id="pre_ss_young",
+            ),
+        ],
+    )
+    def test_no_conversion_tax_is_always_zero(self, hh: Household) -> None:
+        result = run_no_conversion(hh, end_age=95)
+        assert result.years, "precondition: scenario must project at least one year"
+        for yr in result.years:
+            assert yr.conversion_tax == 0.0, (
+                f"year {yr.year} (age {yr.your_age}): expected conversion_tax == 0.0 "
+                f"under run_no_conversion, got {yr.conversion_tax!r}"
+            )
+
+
+class TestWaterfallMarginalBaselineC8Followup:
+    """audit-0805 C8 follow-up: conversion_tax/aca_loss must be the MARGINAL
+    cost of THIS year's conversion, holding prior years' actual balances
+    fixed -- i.e. measured against a genuinely SOLVED zero-conversion
+    waterfall for the same year, not `combined_gross - conversions`. The
+    naive subtraction silently attributes a forced draw's own tax to the
+    conversion whenever the two coincide, because the draw's SIZE depends on
+    the conversion (draw -> tax -> larger draw).
+    """
+
+    def _household(
+        self,
+        *,
+        living_expenses: float,
+        brokerage_start: float,
+        your_aca_enrolled: bool = False,
+    ) -> Household:
+        return Household(
+            grants=[],
+            your_age=61,
+            spouse_age=61,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            filing_status="MFJ",
+            base_year=2026,
+            growth_rate=0.0,
+            brok_turnover=0.0,
+            expense_inflation=0.0,
+            brokerage_start=brokerage_start,
+            living_expenses=living_expenses,
+            your_aca_enrolled=your_aca_enrolled,
         )
-        # With SS torpedo, conversion_tax must be higher than without SS.
-        assert yr_ss.conversion_tax > yr_no_ss.conversion_tax, (
-            f"conversion_tax with SS torpedo ({yr_ss.conversion_tax:.0f}) must exceed "
-            f"no-SS baseline ({yr_no_ss.conversion_tax:.0f}); "
-            f"torpedo_delta={torpedo_delta:.0f} must be captured in conversion_tax"
+
+    def test_no_forced_draw_conversion_tax_and_aca_loss_unchanged(self) -> None:
+        """brokerage_start=$500,000 is large enough to fund the entire
+        living-expense + conversion-tax shortfall ($87,640) from brokerage
+        alone -- no forced IRA draw occurs this year. The subtraction-based
+        baseline and the newly-solved baseline must agree exactly.
+
+        Hand-derivation (mirrors tests/test_audit_0805_c8_expense_debit.py
+        ``TestConversionCarriesItsCost``, same fixture numbers): $100,000
+        conversion only, MFJ std ded $32,200 (age 61, no senior bonus) ->
+        taxable=$67,800 -> 10%/12% bracket walk = $7,640.00 federal tax.
+        Zero-conversion, zero-draw baseline has zero income -> $0.00 tax.
+        conversion_tax = 7,640.00 - 0.00 = 7,640.00 either way.
+        """
+        hh = self._household(
+            living_expenses=80_000.0, brokerage_start=500_000.0, your_aca_enrolled=True
+        )
+        plan = ConversionPlan(your_conversions={2026: 100_000.0})
+        result = run_scenario(hh, plan, "c8f-no-draw", end_age=62)
+        yr0 = result.years[0]
+
+        # Precondition: confirms this year truly has NO forced IRA draw, so
+        # the test actually exercises the "no draw" branch of the invariant.
+        assert yr0.forced_your_ira_draw == approx(0.0)
+        assert yr0.forced_spouse_ira_draw == approx(0.0)
+
+        assert yr0.conversion_tax == approx(7_640.0)
+
+        naive_base_aca_magi = yr0.aca_magi - yr0.your_conversion - yr0.spouse_conversion
+        naive_aca_loss = aca_subsidy_loss(
+            naive_base_aca_magi,
+            yr0.aca_magi,
+            hh.aca_benchmark_premium_annual,
+            hh.aca_enhanced_subsidies_active,
+            hh.filing_status,
+            year=yr0.year,
+            cpi=hh.cpi_assumption,
+        )
+        assert yr0.aca_loss == approx(naive_aca_loss)
+
+    def test_forced_draw_conversion_tax_exceeds_naive_subtraction(self) -> None:
+        """brokerage_start=$10,000 is too small to cover the $87,640
+        shortfall -- a real forced IRA draw coincides with the conversion.
+
+        DIRECTION ESTABLISHED: the naive `combined_gross - conversions`
+        baseline silently INCLUDES the with-conversion-sized forced draw's
+        own taxable income (bigger than the true zero-conversion draw would
+        be, since a smaller shortfall needs a smaller draw), so it
+        OVERSTATES the baseline tax and therefore UNDERSTATES
+        conversion_tax. The fix corrects this: conversion_tax must come out
+        LARGER than the naive figure.
+        """
+        hh = self._household(living_expenses=80_000.0, brokerage_start=10_000.0)
+        plan = ConversionPlan(your_conversions={2026: 100_000.0})
+        result = run_scenario(hh, plan, "c8f-draw", end_age=62)
+        yr0 = result.years[0]
+
+        # Precondition: confirms a real forced IRA draw occurred this year,
+        # so the test actually exercises the fixed-point (draw depends on
+        # conversion) branch the fix targets.
+        assert yr0.forced_your_ira_draw > 0.0
+
+        naive_base_gross = yr0.combined_gross - yr0.your_conversion - yr0.spouse_conversion
+        naive_base_taxable = max(naive_base_gross - yr0.total_deductions, 0)
+        naive_conversion_tax = federal_tax(
+            yr0.taxable_income, year=yr0.year, cpi=hh.cpi_assumption
+        ) - federal_tax(naive_base_taxable, year=yr0.year, cpi=hh.cpi_assumption)
+
+        assert yr0.conversion_tax != approx(naive_conversion_tax)
+        assert yr0.conversion_tax > naive_conversion_tax, (
+            f"corrected conversion_tax ({yr0.conversion_tax:.2f}) must exceed "
+            f"the naive combined_gross-conversions figure "
+            f"({naive_conversion_tax:.2f}) -- the naive baseline silently "
+            f"included the with-conversion-sized forced draw's own taxable "
+            f"income, overstating the baseline tax and understating "
+            f"conversion_tax"
+        )
+
+
+class TestLtcgStackingBaselineC8Consistency:
+    """audit-0805 C8 follow-up (base_taxable consistency): the LTCG
+    bracket-stacking baseline behind `conversion_ltcg_cost` (C2) is the SAME
+    "cost of THIS year's conversion" counterfactual as conversion_tax/aca_loss
+    -- it re-stacks the SAME realized-gains amount at the without-conversion
+    ordinary-income floor to isolate the conversion's own marginal bracket
+    impact. `base_taxable` (returned by compute_federal_tax and consumed at
+    scenario.py's C2 block) was left on the naive `combined_gross -
+    conversions` subtraction even after conversion_tax/aca_loss were fixed to
+    use a genuinely SOLVED zero-conversion waterfall baseline. Whenever a
+    forced draw coincides with the conversion, the naive subtraction retains
+    the draw at its ACTUAL (conversion-inflated) size instead of the smaller
+    size it would be in a true no-conversion year, overstating the baseline
+    ordinary-income floor and therefore UNDERSTATING conversion_ltcg_cost --
+    same bug, same direction, as the pre-fix conversion_tax defect above.
+    """
+
+    def _household(self, *, living_expenses: float, brokerage_start: float) -> Household:
+        from models.household import GrowthProfile
+
+        return Household(
+            grants=[],
+            your_age=61,
+            spouse_age=61,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            filing_status="MFJ",
+            base_year=2026,
+            growth_rate=0.0,
+            expense_inflation=0.0,
+            brokerage_start=brokerage_start,
+            brok_turnover=1.0,
+            # No forecast appreciation and zero cost basis: the ONLY LTCG
+            # source is the forced brokerage draw itself, realizing dollar-
+            # for-dollar (basis_fraction=0) -- deterministic and independent
+            # of the with/without-conversion split, since living_expenses is
+            # large enough that brokerage is fully drained in BOTH cases.
+            brokerage_growth=GrowthProfile(default_rate=0.0, yield_rate=0.0),
+            brokerage_start_basis=0.0,
+            living_expenses=living_expenses,
+        )
+
+    def test_forced_draw_ltcg_cost_exceeds_naive_subtraction(self) -> None:
+        """brokerage_start=$20,000 is fully drained funding the $80,000 living
+        expenses (too small on its own) -- realizing exactly $20,000 of LTCG
+        via the forced brokerage draw (zero cost basis, no forecast
+        appreciation). A $400,000 conversion request (bracket-ceiling-capped
+        by the engine to ~$243,600) forces a big enough IRA draw that the
+        NAIVE (subtraction-based) baseline's ordinary-income floor ($94,026,
+        RETAINING the conversion-inflated draw) sits just under the $98,900
+        MFJ 0%/15% LTCG threshold, while the TRUE (much smaller, genuinely
+        SOLVED no-conversion) baseline (~$31,100) sits well under it -- so
+        the two baselines disagree about how much of the $20,000 gain is
+        taxed at 15% instead of 0% ($2,269 vs. $0 of baseline gain tax).
+        """
+        hh = self._household(living_expenses=80_000.0, brokerage_start=20_000.0)
+        plan = ConversionPlan(your_conversions={2026: 400_000.0})
+        result = run_scenario(hh, plan, "c2-baseline-consistency", end_age=62)
+        yr0 = result.years[0]
+
+        # Preconditions: this year truly exercises all three ingredients.
+        assert yr0.forced_your_ira_draw > 0.0, "fixture must force an IRA draw"
+        assert yr0.brokerage_gain_tax > 0.0, "fixture must realize LTCG-eligible gains"
+        assert yr0.your_conversion > 200_000.0, (
+            f"expected the bracket-ceiling cap to still allow a large conversion, "
+            f"got {yr0.your_conversion:.2f}"
+        )
+
+        from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ
+        from engine.tax_indexing import index_tuple
+
+        thresholds = index_tuple(
+            LTCG_THRESHOLDS_MFJ, yr0.year, hh.cpi_assumption, round50=True
+        )
+        # ltcg_eligible is deterministic given this fixture (see _household
+        # docstring comment): the $20,000 forced brokerage draw, entirely
+        # gain (zero basis), independent of the conversion.
+        ltcg_eligible = 20_000.0
+
+        def stack_tax(start: float) -> float:
+            end = max(0.0, start) + ltcg_eligible
+            at_15 = max(0.0, min(end, thresholds[1]) - max(start, thresholds[0]))
+            at_20 = max(0.0, end - max(start, thresholds[1]))
+            return at_15 * LTCG_RATES_MFJ[1] + at_20 * LTCG_RATES_MFJ[2]
+
+        naive_base_gross = yr0.combined_gross - yr0.your_conversion - yr0.spouse_conversion
+        naive_base_taxable = max(naive_base_gross - yr0.total_deductions, 0)
+        naive_base_gain_tax = stack_tax(naive_base_taxable)
+        naive_conversion_ltcg_cost = max(0.0, yr0.brokerage_gain_tax - naive_base_gain_tax)
+
+        assert yr0.conversion_ltcg_cost != approx(naive_conversion_ltcg_cost), (
+            f"conversion_ltcg_cost ({yr0.conversion_ltcg_cost:.2f}) must differ from "
+            f"the naive combined_gross-conversions figure ({naive_conversion_ltcg_cost:.2f}) "
+            "-- fixture must actually straddle an LTCG threshold differently under "
+            "the two baselines for this test to be meaningful"
+        )
+        assert yr0.conversion_ltcg_cost > naive_conversion_ltcg_cost, (
+            f"corrected conversion_ltcg_cost ({yr0.conversion_ltcg_cost:.2f}) must "
+            f"exceed the naive combined_gross-conversions figure "
+            f"({naive_conversion_ltcg_cost:.2f}) -- the naive baseline silently "
+            "retained the with-conversion-sized forced draw's own ordinary income "
+            "in the LTCG-stacking floor, overstating the baseline gain tax and "
+            "understating conversion_ltcg_cost"
         )

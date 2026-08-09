@@ -509,6 +509,8 @@ def compute_federal_tax(
     year: int,
     cpi: float,
     conversion_ss_delta: float = 0.0,
+    waterfall_baseline_tax: float | None = None,
+    waterfall_baseline_taxable: float | None = None,
 ) -> tuple[float, float, float, float]:
     """Return (federal_tax_amt, marginal_bracket, conversion_tax, base_taxable).
 
@@ -523,6 +525,24 @@ def compute_federal_tax(
     increase the conversion caused (IRC §86); removing it from the baseline lets
     ``conversion_tax`` capture the SS "tax torpedo" and keeps ``base_taxable`` a
     true no-conversion figure for the LTCG bracket-stacking cost (C2).
+
+    ``waterfall_baseline_tax`` (audit-0805 C8 follow-up): when the caller has
+    already SOLVED a genuine zero-conversion waterfall for this year (a forced
+    IRA draw coincides with the conversion, so the draw's own size --  and tax
+    -- depends on the conversion), pass its federal_tax_amt here so
+    ``conversion_tax`` is computed as a true marginal delta instead of via the
+    subtraction below, which silently attributes the draw's own tax to the
+    conversion. Defaults to None (subtraction-based baseline, unchanged).
+
+    ``waterfall_baseline_taxable`` (audit-0805 C8 follow-up, base_taxable
+    consistency): the SAME solved baseline's own taxable_income. ``base_taxable``
+    feeds the LTCG bracket-stacking baseline (C2's conversion_ltcg_cost) --
+    the SAME "cost of this year's conversion" counterfactual as conversion_tax,
+    not an unrelated one -- so when a solved baseline is available,
+    ``base_taxable`` is overridden to it instead of the subtraction, which
+    would otherwise retain the conversion-inflated forced draw's full size and
+    understate conversion_ltcg_cost exactly like it understated conversion_tax
+    pre-fix. Defaults to None (subtraction-based ``base_taxable``, unchanged).
     """
     if current_filing_status == "Single":
         federal_tax_amt = federal_tax_single(taxable_income, year=year, cpi=cpi)
@@ -533,7 +553,11 @@ def compute_federal_tax(
 
     base_gross = combined_gross - your_conversion - spouse_conversion - conversion_ss_delta
     base_taxable = max(base_gross - base_total_deductions, 0)
-    if current_filing_status == "Single":
+    if waterfall_baseline_taxable is not None:
+        base_taxable = waterfall_baseline_taxable
+    if waterfall_baseline_tax is not None:
+        conversion_tax = federal_tax_amt - waterfall_baseline_tax
+    elif current_filing_status == "Single":
         conversion_tax = federal_tax_single(
             taxable_income, year=year, cpi=cpi
         ) - federal_tax_single(base_taxable, year=year, cpi=cpi)
@@ -566,12 +590,21 @@ def compute_aca(
     current_filing_status: str,
     year: int,
     cpi: float,
+    waterfall_baseline_aca_magi: float | None = None,
 ) -> tuple[float, float, float]:
     """Return (aca_magi, aca_loss, aca_clawback).
 
     The caller must apply aca_clawback to federal_tax_amt:
         yr.federal_tax_amt += aca_clawback
     That mutation stays in run_scenario().
+
+    ``waterfall_baseline_aca_magi`` (audit-0805 C8 follow-up): mirrors
+    ``compute_federal_tax``'s ``waterfall_baseline_tax`` -- when the caller has
+    already SOLVED a genuine zero-conversion waterfall for this year, pass its
+    aca_magi here so ``aca_loss`` measures the conversion's own marginal MAGI
+    impact instead of the ``aca_magi - conversions`` subtraction below, which
+    silently attributes a coincident forced draw's MAGI to the conversion.
+    Defaults to None (subtraction-based baseline, unchanged).
     """
     _your_on_aca = aca_applies(ya, your_aca_enrolled)
     _spouse_on_aca = aca_applies(sa, spouse_aca_enrolled)
@@ -590,7 +623,11 @@ def compute_aca(
         filing_status=current_filing_status,
     )
     if num_on_aca > 0:
-        base_aca_magi = aca_magi - your_conversion - spouse_conversion
+        base_aca_magi = (
+            waterfall_baseline_aca_magi
+            if waterfall_baseline_aca_magi is not None
+            else aca_magi - your_conversion - spouse_conversion
+        )
         aca_loss = aca_subsidy_loss(
             base_aca_magi,
             aca_magi,

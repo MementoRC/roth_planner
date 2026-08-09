@@ -89,6 +89,10 @@ def _project_year(
     forced_spouse_roth_draw: float = 0.0,
     forced_early_withdrawal_penalty: float = 0.0,
     conversion_cap: float | None = None,
+    waterfall_baseline_tax: float | None = None,
+    waterfall_baseline_magi: float | None = None,
+    waterfall_baseline_aca_magi: float | None = None,
+    waterfall_baseline_taxable: float | None = None,
 ) -> _YearOutcome:
     """Compute a single projection year — verbatim extraction of the run_scenario loop body.
 
@@ -100,6 +104,19 @@ def _project_year(
     `run_scenario` sizes them from `solve_waterfall()` whenever a year's
     baseline `income_needed > 0` (stage 3b activation), calling this function
     a second time with the solved draws.
+
+    `waterfall_baseline_tax` / `waterfall_baseline_magi` / `waterfall_baseline_aca_magi` /
+    `waterfall_baseline_taxable` (audit-0805 C8 follow-up): when a forced IRA
+    draw coincides with a conversion, `_solve_waterfall_year` SOLVES a genuine
+    zero-conversion waterfall for this same year (same prior-year balances)
+    and passes its federal_tax_amt/magi/aca_magi/taxable_income through here
+    so `conversion_tax`/`aca_loss`/the OBBBA senior-bonus baseline/the LTCG
+    bracket-stacking baseline (C2's conversion_ltcg_cost -- the SAME "cost of
+    this year's conversion" counterfactual) measure the conversion's OWN
+    marginal cost -- not also the tax of a forced draw whose size the
+    conversion itself inflated. All default to None, which preserves the
+    prior subtraction-based baseline (`combined_gross - conversions`) for
+    every year that does NOT go through the waterfall solver.
     """
     _rollover_done = rollover_done
 
@@ -596,6 +613,14 @@ def _project_year(
         qual_div_this_year,
         realized_gains,
         death_year=surv.death_year if surv is not None else None,
+        # Waterfall: this baseline call must pass the same forced IRA draws as the
+        # actual call above (which computed yr.taxable_ss_amt). Omitting them made
+        # conversion_ss_delta capture the forced draw's effect on SS taxability
+        # instead of the conversion's, producing a nonzero conversion_tax under
+        # plans with ZERO conversions (up to $3,889/yr in 7 of 41 years on the
+        # default household). See TestZeroConversionTaxInvariant.
+        forced_your_ira_draw=forced_your_ira_draw,
+        forced_spouse_ira_draw=forced_spouse_ira_draw,
     )
     conversion_ss_delta = yr.taxable_ss_amt - _taxable_ss_no_conv
 
@@ -605,7 +630,15 @@ def _project_year(
     # F12: also subtract conversion_ss_delta so the baseline MAGI reflects the
     # taxable-SS amount WITHOUT the conversion, capturing the full SS tax torpedo
     # in conversion_tax.
-    base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
+    # audit-0805 C8 follow-up: when the caller (a forced-draw year) has already
+    # SOLVED a zero-conversion waterfall for this year, its MAGI is a strictly
+    # better baseline than the subtraction below -- the subtraction assumes the
+    # draw is conversion-invariant, which is false whenever a draw exists.
+    base_magi = (
+        waterfall_baseline_magi
+        if waterfall_baseline_magi is not None
+        else yr.magi - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
+    )
     if survivor_active:
         base_total_deductions = deductions(
             ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
@@ -638,6 +671,8 @@ def _project_year(
         year,
         cpi,
         conversion_ss_delta,
+        waterfall_baseline_tax,
+        waterfall_baseline_taxable,
     )
 
     # Waterfall hook: forced early-withdrawal penalty (IRC §72(t)) adds to
@@ -719,6 +754,7 @@ def _project_year(
         current_filing_status,
         year,
         cpi,
+        waterfall_baseline_aca_magi,
     )
     # Positive clawback = additional tax; negative = additional refund.
     # DO NOT subtract from aca_loss — they model different things.
@@ -1127,7 +1163,16 @@ def _solve_waterfall_year(
             prev_spouse_ira_begin,
             brokerage,
             rollover_done,
-            magi_history,
+            # Isolation (audit-0805 C8 follow-up prerequisite): this is a
+            # SPECULATIVE probe -- unlike `inherited_balances` (already
+            # defensively copied below), `magi_history[year]` was previously
+            # passed bare and mutated unconditionally inside `_project_year`,
+            # so a probe whose conversion_cap != the real plan's could leak a
+            # wrong MAGI into the shared history for a later year's IRMAA
+            # 2-year lookback to read. Copy-then-discard: only the ONE real
+            # final `_project_year` call for this year (below) writes into
+            # the caller's actual `magi_history`.
+            dict(magi_history),
             list(inherited_balances),
             brokerage_basis=brokerage_basis,
             conversion_cap=conversion_cap,
@@ -1193,7 +1238,7 @@ def _solve_waterfall_year(
                 prev_spouse_ira_begin,
                 brokerage,
                 rollover_done,
-                magi_history,
+                dict(magi_history),  # isolation: speculative tax_of probe, see above
                 list(inherited_balances),
                 brokerage_basis=brokerage_basis,
                 forced_your_ira_draw=your_probe,
@@ -1212,7 +1257,7 @@ def _solve_waterfall_year(
         )
         return solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa)
 
-    def _base_headroom() -> float:
+    def _base_headroom(zero_conv_nd: _YearOutcome) -> float:
         """Ordinary-income room for a conversion, measured against BASE income only.
 
         Reuses the engine's own `compute_bracket_room` output (`yr.room_12` /
@@ -1253,10 +1298,12 @@ def _solve_waterfall_year(
         balances or more outside income can overshoot.
 
         `_no_draw_outcome(0.0)` is already exactly the projection required --
-        no forced draws, conversion suppressed -- so it is reused rather than
-        paying for a second identical `_project_year` call.
+        no forced draws, conversion suppressed -- so the caller passes it in
+        (`zero_conv_nd`) rather than this function paying for a second
+        identical `_project_year` call; the caller also reuses that same
+        outcome as the seed for the marginal-baseline waterfall solve below.
         """
-        return _no_draw_outcome(0.0).yr.room_22
+        return zero_conv_nd.yr.room_22
 
     # === Draw/conversion solve ===
     # The dependency is ONE-WAY, so a SINGLE solve is exact. A conversion's tax
@@ -1276,9 +1323,65 @@ def _solve_waterfall_year(
         # Nothing to convert, so the two do not interact at all.
         conversion_cap: float | None = None
         draw = _solve_draw(baseline, None)
+        waterfall_baseline_tax: float | None = None
+        waterfall_baseline_magi: float | None = None
+        waterfall_baseline_aca_magi: float | None = None
+        waterfall_baseline_taxable: float | None = None
     else:
-        conversion_cap = min(planned_conversion, max(0.0, _base_headroom()))
+        # audit-0805 C8 follow-up: also SOLVE a zero-conversion waterfall for
+        # THIS SAME year (same prior-year balances -- this is the marginal
+        # baseline, NOT run_no_conversion) so conversion_tax/aca_loss/the
+        # OBBBA senior-bonus baseline in the final _project_year call below
+        # measure only the conversion's own cost. A naive
+        # `combined_gross - conversions` subtraction silently attributed the
+        # forced draw's own tax to the conversion whenever a draw and a
+        # conversion coincide, because the draw's SIZE depends on the
+        # conversion (draw -> tax -> larger draw). `zero_conv_nd` (zero
+        # conversion, no draw) is reused for both the headroom check AND as
+        # the seed for this baseline solve -- one `_project_year` call, two
+        # uses, same reuse discipline as the rest of this function.
+        zero_conv_nd = _no_draw_outcome(0.0)
+        conversion_cap = min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
         draw = _solve_draw(_no_draw_outcome(conversion_cap), conversion_cap)
+
+        zero_conv_draw = _solve_draw(zero_conv_nd, 0.0)
+        _zc_your_roth_draw = min(zero_conv_draw.roth_draw, zero_conv_nd.yr.your_roth_begin)
+        _zc_spouse_roth_draw = zero_conv_draw.roth_draw - _zc_your_roth_draw
+        # Isolation: this is the SOLVED BASELINE, not the real outcome for
+        # this year -- it must not leak into the caller's shared
+        # magi_history/inherited_balances (see the isolation note on the
+        # speculative probes above). dict()/list() copies discard its writes.
+        zero_conv_outcome = _project_year(
+            yr_idx,
+            hh,
+            plan,
+            cpi,
+            ytd,
+            net_inv_income,
+            surv,
+            your_ira,
+            spouse_ira,
+            your_roth,
+            spouse_roth,
+            prev_your_ira_begin,
+            prev_spouse_ira_begin,
+            brokerage,
+            rollover_done,
+            dict(magi_history),
+            list(inherited_balances),
+            brokerage_basis=brokerage_basis,
+            forced_brokerage_draw=zero_conv_draw.brokerage_draw,
+            forced_your_ira_draw=zero_conv_draw.your_ira_draw,
+            forced_spouse_ira_draw=zero_conv_draw.spouse_ira_draw,
+            forced_your_roth_draw=_zc_your_roth_draw,
+            forced_spouse_roth_draw=_zc_spouse_roth_draw,
+            forced_early_withdrawal_penalty=zero_conv_draw.early_withdrawal_penalty,
+            conversion_cap=0.0,
+        )
+        waterfall_baseline_tax = zero_conv_outcome.yr.federal_tax_amt
+        waterfall_baseline_magi = zero_conv_outcome.yr.magi
+        waterfall_baseline_aca_magi = zero_conv_outcome.yr.aca_magi
+        waterfall_baseline_taxable = zero_conv_outcome.yr.taxable_income
 
     # solve_waterfall returns a single combined roth_draw; split it against
     # the two Roth balances (your first, spouse absorbs the remainder) since
@@ -1313,6 +1416,10 @@ def _solve_waterfall_year(
         forced_spouse_roth_draw=spouse_roth_draw,
         forced_early_withdrawal_penalty=draw.early_withdrawal_penalty,
         conversion_cap=conversion_cap,
+        waterfall_baseline_tax=waterfall_baseline_tax,
+        waterfall_baseline_magi=waterfall_baseline_magi,
+        waterfall_baseline_aca_magi=waterfall_baseline_aca_magi,
+        waterfall_baseline_taxable=waterfall_baseline_taxable,
     )
     # The solver's own residual/convergence flag is authoritative -- it
     # accounts for the brokerage + IRA + Roth allocation as a whole, which

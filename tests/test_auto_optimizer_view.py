@@ -57,8 +57,18 @@ def _click(at: AppTest, label: str) -> None:
     at.run()
 
 
+def _spreadable_app() -> AppTest:
+    """Build the spreadable-household AppTest with a generous timeout.
+
+    Running the optimizer (grid solve across ceilings) plus a rerun can
+    exceed Streamlit's 3s default under full-suite CPU contention; these
+    tests assert on behavior/state, not wall-clock, so give real headroom.
+    """
+    return AppTest.from_function(_render_spreadable_household, default_timeout=60)
+
+
 def test_run_optimizer_caches_result_and_renders_without_exception() -> None:
-    at = AppTest.from_function(_render_spreadable_household)
+    at = _spreadable_app()
     at.run()
     _click(at, "Run optimizer")
 
@@ -72,7 +82,7 @@ def test_run_optimizer_caches_result_and_renders_without_exception() -> None:
 
 
 def test_apply_conversions_writes_planner_session_keys() -> None:
-    at = AppTest.from_function(_render_spreadable_household)
+    at = _spreadable_app()
     at.run()
     _click(at, "Run optimizer")
     _click(at, "Apply conversions")
@@ -89,7 +99,7 @@ def test_apply_exercises_does_not_error(monkeypatch) -> None:
     monkeypatch.setattr(
         "views.auto_optimizer.save_exercise_schedule", lambda schedule: saved.append(schedule)
     )
-    at = AppTest.from_function(_render_spreadable_household)
+    at = _spreadable_app()
     at.run()
     _click(at, "Run optimizer")
     _click(at, "Apply exercises")
