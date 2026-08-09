@@ -12,13 +12,13 @@ from engine.scenario import (
     run_no_conversion,
     run_scenario,
 )
-from engine.tax import federal_tax
 from engine.scenario_autofill import (
     add_bracket_fill_withdrawals,
     auto_fill_12,
     auto_fill_22,
     auto_fill_irmaa_safe,
 )
+from engine.tax import federal_tax
 from models.household import Household, SurvivorScenario
 
 
