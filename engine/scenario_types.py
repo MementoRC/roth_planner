@@ -120,7 +120,26 @@ class YearResult:
     forced_your_roth_draw: float = 0.0
     forced_spouse_roth_draw: float = 0.0
     forced_early_withdrawal_penalty: float = 0.0
+    # False ONLY when the tax gross-up iteration failed to settle (it
+    # oscillated, or pinned against the IRA ceiling and still left the
+    # household short). It is NOT a resource-exhaustion signal: test
+    # `unfunded_need > 0` for that.
     waterfall_converged: bool = True
+    # The IRA leg hit its ceiling and the waterfall moved on to the Roth.
+    # Routine and informational -- true in every year funded partly from the
+    # Roth, which for a decumulating household is most late years. Kept
+    # separate from `waterfall_converged`, which previously conflated the two
+    # and made 17 fully-funded years report solver failure.
+    waterfall_ira_leg_saturated: bool = False
+    # True (default, and always true for non-magi-governed plans) unless a
+    # magi_strategy-governed plan (irmaa_safe/aca_safe) still breached its
+    # MAGI ceiling after the shrink-and-resolve loop in
+    # engine.scenario._solve_waterfall_year exhausted its iteration budget --
+    # i.e. even a zero conversion could not fund living expenses without
+    # crossing the ceiling. Explicit rather than silent per the accepted
+    # design: a large forced draw may shrink the allowed conversion toward
+    # zero, but the caller must be able to tell WHEN that happened.
+    magi_ceiling_converged: bool = True
 
     # Inherited IRA distributions (SECURE Act 10-year rule)
     your_inherited_distribution: float = 0.0
@@ -151,6 +170,16 @@ class ConversionPlan:
     spouse_extra_withdrawals: dict[int, float] = field(
         default_factory=dict
     )  # year -> voluntary excess (spouse IRA)
+    # Waterfall-activation MAGI-ceiling identity (IRA-withdrawal-waterfall
+    # follow-up): set by auto_fill_irmaa_safe/auto_fill_aca ("irmaa_safe" /
+    # "aca_safe") so engine.scenario's conversion_cap can enforce the SAME
+    # MAGI ceiling the plan targets, INCLUDING the forced IRA draw the
+    # waterfall adds -- without this identity, the bracket cap (room_22) is
+    # the only enforced ceiling and an IRMAA/ACA-safe plan can breach its own
+    # threshold once a draw coincides with the conversion. None (default,
+    # every 12%/22%/24%/custom plan) is a no-op: only the bracket cap
+    # applies, unchanged.
+    magi_strategy: str | None = None
 
 
 @dataclass

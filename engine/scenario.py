@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from engine.aca import aca_ceiling_magi
 from engine.ira import inherited_ira_drain
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
@@ -35,6 +36,12 @@ from engine.tax import (
 )
 from engine.tax_indexing import index_tuple as _index_tuple
 from engine.tax_indexing import index_value as _index_value
+from engine.withdrawal_waterfall import (
+    Accounts,
+    WaterfallDraw,
+    allocate_ira_draw,
+    solve_waterfall,
+)
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
 
@@ -83,6 +90,10 @@ def _project_year(
     forced_spouse_roth_draw: float = 0.0,
     forced_early_withdrawal_penalty: float = 0.0,
     conversion_cap: float | None = None,
+    waterfall_baseline_tax: float | None = None,
+    waterfall_baseline_magi: float | None = None,
+    waterfall_baseline_aca_magi: float | None = None,
+    waterfall_baseline_taxable: float | None = None,
 ) -> _YearOutcome:
     """Compute a single projection year — verbatim extraction of the run_scenario loop body.
 
@@ -90,8 +101,23 @@ def _project_year(
     they were when this code lived inline in the run_scenario loop.
 
     The `forced_*`/`conversion_cap` params are IRA-withdrawal-waterfall hooks
-    (stage 3a plumbing only -- see engine/withdrawal_waterfall.py). All default
-    to inert no-op values; stage 3b will size them from solve_waterfall().
+    (see engine/withdrawal_waterfall.py). All default to inert no-op values;
+    `run_scenario` sizes them from `solve_waterfall()` whenever a year's
+    baseline `income_needed > 0` (stage 3b activation), calling this function
+    a second time with the solved draws.
+
+    `waterfall_baseline_tax` / `waterfall_baseline_magi` / `waterfall_baseline_aca_magi` /
+    `waterfall_baseline_taxable` (audit-0805 C8 follow-up): when a forced IRA
+    draw coincides with a conversion, `_solve_waterfall_year` SOLVES a genuine
+    zero-conversion waterfall for this same year (same prior-year balances)
+    and passes its federal_tax_amt/magi/aca_magi/taxable_income through here
+    so `conversion_tax`/`aca_loss`/the OBBBA senior-bonus baseline/the LTCG
+    bracket-stacking baseline (C2's conversion_ltcg_cost -- the SAME "cost of
+    this year's conversion" counterfactual) measure the conversion's OWN
+    marginal cost -- not also the tax of a forced draw whose size the
+    conversion itself inflated. All default to None, which preserves the
+    prior subtraction-based baseline (`combined_gross - conversions`) for
+    every year that does NOT go through the waterfall solver.
     """
     _rollover_done = rollover_done
 
@@ -117,9 +143,9 @@ def _project_year(
     yr = YearResult(year=year, your_age=ya, spouse_age=sa, phase="")
     yr.filing_status = current_filing_status
 
-    # === Inert waterfall hooks: record the (default no-op) inputs for visibility ===
-    # Stage 3a plumbing only -- see engine/withdrawal_waterfall.py. yr.forced_brokerage_draw
-    # is set later, alongside the balance/basis effect it triggers.
+    # === Waterfall hooks: record the (default no-op) inputs for visibility ===
+    # See engine/withdrawal_waterfall.py. yr.forced_brokerage_draw is set
+    # later, alongside the balance/basis effect it triggers.
     yr.forced_your_ira_draw = forced_your_ira_draw
     yr.forced_spouse_ira_draw = forced_spouse_ira_draw
     yr.forced_your_roth_draw = forced_your_roth_draw
@@ -269,6 +295,31 @@ def _project_year(
             yr.your_conversion = 0.0
             yr.extra_withdrawal = 0.0
 
+    # === Waterfall hook: clamp forced IRA draws to the available balance ===
+    # Mirrors the extra_withdrawal clamp (:251-258) and the scenario-core-5
+    # conversion clamp below. Without this, a forced draw larger than the IRA
+    # holds records PHANTOM TAXABLE INCOME in combined_gross (:452-453) even
+    # though yr.your_ira_end floors at 0 (:963) — the floor HIDES the over-draw
+    # instead of preventing it, and the phantom tax then inflates the very
+    # shortfall the draw exists to cover, driving a larger draw next iteration.
+    # Mandatory withdrawals (RMD/QCD/extra_withdrawal) have priority.
+    forced_your_ira_draw = min(
+        forced_your_ira_draw,
+        max(your_ira - max(yr.your_rmd, yr.qcd) - yr.extra_withdrawal, 0.0),
+    )
+    forced_spouse_ira_draw = min(
+        forced_spouse_ira_draw,
+        max(spouse_ira - max(yr.spouse_rmd, yr.spouse_qcd) - yr.spouse_extra_withdrawal, 0.0),
+    )
+    # Record the POST-clamp draws, so YearResult reports what was actually
+    # withdrawn rather than what the solver asked for.
+    yr.forced_your_ira_draw = forced_your_ira_draw
+    yr.forced_spouse_ira_draw = forced_spouse_ira_draw
+    yr.forced_brokerage_draw = forced_brokerage_draw
+    yr.forced_your_roth_draw = forced_your_roth_draw
+    yr.forced_spouse_roth_draw = forced_spouse_roth_draw
+    yr.forced_early_withdrawal_penalty = forced_early_withdrawal_penalty
+
     # === scenario-core-5: clamp conversions to available IRA balance ===
     # A planned conversion can exceed the IRA balance when the IRA has been
     # largely depleted by prior-year growth/withdrawals.  Without this clamp,
@@ -277,19 +328,27 @@ def _project_year(
     # taxable income, and the Roth carry-forward by the excess phantom dollars.
     # Mandatory withdrawals (RMD/QCD/extra_withdrawal) have priority; the
     # conversion receives only what remains.
+    # The forced waterfall draw is also subtracted: it funds living expenses,
+    # so it outranks a discretionary conversion for the same dollars (and per
+    # the approved design the draw is sized FIRST, the conversion second).
     _your_avail_for_conv = max(
-        your_ira - max(yr.your_rmd, yr.qcd) - yr.extra_withdrawal, 0.0
+        your_ira - max(yr.your_rmd, yr.qcd) - yr.extra_withdrawal - forced_your_ira_draw, 0.0
     )
     yr.your_conversion = min(yr.your_conversion, _your_avail_for_conv)
     _spouse_avail_for_conv = max(
-        spouse_ira - max(yr.spouse_rmd, yr.spouse_qcd) - yr.spouse_extra_withdrawal, 0.0
+        spouse_ira
+        - max(yr.spouse_rmd, yr.spouse_qcd)
+        - yr.spouse_extra_withdrawal
+        - forced_spouse_ira_draw,
+        0.0,
     )
     yr.spouse_conversion = min(yr.spouse_conversion, _spouse_avail_for_conv)
 
-    # === Inert waterfall hook: conversion_cap ===
-    # Stage 3b will size this from solve_waterfall() to keep a forced IRA draw
-    # from being immediately re-converted. Applied AFTER the scenario-core-5
-    # balance clamp above. None (default) is a no-op.
+    # === Waterfall hook: conversion_cap ===
+    # Sized by run_scenario (from the planned pre-cap conversion minus this
+    # year's total forced IRA draw) so a forced IRA draw is not immediately
+    # re-converted. Applied AFTER the scenario-core-5 balance clamp above.
+    # None (default) is a no-op.
     if conversion_cap is not None:
         _total_conv = yr.your_conversion + yr.spouse_conversion
         if _total_conv > conversion_cap:
@@ -341,12 +400,19 @@ def _project_year(
         else brokerage * brok_appreciation_rate * hh.brok_turnover
     )
 
-    # === Inert waterfall hook: forced brokerage draw ===
-    # Stage 3b will size this from solve_waterfall(); at the default 0.0 this
+    # === Waterfall hook: forced brokerage draw ===
+    # Sized by run_scenario via solve_waterfall(); at the default 0.0 this
     # is a no-op. Draw realizes gain proportional to the current basis
     # fraction, folded into the SAME realized_gains the LTCG stack-walk below
     # consumes, and reduces both brokerage and its basis before this year's
     # appreciation/dividends are applied.
+    # `_brokerage_opening_balance` is captured BEFORE that reduction so
+    # yr.brokerage_balance (set later, from the reduced `brokerage`) can be
+    # overridden back to the TRUE begin-of-year amount -- its documented
+    # contract (scenario_types.YearResult.brokerage_balance) is "before...
+    # the living-expense debit is applied", and the forced draw IS that
+    # debit, just applied earlier in this function than the legacy one.
+    _brokerage_opening_balance = brokerage
     yr.forced_brokerage_draw = forced_brokerage_draw
     if forced_brokerage_draw > 0.0:
         _fbd_basis_fraction = (brokerage_basis / brokerage) if brokerage > 0.0 else 0.0
@@ -389,6 +455,14 @@ def _project_year(
         qual_div_this_year,
         realized_gains,
         death_year=surv.death_year if surv is not None else None,
+        # Waterfall: the forced IRA draws are ordinary distributions (IRC §408(d)(1)) and
+        # belong in the §86(b)(2) provisional-income base exactly like the sibling
+        # extra_withdrawal quantities passed above. Omitting them understated the taxable
+        # portion of SS wherever a draw and a benefit coincide (10 years on the default
+        # household, 26 on a large one). Invisible to the combined_gross-vs-magi gap check
+        # that caught the parallel MAGI omission, since taxable_ss_amt feeds both.
+        forced_your_ira_draw=forced_your_ira_draw,
+        forced_spouse_ira_draw=forced_spouse_ira_draw,
     )
 
     # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
@@ -400,6 +474,14 @@ def _project_year(
     # silently erased realized income exceeding the schedule.
     # QCD IS excluded from MAGI, so use taxable_rmd / spouse_taxable_rmd.
     # NOTE: realized_gains excluded here; folded into yr.magi in the MAGI ordering block below.
+    # Waterfall: the forced IRA draws are ordinary distributions (IRC §408(d)(1)) and belong
+    # in MAGI exactly like the sibling extra_withdrawal quantities two lines above. They were
+    # added to combined_gross below when the waterfall was wired in but not here, leaving
+    # magi short by the whole draw in 23 of 41 projected years — which silently zeroed
+    # IRMAA (via magi_history's 2-year lookback), NIIT and ACA for any household whose
+    # draw would have carried it across a threshold. The Roth leg (tax-free), the brokerage
+    # leg (its realized gain already reaches MAGI via realized_gains) and the §72(t) penalty
+    # (a tax, not income) are all correctly excluded.
     option_income_for_magi = option_income_bounded - _nqo_ytd
     yr.magi = compute_magi(
         option_income_for_magi,
@@ -415,6 +497,8 @@ def _project_year(
         qual_div_this_year,
         ord_div_this_year,
         ytd_year,
+        forced_your_ira_draw=forced_your_ira_draw,
+        forced_spouse_ira_draw=forced_spouse_ira_draw,
     )
 
     # === Brokerage realized gains added to MAGI ===
@@ -530,6 +614,14 @@ def _project_year(
         qual_div_this_year,
         realized_gains,
         death_year=surv.death_year if surv is not None else None,
+        # Waterfall: this baseline call must pass the same forced IRA draws as the
+        # actual call above (which computed yr.taxable_ss_amt). Omitting them made
+        # conversion_ss_delta capture the forced draw's effect on SS taxability
+        # instead of the conversion's, producing a nonzero conversion_tax under
+        # plans with ZERO conversions (up to $3,889/yr in 7 of 41 years on the
+        # default household). See TestZeroConversionTaxInvariant.
+        forced_your_ira_draw=forced_your_ira_draw,
+        forced_spouse_ira_draw=forced_spouse_ira_draw,
     )
     conversion_ss_delta = yr.taxable_ss_amt - _taxable_ss_no_conv
 
@@ -539,7 +631,15 @@ def _project_year(
     # F12: also subtract conversion_ss_delta so the baseline MAGI reflects the
     # taxable-SS amount WITHOUT the conversion, capturing the full SS tax torpedo
     # in conversion_tax.
-    base_magi = yr.magi - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
+    # audit-0805 C8 follow-up: when the caller (a forced-draw year) has already
+    # SOLVED a zero-conversion waterfall for this year, its MAGI is a strictly
+    # better baseline than the subtraction below -- the subtraction assumes the
+    # draw is conversion-invariant, which is false whenever a draw exists.
+    base_magi = (
+        waterfall_baseline_magi
+        if waterfall_baseline_magi is not None
+        else yr.magi - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
+    )
     if survivor_active:
         base_total_deductions = deductions(
             ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
@@ -572,10 +672,12 @@ def _project_year(
         year,
         cpi,
         conversion_ss_delta,
+        waterfall_baseline_tax,
+        waterfall_baseline_taxable,
     )
 
-    # Inert waterfall hook: forced early-withdrawal penalty (IRC §72(t)) adds
-    # to federal_tax_amt. Default 0.0 is a no-op.
+    # Waterfall hook: forced early-withdrawal penalty (IRC §72(t)) adds to
+    # federal_tax_amt. Default 0.0 is a no-op.
     yr.federal_tax_amt += forced_early_withdrawal_penalty
 
     # === IRMAA (2-year lookback) ===
@@ -653,6 +755,7 @@ def _project_year(
         current_filing_status,
         year,
         cpi,
+        waterfall_baseline_aca_magi,
     )
     # Positive clawback = additional tax; negative = additional refund.
     # DO NOT subtract from aca_loss — they model different things.
@@ -821,7 +924,10 @@ def _project_year(
     yr.excess_rmd = max(available_income - yr.living_expenses, 0)
 
     # Brokerage: accumulates excess, grows (appreciation), dividends reinvest, pays cap gains
-    yr.brokerage_balance = brokerage
+    # yr.brokerage_balance is the TRUE begin-of-year amount (see the capture
+    # above); growth/gain-tax/div/debit below all still key off the
+    # (possibly forced-draw-reduced) `brokerage` local, unaffected.
+    yr.brokerage_balance = _brokerage_opening_balance
     yr.brokerage_growth = brokerage * brok_appreciation_rate
     # realized_gains, the yr.magi fold, and magi_history[year] were computed earlier
     # (MAGI ordering block) so the phase-out and IRMAA fallback see the full MAGI.
@@ -888,18 +994,31 @@ def _project_year(
         + total_div  # dividends reinvested (taxable event already captured in income stacks)
         + yr.excess_rmd
     )
-    # Basis bookkeeping (audit-0805 C8 waterfall, stage 3a plumbing only): total_div
+    # Basis bookkeeping (IRA-withdrawal-waterfall, stage 3): total_div
     # (reinvested dividends) and yr.excess_rmd are CONTRIBUTIONS and add to basis;
     # yr.brokerage_growth is APPRECIATION and adds nothing. brokerage_gain_tax does
-    # not reduce basis here -- no existing field may consume basis yet (stage 3b).
+    # not reduce basis here.
     _brokerage_basis_before_debit = brokerage_basis + total_div + yr.excess_rmd
-    # DELIBERATELY OUT OF SCOPE: falling back to an IRA withdrawal when the
-    # brokerage cannot cover the shortfall. An IRA withdrawal is itself a
-    # taxable draw that would raise the need it's meant to cover -- a fixed
-    # point this engine does not (yet) solve. Surface the unfunded remainder
-    # instead of silently absorbing it (e.g. by letting brokerage go negative).
-    yr.unfunded_need = max(yr.income_needed - _brokerage_before_expense_debit, 0.0)
-    brokerage = max(_brokerage_before_expense_debit - yr.income_needed, 0.0)
+    # Stage 3b activation: when run_scenario has already solved the waterfall
+    # for this year (signalled by ANY forced draw being non-default), the
+    # shortfall has already been funded via forced_brokerage_draw (subtracted
+    # from the OPENING balance above, before this year's growth) plus the
+    # forced IRA/Roth draws (which never touch brokerage at all). Debiting
+    # yr.income_needed AGAIN here would fund the same shortfall twice -- once
+    # from brokerage pre-growth, once from this post-growth balance. Skip the
+    # second debit in that case; run_scenario overwrites yr.unfunded_need with
+    # the solver's own residual (WaterfallDraw.unfunded) immediately after the
+    # call returns.
+    _waterfall_active = (
+        forced_brokerage_draw > 0.0
+        or forced_your_ira_draw > 0.0
+        or forced_spouse_ira_draw > 0.0
+        or forced_your_roth_draw > 0.0
+        or forced_spouse_roth_draw > 0.0
+    )
+    _expense_debit_amount = 0.0 if _waterfall_active else yr.income_needed
+    yr.unfunded_need = max(_expense_debit_amount - _brokerage_before_expense_debit, 0.0)
+    brokerage = max(_brokerage_before_expense_debit - _expense_debit_amount, 0.0)
     # The expense debit reduces basis PROPORTIONALLY: on a reduction of D from
     # balance B, basis -= D * (basis / B); guard B <= 0 -> basis 0.
     if _brokerage_before_expense_debit <= 0:
@@ -921,8 +1040,8 @@ def _project_year(
     # QCD distributions leave the IRA: a QCD exceeding the RMD pulls an extra
     # income-excluded distribution (max(rmd, qcd)), shrinking future RMDs. The
     # excess goes to charity, so it is NOT reinvested (excess_rmd uses taxable_rmd).
-    # forced_your_ira_draw/forced_spouse_ira_draw: inert waterfall hooks (stage
-    # 3a plumbing); default 0.0 is a no-op.
+    # forced_your_ira_draw/forced_spouse_ira_draw: IRA-withdrawal-waterfall
+    # hooks, sized by run_scenario via solve_waterfall(); default 0.0 is a no-op.
     your_withdrawal = (
         yr.your_conversion + max(yr.your_rmd, yr.qcd) + yr.extra_withdrawal + forced_your_ira_draw
     )
@@ -939,8 +1058,8 @@ def _project_year(
     # === Roth end of year ===
     # Credit conversions (only) to Roth; grow tax-free.
     # rmd and extra_withdrawal are NOT Roth-eligible (they go to taxable accounts).
-    # forced_your_roth_draw/forced_spouse_roth_draw: inert waterfall hooks (tax-free,
-    # no income effect); default 0.0 is a no-op.
+    # forced_your_roth_draw/forced_spouse_roth_draw: IRA-withdrawal-waterfall
+    # hooks (tax-free, no income effect); default 0.0 is a no-op.
     yr.your_roth_end = max(
         0.0, (your_roth + yr.your_conversion) * (1 + hh.your_roth_rate(year)) - forced_your_roth_draw
     )
@@ -982,6 +1101,485 @@ def _project_year(
         ya=ya,
         sa=sa,
     )
+
+
+def _strategy_magi_ceiling(strategy: str, filing_status: str, year: int, cpi: float) -> float:
+    """MAGI ceiling for a `ConversionPlan.magi_strategy`-governed plan.
+
+    Mirrors the SAME ceiling each auto_fill_* room_fn in
+    engine/scenario_autofill.py targets, so the waterfall-activation
+    conversion_cap enforces exactly what the plan claims:
+    - "irmaa_safe": the tier-1 IRMAA threshold, indexed to the PAYMENT year
+      (income year + 2 -- the 2-year lookback), matching auto_fill_irmaa_safe.
+    - "aca_safe": the 400%-FPL cliff, same-year (no lookback), matching
+      auto_fill_aca.
+
+    `irmaa_next_threshold(0.0, ...)` returns "room from $0 MAGI to the first
+    un-crossed tier" -- since the tier-1 threshold is always > 0, that IS the
+    tier-1 threshold itself, without reaching into IRMAA_TIERS_MFJ/SINGLE (or
+    its leading-underscore _index_irmaa_tiers helper) a second time.
+    """
+    if strategy == "irmaa_safe":
+        return irmaa_next_threshold(0.0, filing_status, year=year + 2, cpi=cpi)
+    if strategy == "aca_safe":
+        return aca_ceiling_magi(filing_status, year, cpi)
+    raise ValueError(f"unknown ConversionPlan.magi_strategy: {strategy!r}")
+
+
+def _magi_for_strategy(strategy: str, outcome: _YearOutcome) -> float:
+    """The MAGI figure `strategy`'s ceiling is measured against.
+
+    irmaa_safe uses yr.magi (IRMAA-basis MAGI); aca_safe uses yr.aca_magi
+    (adds back the non-taxable SS portion per IRC §36B(d)(2)(B)(iii) --
+    yr.magi alone would understate it, same identity auto_fill_aca's
+    _aca_room relies on).
+    """
+    return outcome.yr.magi if strategy == "irmaa_safe" else outcome.yr.aca_magi
+
+
+def _solve_waterfall_year(
+    yr_idx: int,
+    hh: Household,
+    plan: ConversionPlan,
+    cpi: float,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    surv: SurvivorScenario | None,
+    your_ira: float,
+    spouse_ira: float,
+    your_roth: float,
+    spouse_roth: float,
+    prev_your_ira_begin: float,
+    prev_spouse_ira_begin: float,
+    brokerage: float,
+    brokerage_basis: float,
+    rollover_done: bool,
+    magi_history: dict[int, float],
+    inherited_balances: list[float],
+    baseline: _YearOutcome,
+) -> _YearOutcome:
+    """Solve the IRA-withdrawal waterfall for a shortfall year and re-run
+    `_project_year` once more with the solved draws (stage 3b activation).
+
+    `baseline` is the no-op-hooks outcome the caller already computed this
+    year (`baseline.yr.income_needed > 0`) -- reused here for its federal
+    tax, planned conversion, and begin-of-year account balances so there is
+    only ONE tax stack (`_project_year`), never a second one assembled from
+    the standalone compute_* helpers.
+
+    `inherited_balances` mutates cumulatively on every `_project_year` call
+    (SECURE Act 10-year drain), so every speculative call here (the `tax_of`
+    probes, run repeatedly by `solve_waterfall`) gets its own throwaway copy;
+    only the FINAL re-run's drain is committed back into the caller's list.
+    """
+    planned_conversion = baseline.yr.your_conversion + baseline.yr.spouse_conversion
+    year = hh.base_year + yr_idx
+
+    def _no_draw_outcome(conversion_cap: float | None) -> _YearOutcome:
+        """This year's projection with NO waterfall draw, at a given conversion cap.
+
+        `baseline` already IS that projection whenever the cap does not bind, so
+        it is reused rather than paying for an identical `_project_year` call.
+        """
+        if conversion_cap is None or conversion_cap >= planned_conversion:
+            return baseline
+        return _project_year(
+            yr_idx,
+            hh,
+            plan,
+            cpi,
+            ytd,
+            net_inv_income,
+            surv,
+            your_ira,
+            spouse_ira,
+            your_roth,
+            spouse_roth,
+            prev_your_ira_begin,
+            prev_spouse_ira_begin,
+            brokerage,
+            rollover_done,
+            # Isolation (audit-0805 C8 follow-up prerequisite): this is a
+            # SPECULATIVE probe -- unlike `inherited_balances` (already
+            # defensively copied below), `magi_history[year]` was previously
+            # passed bare and mutated unconditionally inside `_project_year`,
+            # so a probe whose conversion_cap != the real plan's could leak a
+            # wrong MAGI into the shared history for a later year's IRMAA
+            # 2-year lookback to read. Copy-then-discard: only the ONE real
+            # final `_project_year` call for this year (below) writes into
+            # the caller's actual `magi_history`.
+            dict(magi_history),
+            list(inherited_balances),
+            brokerage_basis=brokerage_basis,
+            conversion_cap=conversion_cap,
+        )
+
+    def _solve_draw(nd: _YearOutcome, conversion_cap: float | None) -> WaterfallDraw:
+        """Size the waterfall draw against `nd`'s shortfall and conversion."""
+        need = nd.yr.income_needed
+        nd_tax = nd.yr.federal_tax_amt
+        brok_begin = nd.yr.brokerage_balance
+        basis_fraction = brokerage_basis / brok_begin if brok_begin > 0 else 0.0
+        # Net the IRA ceilings for this year's MANDATORY claims on the same
+        # balance (RMD/QCD and extra_withdrawal). Offering the gross
+        # begin-of-year balance would hand the solver dollars that are already
+        # spoken for, so it allocates them twice and the draw is then silently
+        # truncated downstream -- leaving the need under-funded while the
+        # phantom income is still taxed. Conversions are deliberately NOT
+        # subtracted: per the approved design the draw is sized first and the
+        # conversion is capped against the leftover headroom afterwards.
+        _your_mandatory = max(nd.yr.your_rmd, nd.yr.qcd) + nd.yr.extra_withdrawal
+        _spouse_mandatory = (
+            max(nd.yr.spouse_rmd, nd.yr.spouse_qcd) + nd.yr.spouse_extra_withdrawal
+        )
+        _your_ira_available = max(nd.yr.your_ira_begin - _your_mandatory, 0.0)
+        _spouse_ira_available = max(nd.yr.spouse_ira_begin - _spouse_mandatory, 0.0)
+
+        def tax_of(extra_ordinary: float) -> float:
+            # Marginal federal tax ONLY -- the early-withdrawal penalty is added
+            # by solve_waterfall itself, outside this closure.
+            #
+            # The probe must SPLIT the speculative draw exactly the way the solver
+            # will really take it. Attributing the whole amount to "your" IRA
+            # under-reported the tax whenever that balance was the smaller one
+            # (the forced-draw clamp truncated the probe), and because swapping the
+            # two households swaps which IRA is smaller, the error was asymmetric
+            # and broke the me/spouse parity invariants. allocate_ira_draw is the
+            # solver's own ordering rule, reused rather than reimplemented.
+            #
+            # The probe also carries the SAME conversion_cap as `nd`, so the
+            # measured delta is the marginal tax of the DRAW alone and not a
+            # blend of the draw and a conversion that differs between the two
+            # projections being differenced.
+            your_probe, spouse_probe = allocate_ira_draw(
+                extra_ordinary,
+                _your_ira_available,
+                _spouse_ira_available,
+                nd.ya,
+                nd.sa,
+            )
+            speculative = _project_year(
+                yr_idx,
+                hh,
+                plan,
+                cpi,
+                ytd,
+                net_inv_income,
+                surv,
+                your_ira,
+                spouse_ira,
+                your_roth,
+                spouse_roth,
+                prev_your_ira_begin,
+                prev_spouse_ira_begin,
+                brokerage,
+                rollover_done,
+                dict(magi_history),  # isolation: speculative tax_of probe, see above
+                list(inherited_balances),
+                brokerage_basis=brokerage_basis,
+                forced_your_ira_draw=your_probe,
+                forced_spouse_ira_draw=spouse_probe,
+                conversion_cap=conversion_cap,
+            )
+            return speculative.yr.federal_tax_amt - nd_tax
+
+        accounts = Accounts(
+            brokerage=brok_begin,
+            brokerage_basis_fraction=basis_fraction,
+            your_ira=_your_ira_available,
+            spouse_ira=_spouse_ira_available,
+            your_roth=nd.yr.your_roth_begin,
+            spouse_roth=nd.yr.spouse_roth_begin,
+        )
+        return solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa)
+
+    def _base_headroom(zero_conv_nd: _YearOutcome) -> float:
+        """Ordinary-income room for a conversion, measured against BASE income only.
+
+        Reuses the engine's own `compute_bracket_room` output (`yr.room_12` /
+        `yr.room_22`, already computed inside `_project_year`) rather than
+        re-deriving bracket edges here -- a second copy of the bracket math is
+        the dual-writer trap this feature was designed to avoid.
+
+        CEILING USED: the top of the 22% bracket (`room_22`), always.
+
+        Selecting `room_12` while the marginal rate is still 12% was tried and
+        is WRONG: it makes a deliberate 22%-bracket-fill plan self-limiting,
+        because capping every conversion at the 12% ceiling keeps the marginal
+        rate at 12% forever. It inverts the tool's own invariant -- filling 22%
+        then leaves MORE IRA at 75 than filling 12%
+        (test_scenario_core.py::test_22pct_fill_reduces_ira_more).
+
+        THE DRAW IS DELIBERATELY EXCLUDED. Measuring the room as
+        `ceiling - (base + draw)` was tried and is ALSO wrong: it makes the
+        conversion self-throttling, because a larger planned conversion raises
+        this year's tax, which inflates the living-expense shortfall, which
+        drives a larger IRA draw, which eats the very headroom the conversion
+        is then capped against. The net effect is that a LARGER plan converts
+        LESS in absolute terms -- a 22k/yr plan left $7,546.86 of IRA at 75
+        while a 90k/yr plan left $510,465.89. Sizing against base income alone
+        breaks that feedback loop: the cap no longer sees the draw, so the plan
+        the user wrote is honoured.
+
+        CONSEQUENCE, deliberate and approved: the bracket ceiling is now a
+        TARGET FOR THE CONVERSION, not a hard cap on total ordinary income.
+        In a heavy-draw year, base + conversion + draw may EXCEED the 22% top,
+        and the engine does NOT suppress that -- suppressing it is precisely the
+        self-throttling excluded above. Any overshoot carries IRMAA (2-year
+        lookback) and ACA (same-year, cliff) exposure that the UI should
+        surface -- UNLESS `plan.magi_strategy` is set (irmaa_safe/aca_safe),
+        in which case the MAGI-ceiling block below applies a SECOND, separate
+        cap that DOES enforce the relevant threshold (that plan explicitly
+        claims the guarantee; a bare bracket-fill plan never did). Measured
+        on the default household it never actually binds
+        (0 of 41 years for both a 22k/yr and a 90k/yr plan, peak taxable
+        $157,364 against a $211,400 ceiling), because the IRA is exhausted by
+        the draws before the ceiling is reached -- but a household with larger
+        balances or more outside income can overshoot.
+
+        `_no_draw_outcome(0.0)` is already exactly the projection required --
+        no forced draws, conversion suppressed -- so the caller passes it in
+        (`zero_conv_nd`) rather than this function paying for a second
+        identical `_project_year` call; the caller also reuses that same
+        outcome as the seed for the marginal-baseline waterfall solve below.
+        """
+        return zero_conv_nd.yr.room_22
+
+    def _probe_magi(conversion_cap: float, strategy: str) -> float:
+        """Achieved MAGI (per `strategy`) from a FULL solve at a candidate
+        conversion cap -- draw included, not just the conversion.
+
+        Used only by the MAGI-ceiling shrink-and-resolve loop below to verify
+        a candidate cap actually lands under the ceiling once the draw its
+        own conversion tax provokes is accounted for. Isolated (dict/list
+        copies), like every other speculative probe in this function -- only
+        the FINAL draw/outcome computed after the loop is committed to the
+        caller's shared magi_history/inherited_balances.
+        """
+        _nd = _no_draw_outcome(conversion_cap)
+        _pdraw = _solve_draw(_nd, conversion_cap)
+        _pr_your_roth = min(_pdraw.roth_draw, _nd.yr.your_roth_begin)
+        _pr_spouse_roth = _pdraw.roth_draw - _pr_your_roth
+        _probe = _project_year(
+            yr_idx,
+            hh,
+            plan,
+            cpi,
+            ytd,
+            net_inv_income,
+            surv,
+            your_ira,
+            spouse_ira,
+            your_roth,
+            spouse_roth,
+            prev_your_ira_begin,
+            prev_spouse_ira_begin,
+            brokerage,
+            rollover_done,
+            dict(magi_history),
+            list(inherited_balances),
+            brokerage_basis=brokerage_basis,
+            forced_brokerage_draw=_pdraw.brokerage_draw,
+            forced_your_ira_draw=_pdraw.your_ira_draw,
+            forced_spouse_ira_draw=_pdraw.spouse_ira_draw,
+            forced_your_roth_draw=_pr_your_roth,
+            forced_spouse_roth_draw=_pr_spouse_roth,
+            forced_early_withdrawal_penalty=_pdraw.early_withdrawal_penalty,
+            conversion_cap=conversion_cap,
+        )
+        return _magi_for_strategy(strategy, _probe)
+
+    # === Draw/conversion solve ===
+    # The dependency is ONE-WAY, so a SINGLE solve is exact. A conversion's tax
+    # raises the living-expense shortfall the draw must itself fund, so the draw
+    # depends on the conversion -- but the cap is measured against BASE income
+    # only (see _base_headroom), so the draw does NOT feed back into it. Sizing
+    # the conversion first and the draw second therefore lands on the fixed
+    # point in one pass; there is nothing left to iterate.
+    #
+    # This previously ran a max-3-pass loop. That loop was dead: `conv_estimate`
+    # was computed once and never updated, so every pass called _solve_draw with
+    # identical arguments, reproduced pass 1 exactly, and always broke on the
+    # tolerance test -- leaving the "did not stabilise" branch unreachable.
+    # Removing it halves the solver calls in a conversion year and moves no
+    # projected figure.
+    magi_ceiling_converged = True
+    if planned_conversion <= 0.0:
+        # Nothing to convert, so the two do not interact at all.
+        conversion_cap: float | None = None
+        draw = _solve_draw(baseline, None)
+        waterfall_baseline_tax: float | None = None
+        waterfall_baseline_magi: float | None = None
+        waterfall_baseline_aca_magi: float | None = None
+        waterfall_baseline_taxable: float | None = None
+    else:
+        # audit-0805 C8 follow-up: also SOLVE a zero-conversion waterfall for
+        # THIS SAME year (same prior-year balances -- this is the marginal
+        # baseline, NOT run_no_conversion) so conversion_tax/aca_loss/the
+        # OBBBA senior-bonus baseline in the final _project_year call below
+        # measure only the conversion's own cost. A naive
+        # `combined_gross - conversions` subtraction silently attributed the
+        # forced draw's own tax to the conversion whenever a draw and a
+        # conversion coincide, because the draw's SIZE depends on the
+        # conversion (draw -> tax -> larger draw). `zero_conv_nd` (zero
+        # conversion, no draw) is reused for both the headroom check AND as
+        # the seed for this baseline solve -- one `_project_year` call, two
+        # uses, same reuse discipline as the rest of this function.
+        #
+        # Computed BEFORE conversion_cap (moved up from its original position
+        # after the draw solve): neither zero_conv_draw nor zero_conv_outcome
+        # depends on conversion_cap (both are solved/projected at a HARD 0.0
+        # cap), so this reorder changes no value -- it only lets the MAGI-
+        # ceiling block below reuse zero_conv_outcome as its baseline MAGI
+        # instead of paying for a third, otherwise-identical _project_year
+        # call (waterfall-activation follow-up, see conversion_cap below).
+        zero_conv_nd = _no_draw_outcome(0.0)
+        zero_conv_draw = _solve_draw(zero_conv_nd, 0.0)
+        _zc_your_roth_draw = min(zero_conv_draw.roth_draw, zero_conv_nd.yr.your_roth_begin)
+        _zc_spouse_roth_draw = zero_conv_draw.roth_draw - _zc_your_roth_draw
+        # Isolation: this is the SOLVED BASELINE, not the real outcome for
+        # this year -- it must not leak into the caller's shared
+        # magi_history/inherited_balances (see the isolation note on the
+        # speculative probes above). dict()/list() copies discard its writes.
+        zero_conv_outcome = _project_year(
+            yr_idx,
+            hh,
+            plan,
+            cpi,
+            ytd,
+            net_inv_income,
+            surv,
+            your_ira,
+            spouse_ira,
+            your_roth,
+            spouse_roth,
+            prev_your_ira_begin,
+            prev_spouse_ira_begin,
+            brokerage,
+            rollover_done,
+            dict(magi_history),
+            list(inherited_balances),
+            brokerage_basis=brokerage_basis,
+            forced_brokerage_draw=zero_conv_draw.brokerage_draw,
+            forced_your_ira_draw=zero_conv_draw.your_ira_draw,
+            forced_spouse_ira_draw=zero_conv_draw.spouse_ira_draw,
+            forced_your_roth_draw=_zc_your_roth_draw,
+            forced_spouse_roth_draw=_zc_spouse_roth_draw,
+            forced_early_withdrawal_penalty=zero_conv_draw.early_withdrawal_penalty,
+            conversion_cap=0.0,
+        )
+        waterfall_baseline_tax = zero_conv_outcome.yr.federal_tax_amt
+        waterfall_baseline_magi = zero_conv_outcome.yr.magi
+        waterfall_baseline_aca_magi = zero_conv_outcome.yr.aca_magi
+        waterfall_baseline_taxable = zero_conv_outcome.yr.taxable_income
+
+        conversion_cap = min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
+
+        # === MAGI-ceiling enforcement (irmaa_safe / aca_safe plans ONLY) ===
+        # `plan.magi_strategy` (set by auto_fill_irmaa_safe/auto_fill_aca) is
+        # the strategy-identity channel: applying this to a 12/22/24-bracket
+        # plan (magi_strategy is None) would be a behaviour regression --
+        # those strategies never claimed an IRMAA/ACA guarantee and are
+        # correctly bounded by _base_headroom (the bracket ceiling) alone.
+        #
+        # THE DEFECT THIS CLOSES: conversion_cap above enforces only the
+        # bracket ceiling, never the IRMAA/ACA MAGI ceiling -- the guarantee
+        # was previously carried SOLELY by auto_fill_irmaa_safe/auto_fill_aca
+        # sizing the plan against a draw-blind base_magi, so once the
+        # waterfall activated a real, materially larger draw, the achieved
+        # yr.magi (base + conversion + draw) could sail past the ceiling the
+        # plan claimed to respect.
+        #
+        # AVOIDING CIRCULARITY: capping conversion against `ceiling -
+        # yr.magi` from the year's OWN outcome is circular (that MAGI already
+        # includes the conversion's own draw). Cap instead against the
+        # zero-conversion baseline (`zero_conv_outcome`, already solved
+        # above) -- its MAGI includes the draw needed to fund living expenses
+        # at ZERO conversion, which is NOT itself a function of the
+        # conversion being sized.
+        #
+        # A nonzero conversion still raises this year's tax and therefore the
+        # draw beyond the zero-conversion baseline, so the first-pass cap can
+        # undershoot the truth. Verify the ACHIEVED MAGI against a full solve
+        # at the candidate cap and shrink-and-resolve if it still breaches,
+        # bounded at 3 extra passes; the loop's `else` (no `break` reached)
+        # marks non-convergence EXPLICITLY via `magi_ceiling_converged`
+        # rather than silently leaving the household over the ceiling.
+        if plan.magi_strategy is not None:
+            _ceiling = _strategy_magi_ceiling(
+                plan.magi_strategy, zero_conv_nd.yr.filing_status, year, cpi
+            )
+            _baseline_magi = _magi_for_strategy(plan.magi_strategy, zero_conv_outcome)
+            conversion_cap = min(conversion_cap, max(0.0, _ceiling - _baseline_magi))
+            _magi_tol = 1.0
+            for _ in range(3):
+                _achieved = (
+                    _baseline_magi
+                    if conversion_cap <= 0.0
+                    else _probe_magi(conversion_cap, plan.magi_strategy)
+                )
+                if _achieved <= _ceiling + _magi_tol:
+                    break
+                if conversion_cap <= 0.0:
+                    # Already at the floor and still over the ceiling: even a
+                    # ZERO conversion cannot fund this year's living expenses
+                    # without crossing it. Nothing left to shrink -- accepted
+                    # per the approved design, but must be surfaced.
+                    magi_ceiling_converged = False
+                    break
+                conversion_cap = max(0.0, conversion_cap - (_achieved - _ceiling))
+            else:
+                magi_ceiling_converged = False
+
+        draw = _solve_draw(_no_draw_outcome(conversion_cap), conversion_cap)
+
+    # solve_waterfall returns a single combined roth_draw; split it against
+    # the two Roth balances (your first, spouse absorbs the remainder) since
+    # _project_year needs the per-owner amounts to reduce each balance.
+    your_roth_draw = min(draw.roth_draw, baseline.yr.your_roth_begin)
+    spouse_roth_draw = draw.roth_draw - your_roth_draw
+
+    final_inherited = list(inherited_balances)
+    outcome = _project_year(
+        yr_idx,
+        hh,
+        plan,
+        cpi,
+        ytd,
+        net_inv_income,
+        surv,
+        your_ira,
+        spouse_ira,
+        your_roth,
+        spouse_roth,
+        prev_your_ira_begin,
+        prev_spouse_ira_begin,
+        brokerage,
+        rollover_done,
+        magi_history,
+        final_inherited,
+        brokerage_basis=brokerage_basis,
+        forced_brokerage_draw=draw.brokerage_draw,
+        forced_your_ira_draw=draw.your_ira_draw,
+        forced_spouse_ira_draw=draw.spouse_ira_draw,
+        forced_your_roth_draw=your_roth_draw,
+        forced_spouse_roth_draw=spouse_roth_draw,
+        forced_early_withdrawal_penalty=draw.early_withdrawal_penalty,
+        conversion_cap=conversion_cap,
+        waterfall_baseline_tax=waterfall_baseline_tax,
+        waterfall_baseline_magi=waterfall_baseline_magi,
+        waterfall_baseline_aca_magi=waterfall_baseline_aca_magi,
+        waterfall_baseline_taxable=waterfall_baseline_taxable,
+    )
+    # The solver's own residual/convergence flag is authoritative -- it
+    # accounts for the brokerage + IRA + Roth allocation as a whole, which
+    # _project_year (funding one account at a time) cannot re-derive.
+    outcome.yr.unfunded_need = draw.unfunded
+    outcome.yr.waterfall_converged = draw.converged
+    outcome.yr.waterfall_ira_leg_saturated = draw.ira_leg_saturated
+    outcome.yr.magi_ceiling_converged = magi_ceiling_converged
+    inherited_balances[:] = final_inherited
+    return outcome
 
 
 def run_scenario(
@@ -1037,6 +1635,12 @@ def run_scenario(
     total_years = end_age - hh.your_age + 1
 
     for yr_idx in range(total_years):
+        # IRA-withdrawal-waterfall (stage 3b): baseline call with every hook
+        # at its inert default. inherited_balances mutates cumulatively per
+        # call (SECURE Act drain), so the baseline gets its own copy -- it is
+        # only committed to the real list if it turns out to BE this year's
+        # final outcome (income_needed <= 0, no solver call needed).
+        _inherited_baseline = list(inherited_balances)
         outcome = _project_year(
             yr_idx,
             hh,
@@ -1054,9 +1658,33 @@ def run_scenario(
             brokerage,
             _rollover_done,
             magi_history,
-            inherited_balances,
+            _inherited_baseline,
             brokerage_basis=brokerage_basis,
         )
+        if outcome.yr.income_needed > 0:
+            outcome = _solve_waterfall_year(
+                yr_idx,
+                hh,
+                plan,
+                cpi,
+                ytd,
+                net_inv_income,
+                surv,
+                your_ira,
+                spouse_ira,
+                your_roth,
+                spouse_roth,
+                prev_your_ira_begin,
+                prev_spouse_ira_begin,
+                brokerage,
+                brokerage_basis,
+                _rollover_done,
+                magi_history,
+                inherited_balances,
+                outcome,
+            )
+        else:
+            inherited_balances[:] = _inherited_baseline
         yr = outcome.yr
         your_ira = outcome.your_ira
         spouse_ira = outcome.spouse_ira

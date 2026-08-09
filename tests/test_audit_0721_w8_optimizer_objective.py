@@ -77,6 +77,7 @@ def _make_household() -> Household:
         your_ira=1_000_000.0,
         spouse_ira=1_000_000.0,
         grants=[grant],
+        living_expenses=0.0,
     )
 
 

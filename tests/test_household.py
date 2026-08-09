@@ -425,8 +425,26 @@ class TestInheritedIRA:
             owner="you",
             growth_rate=0.0,  # no growth → deterministic drain amounts
         )
-        hh_with = self._base_hh(base_year=self.BASE_YEAR, inherited_iras=[iira])
-        hh_without = self._base_hh(base_year=self.BASE_YEAR)
+        # Fund each year's federal-tax cost from an inert, basis-matched
+        # brokerage reserve (brok_turnover=0.0 so no gain is ever realized)
+        # instead of forcing an IRA draw -- otherwise the IRA-withdrawal
+        # waterfall's fixed point (draw -> tax -> larger draw) inflates MAGI
+        # beyond the inherited-IRA distribution itself, confounding the
+        # 1:1 distribution->MAGI comparison below. Applied symmetrically to
+        # both scenarios.
+        hh_with = self._base_hh(
+            base_year=self.BASE_YEAR,
+            inherited_iras=[iira],
+            living_expenses=0.0,
+            brokerage_start=500_000.0,
+            brok_turnover=0.0,
+        )
+        hh_without = self._base_hh(
+            base_year=self.BASE_YEAR,
+            living_expenses=0.0,
+            brokerage_start=500_000.0,
+            brok_turnover=0.0,
+        )
         plan = ConversionPlan()
         r_with = run_scenario(hh_with, plan)
         r_without = run_scenario(hh_without, plan)

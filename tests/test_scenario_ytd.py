@@ -305,7 +305,7 @@ class TestScenarioWithYTD:
         """Ordinary dividends in YTD snapshot must stack into combined_gross (ordinary income)."""
         from models.ytd_income import YTDSnapshot
 
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         ytd_no_div = YTDSnapshot(tax_year=2026, wages_ytd=50_000)
         ytd_with_div = YTDSnapshot(tax_year=2026, wages_ytd=50_000, ordinary_dividends_ytd=4_000)
         plan = ConversionPlan()
@@ -376,7 +376,7 @@ class TestScenarioWithYTD:
         """nec_income_ytd (1099-NEC) must appear in base-year MAGI."""
         from models.ytd_income import YTDSnapshot
 
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         nec = 28_000
         ytd_with = YTDSnapshot(tax_year=2026, nec_income_ytd=nec)
         ytd_none = YTDSnapshot(tax_year=2026)
@@ -392,7 +392,7 @@ class TestScenarioWithYTD:
         in base-year MAGI."""
         from models.ytd_income import YTDSnapshot
 
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         distrib = 42_000
         ytd_with = YTDSnapshot(tax_year=2026, ira_distributions_ytd=distrib)
         ytd_none = YTDSnapshot(tax_year=2026)
@@ -824,6 +824,7 @@ class TestTaxExemptInterestSSProvisional:
             your_ss_start_age=61,  # active in base year
             spouse_ss_fra=0.0,
             grants=[],
+            living_expenses=0.0,
         )
         ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
         ytd_with_muni = YTDSnapshot(

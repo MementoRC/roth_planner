@@ -116,7 +116,10 @@ class TestC29ComparatorViewPassesYtd:
         with patch.object(
             comparator_mod, "build_scenario", wraps=real_build_scenario
         ) as mock_build:
-            at = AppTest.from_function(_render_comparator_with_ytd)
+            # default_timeout=60: this test measures build_scenario call args,
+            # not wall-clock; Streamlit's 3s default trips under full-suite
+            # CPU contention and is not a behavioral signal.
+            at = AppTest.from_function(_render_comparator_with_ytd, default_timeout=60)
             at.run()
 
         assert not at.exception
