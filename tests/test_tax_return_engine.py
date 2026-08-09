@@ -44,6 +44,15 @@ class TestForm8606NotModeled:
             spouse_ira=0.0,
             your_ss_start_age=70,
             spouse_ss_start_age=70,
+            living_expenses=0.0,
+            # Fund the conversion's own federal-tax cost from an inert,
+            # basis-matched brokerage reserve (brok_turnover=0.0 so no gain
+            # is ever realized) instead of forcing an IRA draw -- otherwise
+            # the IRA-withdrawal waterfall's fixed point (draw -> tax ->
+            # larger draw) inflates taxable_income beyond the conversion
+            # amount, confounding this test's isolated assertion.
+            brokerage_start=500_000.0,
+            brok_turnover=0.0,
         )
         conversion_amount = 50_000.0
         plan = ConversionPlan(your_conversions={hh.base_year: conversion_amount})

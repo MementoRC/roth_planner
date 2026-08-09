@@ -475,7 +475,7 @@ class TestBrokerageStart:
         """
         start = 500_000.0
         rate = 0.07
-        hh = self._hh(brokerage_start=start, growth_rate=rate)
+        hh = self._hh(brokerage_start=start, growth_rate=rate, living_expenses=0.0)
         plan = ConversionPlan()
         result = run_scenario(hh, plan, end_age=hh.your_age)
         yr0 = result.years[0]
@@ -495,8 +495,8 @@ class TestBrokerageStart:
         """BEHAVIORAL: brokerage_start delta drives a matching MAGI delta via realized gains."""
         start = 200_000.0
         rate = 0.07
-        hh_zero = self._hh(brokerage_start=0.0, growth_rate=rate)
-        hh_with = self._hh(brokerage_start=start, growth_rate=rate)
+        hh_zero = self._hh(brokerage_start=0.0, growth_rate=rate, living_expenses=0.0)
+        hh_with = self._hh(brokerage_start=start, growth_rate=rate, living_expenses=0.0)
         plan = ConversionPlan()
 
         yr_zero = run_scenario(hh_zero, plan, end_age=hh_zero.your_age).years[0]

@@ -84,7 +84,7 @@ class TestReviewRegressions:
         """scenario-math-1: interest_ytd must flow into base-year ordinary income."""
         from models.ytd_income import YTDSnapshot
 
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         plan = ConversionPlan()
         ytd_zero = YTDSnapshot(tax_year=2026, interest_ytd=0.0)
         ytd_int = YTDSnapshot(tax_year=2026, interest_ytd=50_000.0)

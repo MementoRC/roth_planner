@@ -179,7 +179,9 @@ class TestRmdYearBaseIncomeParity:
     identical undiminished balance."""
 
     def test_rmd_year_matches_oracle(self) -> None:
-        hh = _no_ss_no_option_household(your_ira=1_700_000.0, spouse_ira=1_700_000.0)
+        hh = _no_ss_no_option_household(
+            your_ira=1_700_000.0, spouse_ira=1_700_000.0, living_expenses=0.0
+        )
         assert hh.your_rmd_start_age == 75  # sanity: post-1959 cohort default
 
         rmd_year = hh.base_year + (hh.your_rmd_start_age - hh.your_age)  # first RMD year
@@ -488,6 +490,7 @@ class TestBaseYearNqoExerciseMagiParity:
             your_ss_fra=0.0,
             spouse_ss_fra=0.0,
             filing_status="MFJ",
+            living_expenses=0.0,
         )
         # Exercise the first TXN grant's full block in the base year so its
         # spread lands in option_income(base_year).

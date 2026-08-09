@@ -28,7 +28,7 @@ def approx(expected, tol=1.0):
 
 class TestScenarios:
     def test_no_conversion_ira_at_75(self):
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
         years_to_75 = 75 - DEFAULTS["your_age"]
@@ -36,7 +36,7 @@ class TestScenarios:
         assert yr75.your_ira_begin == approx(expected_ira, tol=500)
 
     def test_no_conversion_rmd_at_75(self):
-        hh = Household()
+        hh = Household(living_expenses=0.0)
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
         years_to_75 = 75 - DEFAULTS["your_age"]
@@ -292,6 +292,7 @@ class TestRothBalanceTracking:
         growth_rate: float = 0.07,
         your_age: int = 55,
         spouse_age: int = 53,
+        living_expenses: float = 60_000.0,
     ) -> Household:
         """Minimal household with no option grants and predictable growth."""
         return Household(
@@ -307,6 +308,7 @@ class TestRothBalanceTracking:
             # No SS before 70 for cleaner arithmetic in early years
             your_ss_fra=0.0,
             spouse_ss_fra=0.0,
+            living_expenses=living_expenses,
         )
 
     # ------------------------------------------------------------------
@@ -353,6 +355,7 @@ class TestRothBalanceTracking:
             your_ira=1_000_000.0,
             your_age=74,
             spouse_age=72,
+            living_expenses=0.0,
         )
         # No conversions anywhere in the plan — only RMDs will fire at 75
         plan = ConversionPlan()

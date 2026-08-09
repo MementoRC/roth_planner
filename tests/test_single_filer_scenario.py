@@ -98,7 +98,7 @@ class TestComputeBracketRoomFilingStatus:
 
 class TestRunScenarioSingleNonSurvivor:
     def test_single_lower_deduction_higher_tax_than_mfj(self) -> None:
-        plan = ConversionPlan(your_conversions={2026: 200_000.0})
+        plan = ConversionPlan(your_conversions={2026: 60_000.0})
         single = run_scenario(_single_household(), plan, "single", end_age=70)
         mfj = run_scenario(_mfj_household(), plan, "mfj", end_age=70)
         y_s = single.years[0]

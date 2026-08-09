@@ -80,7 +80,15 @@ class TestScenarioNiitMagiOmitsManualNII:
         below the $250K MFJ threshold -- so niit() short-circuits to 0.0
         regardless of net_investment_income.
         """
-        hh = _bare_mfj_household()
+        # Fund the conversion's own federal-tax (+NIIT) cost from an inert,
+        # basis-matched brokerage reserve (brok_turnover=0.0 so no gain is
+        # ever realized) instead of forcing an IRA draw -- otherwise the
+        # IRA-withdrawal waterfall's fixed point (draw -> tax -> larger draw)
+        # inflates magi beyond the conversion amount, confounding this test's
+        # isolated assertion.
+        hh = _bare_mfj_household(
+            living_expenses=0.0, brokerage_start=500_000.0, brok_turnover=0.0
+        )
         plan = ConversionPlan(your_conversions={2026: 240_000.0})
         result = run_scenario(hh, plan, "c10-scenario", end_age=61, net_inv_income=20_000.0)
         yr = result.years[0]

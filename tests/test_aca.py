@@ -131,6 +131,7 @@ class TestACA:
             your_ss_start_age=61,  # claim now so SS flows in the base year
             spouse_ss_start_age=70,
             aca_enhanced_subsidies_active=False,
+            living_expenses=0.0,
         )
         # Base SS → no-conversion MAGI ~148% FPL (in-band, subsidy(base) > 0).
         # A 60k conversion pushes new MAGI just above the 400% FPL cliff (~91K):
@@ -185,6 +186,7 @@ class TestACAMedicareSplit:
             txn_price_late=0.0,
             your_ss_start_age=70,
             spouse_ss_start_age=61,  # spouse claims now so SS flows in the base year
+            living_expenses=0.0,
         )
 
     def test_solo_aca_benchmark_halved_vs_couple(self):
