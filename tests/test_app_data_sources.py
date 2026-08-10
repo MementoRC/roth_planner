@@ -26,23 +26,34 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+import engine.data_sources.paths as _paths_mod
+import engine.portfolio_sync as _portfolio_sync_pkg
 from config.defaults import DEFAULTS
 from engine.data_sources.committed import load_committed
-from engine.portfolio_sync import _CACHE_PATH as _PORTFOLIO_CACHE_PATH
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, save_snapshot
 from models.sourced import Provenance, Source, SourcedValue
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 REPO_ROOT = APP_PATH.parent
 
-# Mirrors tests/conftest.py's _COMMAND_CENTER_CACHE_FILES — several tests
-# below need an explicit mid-test pre-clean (e.g. before writing a seeded
-# committed baseline), in addition to the shared fixture's before/after clean.
-_NEW_CACHE_FILES = [
-    REPO_ROOT / ".candidate_store.json",
-    REPO_ROOT / ".trust_choices.json",
-    REPO_ROOT / ".committed_household.json",
-]
+
+def _new_cache_files() -> list[Path]:
+    """The 3 Setup/Command Center cache paths, resolved at CALL time --
+    mirrors ``tests/conftest.py``'s ``_command_center_cache_files()``.
+
+    audit-0809 F18: this used to be a module-level ``_NEW_CACHE_FILES`` list
+    built from ``REPO_ROOT`` at THIS MODULE'S import time, a third instance
+    of the same class of defect as ``tests/test_scan_ingest.py``'s
+    module-level ``CANDIDATE_STORE_PATH`` import and
+    ``tests/conftest.py``'s old ``_COMMAND_CENTER_CACHE_FILES`` list --
+    frozen before any per-test redirect, so the explicit mid-test pre-cleans
+    below were deleting the developer's REAL repo-root cache files.
+    """
+    return [
+        _paths_mod.CANDIDATE_STORE_PATH,
+        _paths_mod.TRUST_CHOICES_PATH,
+        _paths_mod.COMMITTED_PATH,
+    ]
 
 
 def test_setup_page_renders_without_exception(clean_command_center_caches) -> None:
@@ -83,7 +94,7 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
     """
     from engine.data_sources.paths import COMMITTED_PATH
 
-    for p in _NEW_CACHE_FILES:
+    for p in _new_cache_files():
         p.unlink(missing_ok=True)
 
     at = AppTest.from_file(str(APP_PATH))
@@ -112,7 +123,7 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     """
     from engine.data_sources.paths import COMMITTED_PATH
 
-    for p in _NEW_CACHE_FILES:
+    for p in _new_cache_files():
         p.unlink(missing_ok=True)
 
     at = AppTest.from_file(str(APP_PATH))
@@ -201,9 +212,9 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
     """
     from engine.data_sources.paths import COMMITTED_PATH
 
-    for p in _NEW_CACHE_FILES:
+    for p in _new_cache_files():
         p.unlink(missing_ok=True)
-    _PORTFOLIO_CACHE_PATH.unlink(missing_ok=True)
+    _portfolio_sync_pkg._CACHE_PATH.unlink(missing_ok=True)
 
     try:
         committed_path = COMMITTED_PATH
@@ -234,7 +245,7 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
         assert reloaded["your_ira"]["value"] == 1_700_000.0
         assert reloaded["your_ira"]["source"] != "MANUAL"
     finally:
-        _PORTFOLIO_CACHE_PATH.unlink(missing_ok=True)
+        _portfolio_sync_pkg._CACHE_PATH.unlink(missing_ok=True)
 
 
 def test_resolved_sourced_values_are_written_back_to_session_state(
@@ -244,7 +255,7 @@ def test_resolved_sourced_values_are_written_back_to_session_state(
     load, session_state mirrors the migrated/committed household every
     render — including through the txn_price_now -> "txn_price" alias.
     """
-    for p in _NEW_CACHE_FILES:
+    for p in _new_cache_files():
         p.unlink(missing_ok=True)
 
     at = AppTest.from_file(str(APP_PATH))
@@ -282,7 +293,7 @@ def test_command_center_txn_price_confirm_sticks_and_next_render_does_not_revert
     from engine.data_sources.choices import ChoiceMap
     from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 
-    for p in _NEW_CACHE_FILES:
+    for p in _new_cache_files():
         p.unlink(missing_ok=True)
 
     recorded_at = datetime(2026, 1, 1)
