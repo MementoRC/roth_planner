@@ -21,12 +21,6 @@ import pytest  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_COMMAND_CENTER_CACHE_FILES = [
-    _REPO_ROOT / ".candidate_store.json",
-    _REPO_ROOT / ".trust_choices.json",
-    _REPO_ROOT / ".committed_household.json",
-]
-
 # --- audit-0805 W1: forbid any test from touching a real repo-root cache ---
 # Import the modules that own each repo-root dotfile-cache constant and record
 # their CURRENT (literal, pre-any-monkeypatch) value at conftest import time —
@@ -245,6 +239,26 @@ def _forbid_real_cache_writes(_redirect_cache_paths_to_tmp):
         )
 
 
+def _command_center_cache_files() -> list[Path]:
+    """The 3 Setup/Command Center cache paths, resolved at CALL time.
+
+    audit-0809 F18: this used to be a module-level ``_COMMAND_CENTER_CACHE_FILES``
+    list built from ``_REPO_ROOT`` at CONFTEST IMPORT time, which escaped
+    ``_redirect_cache_paths_to_tmp`` (a ``monkeypatch.setattr`` on
+    ``engine.data_sources.paths`` cannot reach a value already copied into a
+    separate list at import time) and caused ``clean_command_center_caches``
+    to unlink the developer's REAL repo-root cache files instead of the
+    per-test tmp redirect. Reading ``_paths_mod``'s attributes here instead --
+    at the time this function is actually called, always after the autouse
+    redirect fixture has run -- reflects whatever it currently points at.
+    """
+    return [
+        _paths_mod.CANDIDATE_STORE_PATH,
+        _paths_mod.TRUST_CHOICES_PATH,
+        _paths_mod.COMMITTED_PATH,
+    ]
+
+
 @pytest.fixture
 def clean_command_center_caches():
     """Delete the 3 Setup/Command Center cache files before AND after a test.
@@ -261,8 +275,8 @@ def clean_command_center_caches():
     ``test_setup_shell_characterization.py``) — keep it here rather than
     re-declaring per-file so behavior can't silently diverge between copies.
     """
-    for p in _COMMAND_CENTER_CACHE_FILES:
+    for p in _command_center_cache_files():
         p.unlink(missing_ok=True)
     yield
-    for p in _COMMAND_CENTER_CACHE_FILES:
+    for p in _command_center_cache_files():
         p.unlink(missing_ok=True)

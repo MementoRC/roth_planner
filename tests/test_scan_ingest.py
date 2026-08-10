@@ -21,10 +21,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import engine.data_sources.paths as _paths_mod
 import views.ytd_income as ytd_income_mod
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_sources.candidate_store import CandidateStore
-from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.pdf_import import PdfImportResult
 from engine.tax_return_pdf import Form1040Record
@@ -117,10 +117,15 @@ def clean_candidate_store():
     same isolation approach as tests/test_pdf_magi_candidate_flow.py. Cleans up
     BEFORE (not just after) to guard against a leftover file from a prior
     interrupted suite run (mirrors tests/conftest.py's
-    clean_command_center_caches pattern)."""
-    CANDIDATE_STORE_PATH.unlink(missing_ok=True)
+    clean_command_center_caches pattern).
+
+    audit-0809 F18: reads ``_paths_mod.CANDIDATE_STORE_PATH`` at CALL time
+    (not a module-level ``from ... import CANDIDATE_STORE_PATH`` binding,
+    which freezes the real repo-root path at collection time and escapes
+    conftest.py's autouse ``_redirect_cache_paths_to_tmp`` fixture)."""
+    _paths_mod.CANDIDATE_STORE_PATH.unlink(missing_ok=True)
     yield
-    CANDIDATE_STORE_PATH.unlink(missing_ok=True)
+    _paths_mod.CANDIDATE_STORE_PATH.unlink(missing_ok=True)
 
 
 def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
@@ -286,7 +291,7 @@ class TestA1ScanAndRecordPureHelper:
 
         assert result.magi_candidates_recorded == 0
         assert result.pdf_cache == {}
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load(_paths_mod.CANDIDATE_STORE_PATH)
         assert not store.has_candidates(f"prior_year_magi.{_GOLDEN_YEAR}")
 
 
