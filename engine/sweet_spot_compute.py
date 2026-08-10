@@ -310,10 +310,18 @@ def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = N
     R5 (audit 2026-07-13): when `ytd` actuals are supplied (base year), the forecast
     is suppressed and replaced with the YTD LTCG + qualified dividends actually
     realized so far this year -- mirroring scenario.py's base-year YTD LTCG
-    stack-walk input (_ytd_ltcg_total = ytd.ltcg_ytd + ytd.qualified_dividends_ytd
-    + ytd.crypto_ltcg_ytd, scenario.py:606-607)."""
+    stack-walk input (_ytd_ltcg_total = ytd.preferential_capital_gain_ytd +
+    ytd.qualified_dividends_ytd, scenario.py's LTCG-tax block).
+
+    audit-0809 Class A (site 4): preferential_capital_gain_ytd is the IRC
+    §1222-netted long-term-character leg (ltcg_ytd + crypto_ltcg_ytd already
+    folded in, net of any offsetting short-term loss -- see
+    models/ytd_income.py::_net_capital_gain_split), not the raw ltcg_ytd +
+    crypto_ltcg_ytd sum. qualified_dividends_ytd is NOT part of that netting
+    and stays a separate addend.
+    """
     if ytd is not None:
-        return ytd.ltcg_ytd + ytd.qualified_dividends_ytd + ytd.crypto_ltcg_ytd
+        return ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
     qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, None)
     return realized_gains + qual_div
 

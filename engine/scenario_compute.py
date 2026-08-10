@@ -393,7 +393,6 @@ def compute_social_security(
         other_inc += (
             ytd_year.wages_ytd
             + ytd_year.nec_income_ytd
-            + ytd_year.stcg_ytd
             + ytd_year.ordinary_dividends_ytd
             + ytd_year.ira_conversions_ytd
             + ytd_year.spouse_ira_conversions_ytd
@@ -401,14 +400,18 @@ def compute_social_security(
             + ytd_year.interest_ytd  # C-3: fully taxable ordinary interest (IRC §86(b)(2))
             + ytd_year.tax_exempt_interest_ytd  # IRC §86(b)(2): tax-exempt (muni) interest is in provisional income
             # F3: LTCG and qualified dividends are AGI items per IRC §86(b)(2) provisional-income
-            + ytd_year.ltcg_ytd
+            # audit-0809 Class A (site 3): ordinary_capital_gain_ytd + preferential_capital_gain_ytd
+            # is the IRC §1222-netted, §1211(b)-capped sum of ALL FOUR raw legs (stcg_ytd,
+            # ltcg_ytd, crypto_stcg_ytd, crypto_ltcg_ytd already folded in -- see
+            # models/ytd_income.py::_net_capital_gain_split). qualified_dividends_ytd is NOT
+            # part of that netting and stays a separate addend, same as crypto_income_ytd
+            # (ordinary, not capital gain).
+            + ytd_year.ordinary_capital_gain_ytd
+            + ytd_year.preferential_capital_gain_ytd
             + ytd_year.qualified_dividends_ytd
-            # audit-0720 F2: crypto STCG/income (ordinary) and crypto LTCG (capital
-            # gain) are AGI items just like their non-crypto counterparts above and
-            # must count toward IRC §86(b)(2) provisional income.
-            + ytd_year.crypto_stcg_ytd
+            # audit-0720 F2: crypto income (staking/DeFi/airdrops, ordinary -- Sch 1 8z) is
+            # an AGI item and must count toward IRC §86(b)(2) provisional income.
             + ytd_year.crypto_income_ytd
-            + ytd_year.crypto_ltcg_ytd
             # P3-1 (2026-07-23 audit): HSA/deductible-IRA contributions are above-the-line
             # and reduce AGI — magi_ytd/total_ordinary_income already net this out, so SS
             # provisional income (also AGI-basis per IRC §86(b)(2)) must too.
