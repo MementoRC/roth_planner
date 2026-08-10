@@ -537,17 +537,22 @@ def _project_year(
     # here to match yr.magi's existing treatment (via magi_ytd) — both are AGI-basis
     # aggregates and above-the-line adjustments reduce AGI, hence both the ordinary
     # bracket base and MAGI.
+    # audit-0809 Class A (site 1): ordinary_capital_gain_ytd is the IRC §1222-netted,
+    # §1211(b)-capped short-term-character leg (stcg_ytd + crypto_stcg_ytd already
+    # folded in -- see models/ytd_income.py::_net_capital_gain_split). Using the raw
+    # stcg_ytd + crypto_stcg_ytd sum instead let a short-term GAIN stack into ordinary
+    # brackets undiminished even when a same-size (or larger) long-term LOSS existed to
+    # offset it, and let a net capital loss exceed the $3,000/year statutory cap.
     if ytd_year is not None:
         yr.combined_gross += (
             ytd_year.wages_ytd
             + ytd_year.nec_income_ytd
-            + ytd_year.stcg_ytd
+            + ytd_year.ordinary_capital_gain_ytd
             + ytd_year.ordinary_dividends_ytd
             + ytd_year.interest_ytd
             + ytd_year.ira_conversions_ytd
             + ytd_year.spouse_ira_conversions_ytd
             + ytd_year.ira_distributions_ytd
-            + ytd_year.crypto_stcg_ytd
             + ytd_year.crypto_income_ytd
             - ytd_year.above_the_line_adjustments_ytd
         )
@@ -772,8 +777,14 @@ def _project_year(
     # rates (IRC §1(h)) as ltcg_ytd/qualified_dividends_ytd and must be included
     # in the stack-walk base — it already reaches MAGI/NIIT but was silently
     # skipping the LTCG-rate tax computation itself.
+    # audit-0809 Class A (site 2): preferential_capital_gain_ytd is the IRC
+    # §1222-netted long-term-character leg (ltcg_ytd + crypto_ltcg_ytd already
+    # folded in, net of any offsetting short-term loss -- see
+    # models/ytd_income.py::_net_capital_gain_split). qualified_dividends_ytd is
+    # NOT part of that netting (dividends are never capital gain/loss) and MUST
+    # stay a separate addend here.
     _ytd_ltcg_total = (
-        (ytd_year.ltcg_ytd + ytd_year.qualified_dividends_ytd + ytd_year.crypto_ltcg_ytd)
+        (ytd_year.preferential_capital_gain_ytd + ytd_year.qualified_dividends_ytd)
         if ytd_year is not None
         else 0.0
     )

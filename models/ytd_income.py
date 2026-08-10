@@ -236,14 +236,31 @@ class YTDSnapshot:
         Crypto STCG/LTCG count as capital gains and are included. Crypto staking/DeFi/
         airdrop income (crypto_income_ytd) is deliberately excluded — staking-as-NII
         is unsettled, so it is conservatively treated as non-investment income here.
+
+        audit-0809 Class A (site 5): the capital-gain contribution is
+        ``ordinary_capital_gain_ytd + preferential_capital_gain_ytd`` (IRC §1222-netted,
+        IRC §1211(b)-capped at -$3,000 if the net result is a loss) -- NOT the raw
+        ``ltcg_ytd + stcg_ytd + crypto_stcg_ytd + crypto_ltcg_ytd`` sum. This is a
+        DELIBERATE reversal of an audit-0805 note that called the raw sum correct for
+        the NII base specifically; that note is wrong against the regulation. Per
+        Reg. §1.1411-4(d)(2), net gain for NII purposes "may not be less than zero,"
+        and per Reg. §1.1411-4(f)(4) (Example 1), the §1211(b) $3,000 allowed capital
+        loss IS a properly allocable deduction against NII -- it is not simply added,
+        unfloored, into the NII base. Form 8960 line 5a starts from the Schedule D
+        figure already capped at -$3,000, and line 5d (which carries that capped loss
+        into the NII computation) has no zero floor of its own. Worked case: a $50,000
+        net capital LOSS + $40,000 ordinary dividends nets to NII $37,000 (= $0 floored
+        gain + $40,000 dividends - $3,000 allowed loss deduction), not the raw sum's
+        -$10,000 (which then gets floored to $0 by niit.py, silently erasing $37,000 of
+        real NII). For any net capital GAIN this substitution is numerically identical
+        to the raw sum (netting a gain against nothing is a no-op); it only differs --
+        correctly -- when a net capital LOSS exists.
         """
         return (
-            self.ltcg_ytd
-            + self.stcg_ytd
+            self.ordinary_capital_gain_ytd
+            + self.preferential_capital_gain_ytd
             + self.dividends_ytd
             + self.interest_ytd
-            + self.crypto_stcg_ytd
-            + self.crypto_ltcg_ytd
         )
 
     @property
