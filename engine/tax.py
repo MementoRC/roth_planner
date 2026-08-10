@@ -47,7 +47,9 @@ SENIOR_EXTRA_MFJ = 1_650  # per spouse 65+
 OBBBA_BONUS_PER_PERSON = 6_000
 OBBBA_PHASEOUT_START_MFJ = 150_000  # Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)
 OBBBA_PHASEOUT_START_SINGLE = 75_000  # Single / HoH — same citation
-# $0.06 reduction per $1 of excess MAGI ($60 per $1,000; phases out over $100K range)
+# $0.06 reduction per $1 of excess MAGI ($60 per $1,000), applied PER PERSON —
+# each eligible person's own $6,000 phases out over its own $100K range
+# (IRS Schedule 1-A Part V lines 31-37); it is NOT a household-wide range.
 OBBBA_PHASEOUT_RATE = 0.06
 
 # Social Security taxation tiers (MFJ provisional-income thresholds)
@@ -210,20 +212,28 @@ def senior_bonus_deduction(
     """
     OBBBA Senior Bonus Deduction (2025-2028).
 
-    $6,000 per person age 65+, phases out at $0.06 per $1 of excess MAGI ($60/$1,000) above threshold,
-    applied once to the AGGREGATE bonus (not per person — see below).
+    $6,000 per person age 65+, phases out at $0.06 per $1 of excess MAGI ($60/$1,000)
+    above threshold, applied INDEPENDENTLY PER PERSON then summed — see below.
     Sunset: returns 0.0 for year < 2025 or year > 2028 (Pub. L. 119-21 §70103).
     Threshold depends on filing status (Pub. L. 119-21 §70103 — IRC §151(d)(5)(C)):
       MFJ (one eligible spouse):  phase-out starts $150,000, ends $250,000
-      MFJ (both eligible):        phase-out starts $150,000, ends $350,000
+      MFJ (both eligible):        phase-out starts $150,000, ends $250,000 (per person)
       Single/HoH: phase-out starts $75,000, ends $175,000
       MFS:    ineligible (returns 0)
 
-    Phaseout is applied ONCE against the aggregate bonus (not per person), per
-    Pub. L. 119-21 §70103 / IRC §151(d)(5)(C): total_bonus = $6,000 * eligible,
-    reduced by $0.06 per $1 of MAGI above the threshold. For dual-eligible MFJ
-    ($12,000 aggregate bonus) the deduction zeros at MAGI=$150,000+$12,000/0.06
-    = $350,000, not $250,000 (audit-0722b OBBBA-1).
+    Phaseout is computed PER PERSON and floored at zero PER PERSON before
+    summing, per IRS Schedule 1-A (Form 1040), Part V, lines 31-37: the form
+    derives one reduced amount and enters that SAME amount on both line 36a
+    (you) and line 36b (spouse), then line 37 sums them. So each person's
+    $6,000 is independently reduced by $0.06 per $1 of MAGI above the
+    threshold and independently floored at zero:
+
+        per_person = max(0.0, bonus_per_person - phaseout_rate * (magi - phaseout_start))
+        deduction  = per_person * eligible
+
+    For dual-eligible MFJ the deduction zeros at MAGI=$150,000+$6,000/0.06
+    = $250,000 (not $350,000 — that endpoint comes from incorrectly reducing
+    the aggregate $12,000 once instead of each $6,000 independently).
 
     Pass ``phaseout_start`` explicitly to override the filing-status default.
     Stacks with standard deduction and senior extra.
@@ -250,11 +260,9 @@ def senior_bonus_deduction(
         )
         # Statutory nominal amount — NOT CPI-indexed (Pub. L. 119-21 §70103)
         phaseout_start = _base_phaseout
-    total_bonus = bonus_per_person * eligible
-    if magi <= phaseout_start:
-        return total_bonus
-    reduction = phaseout_rate * (magi - phaseout_start)
-    return max(0.0, total_bonus - reduction)
+    reduction = phaseout_rate * max(0.0, magi - phaseout_start)
+    per_person = max(0.0, bonus_per_person - reduction)
+    return per_person * eligible
 
 
 def tax_on_conversion(

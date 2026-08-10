@@ -593,18 +593,27 @@ class TestAutoFillSeniorBonusPostConversionMagi:
         naive_room = ded_no_senior + naive_senior + ceiling_22 - fixed_gross
 
         # Closed-form fixed point: room* = ded_no_senior + senior_bonus(room*) +
-        # ceiling - fixed_gross, with senior_bonus linear in the phaseout band:
-        # senior_bonus(magi) = 12_000 - 0.06*(magi-150_000) for magi in [150K,350K].
+        # ceiling - fixed_gross, with senior_bonus linear in the phaseout band.
+        # audit-0809 C19: the reduction is applied PER PERSON (each $6,000
+        # reduced by 0.06*(magi-150_000), floored independently), so for two
+        # eligible people moving in lockstep the AGGREGATE slope doubles:
+        # senior_bonus(magi) = 12_000 - 2*0.06*(magi-150_000) for magi in [150K,250K].
         total_bonus = 12_000.0
         phaseout_rate = 0.06
+        effective_phaseout_rate = 2.0 * phaseout_rate  # dual-eligible: both persons phase out in lockstep
         phaseout_start = 150_000.0
         expected_room = (
-            ded_no_senior + total_bonus + phaseout_rate * phaseout_start + ceiling_22 - fixed_gross
-        ) / (1.0 + phaseout_rate)
+            ded_no_senior
+            + total_bonus
+            + effective_phaseout_rate * phaseout_start
+            + ceiling_22
+            - fixed_gross
+        ) / (1.0 + effective_phaseout_rate)
 
         # Precondition: the fixed point actually sits inside the linear phaseout
-        # band (not clamped at $0 or the full $12,000).
-        assert 150_000.0 < expected_room < 350_000.0, (
+        # band (not clamped at $0 or the full $12,000). Per-person zeroing at
+        # $250,000 (not the old aggregate $350,000 endpoint).
+        assert 150_000.0 < expected_room < 250_000.0, (
             f"precondition: expected_room ({expected_room:.0f}) must sit inside the "
             "OBBBA phaseout band for the linear closed form above to apply"
         )
