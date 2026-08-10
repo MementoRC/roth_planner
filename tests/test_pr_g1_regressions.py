@@ -17,10 +17,10 @@ class TestObbbaSeniorDeduction:
         amount ($150k MFJ), NOT CPI-indexed. At MAGI 152k in 2027 the phaseout must
         fire on the $2k excess. Pre-fix the threshold inflated to ~153.75k and no
         phaseout occurred (full $12k)."""
-        # both 65+, MAGI 152k, 2027: excess 2000 * 6 percent = 120 aggregate reduction
-        # (audit-0722b OBBBA-1: reduction applies once to the aggregate bonus, not per person)
+        # both 65+, MAGI 152k, 2027: excess 2000 * 6 percent = 120 reduction PER PERSON,
+        # applied to both spouses independently then summed (audit-0809 C19) -> 240 total
         ded = senior_bonus_deduction(66, 66, 152_000, year=2027, cpi=0.025)
-        assert ded == approx(12_000 - 120)  # 11_880, not 12_000
+        assert ded == approx(12_000 - 240)  # 11_760, not 12_000
         assert ded < 12_000
 
     def test_sunsets_before_2025(self):

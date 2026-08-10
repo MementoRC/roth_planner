@@ -29,7 +29,9 @@ class TestEngineConstantsCharacterization:
 
       deductions: std_ded=32_200, senior_extra=1_650
       senior_bonus_deduction: bonus_per_person=6_000, phaseout_start=150_000,
-                              phaseout_rate=0.06 (per $1 of excess, not per person)
+                              phaseout_rate=0.06 per $1 of excess MAGI, applied
+                              independently to each eligible person then summed
+                              (audit-0809 C19; see engine/tax.py docstring)
       taxable_ss: tier1=32_000, tier2=44_000, max_fraction=0.85;
                   tier1→tier2 formula: 0.5*(provisional-32_000)
                   above tier2: 0.85*(provisional-44_000)+6_000
@@ -68,9 +70,9 @@ class TestEngineConstantsCharacterization:
         assert senior_bonus_deduction(65, 65, magi=150_000, year=2026) == approx(12_000)
 
     def test_senior_bonus_partial_phaseout(self):
-        # audit-0722b OBBBA-1: phaseout applies ONCE to the aggregate bonus, not per person.
-        # MAGI=200_000: total_bonus=12_000, reduction=(200_000-150_000)*0.06=3_000 -> 9_000
-        assert senior_bonus_deduction(65, 65, magi=200_000, year=2026) == approx(9_000)
+        # audit-0809 C19: phaseout applies PER PERSON, independently floored, then summed.
+        # MAGI=200_000: per_person=max(0,6_000-(200_000-150_000)*0.06)=3_000 -> total 6_000
+        assert senior_bonus_deduction(65, 65, magi=200_000, year=2026) == approx(6_000)
 
     def test_senior_bonus_one_person_partial_phaseout(self):
         # ya=65, sa=60: eligible=1
@@ -130,15 +132,15 @@ class TestEngineConstantsCharacterization:
     # --- audit regression: dual-senior MFJ phaseout endpoint (A2) ---
 
     def test_senior_bonus_dual_mfj_phaseout_endpoint(self):
-        # audit-0722b OBBBA-1: aggregate reduction, not per-person. Dual-eligible MFJ,
-        # MAGI=250_000: total_bonus=12_000, reduction=(250_000-150_000)*0.06=6_000 -> 6_000
-        # (the aggregate deduction does NOT zero here; it zeros at MAGI=$350,000).
-        assert senior_bonus_deduction(70, 70, magi=250_000, year=2026) == approx(6_000)
+        # audit-0809 C19: per-person reduction, independently floored. Dual-eligible MFJ,
+        # MAGI=250_000: per_person=max(0,6_000-(250_000-150_000)*0.06)=max(0,0)=0 -> 0
+        # (the per-person deduction zeros here at MAGI=$250,000, not $350,000).
+        assert senior_bonus_deduction(70, 70, magi=250_000, year=2026) == approx(0.0)
 
     def test_senior_bonus_dual_mfj_partial_mid_range(self):
-        # audit-0722b OBBBA-1: Dual-eligible MFJ, MAGI=200_000: midpoint
-        # total_bonus=12_000, reduction=(200_000-150_000)*0.06=3_000 -> 9_000
-        assert senior_bonus_deduction(70, 70, magi=200_000, year=2026) == approx(9_000)
+        # audit-0809 C19: Dual-eligible MFJ, MAGI=200_000: midpoint
+        # per_person=max(0,6_000-(200_000-150_000)*0.06)=3_000 -> total 2*3_000=6_000
+        assert senior_bonus_deduction(70, 70, magi=200_000, year=2026) == approx(6_000)
 
     def test_senior_bonus_single_phaseout_endpoint_preserved(self):
         # Single, MAGI=175_000: endpoint for single filer ($75K start + $100K range at 6%)
