@@ -11,6 +11,7 @@ from engine.aca import (
     aca_excess_aptc_repayment,
     aca_subsidy_loss,
     effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
 )
 from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
 from engine.tax import (
@@ -587,7 +588,7 @@ def compute_aca(
     sa: int,
     your_aca_enrolled: bool,
     spouse_aca_enrolled: bool,
-    aca_benchmark_premium_annual: float,
+    aca_benchmark_premium_annual: float | None,
     aca_enhanced_subsidies_active: bool,
     advance_aptc_annual: float,
     current_filing_status: str,
@@ -616,9 +617,19 @@ def compute_aca(
     # yr.magi already includes taxable_ss_amt; add the non-taxable remainder.
     # Distinct from yr.magi (IRMAA §1839(i)(4)) which does NOT add non-taxable SS.
     aca_magi = magi + (combined_ss - taxable_ss_amt)
+    # Resolve the household-level (None="derive") couple benchmark for this
+    # year's ages before age-rating the enrolled member(s)' share.
+    resolved_couple_benchmark = resolve_couple_benchmark_annual(
+        aca_benchmark_premium_annual,
+        your_age=ya,
+        spouse_age=sa,
+        filing_status=current_filing_status,
+        year=year,
+        cpi=cpi,
+    )
     # Scale the couple benchmark by age-rated share for the enrolled member(s).
     effective_benchmark = effective_benchmark_premium(
-        aca_benchmark_premium_annual,
+        resolved_couple_benchmark,
         your_age=ya,
         your_on_aca=_your_on_aca,
         spouse_age=sa,

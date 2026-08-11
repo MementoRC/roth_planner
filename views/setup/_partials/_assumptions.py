@@ -26,6 +26,7 @@ from typing import TypeVar
 
 import streamlit as st
 
+from engine.aca import derive_couple_benchmark_annual
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed
@@ -318,21 +319,68 @@ def render_assumptions_partial(hh: Household, container) -> None:
     # from views/setup/portfolio.py's Portfolio tab) as of Task 5 of the
     # ui-shell-theme-toggle plan — co-located with the stock-grants table
     # it prices, alongside its own trust/manual/confirm governance card.
-    st.session_state["aca_benchmark_premium_annual"] = container.number_input(
-        "ACA Benchmark Premium ($/yr)",
-        min_value=0,
-        max_value=60_000,
-        value=_clamp(
-            int(st.session_state.get("aca_benchmark_premium_annual", 21_600.0)), 0, 60_000
-        ),
-        step=100,
-        format="%d",
+    # None means "derive" (national-average SLCSP, age-rated + CPI-indexed via
+    # engine.aca.derive_couple_benchmark_annual) and an explicit float
+    # (including 0.0) is a household override used verbatim -- see
+    # models/household.py's aca_benchmark_premium_annual docstring. A plain
+    # number_input can't represent "unset" without smuggling it in as 0.0
+    # (a legitimate override meaning "no ACA premium exposure"), so an
+    # explicit checkbox gates the numeric override instead; unchecking writes
+    # None back rather than 0.0. The single source of truth for the derived
+    # figure is engine.aca.derive_couple_benchmark_annual -- not recomputed
+    # here (this project has killed parallel-computation "dual writer"
+    # defects structurally twice, PRs #376 and #378).
+    _current_benchmark = st.session_state.get("aca_benchmark_premium_annual")
+    _derived_benchmark = derive_couple_benchmark_annual(
+        hh.your_age,
+        hh.spouse_age,
+        hh.filing_status,
+        year=hh.base_year,
+        cpi=hh.cpi_assumption,
+    )
+    _override_benchmark = container.checkbox(
+        "Override ACA benchmark premium with my county's SLCSP",
+        value=_current_benchmark is not None,
         help=(
-            "Annual cost of the 2nd-lowest-cost Silver plan in your state/county "
-            "for your age group. Used to calculate ACA subsidy loss from conversions. "
-            "Varies widely by geography — check healthcare.gov for your area."
+            "Leave unchecked to use a national-average estimate, age-rated for "
+            "your household and CPI-indexed to the projection year (shown "
+            "below when unchecked). Check this to enter YOUR county's actual "
+            "2nd-lowest-cost Silver (SLCSP) plan premium: look up the gross "
+            "monthly premium, BEFORE subsidies, for the plan year, at "
+            "healthcare.gov/tax-tool (or your state's exchange), for the "
+            "enrolled adult(s) -- then enter the ANNUAL total below. State "
+            "variation is large (roughly $401/mo in NH to $1,299/mo in VT at "
+            "age 40), so the national default can be far off for your actual "
+            "county."
         ),
     )
+    if _override_benchmark:
+        _seed_benchmark = (
+            _current_benchmark if _current_benchmark is not None else _derived_benchmark
+        )
+        st.session_state["aca_benchmark_premium_annual"] = float(
+            container.number_input(
+                "ACA Benchmark Premium ($/yr)",
+                min_value=0,
+                max_value=60_000,
+                value=_clamp(int(_seed_benchmark), 0, 60_000),
+                step=100,
+                format="%d",
+                help=(
+                    "Annual cost of YOUR county's 2nd-lowest-cost Silver (SLCSP) "
+                    "plan -- gross monthly premium before subsidies, for the "
+                    "enrolled adult(s), for the full plan year. Used to calculate "
+                    "ACA subsidy loss from conversions."
+                ),
+            )
+        )
+    else:
+        st.session_state["aca_benchmark_premium_annual"] = None
+        container.caption(
+            f"Using national-average estimate for your ages: "
+            f"${_derived_benchmark:,.0f}/yr. Check the box above to enter your "
+            "own county's SLCSP instead."
+        )
     st.session_state["aca_enhanced_subsidies_active"] = container.checkbox(
         "ACA enhanced subsidies active (ARP/IRA-style)",
         value=st.session_state.get("aca_enhanced_subsidies_active", False),

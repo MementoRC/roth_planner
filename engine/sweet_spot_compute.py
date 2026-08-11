@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.aca import aca_applies, aca_subsidy_loss, effective_benchmark_premium
+from engine.aca import (
+    aca_applies,
+    aca_subsidy_loss,
+    effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
+)
 from engine.ira import calc_rmd, inherited_ira_drain_for_year, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
@@ -593,8 +598,16 @@ def all_in_at_conversion(
     _your_on_aca = aca_applies(ya, hh.your_aca_enrolled)
     _spouse_on_aca = aca_applies(sa, hh.spouse_aca_enrolled)
     num_on_aca = (1 if _your_on_aca else 0) + (1 if _spouse_on_aca else 0)
-    effective_benchmark = effective_benchmark_premium(
+    resolved_couple_benchmark = resolve_couple_benchmark_annual(
         hh.aca_benchmark_premium_annual,
+        your_age=ya,
+        spouse_age=sa,
+        filing_status=hh.filing_status,
+        year=year,
+        cpi=cpi,
+    )
+    effective_benchmark = effective_benchmark_premium(
+        resolved_couple_benchmark,
         your_age=ya,
         your_on_aca=_your_on_aca,
         spouse_age=sa,

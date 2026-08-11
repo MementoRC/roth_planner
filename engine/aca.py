@@ -91,6 +91,71 @@ def aca_age_factor(age: int) -> float:
     return _HHS_AGE_CURVE[age]
 
 
+# 2026 national average benchmark premium (second-lowest-cost silver, SLCSP) for a
+# 40-year-old, GROSS of subsidies. Source: KFF State Health Facts, "Marketplace
+# Average Monthly Benchmark Premiums" (county-level, weighted by county plan
+# selections). 2026 = $625/mo; 2025 was $497/mo.
+# NOTE: state variation is roughly 3.2x ($401/mo NH to $1,299/mo VT), so this
+# national figure is only a starting default -- a household should override it
+# with their own county's SLCSP from healthcare.gov/tax-tool.
+SLCSP_AGE40_MONTHLY = 625.0
+
+
+def derive_couple_benchmark_annual(
+    your_age: int,
+    spouse_age: int,
+    filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
+    """Derive the household-level annual ACA benchmark (SLCSP) premium.
+
+    Age-rates the national-average age-40 SLCSP monthly premium
+    (``SLCSP_AGE40_MONTHLY``) for each adult via the HHS age curve
+    (``aca_age_factor``), sums across the household's adults (both for MFJ,
+    just the filer for Single), then indexes the total forward from
+    BASE_YEAR using the SAME ``index_value`` helper ``_fpl()`` uses so the
+    premium and FPL inflate consistently.
+
+    This is only a national-average starting default -- state variation is
+    roughly 3.2x (see ``SLCSP_AGE40_MONTHLY``) -- households should override
+    via ``Household.aca_benchmark_premium_annual`` with their own county's
+    SLCSP when known.
+    """
+    ages = [your_age] if filing_status == "Single" else [your_age, spouse_age]
+    monthly_total = sum(
+        SLCSP_AGE40_MONTHLY * (aca_age_factor(age) / aca_age_factor(40)) for age in ages
+    )
+    return index_value(monthly_total * 12, year, cpi)
+
+
+def resolve_couple_benchmark_annual(
+    override: float | None,
+    *,
+    your_age: int,
+    spouse_age: int,
+    filing_status: str = "MFJ",
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+) -> float:
+    """Resolve ``Household.aca_benchmark_premium_annual`` to a couple-level
+    annual benchmark premium. Single source of truth for every consumer.
+
+    ``override`` is the raw field value. An explicit float (INCLUDING 0.0) is
+    a household-supplied override and is returned VERBATIM -- no age-rating,
+    no indexing. ``None`` means "derive" and calls
+    ``derive_couple_benchmark_annual`` with the given ages/filing_status/
+    year/cpi. None-vs-0.0 is resolved with ``is not None``, not truthiness --
+    0.0 is a valid override meaning "no ACA premium exposure modeled".
+    """
+    if override is not None:
+        return override
+    return derive_couple_benchmark_annual(
+        your_age, spouse_age, filing_status, year=year, cpi=cpi
+    )
+
+
 def effective_benchmark_premium(
     couple_benchmark: float,
     *,

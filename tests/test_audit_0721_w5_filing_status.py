@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from engine.aca import aca_net_cost, aca_subsidy, effective_benchmark_premium
+from engine.aca import (
+    aca_net_cost,
+    aca_subsidy,
+    effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
+)
 from engine.aca_irmaa_compute import compute_year_by_year_timeline
 from engine.headroom import compute_headroom
 from engine.tax import deductions, estimate_ytd_federal_tax, room_to_12
@@ -112,15 +117,23 @@ class TestC5SurvivorAcaBenchmarkIndividualShare:
         assert survivor_row.aca_subsidy is not None
 
         deceased_age = hh.spouse_age_in(2027)
-        expected_individual_share = effective_benchmark_premium(
+        resolved_couple_bench = resolve_couple_benchmark_annual(
             hh.aca_benchmark_premium_annual,
+            your_age=hh.your_age_in(2027),
+            spouse_age=deceased_age,
+            filing_status="MFJ",
+            year=2027,
+            cpi=0.0,
+        )
+        expected_individual_share = effective_benchmark_premium(
+            resolved_couple_bench,
             your_age=hh.your_age_in(2027),
             your_on_aca=True,
             spouse_age=deceased_age,
             spouse_on_aca=False,
             filing_status="MFJ",
         )
-        assert expected_individual_share < hh.aca_benchmark_premium_annual, (
+        assert expected_individual_share < resolved_couple_bench, (
             "Sanity: the survivor's age-rated share must be less than the full couple rate"
         )
 
@@ -140,7 +153,7 @@ class TestC5SurvivorAcaBenchmarkIndividualShare:
         # the subsidy — not aca_you_pay — is where the bug is visible).
         buggy_subsidy = aca_subsidy(
             base_magi,
-            hh.aca_benchmark_premium_annual,
+            resolved_couple_bench,
             enhanced_subsidies_active=True,
             filing_status="Single",
             year=2027,

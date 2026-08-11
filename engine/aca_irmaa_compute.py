@@ -14,6 +14,7 @@ from engine.aca import (
     aca_subsidy,
     aca_subsidy_loss,
     effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
 )
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
@@ -173,8 +174,16 @@ def compute_cost_curves(
     _spouse_on_aca = aca_applies(hh.spouse_age_in(year), hh.spouse_aca_enrolled)
     anyone_on_aca = _your_on_aca or _spouse_on_aca
 
-    effective_benchmark = effective_benchmark_premium(
+    resolved_couple_benchmark = resolve_couple_benchmark_annual(
         hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        spouse_age=hh.spouse_age,
+        filing_status=hh.filing_status,
+        year=year,
+        cpi=cpi,
+    )
+    effective_benchmark = effective_benchmark_premium(
+        resolved_couple_benchmark,
         your_age=hh.your_age,
         your_on_aca=_your_on_aca,
         spouse_age=hh.spouse_age,
@@ -481,8 +490,16 @@ def compute_year_by_year_timeline(
             _deceased_age = (
                 hh.spouse_age_in(year) if surv.who_dies == "spouse" else hh.your_age_in(year)
             )
-            eff_bench_yr = effective_benchmark_premium(
+            resolved_couple_bench_yr = resolve_couple_benchmark_annual(
                 hh.aca_benchmark_premium_annual,
+                your_age=ya,
+                spouse_age=_deceased_age,
+                filing_status="MFJ",
+                year=year,
+                cpi=_yr_cpi,
+            )
+            eff_bench_yr = effective_benchmark_premium(
+                resolved_couple_bench_yr,
                 your_age=ya,
                 your_on_aca=you_on_aca,
                 spouse_age=_deceased_age,
@@ -490,8 +507,16 @@ def compute_year_by_year_timeline(
                 filing_status="MFJ",
             )
         else:
-            eff_bench_yr = effective_benchmark_premium(
+            resolved_couple_bench_yr = resolve_couple_benchmark_annual(
                 hh.aca_benchmark_premium_annual,
+                your_age=ya,
+                spouse_age=sa if sa is not None else 0,
+                filing_status=current_filing_status,
+                year=year,
+                cpi=_yr_cpi,
+            )
+            eff_bench_yr = effective_benchmark_premium(
+                resolved_couple_bench_yr,
                 your_age=ya,
                 your_on_aca=you_on_aca,
                 spouse_age=sa if sa is not None else 0,

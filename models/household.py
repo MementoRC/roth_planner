@@ -273,7 +273,14 @@ class Household:
     # Healthcare coverage
     your_aca_enrolled: bool = False  # you on ACA marketplace (vs employer plan)
     spouse_aca_enrolled: bool = False  # spouse on ACA marketplace
-    aca_benchmark_premium_annual: float = 21_600.0  # 2nd-lowest-cost Silver plan annual cost (household-level; varies by state/county/age)
+    # 2nd-lowest-cost Silver plan (SLCSP) annual cost, household-level (two-adult
+    # rate for MFJ). None means "derive" via engine.aca.derive_couple_benchmark_annual
+    # (national-average age-40 SLCSP, HHS age-rated per adult, CPI-indexed by year).
+    # An explicit float (including 0.0) is a household override used verbatim --
+    # e.g. the household's own county SLCSP from healthcare.gov/tax-tool. Resolve
+    # via engine.aca.resolve_couple_benchmark_annual (None vs 0.0 must use
+    # `is not None`, not truthiness -- mirrors brokerage_start_basis).
+    aca_benchmark_premium_annual: float | None = None
     aca_enhanced_subsidies_active: bool = False  # law toggle for sensitivity analysis: True = ARP/IRA-style enhanced subsidies; False = current law (ARP expired Dec 31, 2025)
     advance_aptc_annual: float = 0.0  # Annual APTC pre-paid by IRS to your insurer based on projected MAGI; reconciled on Form 8962 at year-end. Set to 0 if not enrolled in marketplace insurance or pay full premium upfront.
     medicare_part_b_base_monthly: float = 202.90  # standard Part B monthly premium (CMS-published); IRMAA surcharge is computed on top

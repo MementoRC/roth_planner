@@ -164,12 +164,58 @@ def test_living_expenses_round_trip(clean_command_center_caches) -> None:
 
 
 def test_aca_benchmark_premium_round_trip(clean_command_center_caches) -> None:
-    at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
+    at = AppTest.from_function(
+        _render_assumptions_with_pending, kwargs={"pending": set()}, default_timeout=60
+    )
     at.run()
     assert not at.exception
 
+    _checkbox_by_label(
+        at, "Override ACA benchmark premium with my county's SLCSP"
+    ).set_value(True).run()
     _number_input_by_label(at, "ACA Benchmark Premium ($/yr)").set_value(18_400).run()
     assert at.session_state["aca_benchmark_premium_annual"] == 18_400
+
+
+def test_aca_benchmark_defaults_to_derive(clean_command_center_caches) -> None:
+    """Default (fresh) state: the override checkbox is unchecked and the
+    field stays None -- 'derive', not a hardcoded flat figure."""
+    at = AppTest.from_function(
+        _render_assumptions_with_pending, kwargs={"pending": set()}, default_timeout=60
+    )
+    at.run()
+    assert not at.exception
+
+    assert at.session_state["aca_benchmark_premium_annual"] is None
+    override_box = _checkbox_by_label(
+        at, "Override ACA benchmark premium with my county's SLCSP"
+    )
+    assert override_box.value is False
+    assert "ACA Benchmark Premium ($/yr)" not in [w.label for w in at.number_input]
+    caption_text = "\n".join(c.value for c in at.caption)
+    assert "national-average estimate" in caption_text
+
+
+def test_aca_benchmark_uncheck_reverts_to_derive_not_zero(clean_command_center_caches) -> None:
+    """Clearing an override must land back on None ('derive'), not 0.0 --
+    0.0 is a distinct legitimate override meaning 'no ACA premium exposure'."""
+    at = AppTest.from_function(
+        _render_assumptions_with_pending, kwargs={"pending": set()}, default_timeout=60
+    )
+    at.run()
+    assert not at.exception
+
+    _checkbox_by_label(
+        at, "Override ACA benchmark premium with my county's SLCSP"
+    ).set_value(True).run()
+    _number_input_by_label(at, "ACA Benchmark Premium ($/yr)").set_value(0).run()
+    assert at.session_state["aca_benchmark_premium_annual"] == 0.0
+
+    _checkbox_by_label(
+        at, "Override ACA benchmark premium with my county's SLCSP"
+    ).set_value(False).run()
+    assert at.session_state["aca_benchmark_premium_annual"] is None
+    assert at.session_state["aca_benchmark_premium_annual"] != 0.0
 
 
 def test_aca_enhanced_subsidies_active_round_trip(clean_command_center_caches) -> None:
