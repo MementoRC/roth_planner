@@ -2,7 +2,12 @@
 
 import pytest
 
-from engine.aca import aca_subsidy, aca_subsidy_loss, effective_benchmark_premium
+from engine.aca import (
+    aca_subsidy,
+    aca_subsidy_loss,
+    effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
+)
 from engine.aca_irmaa_compute import compute_cost_curves, compute_year_by_year_timeline
 from engine.scenario_compute import compute_aca
 from engine.sweet_spot_compute import BaseIncome, all_in_at_conversion
@@ -71,8 +76,16 @@ def test_compute_cost_curves_scales_benchmark_single_enrollee() -> None:
     hh.aca_enhanced_subsidies_active = True
     magi = 80_000.0
     cc = compute_cost_curves([magi], base_magi=magi, net_inv_income=0.0, hh=hh, year=2026, cpi=0.0)
-    age_rated_bench = effective_benchmark_premium(
+    resolved_couple_bench = resolve_couple_benchmark_annual(
         hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        spouse_age=hh.spouse_age,
+        filing_status=hh.filing_status,
+        year=2026,
+        cpi=0.0,
+    )
+    age_rated_bench = effective_benchmark_premium(
+        resolved_couple_bench,
         your_age=hh.your_age,
         your_on_aca=True,
         spouse_age=hh.spouse_age,
@@ -90,7 +103,7 @@ def test_compute_cost_curves_scales_benchmark_single_enrollee() -> None:
     assert cc.aca_subsidy_vals[0] == pytest.approx(expected)
     assert expected > 0
     # Age-rated share (55yo) is slightly above 50/50 for a 55+53 pair
-    assert age_rated_bench > hh.aca_benchmark_premium_annual * 0.5
+    assert age_rated_bench > resolved_couple_bench * 0.5
 
 
 def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
@@ -116,8 +129,16 @@ def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
         ytd_magi=0.0,
     )
     res = all_in_at_conversion(hh, base, conv=20_000.0, net_inv_income=0.0)
-    age_rated_bench = effective_benchmark_premium(
+    resolved_couple_bench = resolve_couple_benchmark_annual(
         hh.aca_benchmark_premium_annual,
+        your_age=hh.your_age,
+        spouse_age=hh.spouse_age,
+        filing_status=hh.filing_status,
+        year=2026,
+        cpi=0.0,
+    )
+    age_rated_bench = effective_benchmark_premium(
+        resolved_couple_bench,
         your_age=hh.your_age,
         your_on_aca=True,
         spouse_age=hh.spouse_age,
@@ -136,7 +157,7 @@ def test_sweet_spot_all_in_scales_aca_benchmark_single_enrollee() -> None:
     assert res.aca_loss == pytest.approx(expected)
     assert expected > 0
     # Age-rated share (55yo in a 55+53 pair) is slightly above 50/50
-    assert age_rated_bench > hh.aca_benchmark_premium_annual * 0.5
+    assert age_rated_bench > resolved_couple_bench * 0.5
 
 
 def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
@@ -163,10 +184,18 @@ def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
 
     r_both = next(r for r in rows if both(r))
     r_one = next(r for r in rows if exactly_one(r))
+    resolved_bench_both = resolve_couple_benchmark_annual(
+        hh.aca_benchmark_premium_annual,
+        your_age=r_both.you_age or hh.your_age,
+        spouse_age=r_both.spouse_age or hh.spouse_age,
+        filing_status="MFJ",
+        year=r_both.year,
+        cpi=0.0,
+    )
     assert r_both.aca_subsidy == pytest.approx(
         aca_subsidy(
             base_magi,
-            hh.aca_benchmark_premium_annual,
+            resolved_bench_both,
             enhanced_subsidies_active=True,
             filing_status="MFJ",
             year=r_both.year,
@@ -178,8 +207,16 @@ def test_timeline_scales_benchmark_by_yearly_enrollee_count() -> None:
     sa_one = r_one.spouse_age
     you_on = ya_one is not None and ya_one < 65
     sp_on = sa_one is not None and sa_one < 65
-    age_rated_bench_one = effective_benchmark_premium(
+    resolved_bench_one = resolve_couple_benchmark_annual(
         hh.aca_benchmark_premium_annual,
+        your_age=ya_one or 0,
+        spouse_age=sa_one or 0,
+        filing_status="MFJ",
+        year=r_one.year,
+        cpi=0.0,
+    )
+    age_rated_bench_one = effective_benchmark_premium(
+        resolved_bench_one,
         your_age=ya_one or 0,
         your_on_aca=you_on,
         spouse_age=sa_one or 0,
@@ -421,8 +458,16 @@ def test_timeline_single_filer_gets_full_benchmark_not_age_ratio() -> None:
 
     for r in aca_rows:
         ya = r.you_age or hh.your_age
-        expected_bench = effective_benchmark_premium(
+        resolved_bench = resolve_couple_benchmark_annual(
             hh.aca_benchmark_premium_annual,
+            your_age=ya,
+            spouse_age=0,
+            filing_status="Single",
+            year=r.year,
+            cpi=0.0,
+        )
+        expected_bench = effective_benchmark_premium(
+            resolved_bench,
             your_age=ya,
             your_on_aca=True,
             spouse_age=0,
@@ -430,7 +475,7 @@ def test_timeline_single_filer_gets_full_benchmark_not_age_ratio() -> None:
             filing_status="Single",
         )
         # Now: full benchmark, unblended (no age-ratio share, no flat/2 split).
-        assert expected_bench == pytest.approx(hh.aca_benchmark_premium_annual), (
+        assert expected_bench == pytest.approx(resolved_bench), (
             "Single filer must get the FULL benchmark, not a blended/halved share"
         )
         expected_sub = aca_subsidy(
@@ -447,7 +492,7 @@ def test_timeline_single_filer_gets_full_benchmark_not_age_ratio() -> None:
         # Guard: old flat-/2 must no longer match
         half_bench_sub = aca_subsidy(
             base_magi,
-            hh.aca_benchmark_premium_annual / 2,
+            resolved_bench / 2,
             enhanced_subsidies_active=True,
             filing_status="Single",
             year=r.year,

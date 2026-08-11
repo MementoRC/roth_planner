@@ -16,6 +16,7 @@ from engine.aca import (
     _aca_cap_schedule,
     aca_applies,
     effective_benchmark_premium,
+    resolve_couple_benchmark_annual,
 )
 from engine.aca_irmaa_compute import (
     compute_cost_curves,
@@ -131,8 +132,16 @@ def render(hh: Household):
                     hovertemplate="MAGI: $%{x:,.0f}<br>You Pay: $%{y:,.0f}<extra></extra>",
                 )
             )
-            effective_benchmark = effective_benchmark_premium(
+            _resolved_couple_benchmark = resolve_couple_benchmark_annual(
                 hh.aca_benchmark_premium_annual,
+                your_age=hh.your_age,
+                spouse_age=hh.spouse_age,
+                filing_status=hh.filing_status,
+                year=_view_year,
+                cpi=_view_cpi,
+            )
+            effective_benchmark = effective_benchmark_premium(
+                _resolved_couple_benchmark,
                 your_age=hh.your_age,
                 your_on_aca=aca_applies(hh.your_age, hh.your_aca_enrolled),
                 spouse_age=hh.spouse_age,
@@ -390,9 +399,17 @@ def render(hh: Household):
 
         _fpl_label = "family of 1" if hh.filing_status == "Single" else "family of 2"
         _fpl_val = FPL_1 if hh.filing_status == "Single" else FPL_2
+        _caption_couple_benchmark = resolve_couple_benchmark_annual(
+            hh.aca_benchmark_premium_annual,
+            your_age=hh.your_age,
+            spouse_age=hh.spouse_age,
+            filing_status=hh.filing_status,
+            year=_view_year,
+            cpi=_view_cpi,
+        )
         st.caption(
             f"FPL ({_fpl_label}): {fmt_dollars(_fpl_val)} · "
-            f"Benchmark silver plan: {fmt_dollars(hh.aca_benchmark_premium_annual)}/yr"
+            f"Benchmark silver plan: {fmt_dollars(_caption_couple_benchmark)}/yr"
         )
 
     _niit_thr = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
