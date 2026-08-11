@@ -46,7 +46,12 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("txn_price_growth_rate", 7.0)
     st.session_state.setdefault("your_aca", False)
     st.session_state.setdefault("spouse_aca", False)
-    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    # None = "derive" (national-average SLCSP, age-rated + CPI-indexed via
+    # engine.aca.derive_couple_benchmark_annual); an explicit float (including
+    # 0.0) is a household override used verbatim. Fresh installs default to
+    # derive, not a hardcoded flat figure -- see models/household.py's
+    # aca_benchmark_premium_annual docstring.
+    st.session_state.setdefault("aca_benchmark_premium_annual", None)
     st.session_state.setdefault("aca_enhanced_subsidies_active", False)
     st.session_state.setdefault("advance_aptc_annual", 0)
     st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
@@ -270,7 +275,9 @@ def get_household() -> Household:
         ),
         your_aca_enrolled=st.session_state.your_aca,
         spouse_aca_enrolled=st.session_state.spouse_aca,
-        aca_benchmark_premium_annual=st.session_state.get("aca_benchmark_premium_annual", 21_600.0),
+        # None-vs-0.0 must use `is not None`, not truthiness (0.0 is a legitimate
+        # override); .get() with no default already returns None when unset.
+        aca_benchmark_premium_annual=st.session_state.get("aca_benchmark_premium_annual"),
         aca_enhanced_subsidies_active=st.session_state.get("aca_enhanced_subsidies_active", False),
         advance_aptc_annual=float(st.session_state.get("advance_aptc_annual", 0)),
         medicare_part_b_base_monthly=st.session_state.get(
