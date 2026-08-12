@@ -942,6 +942,23 @@ class TestMagiCeilingWaterfallActivation:
         feat/ira-waterfall-activation) -- any future change that lets the
         MAGI-ceiling block (or the reorder) leak into a magi_strategy=None
         plan's cap will move this number.
+
+        UPDATE (branch fix/fund-aca-irmaa-cash-flow): the constant moved from
+        3_895_700 to 3_886_573 (delta -9_127) once ACA/IRMAA premiums and
+        surcharges were funded into cash flow rather than left as a
+        display-only ``all_in_cost`` add-on. The premise above is STILL
+        TRUE -- this household (your_age=61, spouse_age=55) leaves
+        ``your_aca_enrolled``/``spouse_aca_enrolled`` at their False default,
+        so ACA contributes nothing; the entire drift is IRMAA alone (both
+        spouses cross into Medicare and IRMAA-surcharge years within the
+        run's 34-year horizon to age 95). The causal chain: funding the
+        surcharge into the year it is charged forces a larger waterfall draw
+        to cover it; that draw is ordinary income that consumes room_22
+        headroom; less room_22 headroom means fewer dollars of 22%-bracket
+        conversion are affordable in that year. The guard itself is
+        unchanged in what it detects -- a magi_strategy=None plan's cap must
+        still be governed by _base_headroom alone, never by the MAGI-ceiling
+        block or its reorder; only the absolute total moved.
         """
         hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         plan = auto_fill_22(hh)
@@ -951,7 +968,7 @@ class TestMagiCeilingWaterfallActivation:
             sum(yr.your_conversion + yr.spouse_conversion for yr in result.years)
         )
         assert total_achieved > 0, "precondition: the 22%-fill plan must convert something"
-        assert total_achieved == approx(3_895_700, tol=1)
+        assert total_achieved == approx(3_886_573, tol=1)
 
 
 class TestWaterfallMarginalBaselineC8Followup:

@@ -9,6 +9,7 @@ from __future__ import annotations
 from engine.aca import (
     aca_applies,
     aca_excess_aptc_repayment,
+    aca_net_cost,
     aca_subsidy_loss,
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
@@ -595,12 +596,26 @@ def compute_aca(
     year: int,
     cpi: float,
     waterfall_baseline_aca_magi: float | None = None,
-) -> tuple[float, float, float]:
-    """Return (aca_magi, aca_loss, aca_clawback).
+) -> tuple[float, float, float, float]:
+    """Return (aca_magi, aca_loss, aca_clawback, aca_premium_cost).
 
     The caller must apply aca_clawback to federal_tax_amt:
         yr.federal_tax_amt += aca_clawback
     That mutation stays in run_scenario().
+
+    ``aca_premium_cost`` is the household's REAL out-of-pocket premium and is
+    the quantity the caller FUNDS through ``income_needed``. ``aca_loss`` is a
+    DELTA against a counterfactual and stays display-only (``all_in_cost``);
+    funding a delta would leave a scenario-dependent residual unfunded,
+    because the baseline MAGI itself moves with the waterfall draw.
+
+    Subtracting ``aca_clawback`` is what makes the two paths compose without
+    double-counting. advance_aptc == 0 -> clawback 0 -> this funds
+    benchmark - PTC, so the refundable PTC is credited. advance_aptc > 0 ->
+    clawback (advance_aptc - PTC) is already added to federal_tax_amt by the
+    caller, so the remainder is benchmark - advance_aptc, the true in-year
+    premium. Total outflow is benchmark - PTC either way, counted exactly
+    once.
 
     ``waterfall_baseline_aca_magi`` (audit-0805 C8 follow-up): mirrors
     ``compute_federal_tax``'s ``waterfall_baseline_tax`` -- when the caller has
@@ -675,7 +690,23 @@ def compute_aca(
     else:
         aca_clawback = 0.0
 
-    return aca_magi, aca_loss, aca_clawback
+    if num_on_aca > 0:
+        aca_premium_cost = max(
+            aca_net_cost(
+                aca_magi,
+                effective_benchmark,
+                enhanced_subsidies_active=aca_enhanced_subsidies_active,
+                filing_status=current_filing_status,
+                year=year,
+                cpi=cpi,
+            )
+            - aca_clawback,
+            0.0,
+        )
+    else:
+        aca_premium_cost = 0.0
+
+    return aca_magi, aca_loss, aca_clawback, aca_premium_cost
 
 
 # ---------------------------------------------------------------------------
