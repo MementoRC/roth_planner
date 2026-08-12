@@ -16,7 +16,9 @@ from engine.aca import (
 from engine.ira import calc_rmd, inherited_ira_drain_for_year, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_for_year
 from engine.niit import niit
+from engine.scenario import run_scenario
 from engine.scenario_compute import QCD_MIN_AGE
+from engine.scenario_types import ConversionPlan
 from engine.tax import (
     BRACKETS_MFJ,
     BRACKETS_SINGLE,
@@ -66,27 +68,43 @@ class BaseIncome:
     forecast_realized_gains: float = 0.0  # forecast realized LTCG from brokerage turnover (MAGI + LTCG-stack only; suppressed to 0 in base year when ytd is supplied)
     rmd_income: float = 0.0  # taxable RMD (both spouses) + inherited-IRA distributions (ordinary bracket + MAGI + SS provisional income)
     ytd_investment_income: float = 0.0  # ytd.total_investment_income (NIIT net-investment-income parity; 0 outside the base year)
+    # audit-0809 #08: the traditional-IRA draw that funds this year's living
+    # expenses, IRMAA surcharges and ACA premiums, solved at ZERO conversion by
+    # engine.scenario's withdrawal waterfall (see zero_conversion_ira_draws).
+    # Ordinary income, so it belongs in the ordinary bracket base, in MAGI and
+    # in the muni-exclusive NIIT MAGI alike -- but NOT in net investment income.
+    waterfall_draw: float = 0.0
 
     @property
     def magi_addl(self) -> float:
         """Year-level MAGI additions independent of the swept conversion amount:
         YTD MAGI + forecast qual/ord dividends + forecast realized gains + RMD/
-        inherited-IRA income. Mirrors engine.scenario's magi assembly (compute_magi
-        + the realized_gains fold)."""
+        inherited-IRA income + the living-expense waterfall draw. Mirrors
+        engine.scenario's magi assembly (compute_magi + the realized_gains fold),
+        including compute_magi's forced_your_ira_draw/forced_spouse_ira_draw
+        terms (audit-0809 #08)."""
         return (
             self.ytd_magi
             + self.forecast_qual_div
             + self.forecast_ord_div
             + self.forecast_realized_gains
             + self.rmd_income
+            + self.waterfall_draw
         )
 
     @property
     def ordinary_addl(self) -> float:
         """Year-level ordinary-bracket additions independent of the swept conversion
         amount: YTD ordinary income + forecast ordinary dividends + RMD/inherited-IRA
-        income. Mirrors engine.scenario's combined_gross assembly."""
-        return self.ytd_ordinary + self.forecast_ord_div + self.rmd_income
+        income + the living-expense waterfall draw (a traditional-IRA distribution
+        is ordinary income exactly as an RMD is). Mirrors engine.scenario's
+        combined_gross assembly."""
+        return (
+            self.ytd_ordinary
+            + self.forecast_ord_div
+            + self.rmd_income
+            + self.waterfall_draw
+        )
 
     @property
     def net_investment_income_addl(self) -> float:
@@ -95,12 +113,37 @@ class BaseIncome:
         engine.scenario's `net_investment_income = realized_gains +
         qual_div_this_year + ord_div_this_year` assembly in compute_scenario
         (grep for that assignment rather than a line number -- it has moved
-        before). Excludes rmd_income (RMDs are not investment income)."""
+        before). Excludes rmd_income AND waterfall_draw: neither an RMD nor a
+        living-expense IRA distribution is net investment income under IRC
+        1411(c). Both raise the NIIT MAGI threshold test (see niit_magi_addl)
+        but never the NII the tax is charged on."""
         return (
             self.forecast_realized_gains
             + self.forecast_qual_div
             + self.forecast_ord_div
             + self.ytd_investment_income
+        )
+
+    @property
+    def niit_magi_addl(self) -> float:
+        """Muni-exclusive twin of `magi_addl`, for the NIIT MAGI threshold test
+        and the OBBBA senior-bonus phaseout: identical except that tax-exempt
+        muni interest is excluded (IRC 103 keeps it out of gross income, so it
+        was never in AGI/MAGI) -- hence ytd_niit_magi in place of ytd_magi.
+
+        Extracted because this exact sum previously appeared open-coded at four
+        call sites in all_in_at_conversion plus one in base_income_for_year, and
+        adding a term meant remembering all five. audit-0809 classes that shape
+        of omission as Class B (a fix applied to one consumer and not its
+        sibling, so one page shows two answers to one question); one expression,
+        one place to extend it."""
+        return (
+            self.ytd_niit_magi
+            + self.forecast_qual_div
+            + self.forecast_ord_div
+            + self.forecast_realized_gains
+            + self.rmd_income
+            + self.waterfall_draw
         )
 
 
@@ -338,6 +381,7 @@ def base_income_for_year(
     *,
     your_qcd: float = 0.0,
     spouse_qcd: float = 0.0,
+    ira_draw: float = 0.0,
 ) -> BaseIncome:
     """Compute fixed income components for a given year (no conversion).
 
@@ -347,7 +391,20 @@ def base_income_for_year(
     wired to a QCD source -- supplies the dollar amount directly). Threaded
     through to estimate_rmd_income() to net the QCD out of taxable RMD before
     it enters magi/niit_magi. Defaults to 0.0 (no behavior change for callers
-    that don't supply a QCD election)."""
+    that don't supply a QCD election).
+
+    audit-0809 #08 (HIGH): `ira_draw` is the traditional-IRA withdrawal that
+    funds this year's living expenses, IRMAA surcharges and ACA premiums,
+    solved at ZERO conversion (see zero_conversion_ira_draws). Without it,
+    base_gross/base_magi described a household that pays its bills from thin
+    air, and every recommendation sized off that base -- fill-to-12/22,
+    IRMAA-Safe Max, the marginal-cost sweep -- was optimistic by the whole
+    draw. engine/scenario.py names the same failure mode from the other side:
+    the IRMAA/ACA guarantee "was previously carried SOLELY by
+    auto_fill_irmaa_safe/auto_fill_aca sizing the plan against a draw-blind
+    base_magi". Defaults to 0.0, so direct callers that do not model a draw are
+    numerically unchanged.
+    """
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
     cpi = hh.cpi_assumption
@@ -416,8 +473,27 @@ def base_income_for_year(
     rmd_income = estimate_rmd_income(
         hh, year, ytd, your_qcd=your_qcd, spouse_qcd=spouse_qcd
     )
-    magi_addl = ytd_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income
-    ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income
+    # audit-0809 #08: `ira_draw` is ordinary income, so it enters the MAGI base,
+    # the ordinary bracket base and the muni-exclusive NIIT base identically to
+    # a taxable RMD. These three locals mirror BaseIncome.magi_addl /
+    # .ordinary_addl / .niit_magi_addl, which the returned object exposes.
+    magi_addl = (
+        ytd_magi
+        + forecast_qual_div
+        + forecast_ord_div
+        + forecast_realized_gains
+        + rmd_income
+        + ira_draw
+    )
+    ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income + ira_draw
+    niit_magi_addl = (
+        ytd_niit_magi
+        + forecast_qual_div
+        + forecast_ord_div
+        + forecast_realized_gains
+        + rmd_income
+        + ira_draw
+    )
 
     # Base taxable SS (without conversion).
     # F9/R1/R3: other_inc must include ytd_magi, forecast div/gains, and RMD/
@@ -443,7 +519,7 @@ def base_income_for_year(
     senior_bonus = senior_bonus_deduction(
         ya,
         sa,
-        opt + tss + ytd_niit_magi + forecast_qual_div + forecast_ord_div + forecast_realized_gains + rmd_income,
+        opt + tss + niit_magi_addl,
         year=year,
         cpi=cpi,
         filing_status=hh.filing_status,
@@ -469,6 +545,7 @@ def base_income_for_year(
         forecast_realized_gains=forecast_realized_gains,
         rmd_income=rmd_income,
         ytd_investment_income=ytd_investment_income,
+        waterfall_draw=ira_draw,
     )
 
 
@@ -547,8 +624,7 @@ def all_in_at_conversion(
     senior_bonus = senior_bonus_deduction(
         ya,
         sa,
-        base.opt + conv + tss + base.ytd_niit_magi
-        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income,
+        base.opt + conv + tss + base.niit_magi_addl,
         year=year,
         cpi=cpi,
         filing_status=hh.filing_status,
@@ -567,8 +643,7 @@ def all_in_at_conversion(
     base_senior = senior_bonus_deduction(
         ya,
         sa,
-        base.opt + base_tss + base.ytd_niit_magi
-        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income,
+        base.opt + base_tss + base.niit_magi_addl,
         year=year,
         cpi=cpi,
         filing_status=hh.filing_status,
@@ -632,23 +707,15 @@ def all_in_at_conversion(
 
     # NIIT — use NIIT-relevant MAGI, which excludes tax-exempt interest (muni
     # interest is excluded from gross income under IRC §103, so it was never
-    # in AGI/MAGI to begin with). R1/R3: niit_magi mirrors `magi` but with
-    # ytd_niit_magi in place of ytd_magi
-    # (muni-exclusive); forecast div/gains and RMD/inherited income are the same
-    # in both since neither is muni interest.
+    # in AGI/MAGI to begin with). R1/R3: niit_magi mirrors `magi` but uses
+    # base.niit_magi_addl (muni-exclusive) in place of base.magi_addl.
     # audit-0805 C10: net_inv_income (the manual "Additional NII $/yr" estimate)
     # is real declared income -- add it here too, not just to total_net_inv_income
     # below, so the excess-over-threshold niit() charges against isn't understated.
     # Applied identically to both the with- and without-conversion MAGI so the
     # manual figure is measured consistently on both sides of niit_delta.
-    niit_magi = (
-        base.opt + conv + tss + base.ytd_niit_magi + net_inv_income
-        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
-    )
-    niit_base_magi = (
-        base.opt + base_tss + base.ytd_niit_magi + net_inv_income
-        + base.forecast_qual_div + base.forecast_ord_div + base.forecast_realized_gains + base.rmd_income
-    )
+    niit_magi = base.opt + conv + tss + net_inv_income + base.niit_magi_addl
+    niit_base_magi = base.opt + base_tss + net_inv_income + base.niit_magi_addl
     # R2: net investment income = realized gains + qual/ord dividends + YTD investment
     # income, mirroring scenario.py's `net_investment_income = realized_gains +
     # qual_div_this_year + ord_div_this_year` assembly in compute_scenario (grep
@@ -815,16 +882,77 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     )
 
 
+def zero_conversion_ira_draws(
+    hh: Household,
+    *,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> dict[int, float]:
+    """Per-year traditional-IRA draw that funds living expenses at ZERO conversion.
+
+    audit-0809 #08. Sourced from engine.scenario rather than re-solved here on
+    purpose. Reproducing the cash-need assembly locally (living_expenses +
+    irmaa_cost + aca_premium_cost - available_income, with the YTD spendable-cash
+    restoration, the per-spouse QCD ordering and the IRMAA payment-year offset)
+    would be a second implementation of logic that already exists, and
+    engine/withdrawal_waterfall.py's own allocate_ira_draw docstring records what
+    happened last time this codebase kept two copies of one rule: "a second
+    implementation is free to drift from this one, and did."
+
+    Only the two traditional-IRA legs are returned. The Roth leg is excluded
+    because a qualified Roth distribution is not includible in gross income and
+    so never reaches MAGI. The brokerage leg is excluded because it is largely a
+    return of capital whose realized-gain component this module already models on
+    its own forecast_realized_gains path -- folding the leg in here would
+    double-count it.
+
+    ZERO conversion, not the swept amount: see engine/scenario.py's "AVOIDING
+    CIRCULARITY" note. A draw solved at the conversion being sized is itself a
+    function of that conversion, so it cannot bound it. A nonzero conversion does
+    raise this year's tax and therefore the true draw, so a second-order
+    understatement of the draw survives here -- the same direction, and for the
+    same reason, as the engine's own first-pass conversion_cap.
+    """
+    conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
+    end_age = hh.your_age + max(conv_window - 1, 0)
+    result = run_scenario(
+        hh,
+        ConversionPlan(),
+        "sweet-spot waterfall baseline",
+        end_age=end_age,
+        ytd=ytd,
+        net_inv_income=net_inv_income,
+    )
+    return {
+        yr.year: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw
+        for yr in result.years
+    }
+
+
 def compute_multi_year_summary(
     hh: Household,
     *,
     net_inv_income: float = 0.0,
     ytd: YTDSnapshot | None = None,
     include_ltcg_stacking: bool = False,
+    ira_draws: dict[int, float] | None = None,
 ) -> list[YearSummary]:
-    """Compute sweet-spot summary rows for all conversion years."""
+    """Compute sweet-spot summary rows for all conversion years.
+
+    audit-0809 #08: `ira_draws` maps year -> the living-expense waterfall draw
+    folded into that year's base (see zero_conversion_ira_draws). Derived here
+    when not supplied, which costs one zero-conversion projection for the whole
+    table rather than one per year; pass the map explicitly when the caller
+    already has it -- views/sweet_spot.py needs the same draws for its selected
+    year -- to avoid paying for a second projection. Pass an empty dict for the
+    pre-fix, draw-blind behaviour.
+    """
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
     conv_years = list(range(hh.base_year, hh.base_year + conv_window))
+    if ira_draws is None:
+        ira_draws = zero_conversion_ira_draws(
+            hh, ytd=ytd, net_inv_income=net_inv_income
+        )
 
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
 
@@ -835,7 +963,7 @@ def compute_multi_year_summary(
         irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, yr + 2, cpi)
 
         _yr_ytd = ytd if yr == hh.base_year else None
-        b = base_income_for_year(hh, yr, ytd=_yr_ytd)
+        b = base_income_for_year(hh, yr, ytd=_yr_ytd, ira_draw=ira_draws.get(yr, 0.0))
         _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
 
         # C23 (audit-0805): route fill_12/fill_22 through bracket_boundary_conversion
