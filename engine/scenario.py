@@ -744,7 +744,7 @@ def _project_year(
     _spouse_aca_enrolled = hh.spouse_aca_enrolled and not (
         survivor_active and surv is not None and surv.who_dies == "spouse"
     )
-    yr.aca_magi, yr.aca_loss, yr.aca_clawback = compute_aca(
+    yr.aca_magi, yr.aca_loss, yr.aca_clawback, yr.aca_premium_cost = compute_aca(
         yr.magi,
         yr.combined_ss,
         yr.taxable_ss_amt,
@@ -931,8 +931,26 @@ def _project_year(
             + ytd_year.stcg_ytd
             + _ytd_dist_excess
         )
-    yr.income_needed = max(yr.living_expenses - available_income, 0)
-    yr.excess_rmd = max(available_income - yr.living_expenses, 0)
+    # audit-0809 follow-up: healthcare is a real non-discretionary cash
+    # outflow; previously `irmaa_cost` and `aca_loss` fed ONLY the display
+    # metric `all_in_cost` (see the `all_in_cost` line earlier in this
+    # function), so the entire healthcare side of the model could not move
+    # terminal net worth. Same defect class as the unfunded living expenses
+    # fixed in PR #429.
+    # `irmaa_cost` is the surcharge ABOVE the base Part B/D premium
+    # (engine/irmaa.py subtracts `base_part_b`), so adding it is purely
+    # additive and cannot double-count a standard premium already budgeted
+    # inside `living_expenses`.
+    # `aca_premium_cost` is already net of any advance APTC reconciled
+    # through `aca_clawback` -> `federal_tax_amt`, which `available_income`
+    # subtracts above -- so it is counted exactly once.
+    # IRMAA needs no within-year feedback: `irmaa_for_year` reads MAGI from
+    # two years earlier, so this year's draw cannot move this year's
+    # surcharge. ACA does, and that is handled in `_solve_waterfall_year`'s
+    # `tax_of`.
+    _total_cash_need = yr.living_expenses + yr.irmaa_cost + yr.aca_premium_cost
+    yr.income_needed = max(_total_cash_need - available_income, 0)
+    yr.excess_rmd = max(available_income - _total_cash_need, 0)
 
     # Brokerage: accumulates excess, grows (appreciation), dividends reinvest, pays cap gains
     # yr.brokerage_balance is the TRUE begin-of-year amount (see the capture
@@ -1229,6 +1247,7 @@ def _solve_waterfall_year(
         """Size the waterfall draw against `nd`'s shortfall and conversion."""
         need = nd.yr.income_needed
         nd_tax = nd.yr.federal_tax_amt
+        nd_aca_premium = nd.yr.aca_premium_cost
         brok_begin = nd.yr.brokerage_balance
         basis_fraction = brokerage_basis / brok_begin if brok_begin > 0 else 0.0
         # Net the IRA ceilings for this year's MANDATORY claims on the same
@@ -1247,8 +1266,15 @@ def _solve_waterfall_year(
         _spouse_ira_available = max(nd.yr.spouse_ira_begin - _spouse_mandatory, 0.0)
 
         def tax_of(extra_ordinary: float) -> float:
-            # Marginal federal tax ONLY -- the early-withdrawal penalty is added
-            # by solve_waterfall itself, outside this closure.
+            # Returns the marginal NON-DISCRETIONARY OUTFLOW of the draw --
+            # federal tax PLUS the ACA premium the draw itself triggers --
+            # because a draw that pushes ACA MAGI across the 400%-FPL cliff
+            # makes the premium jump by the entire subsidy, and the solver
+            # must gross the draw up to cover that jump exactly as it already
+            # does for marginal tax. The cliff is a discontinuity
+            # `solve_waterfall` is already designed to handle conservatively.
+            # The early-withdrawal penalty is added by solve_waterfall itself,
+            # outside this closure.
             #
             # The probe must SPLIT the speculative draw exactly the way the solver
             # will really take it. Attributing the whole amount to "your" IRA
@@ -1292,7 +1318,9 @@ def _solve_waterfall_year(
                 forced_spouse_ira_draw=spouse_probe,
                 conversion_cap=conversion_cap,
             )
-            return speculative.yr.federal_tax_amt - nd_tax
+            return (speculative.yr.federal_tax_amt + speculative.yr.aca_premium_cost) - (
+                nd_tax + nd_aca_premium
+            )
 
         accounts = Accounts(
             brokerage=brok_begin,
@@ -1630,6 +1658,7 @@ def run_scenario(
     cum_conv_tax = 0.0
     cum_irmaa = 0.0
     cum_aca = 0.0
+    cum_aca_premium = 0.0
     cum_niit = 0.0
     cum_rmd_tax = 0.0
     cum_brok_tax = 0.0
@@ -1713,6 +1742,7 @@ def run_scenario(
         cum_conv_tax += yr.conversion_tax
         cum_irmaa += yr.irmaa_cost
         cum_aca += yr.aca_loss
+        cum_aca_premium += yr.aca_premium_cost
         cum_niit += yr.niit_cost
         if (
             ya >= hh.your_rmd_start_age
@@ -1752,6 +1782,7 @@ def run_scenario(
         total_conv_tax=cum_conv_tax,
         total_irmaa=cum_irmaa,
         total_aca_loss=cum_aca,
+        total_aca_premium=cum_aca_premium,
         total_niit=cum_niit,
         total_rmd_tax=cum_rmd_tax,
         total_brok_tax=cum_brok_tax,

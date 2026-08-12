@@ -22,7 +22,7 @@ def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:
     benchmark = 21_600.0
     magi = 60_000.0
     advance = 10_000.0
-    _, _, clawback = compute_aca(
+    _, _, clawback, _ = compute_aca(
         magi=magi,
         combined_ss=0.0,
         taxable_ss_amt=0.0,

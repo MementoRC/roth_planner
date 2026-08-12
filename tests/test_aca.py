@@ -348,7 +348,7 @@ class TestACAExcessAPTCRepayment:
         """
         from engine.scenario_compute import compute_aca
 
-        _aca_magi, aca_loss, aca_clawback = compute_aca(
+        _aca_magi, aca_loss, aca_clawback, _aca_premium = compute_aca(
             magi=200_000.0,
             combined_ss=0.0,
             taxable_ss_amt=0.0,

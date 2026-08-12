@@ -75,6 +75,7 @@ class YearResult:
     irmaa_cost: float = 0.0
     aca_loss: float = 0.0
     aca_clawback: float = 0.0  # Form 8962 excess-APTC repayment (positive = owed, negative = refund); added to federal_tax_amt
+    aca_premium_cost: float = 0.0  # out-of-pocket ACA premium actually paid this year (benchmark - PTC), net of any advance APTC already reconciled through aca_clawback; FUNDED via income_needed, unlike the display-only delta aca_loss
     niit_cost: float = 0.0
     conversion_ltcg_cost: float = 0.0  # C2: conversion-induced LTCG bracket-stacking cost; added to all_in_cost only (NOT conversion_tax) to avoid double-counting cum_brok_tax
     all_in_cost: float = 0.0
@@ -197,6 +198,7 @@ class ScenarioResult:
     total_conv_tax: float = 0.0
     total_irmaa: float = 0.0
     total_aca_loss: float = 0.0
+    total_aca_premium: float = 0.0  # cumulative out-of-pocket ACA premiums actually paid
     total_niit: float = 0.0
     total_rmd_tax: float = 0.0  # cumulative tax during RMD years
     total_brok_tax: float = 0.0  # cumulative brokerage capital gains tax
