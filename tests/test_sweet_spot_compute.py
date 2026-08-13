@@ -11,6 +11,7 @@ from engine.sweet_spot_compute import (
     base_income_for_year,
     bracket_boundary_conversion,
     compute_multi_year_summary,
+    zero_conversion_ira_draws,
 )
 from engine.tax import taxable_ss
 from models.household import Household
@@ -172,10 +173,19 @@ class TestComputeMultiYearSummaryFillBoundarySsTorpedo:
     def test_fill_12_lands_on_ceiling_not_naive_gross_room(self) -> None:
         hh = self._make_household()
         year = hh.base_year
-        b = base_income_for_year(hh, year)
+        # audit-0809 #08: compute_multi_year_summary folds the living-expense
+        # waterfall draw into each year's base, so the oracle re-check below must
+        # be built on the SAME base -- a draw-blind `b` here would evaluate a
+        # draw-aware fill_12 against a base short by the entire draw, and the
+        # taxable_inc comparison would fail for a reason that has nothing to do
+        # with the SS torpedo this test is about. Deriving the map once and
+        # passing it to both sides makes that agreement explicit rather than
+        # coincidental.
+        draws = zero_conversion_ira_draws(hh)
+        b = base_income_for_year(hh, year, ira_draw=draws.get(year, 0.0))
         assert b.combined_ss > 0, "precondition: SS must be active"
 
-        rows = compute_multi_year_summary(hh)
+        rows = compute_multi_year_summary(hh, ira_draws=draws)
         row = next(r for r in rows if r.year == year)
 
         ceiling_12 = 100_800.0  # BRACKETS_MFJ[1][0], unindexed at base_year 2026

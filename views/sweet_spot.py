@@ -22,6 +22,7 @@ from engine.sweet_spot_compute import (
     estimate_ltcg_eligible,
     find_sweet_spots,
     irmaa_safe_max,
+    zero_conversion_ira_draws,
 )
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
@@ -84,8 +85,19 @@ def render(hh: Household) -> None:
     # Inject base-year realized YTD income into MAGI when the user opted in (niit-5).
     _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
     _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    # audit-0809 #08: the traditional-IRA withdrawal that funds living expenses,
+    # IRMAA surcharges and ACA premiums belongs in every base this page computes
+    # -- without it the whole page priced a household that pays its bills from
+    # thin air. Derived ONCE here (one zero-conversion projection) and handed to
+    # compute_multi_year_summary below, which would otherwise run a second
+    # identical projection of its own.
+    _ira_draws = zero_conversion_ira_draws(hh, ytd=_ytd, net_inv_income=net_inv_income)
+    _selected_draw = _ira_draws.get(selected_year, 0.0)
     base = base_income_for_year(
-        hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
+        hh,
+        selected_year,
+        ytd=_ytd if selected_year == hh.base_year else None,
+        ira_draw=_selected_draw,
     )
 
     # --- Info bar ---
@@ -99,6 +111,12 @@ def render(hh: Household) -> None:
     )
     base_result = all_in_at_conversion(hh, base, 0, net_inv_income, ltcg_eligible=_ltcg_eligible)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
+    if _selected_draw > 0:
+        st.caption(
+            f"Base MAGI includes {fmt_dollars(_selected_draw)} of traditional-IRA "
+            "withdrawal needed to fund living expenses, IRMAA surcharges and ACA "
+            "premiums this year -- every zone below is measured on top of it."
+        )
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
     prior_magi = st.session_state.get("prior_year_magi") or {}
@@ -373,7 +391,11 @@ def render(hh: Household) -> None:
     st.caption("Quick comparison of recommended zones across all conversion years.")
 
     summary_rows = compute_multi_year_summary(
-        hh, net_inv_income=net_inv_income, ytd=_ytd, include_ltcg_stacking=True
+        hh,
+        net_inv_income=net_inv_income,
+        ytd=_ytd,
+        include_ltcg_stacking=True,
+        ira_draws=_ira_draws,
     )
 
     import pandas as pd
