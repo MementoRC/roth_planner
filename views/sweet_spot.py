@@ -20,6 +20,7 @@ from engine.sweet_spot_compute import (
     compute_marginal_costs,
     compute_multi_year_summary,
     estimate_ltcg_eligible,
+    fill_conversions_for_year,
     find_sweet_spots,
     irmaa_safe_max,
     zero_conversion_ira_draws,
@@ -79,7 +80,14 @@ def render(hh: Household) -> None:
     _cpi = hh.cpi_assumption
     irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year + 2, _cpi)  # +2: payment-year indexing
     _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
-    indexed_brackets = _index_brackets(_base_brackets, selected_year, _cpi)
+    # round50=True per IRC 1(f)(6): ordinary bracket ceilings are statutorily
+    # rounded to the nearest $50, and every bracket-indexing call in engine/tax.py
+    # passes it. Without it this page's ceilings drift up to $25 from the engine's
+    # in any post-base-year, putting the chart's bracket guide-lines a little off
+    # the cards and the multi-year table (which derive theirs via
+    # fill_conversions_for_year). A no-op at base_year, where index_value returns
+    # the unscaled 2026 constant.
+    indexed_brackets = _index_brackets(_base_brackets, selected_year, _cpi, round50=True)
 
     # --- Compute base income ---
     # Inject base-year realized YTD income into MAGI when the user opted in (niit-5).
@@ -109,7 +117,6 @@ def render(hh: Household) -> None:
     _ltcg_eligible = estimate_ltcg_eligible(
         hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
     )
-    base_result = all_in_at_conversion(hh, base, 0, net_inv_income, ltcg_eligible=_ltcg_eligible)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
     if _selected_draw > 0:
         st.caption(
@@ -248,29 +255,35 @@ def render(hh: Household) -> None:
     # --- Sweet spots ---
     sweet_spots = find_sweet_spots(results)
 
-    # Also find the room-to-12% and room-to-22% values
-    room_12 = base_result.room_12
-    room_22 = base_result.room_22
+    # audit-0809 #01 (HIGH, Class B): these cards rendered base_result.room_12 /
+    # .room_22 -- GROSS-INCOME room at zero conversion, documented on
+    # ConversionResult as valid only when taxable SS is conversion-invariant --
+    # as the recommended CONVERSION amount. C23 (audit-0805) fixed the multi-year
+    # table below and left these cards, so one page showed two answers to one
+    # question, and the cards disagreed with the bracket guide-lines drawn just
+    # above them (which already bisect via bracket_boundary_conversion). Both the
+    # table and these cards now read one shared derivation.
+    fill_12, fill_22 = fill_conversions_for_year(hh, base)
 
     st.markdown("### Recommended Conversion Zones")
 
     z1, z2, z3 = st.columns(3)
     with z1:
         st.markdown("#### Fill to 12%")
-        st.metric("Conversion", fmt_dollars(room_12))
+        st.metric("Conversion", fmt_dollars(fill_12))
         r12_result = all_in_at_conversion(
-            hh, base, room_12, net_inv_income, ltcg_eligible=_ltcg_eligible
+            hh, base, fill_12, net_inv_income, ltcg_eligible=_ltcg_eligible
         )
-        avg_rate = r12_result.all_in / max(room_12, 1)
+        avg_rate = r12_result.all_in / max(fill_12, 1)
         st.metric("All-In Cost", fmt_dollars(r12_result.all_in), f"Avg {fmt_pct(avg_rate)}")
 
     with z2:
         st.markdown("#### Fill to 22%")
-        st.metric("Conversion", fmt_dollars(room_22))
+        st.metric("Conversion", fmt_dollars(fill_22))
         r22_result = all_in_at_conversion(
-            hh, base, room_22, net_inv_income, ltcg_eligible=_ltcg_eligible
+            hh, base, fill_22, net_inv_income, ltcg_eligible=_ltcg_eligible
         )
-        avg_rate_22 = r22_result.all_in / max(room_22, 1)
+        avg_rate_22 = r22_result.all_in / max(fill_22, 1)
         st.metric("All-In Cost", fmt_dollars(r22_result.all_in), f"Avg {fmt_pct(avg_rate_22)}")
 
     with z3:

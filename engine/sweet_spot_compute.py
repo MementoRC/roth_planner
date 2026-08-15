@@ -587,6 +587,37 @@ def bracket_boundary_conversion(
     return lo
 
 
+def fill_conversions_for_year(hh: Household, base: BaseIncome) -> tuple[float, float]:
+    """(fill_to_12, fill_to_22): the conversions that lift taxable income exactly
+    to this year's 12% and 22% bracket ceilings, SS-torpedo-aware.
+
+    audit-0809 #01 (HIGH, Class B). C23 (audit-0805) established that the
+    closed-form room_12/room_22 on ConversionResult -- documented there as
+    GROSS-INCOME room, valid only when taxable SS is conversion-invariant --
+    must never be fed back in as a CONVERSION amount, and routed
+    compute_multi_year_summary's fill_12/fill_22 through
+    bracket_boundary_conversion instead. It converted the multi-year TABLE and
+    left views/sweet_spot.py's "Fill to 12%" / "Fill to 22%" CARDS reading
+    ConversionResult.room_12/.room_22, so one page showed two different answers
+    to one question -- the exact shape audit-0809 names Class B.
+
+    The ceiling derivation lives HERE rather than at each call site because
+    open-coding it a second time is what let the two consumers drift, and a
+    third copy in the view would invite the same failure again. Same remedy as
+    BaseIncome.niit_magi_addl (audit-0809 #08).
+
+    Ceilings are $50-rounded per IRC 1(f)(6) (round50=True), matching every
+    bracket-indexing call in engine/tax.py.
+    """
+    brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    ceiling_12 = _index_value(brackets[1][0], base.year, base.cpi, round50=True)
+    ceiling_22 = _index_value(brackets[2][0], base.year, base.cpi, round50=True)
+    return (
+        bracket_boundary_conversion(hh, base, ceiling_12),
+        bracket_boundary_conversion(hh, base, ceiling_22),
+    )
+
+
 def all_in_at_conversion(
     hh: Household,
     base: BaseIncome,
@@ -966,19 +997,17 @@ def compute_multi_year_summary(
         b = base_income_for_year(hh, yr, ytd=_yr_ytd, ira_draw=ira_draws.get(yr, 0.0))
         _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
 
-        # C23 (audit-0805): route fill_12/fill_22 through bracket_boundary_conversion
-        # -- the module's own SS-torpedo-aware oracle (finding 1 / TestBracketBoundarySsTaxabilityNonlinearity)
-        # -- instead of the closed-form room_12/room_22 (documented as GROSS-INCOME
-        # room, valid only when taxable SS is conversion-invariant) fed back as a
-        # CONVERSION amount. Feeding gross-income room in as a conversion double-counts
-        # the SS-torpedo effect the closed form already ignored once, overshooting the
-        # ceiling. bracket_boundary_conversion bisects against the real (non-linear)
-        # taxable_inc, landing exactly on the ceiling.
-        _year_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
-        _ceiling_12 = _index_value(_year_brackets[1][0], yr, cpi, round50=True)
-        _ceiling_22 = _index_value(_year_brackets[2][0], yr, cpi, round50=True)
-        r12 = bracket_boundary_conversion(hh, b, _ceiling_12)
-        r22 = bracket_boundary_conversion(hh, b, _ceiling_22)
+        # C23 (audit-0805) / audit-0809 #01: fill_12/fill_22 route through
+        # bracket_boundary_conversion -- the module's own SS-torpedo-aware oracle
+        # (finding 1 / TestBracketBoundarySsTaxabilityNonlinearity) -- instead of
+        # the closed-form room_12/room_22 (documented as GROSS-INCOME room, valid
+        # only when taxable SS is conversion-invariant) fed back as a CONVERSION
+        # amount, which double-counts the SS-torpedo effect the closed form already
+        # ignored once and overshoots the ceiling. The derivation now lives in
+        # fill_conversions_for_year so views/sweet_spot.py's cards read the same
+        # one: C23 fixed this table and left those cards, which is how one page
+        # came to show two answers to one question (audit-0809 #01, Class B).
+        r12, r22 = fill_conversions_for_year(hh, b)
 
         tier1_threshold = irmaa_tiers[0][0]
         # Binary search for the largest STEP-aligned conversion where magi <= tier1_threshold.
