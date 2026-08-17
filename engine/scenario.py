@@ -1132,6 +1132,13 @@ def _project_year(
     )
 
 
+# Tolerance (dollars) for every MAGI-vs-ceiling comparison in
+# _solve_waterfall_year. Shared by the shrink-and-resolve loop and the
+# zero-planned-conversion check below so the two cannot drift on what counts
+# as a breach (audit-0809 #20).
+_MAGI_CEILING_TOL = 1.0
+
+
 def _strategy_magi_ceiling(strategy: str, filing_status: str, year: int, cpi: float) -> float:
     """MAGI ceiling for a `ConversionPlan.magi_strategy`-governed plan.
 
@@ -1550,14 +1557,13 @@ def _solve_waterfall_year(
             )
             _baseline_magi = _magi_for_strategy(plan.magi_strategy, zero_conv_outcome)
             conversion_cap = min(conversion_cap, max(0.0, _ceiling - _baseline_magi))
-            _magi_tol = 1.0
             for _ in range(3):
                 _achieved = (
                     _baseline_magi
                     if conversion_cap <= 0.0
                     else _probe_magi(conversion_cap, plan.magi_strategy)
                 )
-                if _achieved <= _ceiling + _magi_tol:
+                if _achieved <= _ceiling + _MAGI_CEILING_TOL:
                     break
                 if conversion_cap <= 0.0:
                     # Already at the floor and still over the ceiling: even a
@@ -1616,6 +1622,32 @@ def _solve_waterfall_year(
     outcome.yr.unfunded_need = draw.unfunded
     outcome.yr.waterfall_converged = draw.converged
     outcome.yr.waterfall_ira_leg_saturated = draw.ira_leg_saturated
+    # audit-0809 #20 (HIGH): the MAGI-ceiling block above lives entirely in
+    # the `else` of `planned_conversion <= 0.0`, so a zero-planned year
+    # verified nothing and reported the guarantee honoured by default. The
+    # living-expense draw is sized whether or not a conversion is planned, so
+    # it can carry MAGI over the ceiling on its own -- the SAME household
+    # state the `conversion_cap <= 0.0` branch already surfaces as False when
+    # a NONZERO plan shrinks to the floor, and exactly the condition
+    # ScenarioYear.magi_ceiling_converged documents ("even a zero conversion
+    # could not fund living expenses without crossing the ceiling").
+    # Reporting True here made the answer turn on whether the plan dict
+    # happened to hold 0.0 rather than an amount the cap then shrank to 0.0.
+    #
+    # Measured against the ACHIEVED outcome rather than a probe: it costs no
+    # extra solve and it is the exact MAGI this year projected.
+    #
+    # LIMIT: _solve_waterfall_year runs ONLY in shortfall years, so a breach
+    # in a year with no shortfall (a large RMD already covering living
+    # expenses) is still reported as converged. Closing that needs the flag
+    # set on the normal projection path too -- deliberately out of scope.
+    if planned_conversion <= 0.0 and plan.magi_strategy is not None:
+        _zero_ceiling = _strategy_magi_ceiling(
+            plan.magi_strategy, baseline.yr.filing_status, year, cpi
+        )
+        _zero_achieved = _magi_for_strategy(plan.magi_strategy, outcome)
+        if _zero_achieved > _zero_ceiling + _MAGI_CEILING_TOL:
+            magi_ceiling_converged = False
     outcome.yr.magi_ceiling_converged = magi_ceiling_converged
     inherited_balances[:] = final_inherited
     return outcome
