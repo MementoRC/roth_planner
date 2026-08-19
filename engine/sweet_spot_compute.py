@@ -587,6 +587,59 @@ def bracket_boundary_conversion(
     return lo
 
 
+def magi_boundary_conversion(
+    hh: Household,
+    base: BaseIncome,
+    magi_threshold: float,
+    net_inv_income: float = 0.0,
+    ltcg_eligible: float = 0.0,
+) -> float:
+    """Conversion amount that lifts MAGI to `magi_threshold`.
+
+    audit-0809 Class B. The MAGI analogue of bracket_boundary_conversion, and
+    it rests on the same argument: the closed form
+    `magi_threshold - base.base_magi` assumes MAGI rises exactly $1 per $1
+    converted. It does not -- once provisional income enters the 50%/85%
+    partial-taxability zone (IRC section 86(b)) each converted dollar also
+    drags more Social Security into MAGI, so the true boundary sits BELOW the
+    naive estimate. irmaa_safe_max has documented this since audit finding 1;
+    views/sweet_spot.py's IRMAA tier lines and its NIIT line kept using the
+    closed form regardless, drawing every cliff marker too far right -- by the
+    whole additional taxable SS the conversion pulls in, up to 85% of benefits.
+
+    Extracted rather than open-coded at the call sites: open-coding the
+    bracket version a second time is exactly what let audit-0809 #01's cards
+    drift away from the multi-year table.
+
+    Returns 0.0 when base MAGI already meets or exceeds the threshold.
+
+    NOT interchangeable with irmaa_safe_max, which answers a deliberately
+    different question -- the largest STEP-aligned SAFE conversion, floored to
+    the sweep grid, which is the right answer for a RECOMMENDED amount. This
+    returns the exact boundary, which is what a chart marker needs. The two
+    agree to within one STEP by construction.
+    """
+    if base.base_magi >= magi_threshold:
+        return 0.0
+
+    # The naive subtraction is a valid UPPER bound: magi(conv) >= base_magi +
+    # conv because taxable SS is non-decreasing in conv, so any conversion
+    # above it is guaranteed to overshoot the threshold.
+    upper = magi_threshold - base.base_magi
+
+    lo, hi = 0.0, upper
+    for _ in range(60):  # bisection to well under a cent of precision
+        mid = (lo + hi) / 2
+        result = all_in_at_conversion(
+            hh, base, mid, net_inv_income, ltcg_eligible=ltcg_eligible
+        )
+        if result.magi <= magi_threshold:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
 def fill_conversions_for_year(hh: Household, base: BaseIncome) -> tuple[float, float]:
     """(fill_to_12, fill_to_22): the conversions that lift taxable income exactly
     to this year's 12% and 22% bracket ceilings, SS-torpedo-aware.
