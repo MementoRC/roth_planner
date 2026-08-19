@@ -23,6 +23,7 @@ from engine.sweet_spot_compute import (
     fill_conversions_for_year,
     find_sweet_spots,
     irmaa_safe_max,
+    magi_boundary_conversion,
     zero_conversion_ira_draws,
 )
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
@@ -221,7 +222,17 @@ def render(hh: Household) -> None:
 
     # IRMAA threshold lines
     for threshold, _, _ in irmaa_tiers:
-        irmaa_conv = threshold - base.base_magi
+        # audit-0809 Class B: this was `threshold - base.base_magi`, which
+        # assumes MAGI rises $1 per $1 converted and so drew every tier marker
+        # too far right -- by the whole additional taxable SS a conversion
+        # drags in (up to 85% of benefits). The bracket guide-lines just above
+        # already bisect via bracket_boundary_conversion, and the IRMAA-Safe
+        # Max card below binary-searches via irmaa_safe_max; only these lines
+        # still used the closed form, so one chart answered one question three
+        # different ways.
+        irmaa_conv = magi_boundary_conversion(
+            hh, base, threshold, net_inv_income, _ltcg_eligible
+        )
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
                 x=irmaa_conv,
@@ -232,7 +243,11 @@ def render(hh: Household) -> None:
             )
 
     # NIIT threshold line
-    niit_conv = niit_threshold - base.base_magi
+    # Same Class B defect as the IRMAA lines above -- not named in the audit
+    # bullet, but the identical closed form on the same chart.
+    niit_conv = magi_boundary_conversion(
+        hh, base, niit_threshold, net_inv_income, _ltcg_eligible
+    )
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
             x=niit_conv,
