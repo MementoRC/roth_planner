@@ -1637,10 +1637,11 @@ def _solve_waterfall_year(
     # Measured against the ACHIEVED outcome rather than a probe: it costs no
     # extra solve and it is the exact MAGI this year projected.
     #
-    # LIMIT: _solve_waterfall_year runs ONLY in shortfall years, so a breach
-    # in a year with no shortfall (a large RMD already covering living
-    # expenses) is still reported as converged. Closing that needs the flag
-    # set on the normal projection path too -- deliberately out of scope.
+    # _solve_waterfall_year runs ONLY in shortfall years, so a breach in a
+    # year with no shortfall (a large RMD already covering living expenses)
+    # is NOT caught here. That gap is closed on the shared per-year path in
+    # run_scenario, right after this function's call site -- see the check
+    # there guarded on `outcome.yr.magi_ceiling_converged` still being True.
     if planned_conversion <= 0.0 and plan.magi_strategy is not None:
         _zero_ceiling = _strategy_magi_ceiling(
             plan.magi_strategy, baseline.yr.filing_status, year, cpi
@@ -1757,6 +1758,31 @@ def run_scenario(
             )
         else:
             inherited_balances[:] = _inherited_baseline
+        # audit-0809 #20 no-shortfall follow-up (the LIMIT PR #437 documented
+        # at _solve_waterfall_year's zero-planned-conversion check, above):
+        # that check -- and the whole rest of the MAGI-ceiling machinery --
+        # lives inside _solve_waterfall_year, which only runs when
+        # outcome.yr.income_needed > 0. A year with NO shortfall (a large
+        # forced RMD alone covers living expenses) never calls it, so a
+        # breach carried by that forced RMD went unchecked and the flag's
+        # True default stood unchallenged. This sits on the shared
+        # per-year path BOTH branches above rejoin, so it reaches every
+        # year regardless of which branch ran.
+        #
+        # Guarded on the flag still being True: _solve_waterfall_year (when
+        # it DID run) knows why it gave up -- floored conversion_cap at
+        # zero, or an achieved MAGI still over ceiling after the
+        # shrink-and-resolve loop -- and this check has no access to that
+        # reasoning, only the achieved MAGI. It must only ever CLEAR the
+        # flag, never set it back to True, or an in-tolerance achieved
+        # figure here could silently overwrite a real solver-reported
+        # breach.
+        if plan.magi_strategy is not None and outcome.yr.magi_ceiling_converged:
+            _ceiling = _strategy_magi_ceiling(
+                plan.magi_strategy, outcome.yr.filing_status, outcome.yr.year, cpi
+            )
+            if _magi_for_strategy(plan.magi_strategy, outcome) > _ceiling + _MAGI_CEILING_TOL:
+                outcome.yr.magi_ceiling_converged = False
         yr = outcome.yr
         your_ira = outcome.your_ira
         spouse_ira = outcome.spouse_ira
