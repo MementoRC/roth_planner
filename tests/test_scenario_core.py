@@ -1005,6 +1005,79 @@ class TestMagiCeilingWaterfallActivation:
             )
         )
 
+    @pytest.mark.parametrize(
+        ("autofill", "strategy_label"),
+        [(auto_fill_irmaa_safe, "IRMAA-Safe"), (auto_fill_aca, "ACA-Safe")],
+        ids=["irmaa_safe", "aca_safe"],
+    )
+    def test_magi_breach_reported_in_no_shortfall_years(
+        self,
+        autofill: Callable[[Household], ConversionPlan],
+        strategy_label: str,
+    ) -> None:
+        """audit-0809 #20 follow-up (the LIMIT that PR #437 documented as
+        out of scope, engine/scenario.py:1640-1643 pre-fix): the whole
+        MAGI-ceiling block lives inside `_solve_waterfall_year`, which
+        `run_scenario` calls ONLY when `outcome.yr.income_needed > 0`
+        (stage 3b activation). A year with NO shortfall -- e.g. a large
+        forced RMD that alone covers living expenses -- never enters the
+        solver, so nothing ever checks whether that forced RMD carried MAGI
+        over the ceiling, and `magi_ceiling_converged` reports its True
+        default regardless.
+
+        This is exactly the pure-RMD case this class's own docstring
+        already names as "real and unavoidable, not a defect this cap
+        closes" -- the cap genuinely cannot suppress a forced RMD. What
+        WAS a defect is the flag staying True and claiming the guarantee
+        held anyway. This household is well past both RMD-start ages with
+        IRA balances large enough that the RMD alone dwarfs both the
+        IRMAA tier-1 and ACA 400%-FPL ceilings, while living_expenses is
+        set low enough that the RMD alone covers it -- i.e. a genuine
+        no-shortfall, over-ceiling year.
+        """
+        hh = Household(
+            your_age=80,
+            spouse_age=78,
+            your_ira=6_000_000.0,
+            spouse_ira=6_000_000.0,
+            living_expenses=10_000.0,
+        )
+        plan = autofill(hh)
+        result = run_scenario(hh, plan, strategy_label, end_age=95)
+
+        checked_a_no_shortfall_year = False
+        breach_flagged = False
+        for yr in result.years:
+            if yr.income_needed != 0:
+                continue
+            if strategy_label == "IRMAA-Safe":
+                ceiling = irmaa_next_threshold(
+                    0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+                )
+                achieved = yr.magi
+            else:
+                ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+                achieved = yr.aca_magi
+            if achieved <= ceiling + 1.0:
+                continue
+            # Found a genuine no-shortfall, over-ceiling year -- the exact
+            # case _solve_waterfall_year never reaches.
+            checked_a_no_shortfall_year = True
+            if not yr.magi_ceiling_converged:
+                breach_flagged = True
+                break
+
+        assert checked_a_no_shortfall_year, (
+            f"{strategy_label}: precondition failed -- no year in this household's "
+            "projection had income_needed == 0 AND achieved MAGI over its ceiling; "
+            "the test fixture needs a bigger RMD or lower living_expenses"
+        )
+        assert breach_flagged, (
+            f"{strategy_label}: a no-shortfall year's achieved MAGI exceeded its "
+            "ceiling but magi_ceiling_converged still reported True -- the "
+            "no-shortfall path never checked it (LIMIT PR #437 documented)"
+        )
+
     def test_22pct_fill_conversions_unchanged_by_magi_ceiling_work(self) -> None:
         """Regression guard: a plan with magi_strategy=None (12/22/24-bracket
         fill) never enters the MAGI-ceiling block added by this change, so

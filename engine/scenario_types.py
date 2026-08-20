@@ -133,13 +133,20 @@ class YearResult:
     # and made 17 fully-funded years report solver failure.
     waterfall_ira_leg_saturated: bool = False
     # True (default, and always true for non-magi-governed plans) unless a
-    # magi_strategy-governed plan (irmaa_safe/aca_safe) still breached its
-    # MAGI ceiling after the shrink-and-resolve loop in
-    # engine.scenario._solve_waterfall_year exhausted its iteration budget --
-    # i.e. even a zero conversion could not fund living expenses without
-    # crossing the ceiling. Explicit rather than silent per the accepted
-    # design: a large forced draw may shrink the allowed conversion toward
-    # zero, but the caller must be able to tell WHEN that happened.
+    # magi_strategy-governed plan (irmaa_safe/aca_safe) breached its MAGI
+    # ceiling in THIS year, by either of two independent checks in
+    # engine.scenario:
+    #   - in a shortfall year, _solve_waterfall_year's shrink-and-resolve
+    #     loop exhausted its iteration budget -- i.e. even a zero conversion
+    #     could not fund living expenses without crossing the ceiling;
+    #   - in ANY year (shortfall or not), run_scenario's shared per-year
+    #     check catches a breach the shortfall-only solver never runs for --
+    #     e.g. a large forced RMD alone carrying MAGI over the ceiling in a
+    #     year with no shortfall at all.
+    # Explicit rather than silent per the accepted design: a large forced
+    # draw (planned conversion, or a forced RMD) may carry MAGI over the
+    # ceiling with nothing left to shrink, but the caller must be able to
+    # tell WHEN that happened.
     magi_ceiling_converged: bool = True
 
     # Inherited IRA distributions (SECURE Act 10-year rule)
