@@ -10,12 +10,13 @@ this reason (see git history); renaming it back to a 35-character suffix will
 silently break CI.
 """
 
+import math
 from collections.abc import Callable
 
 import pytest
 
 from config.defaults import DEFAULTS
-from engine.aca import aca_ceiling_magi, aca_subsidy_loss
+from engine.aca import aca_ceiling_magi, aca_subsidy_loss, is_pre_medicare_age
 from engine.ira import (
     project_ira,
 )
@@ -33,6 +34,7 @@ from engine.scenario_autofill import (
     auto_fill_irmaa_safe,
 )
 from engine.tax import federal_tax
+from models.grants import StockGrant
 from models.household import Household, SurvivorScenario
 
 
@@ -912,12 +914,31 @@ class TestMagiCeilingWaterfallActivation:
     # detector matches it inside a comment just as readily as in code.
     @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
     def test_aca_safe_magi_never_exceeds_its_ceiling(self, hh: Household) -> None:
+        """fix/aca-safe-medicare-age-gate: the aca_safe ceiling now LIFTS
+        ENTIRELY once BOTH spouses are 65+ (Medicare, no ACA subsidy left to
+        protect) -- an AGE-ONLY gate, deliberately independent of ACA
+        marketplace enrollment (Household.your_aca_enrolled /
+        spouse_aca_enrolled both default False and are irrelevant to this
+        gate; gating on enrollment would silently unbound the ceiling for
+        any household that never set those flags, defeating the "aca_safe"
+        strategy the user explicitly selected). This loop is scoped to
+        years where at least one spouse is actually under 65.
+        ss_and_rmd_active (76/74) is already 65+ for its entire projection,
+        so it correctly contributes zero assertions here -- that IS the
+        fix, exercised by the dedicated post-Medicare test below instead.
+        The other shapes (default 61/55 among them) are pre-65 for a real
+        span of years, so this loop still contributes genuine, non-vacuous
+        assertions overall.
+        """
         plan = auto_fill_aca(hh)
         planned = self._planned_totals(plan)
         result = run_scenario(hh, plan, "ACA-Safe", end_age=95)
         for yr in result.years:
             if planned.get(yr.year, 0.0) <= 0.0:
                 continue  # strategy offered nothing this year -- not its claim
+            eligible = is_pre_medicare_age(yr.your_age) or is_pre_medicare_age(yr.spouse_age)
+            if not eligible:
+                continue  # ceiling LIFTED (Medicare) -- nothing left to protect
             ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
             if yr.magi_ceiling_converged:
                 assert yr.aca_magi <= ceiling + 1.0, (
@@ -933,6 +954,135 @@ class TestMagiCeilingWaterfallActivation:
                     f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
                     f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
                 )
+
+    def test_aca_safe_ceiling_lifts_entirely_post_medicare(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (a): once BOTH spouses
+        are 65+ for the WHOLE projection (Medicare, no ACA subsidy left to
+        protect), the aca_safe ceiling must not merely be reported as
+        "breached" -- it must LIFT ENTIRELY, so a forced RMD well over the
+        raw 400%-FPL figure is honoured (magi_ceiling_converged True), not
+        flagged as a breach.
+
+        your_aca_enrolled=True/spouse_aca_enrolled=True are set for realism
+        but are NOT load-bearing: the ceiling gate is AGE-ONLY (see
+        engine.aca.is_pre_medicare_age) and never reads either enrollment
+        flag, so only the Medicare-age cutoff can explain this lift.
+        """
+        hh = Household(
+            your_age=76,
+            spouse_age=74,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        result = run_scenario(hh, plan, "ACA-Safe-post-Medicare", end_age=95)
+        yr0 = result.years[0]
+        naive_ceiling = aca_ceiling_magi(yr0.filing_status, yr0.year, hh.cpi_assumption)
+        # Precondition: the forced RMD alone must genuinely exceed the raw
+        # 400%-FPL figure, or this test would not actually exercise the lift
+        # (a household that never breaches the naive ceiling would pass
+        # trivially regardless of whether the fix works).
+        assert yr0.aca_magi > naive_ceiling, (
+            f"precondition failed: year {yr0.year} aca_magi {yr0.aca_magi:.2f} does not "
+            f"exceed the naive ceiling {naive_ceiling:.2f} -- fixture must force a real "
+            "breach to prove the lift"
+        )
+        assert yr0.magi_ceiling_converged, (
+            f"year {yr0.year} (age {yr0.your_age}/{yr0.spouse_age}): aca_magi "
+            f"{yr0.aca_magi:.2f} exceeds the naive 400%-FPL ceiling {naive_ceiling:.2f} "
+            "but magi_ceiling_converged is False -- the ceiling should have LIFTED "
+            "(both spouses 65+, on Medicare), not merely been reported as unmet"
+        )
+
+    def test_aca_safe_ceiling_still_binds_pre_medicare(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (b): regression guard
+        proving the fix did not simply delete the ACA ceiling feature -- it
+        must still bind while the household is genuinely pre-65 (the AGE-ONLY
+        gate does not read either enrollment flag; they are set here for
+        realism only). your_age=61/spouse_age=55 matches the tool's actual
+        target household (see project memory), so this also exercises the
+        real-world case the whole feature exists for.
+
+        Pre-fix, this already PASSES -- the old code enforced the ceiling
+        unconditionally regardless of age, pre-65 included. It exists to
+        prove the fix's age gate keeps the pre-65 guarantee intact, not to
+        catch the defect itself.
+        """
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "ACA-Safe-pre-Medicare", end_age=95)
+        checked_any = False
+        for yr in result.years:
+            if yr.your_age >= 65:
+                break  # both plan and ages only get further from eligible past this
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue
+            checked_any = True
+            ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+            if yr.magi_ceiling_converged:
+                assert yr.aca_magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): aca_magi {yr.aca_magi:.2f} "
+                    f"exceeds the 400% FPL ceiling {ceiling:.2f} in a genuinely "
+                    "pre-65 ACA-eligible year -- the ceiling must still bind here"
+                )
+            else:
+                assert yr.aca_magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling "
+                    f"{ceiling:.2f}"
+                )
+        assert checked_any, (
+            "precondition failed: no pre-65 year had a planned aca_safe conversion -- "
+            "this test does not actually exercise the regression guard"
+        )
+
+    def test_aca_safe_post_medicare_years_have_no_inf_or_nan(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (c) / CRITICAL HAZARD
+        guard: the lifted-ceiling case must be represented so that it can
+        NEVER reach the (ceiling - baseline_magi) conversion_cap arithmetic
+        in _solve_waterfall_year as math.inf -- inf minus inf is NaN, and
+        either would silently poison every downstream conversion, MAGI, and
+        balance figure once the household crosses into Medicare.
+
+        Runs a household that actually LIVES THROUGH the pre-65 -> post-65
+        transition (not one that starts post-65, where a latent inf/NaN
+        could hide unexercised by any pre-65-only code path) and asserts
+        every year's income, MAGI, and account-balance fields stay finite.
+        """
+        hh = Household(
+            your_age=61,
+            spouse_age=55,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        result = run_scenario(hh, plan, "ACA-Safe-inf-nan-guard", end_age=95)
+        fields = [
+            "your_conversion",
+            "spouse_conversion",
+            "magi",
+            "aca_magi",
+            "your_ira_end",
+            "spouse_ira_end",
+            "your_roth_end",
+            "spouse_roth_end",
+            "brokerage_balance_end",
+            "federal_tax_amt",
+        ]
+        bad = [
+            (yr.year, yr.your_age, f, v)
+            for yr in result.years
+            for f in fields
+            for v in [getattr(yr, f)]
+            if math.isinf(v) or math.isnan(v)
+        ]
+        assert not bad, f"inf/NaN leaked into the projection: {bad}"
 
     @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
     @pytest.mark.parametrize(
@@ -966,6 +1116,21 @@ class TestMagiCeilingWaterfallActivation:
         unfunded shortfall). A year with no shortfall never enters
         _solve_waterfall_year at all, so its flag is untouched by this fix --
         a documented limit of the narrow fix, not a claim about those years.
+
+        fix/aca-safe-medicare-age-gate: the ACA-Safe parametrization is
+        ADDITIONALLY scoped to years where at least one spouse is genuinely
+        pre-Medicare (`is_pre_medicare_age`), mirroring the age gate used by
+        `test_aca_safe_magi_never_exceeds_its_ceiling` above. Once BOTH
+        spouses are 65+ the aca_safe ceiling LIFTS ENTIRELY (Medicare, no
+        ACA subsidy left to protect), so `magi_ceiling_converged=True` in a
+        post-65 zero-planned year is the CORRECT report, not a dishonest
+        one -- flagging it as "dishonest" would be asserting against the
+        very fix this branch ships. The IRMAA-Safe parametrization is
+        deliberately left UNSCOPED by age: the IRMAA tier-1 ceiling has no
+        age gate anywhere in the engine (IRMAA only exists once you're on
+        Medicare, so it must keep binding at every post-Medicare age) and
+        must keep being checked in every zero-planned waterfall year,
+        exactly as before this fix.
         """
         plan = autofill(hh)
         planned = self._planned_totals(plan)
@@ -975,6 +1140,10 @@ class TestMagiCeilingWaterfallActivation:
         for yr in result.years:
             if planned.get(yr.year, 0.0) > 0.0:
                 continue  # the strategy's own claim -- covered by the two tests above
+            if strategy_label == "ACA-Safe":
+                eligible = is_pre_medicare_age(yr.your_age) or is_pre_medicare_age(yr.spouse_age)
+                if not eligible:
+                    continue  # ceiling LIFTED (Medicare) -- nothing left to protect
             waterfall_ran = (
                 yr.forced_brokerage_draw
                 + yr.forced_your_ira_draw
@@ -1005,6 +1174,52 @@ class TestMagiCeilingWaterfallActivation:
             )
         )
 
+    @staticmethod
+    def _no_shortfall_household(strategy_label: str) -> Household:
+        """Per-strategy fixture for the no-shortfall MAGI-breach guarantee.
+
+        IRMAA-Safe: unchanged from the original fixture -- a household well
+        past both RMD-start ages with IRA balances large enough that the
+        forced RMD alone dwarfs the IRMAA tier-1 ceiling and covers
+        living_expenses outright. IRMAA has no age gate, so a post-65
+        household exercises this cleanly.
+
+        ACA-Safe (fix/aca-safe-medicare-age-gate follow-up): the same 80/78
+        fixture no longer works here -- it is entirely post-65, so the
+        aca_safe ceiling has LIFTED for its whole projection and there is no
+        breach left to report. A forced RMD cannot substitute for it either:
+        RMDs start at 73/75, by which point the ceiling has already lifted
+        (age-gated at 65), so "a mandatory draw that dwarfs the ceiling with
+        no top-up needed" can never be an RMD for this strategy. The pre-65
+        equivalent is a single large NQO exercise: option income is ordinary
+        income added DIRECTLY to `available_income` (spendable cash --
+        engine/scenario.py's `available_income` assembly), unlike brokerage
+        dividends/interest, which only reinvest into the brokerage balance
+        and contribute to MAGI without ever becoming spendable cash. A large
+        exercise therefore both funds living_expenses outright (no
+        shortfall) and drives aca_magi far over the 400%-FPL ceiling,
+        entirely pre-65.
+        """
+        if strategy_label == "IRMAA-Safe":
+            return Household(
+                your_age=80,
+                spouse_age=78,
+                your_ira=6_000_000.0,
+                spouse_ira=6_000_000.0,
+                living_expenses=10_000.0,
+            )
+        grant = StockGrant(year=2020, strike=10.0, shares=20_000, expiry_year=2027, grant_id="g1")
+        return Household(
+            your_age=55,
+            spouse_age=53,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            grants=[grant],
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            living_expenses=5_000.0,
+        )
+
     @pytest.mark.parametrize(
         ("autofill", "strategy_label"),
         [(auto_fill_irmaa_safe, "IRMAA-Safe"), (auto_fill_aca, "ACA-Safe")],
@@ -1029,19 +1244,17 @@ class TestMagiCeilingWaterfallActivation:
         already names as "real and unavoidable, not a defect this cap
         closes" -- the cap genuinely cannot suppress a forced RMD. What
         WAS a defect is the flag staying True and claiming the guarantee
-        held anyway. This household is well past both RMD-start ages with
-        IRA balances large enough that the RMD alone dwarfs both the
-        IRMAA tier-1 and ACA 400%-FPL ceilings, while living_expenses is
-        set low enough that the RMD alone covers it -- i.e. a genuine
-        no-shortfall, over-ceiling year.
+        held anyway.
+
+        fix/aca-safe-medicare-age-gate: the two strategies now need
+        DIFFERENT fixtures (see `_no_shortfall_household` above) -- the
+        original 80/78-both-post-65 household still proves the IRMAA-Safe
+        case (IRMAA has no age gate), but it can no longer prove the
+        ACA-Safe case, because the aca_safe ceiling has lifted entirely by
+        age 80. ACA-Safe now uses a genuinely pre-65 household driven by a
+        large NQO exercise instead of a forced RMD.
         """
-        hh = Household(
-            your_age=80,
-            spouse_age=78,
-            your_ira=6_000_000.0,
-            spouse_ira=6_000_000.0,
-            living_expenses=10_000.0,
-        )
+        hh = self._no_shortfall_household(strategy_label)
         plan = autofill(hh)
         result = run_scenario(hh, plan, strategy_label, end_age=95)
 

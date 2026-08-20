@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.aca import aca_ceiling_magi
+from engine.aca import aca_ceiling_magi, is_pre_medicare_age
 from engine.ira import inherited_ira_drain
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
@@ -1139,8 +1139,16 @@ def _project_year(
 _MAGI_CEILING_TOL = 1.0
 
 
-def _strategy_magi_ceiling(strategy: str, filing_status: str, year: int, cpi: float) -> float:
-    """MAGI ceiling for a `ConversionPlan.magi_strategy`-governed plan.
+def _strategy_magi_ceiling(
+    strategy: str,
+    filing_status: str,
+    year: int,
+    cpi: float,
+    your_age: int,
+    spouse_age: int,
+) -> float | None:
+    """MAGI ceiling for a `ConversionPlan.magi_strategy`-governed plan, or
+    None when the ceiling has LIFTED ENTIRELY (aca_safe only -- see below).
 
     Mirrors the SAME ceiling each auto_fill_* room_fn in
     engine/scenario_autofill.py targets, so the waterfall-activation
@@ -1148,16 +1156,37 @@ def _strategy_magi_ceiling(strategy: str, filing_status: str, year: int, cpi: fl
     - "irmaa_safe": the tier-1 IRMAA threshold, indexed to the PAYMENT year
       (income year + 2 -- the 2-year lookback), matching auto_fill_irmaa_safe.
     - "aca_safe": the 400%-FPL cliff, same-year (no lookback), matching
-      auto_fill_aca.
+      auto_fill_aca -- but ONLY while at least one spouse is still under
+      Medicare age (engine.aca.is_pre_medicare_age: age < 65). This is an
+      AGE-ONLY gate, deliberately independent of ACA marketplace enrollment
+      (engine.aca.aca_applies also requires `enrolled`): gating on
+      enrollment silently unbounds the ceiling for any household whose
+      enrollment flag defaults to False (Household.your_aca_enrolled /
+      spouse_aca_enrolled both default False), defeating the "aca_safe"
+      strategy the user explicitly selected. Once both spouses are 65+ they
+      are on Medicare and there is no ACA subsidy left to protect, so the
+      ceiling LIFTS rather than falling back to some other threshold --
+      falling back to IRMAA would silently redefine aca_safe as irmaa_safe,
+      which a caller can already select directly (audit fix/aca-safe-
+      medicare-age-gate).
 
     `irmaa_next_threshold(0.0, ...)` returns "room from $0 MAGI to the first
     un-crossed tier" -- since the tier-1 threshold is always > 0, that IS the
     tier-1 threshold itself, without reaching into IRMAA_TIERS_MFJ/SINGLE (or
     its leading-underscore _index_irmaa_tiers helper) a second time.
+
+    CALLERS MUST BRANCH ON None, never feed it math.inf: this return value
+    feeds a `ceiling - baseline_magi` conversion_cap computation, and
+    inf/NaN there can propagate into an actual conversion dollar amount and
+    poison the whole projection (the None case must SKIP that arithmetic
+    entirely, not participate in it).
     """
     if strategy == "irmaa_safe":
         return irmaa_next_threshold(0.0, filing_status, year=year + 2, cpi=cpi)
     if strategy == "aca_safe":
+        anyone_pre_medicare = is_pre_medicare_age(your_age) or is_pre_medicare_age(spouse_age)
+        if not anyone_pre_medicare:
+            return None
         return aca_ceiling_magi(filing_status, year, cpi)
     raise ValueError(f"unknown ConversionPlan.magi_strategy: {strategy!r}")
 
@@ -1553,28 +1582,40 @@ def _solve_waterfall_year(
         # rather than silently leaving the household over the ceiling.
         if plan.magi_strategy is not None:
             _ceiling = _strategy_magi_ceiling(
-                plan.magi_strategy, zero_conv_nd.yr.filing_status, year, cpi
+                plan.magi_strategy,
+                zero_conv_nd.yr.filing_status,
+                year,
+                cpi,
+                zero_conv_nd.yr.your_age,
+                zero_conv_nd.yr.spouse_age,
             )
-            _baseline_magi = _magi_for_strategy(plan.magi_strategy, zero_conv_outcome)
-            conversion_cap = min(conversion_cap, max(0.0, _ceiling - _baseline_magi))
-            for _ in range(3):
-                _achieved = (
-                    _baseline_magi
-                    if conversion_cap <= 0.0
-                    else _probe_magi(conversion_cap, plan.magi_strategy)
-                )
-                if _achieved <= _ceiling + _MAGI_CEILING_TOL:
-                    break
-                if conversion_cap <= 0.0:
-                    # Already at the floor and still over the ceiling: even a
-                    # ZERO conversion cannot fund this year's living expenses
-                    # without crossing it. Nothing left to shrink -- accepted
-                    # per the approved design, but must be surfaced.
+            # _ceiling is None -- the ceiling LIFTED ENTIRELY (aca_safe, once
+            # both spouses are 65+: Medicare in effect, no ACA subsidy left
+            # to protect). Skip the cap/shrink loop entirely
+            # rather than feeding it math.inf -- conversion_cap is computed
+            # below as (ceiling - baseline_magi), and inf arithmetic there
+            # can propagate inf/NaN into an actual conversion dollar amount.
+            if _ceiling is not None:
+                _baseline_magi = _magi_for_strategy(plan.magi_strategy, zero_conv_outcome)
+                conversion_cap = min(conversion_cap, max(0.0, _ceiling - _baseline_magi))
+                for _ in range(3):
+                    _achieved = (
+                        _baseline_magi
+                        if conversion_cap <= 0.0
+                        else _probe_magi(conversion_cap, plan.magi_strategy)
+                    )
+                    if _achieved <= _ceiling + _MAGI_CEILING_TOL:
+                        break
+                    if conversion_cap <= 0.0:
+                        # Already at the floor and still over the ceiling: even a
+                        # ZERO conversion cannot fund this year's living expenses
+                        # without crossing it. Nothing left to shrink -- accepted
+                        # per the approved design, but must be surfaced.
+                        magi_ceiling_converged = False
+                        break
+                    conversion_cap = max(0.0, conversion_cap - (_achieved - _ceiling))
+                else:
                     magi_ceiling_converged = False
-                    break
-                conversion_cap = max(0.0, conversion_cap - (_achieved - _ceiling))
-            else:
-                magi_ceiling_converged = False
 
         draw = _solve_draw(_no_draw_outcome(conversion_cap), conversion_cap)
 
@@ -1644,11 +1685,18 @@ def _solve_waterfall_year(
     # there guarded on `outcome.yr.magi_ceiling_converged` still being True.
     if planned_conversion <= 0.0 and plan.magi_strategy is not None:
         _zero_ceiling = _strategy_magi_ceiling(
-            plan.magi_strategy, baseline.yr.filing_status, year, cpi
+            plan.magi_strategy,
+            baseline.yr.filing_status,
+            year,
+            cpi,
+            baseline.yr.your_age,
+            baseline.yr.spouse_age,
         )
-        _zero_achieved = _magi_for_strategy(plan.magi_strategy, outcome)
-        if _zero_achieved > _zero_ceiling + _MAGI_CEILING_TOL:
-            magi_ceiling_converged = False
+        # None -- ceiling lifted (Medicare, aca_safe only); nothing to check.
+        if _zero_ceiling is not None:
+            _zero_achieved = _magi_for_strategy(plan.magi_strategy, outcome)
+            if _zero_achieved > _zero_ceiling + _MAGI_CEILING_TOL:
+                magi_ceiling_converged = False
     outcome.yr.magi_ceiling_converged = magi_ceiling_converged
     inherited_balances[:] = final_inherited
     return outcome
@@ -1779,9 +1827,18 @@ def run_scenario(
         # breach.
         if plan.magi_strategy is not None and outcome.yr.magi_ceiling_converged:
             _ceiling = _strategy_magi_ceiling(
-                plan.magi_strategy, outcome.yr.filing_status, outcome.yr.year, cpi
+                plan.magi_strategy,
+                outcome.yr.filing_status,
+                outcome.yr.year,
+                cpi,
+                outcome.yr.your_age,
+                outcome.yr.spouse_age,
             )
-            if _magi_for_strategy(plan.magi_strategy, outcome) > _ceiling + _MAGI_CEILING_TOL:
+            # None -- ceiling lifted (Medicare, aca_safe only); nothing to check.
+            if (
+                _ceiling is not None
+                and _magi_for_strategy(plan.magi_strategy, outcome) > _ceiling + _MAGI_CEILING_TOL
+            ):
                 outcome.yr.magi_ceiling_converged = False
         yr = outcome.yr
         your_ira = outcome.your_ira
