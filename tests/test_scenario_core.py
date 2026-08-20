@@ -10,6 +10,8 @@ this reason (see git history); renaming it back to a 35-character suffix will
 silently break CI.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from config.defaults import DEFAULTS
@@ -931,6 +933,77 @@ class TestMagiCeilingWaterfallActivation:
                     f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
                     f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
                 )
+
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    @pytest.mark.parametrize(
+        ("autofill", "strategy_label"),
+        [(auto_fill_irmaa_safe, "IRMAA-Safe"), (auto_fill_aca, "ACA-Safe")],
+        ids=["irmaa_safe", "aca_safe"],
+    )
+    def test_zero_planned_year_still_reports_a_ceiling_breach(
+        self,
+        hh: Household,
+        autofill: Callable[[Household], ConversionPlan],
+        strategy_label: str,
+    ) -> None:
+        """audit-0809 #20 (HIGH): the two tests above skip years the strategy
+        planned nothing in, and _solve_waterfall_year's whole MAGI-ceiling
+        block sits in the `else` of `planned_conversion <= 0.0` -- so a
+        zero-planned year verified nothing and reported the guarantee honoured
+        by default.
+
+        The living-expense draw is sized whether or not a conversion is
+        planned, so it can carry MAGI over the ceiling on its own. That is the
+        SAME household state the `conversion_cap <= 0.0` branch already
+        surfaces as False when a NONZERO plan shrinks to the floor, and it is
+        the exact condition ScenarioYear.magi_ceiling_converged documents:
+        "even a zero conversion could not fund living expenses without
+        crossing the ceiling". Which of True/False gets reported must not turn
+        on the accident of the plan dict holding 0.0 versus holding an amount
+        that the cap then shrank to 0.0.
+
+        Scoped to years the waterfall ACTUALLY RAN (a forced draw, or an
+        unfunded shortfall). A year with no shortfall never enters
+        _solve_waterfall_year at all, so its flag is untouched by this fix --
+        a documented limit of the narrow fix, not a claim about those years.
+        """
+        plan = autofill(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, strategy_label, end_age=95)
+
+        dishonest = []
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) > 0.0:
+                continue  # the strategy's own claim -- covered by the two tests above
+            waterfall_ran = (
+                yr.forced_brokerage_draw
+                + yr.forced_your_ira_draw
+                + yr.forced_spouse_ira_draw
+                + yr.forced_your_roth_draw
+                + yr.forced_spouse_roth_draw
+                > 0.0
+            ) or yr.unfunded_need > 0.0
+            if not waterfall_ran:
+                continue
+            if strategy_label == "IRMAA-Safe":
+                ceiling = irmaa_next_threshold(
+                    0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+                )
+                achieved = yr.magi
+            else:
+                ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+                achieved = yr.aca_magi
+            if achieved > ceiling + 1.0 and yr.magi_ceiling_converged:
+                dishonest.append((yr.year, yr.your_age, achieved, ceiling))
+
+        assert not dishonest, (
+            f"{strategy_label}: {len(dishonest)} zero-planned waterfall year(s) sit over "
+            f"the MAGI ceiling but still report magi_ceiling_converged=True -- "
+            + "; ".join(
+                f"year {y} (age {a}): achieved {m:,.0f} > ceiling {c:,.0f}"
+                for y, a, m, c in dishonest
+            )
+        )
 
     def test_22pct_fill_conversions_unchanged_by_magi_ceiling_work(self) -> None:
         """Regression guard: a plan with magi_strategy=None (12/22/24-bracket
