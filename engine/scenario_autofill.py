@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from engine.aca import aca_ceiling_magi
+from engine.aca import aca_ceiling_magi, is_pre_medicare_age
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario_compute import compute_brokerage_dividends, survivor_reduction
@@ -454,6 +454,63 @@ def auto_fill_22(
     )
 
 
+def _irmaa_tier1_magi_room(
+    base_magi: float,
+    combined_ss: float,
+    other_fixed: float,
+    yr: int,
+    cpi: float,
+    filing_status: str,
+) -> float:
+    """Conversion room from ``base_magi`` up to the indexed IRMAA tier-1 MAGI ceiling.
+
+    Factored out to a single definition because TWO room fns need this exact
+    ceiling and must not drift on how it is indexed or bisected:
+      - ``auto_fill_irmaa_safe``'s ``_irmaa_room``, as its primary ceiling
+        (which then ADDITIONALLY caps at 22%-bracket room -- that cap belongs
+        to the irmaa_safe strategy, NOT to "the tier-1 ceiling", so it stays
+        at that call site rather than moving in here);
+      - ``auto_fill_aca``'s ``_aca_room``, as its POST-MEDICARE fallback
+        ceiling, once the 400%-FPL cliff no longer applies.
+
+    This is an IRMAA-basis MAGI ceiling, so it is measured against
+    ``base_magi``, which carries only the TAXABLE portion of Social Security
+    (IRC §86 + §1395r(i)(4)) -- NOT against the ACA-basis
+    ``other_fixed + combined_ss`` figure ``_aca_room`` uses for the FPL cliff
+    (IRC §36B(d)(2)(B)(iii) adds back the full benefit). A caller switching
+    from the ACA ceiling to this one must switch MAGI bases with it.
+    """
+    # tier-1 MAGI ceiling — resolve tiers from the PER-YEAR filing status so a
+    # survivor year uses the (lower) single tier-1 threshold, not the MFJ one.
+    _irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
+    irmaa_base_threshold = _irmaa_tiers[0][0]
+    # IRMAA 2-year lookback — index the tier-1 ceiling to the payment year
+    # (yr + 2), matching sweet_spot_compute._index_irmaa_tiers(yr + 2) and
+    # all_in_at_conversion. Income year `yr` under-indexed the ceiling by 2 CPI-years.
+    irmaa_threshold = _iv(irmaa_base_threshold, yr + 2, cpi)
+    # C14 (audit-0805 W5): the naive `threshold - base_magi` subtraction
+    # assumes taxable SS is conversion-invariant. base_magi was built
+    # BEFORE this room's own conversion is added, so once provisional
+    # income (other_fixed + conv) enters the 50%/85% partial-taxability
+    # band, converting the naive room amount pushes MORE SS into
+    # taxability than base_magi accounted for, landing actual MAGI past
+    # the threshold. Bisect against the real (non-linear) post-conversion
+    # MAGI instead, mirroring sweet_spot_compute.irmaa_safe_max /
+    # bracket_boundary_conversion (same bug family, audit C81/C23) via the
+    # shared engine.tax.bisect_conversion_for_ceiling primitive. The naive
+    # value remains a valid (non-decreasing-in-conv) upper bound for the
+    # search.
+    naive_room = max(irmaa_threshold - base_magi, 0.0)
+    if naive_room <= 0.0:
+        return 0.0
+
+    def _magi_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, other_fixed + conv, filing_status=filing_status)
+        return other_fixed + conv + tss_c
+
+    return bisect_conversion_for_ceiling(_magi_at, irmaa_threshold, naive_room)
+
+
 def auto_fill_irmaa_safe(
     hh: Household,
     ytd: YTDSnapshot | None = None,
@@ -472,38 +529,9 @@ def auto_fill_irmaa_safe(
         cpi: float,
         filing_status: str,
     ) -> float:
-        # tier-1 MAGI ceiling — resolve tiers from the PER-YEAR filing status so a
-        # survivor year uses the (lower) single tier-1 threshold, not the MFJ one.
-        _irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
-        irmaa_base_threshold = _irmaa_tiers[0][0]
-        # Room to IRMAA threshold (indexed), capped at 22% bracket room
-        # IRMAA 2-year lookback — index the tier-1 ceiling to the payment year
-        # (yr + 2), matching sweet_spot_compute._index_irmaa_tiers(yr + 2) and
-        # all_in_at_conversion. Income year `yr` under-indexed the ceiling by 2 CPI-years.
-        irmaa_threshold = _iv(irmaa_base_threshold, yr + 2, cpi)
-        # C14 (audit-0805 W5): the naive `threshold - base_magi` subtraction
-        # assumes taxable SS is conversion-invariant. base_magi was built
-        # BEFORE this room's own conversion is added, so once provisional
-        # income (other_fixed + conv) enters the 50%/85% partial-taxability
-        # band, converting the naive room amount pushes MORE SS into
-        # taxability than base_magi accounted for, landing actual MAGI past
-        # the threshold. Bisect against the real (non-linear) post-conversion
-        # MAGI instead, mirroring sweet_spot_compute.irmaa_safe_max /
-        # bracket_boundary_conversion (same bug family, audit C81/C23) via the
-        # shared engine.tax.bisect_conversion_for_ceiling primitive. The naive
-        # value remains a valid (non-decreasing-in-conv) upper bound for the
-        # search.
-        naive_room = max(irmaa_threshold - base_magi, 0.0)
-        if naive_room <= 0.0:
-            irmaa_room = 0.0
-        else:
-            def _magi_at(conv: float) -> float:
-                tss_c = taxable_ss(combined_ss, other_fixed + conv, filing_status=filing_status)
-                return other_fixed + conv + tss_c
-
-            irmaa_room = bisect_conversion_for_ceiling(_magi_at, irmaa_threshold, naive_room)
+        # Room to the IRMAA tier-1 MAGI ceiling, then capped at 22% bracket room.
         return min(
-            irmaa_room,
+            _irmaa_tier1_magi_room(base_magi, combined_ss, other_fixed, yr, cpi, filing_status),
             room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
         )
 
@@ -532,7 +560,13 @@ def auto_fill_aca(
 ) -> ConversionPlan:
     """Fill only up to the ACA 400%-FPL MAGI cliff each year (conversions stop
     at that MAGI). Mirrors auto_fill_irmaa_safe's MAGI-ceiling-minus-base_magi
-    room, but with the ACA ceiling and no lookback (ACA uses same-year MAGI)."""
+    room, but with the ACA ceiling and no lookback (ACA uses same-year MAGI).
+
+    Once BOTH spouses reach Medicare age the FPL cliff no longer applies and
+    the per-year room falls back to the IRMAA tier-1 ceiling -- see _aca_room
+    for why that deliberately differs from engine/scenario.py's
+    _strategy_magi_ceiling, which lifts the ceiling ENTIRELY in those same
+    years."""
     def _aca_room(
         fixed_gross: float,
         ded: float,
@@ -543,6 +577,50 @@ def auto_fill_aca(
         cpi: float,
         filing_status: str,
     ) -> float:
+        # The 400%-FPL cliff only binds while at least one spouse is still
+        # under Medicare age (engine.aca.is_pre_medicare_age: age < 65),
+        # matching the gate in engine/scenario.py's _strategy_magi_ceiling.
+        # This is an AGE-ONLY gate, deliberately independent of ACA
+        # marketplace enrollment (engine.aca.aca_applies also requires
+        # `enrolled`): gating on enrollment silently unbounds this room fn
+        # for any household whose enrollment flag defaults to False
+        # (Household.your_aca_enrolled / spouse_aca_enrolled both default
+        # False), defeating the "aca_safe" strategy the user explicitly
+        # selected.
+        #
+        # Once both spouses are 65+ the ACA ceiling is gone, and this room fn
+        # falls back to the IRMAA tier-1 MAGI ceiling. That is a DELIBERATE
+        # ASYMMETRY with _strategy_magi_ceiling, which returns None (lifts
+        # entirely) in these same years. Do NOT "restore the mirror" by
+        # changing either side to match the other:
+        #   - _strategy_magi_ceiling defines a CONSTRAINT, reported on via
+        #     ScenarioYear.magi_ceiling_converged. Post-65 there is genuinely
+        #     no ACA constraint left, so it must lift; substituting IRMAA
+        #     there would silently redefine aca_safe as irmaa_safe and start
+        #     reporting IRMAA breaches under an ACA label.
+        #   - this room fn is a HEURISTIC that must name some dollar figure to
+        #     convert. With no ceiling at all its room is unbounded, so post-65
+        #     it proposes converting the entire remaining balance every year --
+        #     on a 61/55 $10M+$10M household that took lifetime aca_safe
+        #     conversions from ~$3.3M to ~$39.0M, which is a degenerate plan,
+        #     not a strategy. IRMAA tier-1 is the correct successor bound:
+        #     past 65 the household is on Medicare, so the tier-1 surcharge
+        #     cliff is the MAGI threshold that actually costs it money from
+        #     then on.
+        # The two stay consistent in the sense that matters: this fn is never
+        # LOOSER than the constraint, so a plan it produces can never be
+        # reported as breaching a ceiling.
+        #
+        # The MAGI BASIS switches with the ceiling -- IRMAA MAGI carries only
+        # the taxable portion of SS (base_magi), whereas the FPL cliff below is
+        # measured against full-SS ACA MAGI (other_fixed + combined_ss). See
+        # _irmaa_tier1_magi_room's docstring.
+        ya = hh.your_age + (yr - hh.base_year)
+        sa = hh.spouse_age + (yr - hh.base_year)
+        if not (is_pre_medicare_age(ya) or is_pre_medicare_age(sa)):
+            return _irmaa_tier1_magi_room(
+                base_magi, combined_ss, other_fixed, yr, cpi, filing_status
+            )
         ceiling = aca_ceiling_magi(filing_status, yr, cpi)
         # C15 (audit-0805 W5): ACA MAGI (IRC §36B(d)(2)(B)(iii)) adds back the
         # FULL Social Security benefit (taxable + non-taxable), whereas

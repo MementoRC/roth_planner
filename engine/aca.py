@@ -401,6 +401,23 @@ def aca_excess_aptc_repayment(
     return advance_aptc_annual - actual_ptc
 
 
+def is_pre_medicare_age(age: int) -> bool:
+    """True while under Medicare eligibility age (65) and a valid age (>0).
+
+    Age-only half of `aca_applies`, factored out so callers that need a
+    pure Medicare-age gate -- e.g. the aca_safe MAGI ceiling in
+    engine/scenario.py's `_strategy_magi_ceiling` and
+    engine/scenario_autofill.py's `_aca_room` -- can test Medicare
+    eligibility WITHOUT also requiring marketplace enrollment. Gating on
+    enrollment silently unbounds the ceiling for any household whose
+    enrollment flag defaults to False, defeating the "aca_safe" strategy
+    the user explicitly selected (audit fix/aca-safe-medicare-age-gate).
+    Keeping this as the single source of the 65 boundary means
+    `aca_applies` and the ceiling gates cannot drift on it.
+    """
+    return 0 < age < 65
+
+
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:
     """ACA marketplace only relevant if under 65 AND enrolled AND age > 0 (audit aca-4)."""
-    return 0 < your_age < 65 and enrolled
+    return is_pre_medicare_age(your_age) and enrolled
