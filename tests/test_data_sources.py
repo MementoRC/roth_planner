@@ -18,6 +18,7 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap, TrustChoice
 from engine.data_sources.committed import (
     COMMITTED_FIELD_ATTRS,
+    CorruptCommittedCacheError,
     apply_committed,
     extract_committed,
     load_committed,
@@ -825,10 +826,21 @@ class TestCommitted:
         missing = tmp_path / "does_not_exist.json"
         assert load_committed(missing) is None
 
-    def test_load_committed_corrupt_file_returns_none_no_raise(self, tmp_path: Path) -> None:
+    def test_load_committed_corrupt_file_raises(self, tmp_path: Path) -> None:
+        """audit-0809 #11 — this test previously asserted a corrupt file returns
+        None, the same as a missing file. That collapsed the two cases in a
+        single except clause, so callers could not tell 'nothing committed
+        yet' (safe to overwrite) from 'a baseline exists but is unreadable'
+        (never safe to overwrite), and the app silently destroyed the user's
+        committed data. Missing still returns None — see the sibling test
+        test_load_committed_missing_file_returns_none_no_raise — corrupt now
+        raises. The authoritative data-loss guard is save_committed, which
+        refuses to overwrite an unreadable target.
+        """
         corrupt = tmp_path / "corrupt.json"
         corrupt.write_text("{not valid json")
-        assert load_committed(corrupt) is None
+        with pytest.raises(CorruptCommittedCacheError):
+            load_committed(corrupt)
 
 
 class TestSnapshotIngest:

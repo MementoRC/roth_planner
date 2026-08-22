@@ -11,6 +11,7 @@ st.set_page_config(
 
 
 from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
@@ -221,7 +222,11 @@ if page != "⚙️ Setup":
 # Build household from session state
 from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap  # noqa: E402
-from engine.data_sources.committed import load_committed, save_committed  # noqa: E402
+from engine.data_sources.committed import (  # noqa: E402
+    CorruptCommittedCacheError,
+    load_committed,
+    save_committed,
+)
 from engine.data_sources.orchestrator import (  # noqa: E402
     resolve_for_app,
     session_keys_for_writeback,
@@ -327,7 +332,19 @@ def get_household() -> Household:
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    committed_json = load_committed(COMMITTED_PATH)
+    # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
+    # must NOT be treated the same as "nothing committed yet" — see
+    # CorruptCommittedCacheError's docstring. On a corrupt file we proceed
+    # with committed_json=None (in-memory first-load path, so the app still
+    # renders) but set _corrupt_committed_path so the save below is
+    # suppressed for this run and the user is warned; the corrupt file on
+    # disk is left completely untouched (no delete/rename/overwrite).
+    _corrupt_committed_path: Path | None = None
+    try:
+        committed_json = load_committed(COMMITTED_PATH)
+    except CorruptCommittedCacheError:
+        committed_json = None
+        _corrupt_committed_path = COMMITTED_PATH
 
     app_res = resolve_for_app(
         session_hh, snap, strikes, store, choices, committed_json, recorded_at=datetime.now()
@@ -361,8 +378,24 @@ def get_household() -> Household:
 
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
-    if app_res.committed_changed:
+    # audit-0809 #11: if the on-disk committed file was corrupt (see above),
+    # app_res.committed_changed is still True here (resolve_for_app treated
+    # committed_json=None as "first load" and freshly migrated one) — but
+    # saving now would overwrite the still-intact corrupt file with the
+    # in-memory migration, destroying whatever data was in it. save_committed()
+    # itself now refuses this write unconditionally (the authoritative guard —
+    # see its docstring), so this early skip is defence in depth / an earlier,
+    # more specific warning message rather than the only thing preventing the
+    # clobber; kept so the app.py-level warning below still fires.
+    if app_res.committed_changed and _corrupt_committed_path is None:
         save_committed(COMMITTED_PATH, app_res.committed_json)
+    elif _corrupt_committed_path is not None:
+        st.warning(
+            f"⚠️ Your committed baseline at `{_corrupt_committed_path}` is unreadable "
+            "(corrupt or truncated) and could contain data with no other copy. It has "
+            "been left untouched and will NOT be overwritten this session — restore it "
+            "from a backup if you have one, or contact support before deleting it."
+        )
     store.save(CANDIDATE_STORE_PATH)
     choices.save(TRUST_CHOICES_PATH)
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -105,19 +106,78 @@ def migrate_committed(hh: Household, recorded_at: datetime, detail: str = "pre-m
     return extract_committed(hh)
 
 
+class CorruptCommittedCacheError(Exception):
+    """Raised by :func:`load_committed` when ``path`` exists but its content
+    is not a valid committed_json payload (truncated/malformed JSON or wrong
+    shape).
+
+    Deliberately NOT the same outcome as a missing file: a missing file means
+    "no baseline has ever been committed yet" — safe for the caller to
+    silently re-migrate and overwrite. A file that exists but fails to parse
+    means "a baseline WAS committed and its bytes are still on disk but
+    unreadable" — the only copy of that data is the corrupt file itself, so
+    silently treating it as "nothing committed" and re-migrating over it
+    would permanently destroy it. Callers must catch this separately and
+    leave the file untouched (see app.py's load_committed call site).
+    """
+
+    def __init__(self, path: str | Path, cause: Exception) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"committed cache at {path!r} is corrupt: {cause!r}")
+
+
 def load_committed(path: str | Path) -> dict | None:
     """Load a committed_json payload from ``path``.
 
-    Returns None if the file is missing or corrupt (logging a warning in the
-    corrupt case) — never raises, matching CandidateStore.load/ChoiceMap.load.
+    Returns None if the file is missing/unreadable (OSError) — that case
+    means "no baseline has ever been committed yet" and is safe for callers
+    to treat as a fresh first load. Raises :class:`CorruptCommittedCacheError`
+    if the file EXISTS but its content fails to parse or has the wrong shape
+    — that case means real committed data is sitting on disk in an unreadable
+    state, and must not be silently conflated with "nothing committed" (doing
+    so would let a caller re-migrate and overwrite the only copy of that
+    data). See CorruptCommittedCacheError's docstring for the full rationale.
     """
     try:
         raw = Path(path).read_text()
-        return dict(json.loads(raw))
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+    except OSError as exc:
         logger.warning("load_committed(%s) failed (%s); returning None", path, exc)
         return None
+    try:
+        return dict(json.loads(raw))
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+        raise CorruptCommittedCacheError(path, exc) from exc
 
 
 def save_committed(path: str | Path, committed_json: dict) -> None:
-    Path(path).write_text(json.dumps(committed_json))
+    """Write ``committed_json`` to ``path`` durably.
+
+    Writes to a temp file in the same directory then ``os.replace()`` onto
+    the target so a crash or full disk mid-write cannot truncate an existing
+    good committed baseline in place (audit-0809 #11 — see
+    CorruptCommittedCacheError). ``os.replace`` is atomic on POSIX (and on
+    Windows since it maps to ``MoveFileEx`` with the replace flag), so
+    readers never observe a partially-written file.
+
+    audit-0809 #11 (design follow-up): this is the ONE place the
+    never-overwrite-a-baseline-we-couldn't-read invariant is enforced, so
+    every caller gets it "for free" regardless of how it reached this call
+    (a Setup Confirm click, app.py's migration path, etc). Before writing,
+    if ``path`` already exists we read+parse its current content once; if
+    that parse fails, we refuse to write and raise
+    CorruptCommittedCacheError instead — the on-disk bytes may be the
+    user's only copy of that data, and blindly replacing them (even via the
+    atomic temp+replace above) would still destroy it. A missing target (no
+    prior baseline to protect) or an existing-and-parseable one both write
+    normally.
+    """
+    target = Path(path)
+    if target.exists():
+        try:
+            json.loads(target.read_text())
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise CorruptCommittedCacheError(path, exc) from exc
+    tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(committed_json))
+    os.replace(tmp_path, target)
