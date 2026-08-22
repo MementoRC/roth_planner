@@ -203,8 +203,34 @@ def compute_headroom(
     # (income year + 2), not the income year itself.
     irmaa_t1 = index_value(base_irmaa_tiers[0][0], _year + 2, _cpi)
     niit_threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
-    result.room_to_irmaa_t1 = max(irmaa_t1 - locked_magi, 0.0)
-    result.room_to_niit = max(niit_threshold - locked_niit_magi, 0.0)
+    # audit-0809 Class B: these two must bisect for the SAME reason the bracket
+    # rooms above do. `max(threshold - magi, 0)` assumes MAGI rises exactly $1
+    # per $1 converted; while provisional income sits in the IRC §86(b) 50%/85%
+    # band each converted dollar ALSO drags more Social Security into MAGI, so
+    # the true boundary sits BELOW the naive subtraction and the page overstates
+    # how much may be converted before the cliff. Measured on an MFJ 72/71
+    # fixture with both spouses claiming: the naive IRMAA room of $215,400 lands
+    # MAGI at $278,640 against a $218,000 tier-1 threshold -- $60,640 past it.
+    # Third and last Class B site, after PR #436 (Sweet Spot fill cards) and
+    # PR #438 (Sweet Spot IRMAA/NIIT vlines).
+    #
+    # The naive value is kept as the bisection's UPPER BOUND: taxable SS is
+    # non-decreasing in the conversion, so magi(conv) >= locked_magi + conv and
+    # any amount above the subtraction is guaranteed to overshoot.
+    def _locked_magi_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, locked_other + conv, filing_status=filing_status)
+        return ytd.magi_ytd + conv + tss_c
+
+    def _locked_niit_magi_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, locked_other + conv, filing_status=filing_status)
+        return ytd.niit_magi_ytd + conv + tss_c
+
+    result.room_to_irmaa_t1 = bisect_conversion_for_ceiling(
+        _locked_magi_at, irmaa_t1, max(irmaa_t1 - locked_magi, 0.0)
+    )
+    result.room_to_niit = bisect_conversion_for_ceiling(
+        _locked_niit_magi_at, niit_threshold, max(niit_threshold - locked_niit_magi, 0.0)
+    )
 
     # === WITH PLANNED (locked + option exercise) ===
 
@@ -247,8 +273,24 @@ def compute_headroom(
     result.room_to_22pct_with_planned = bisect_conversion_for_ceiling(
         _planned_taxable_at, _ceiling_22, _naive_room_22_planned
     )
-    result.room_to_irmaa_t1_with_planned = max(irmaa_t1 - planned_magi, 0.0)
-    result.room_to_niit_with_planned = max(niit_threshold - planned_niit_magi, 0.0)
+    # audit-0809 Class B (planned path): same closed-form overshoot as the
+    # locked path above, and it must move with it -- leaving one of the two
+    # naive would put two answers to one question on the same page, which is
+    # the Class B shape itself.
+    def _planned_magi_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, planned_other + conv, filing_status=filing_status)
+        return ytd.magi_ytd + result.planned_option_income + conv + tss_c
+
+    def _planned_niit_magi_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, planned_other + conv, filing_status=filing_status)
+        return ytd.niit_magi_ytd + result.planned_option_income + conv + tss_c
+
+    result.room_to_irmaa_t1_with_planned = bisect_conversion_for_ceiling(
+        _planned_magi_at, irmaa_t1, max(irmaa_t1 - planned_magi, 0.0)
+    )
+    result.room_to_niit_with_planned = bisect_conversion_for_ceiling(
+        _planned_niit_magi_at, niit_threshold, max(niit_threshold - planned_niit_magi, 0.0)
+    )
 
     # === IRMAA relevance check (age-aware) ===
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
@@ -293,6 +335,15 @@ def compute_headroom(
         # dropped the non-taxable SS, under-counting ACA MAGI and overstating cliff
         # room for SS-claiming ACA-age households (audit C7 / headroom-2).
         aca_magi = ytd.magi_ytd + combined_ss
+        # DELIBERATELY a closed form, and do NOT "fix" the asymmetry with the
+        # bisected IRMAA/NIIT rooms above (audit-0809 Class B). Those bisect
+        # because their MAGI carries only the TAXABLE share of SS, which grows
+        # with the conversion. ACA MAGI carries the FULL benefit either way, so
+        # it does not move with the taxable share at all: a conversion raises it
+        # exactly $1 per $1 and this subtraction is EXACT. Bisecting here would
+        # buy nothing and would imply to a later reader that this figure shared
+        # its neighbours' defect. Pinned by
+        # tests/test_audit_0809_class_b_headroom_magi_rooms.py.
         result.room_to_aca_cliff = max(aca_cliff - aca_magi, 0.0)
 
     return result
