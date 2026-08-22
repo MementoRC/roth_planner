@@ -13,7 +13,7 @@ import streamlit as st
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import load_committed
+from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.record import record_ss_fra_candidate
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
@@ -90,7 +90,12 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
     pending: set[str] = st.session_state.get("_pending_review", set())
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    committed_json = load_committed(COMMITTED_PATH) or {}
+    # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
+    # only) — save_committed() is the actual guard against overwriting it.
+    try:
+        committed_json = load_committed(COMMITTED_PATH) or {}
+    except CorruptCommittedCacheError:
+        committed_json = {}
 
     def _maybe_card(field_key: str) -> None:
         if field_key not in pending:

@@ -20,7 +20,7 @@ import streamlit as st
 
 from engine.data_sources.candidate_store import Candidate, CandidateStore
 from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import save_committed
+from engine.data_sources.committed import CorruptCommittedCacheError, save_committed
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import session_keys_for_writeback
 from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
@@ -143,7 +143,19 @@ def _handle_confirm_click(
     value, source, detail = picked
 
     confirm_field(committed_json, choices, field_key, value, source, datetime.now(), detail=detail)
-    save_committed(COMMITTED_PATH, committed_json)
+    # audit-0809 #11: save_committed() itself refuses to overwrite a
+    # committed cache file that exists on disk but fails to parse (see its
+    # docstring) — that is the actual guard, not this call site. Catch the
+    # refusal here so a Confirm click degrades to a warning instead of an
+    # unhandled exception, and leave the corrupt file untouched.
+    try:
+        save_committed(COMMITTED_PATH, committed_json)
+    except CorruptCommittedCacheError:
+        st.warning(
+            f"⚠️ Could not save — the committed baseline at `{COMMITTED_PATH}` is "
+            "unreadable (corrupt or truncated) and was left untouched."
+        )
+        return False
     choices.save(TRUST_CHOICES_PATH)
     _apply_confirm_to_session(field_key, value)
     st.success(f"Confirmed {_field_label(field_key)} from {source}.")
