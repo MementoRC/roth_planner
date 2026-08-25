@@ -37,7 +37,21 @@ def render(hh: Household, theme: str | None = None) -> None:
     _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
     ytd = _render_domains(hh) if _theme == "Domains" else _render_classic(hh)
 
-    save_ytd_snapshot(ytd)
+    # audit-0823 M1: save ONLY when session_state actually holds a real
+    # "ytd_snapshot" -- never when the returned `ytd` is nothing but
+    # render_manual_entry_partial's `st.session_state.get("ytd_snapshot",
+    # YTDSnapshot())` fallback default (e.g. manual entry off with no prior
+    # snapshot: a "Reset to demo", or any session that never loaded/synced
+    # one). In that case nothing writes session_state["ytd_snapshot"] during
+    # this render either, so an unconditional save_ytd_snapshot(ytd) below
+    # would silently overwrite a real .ytd_cache.json on disk with a blank
+    # snapshot on the very first render. A real write DOES land in
+    # session_state during this render whenever manual entry or a sync
+    # actually produced a value, so checking presence AFTER render (not
+    # before) still saves legitimate first-time entries -- this deliberately
+    # does not invent a "looks empty" heuristic on field values.
+    if "ytd_snapshot" in st.session_state:
+        save_ytd_snapshot(ytd)
 
 
 def _render_classic(hh: Household) -> YTDSnapshot:

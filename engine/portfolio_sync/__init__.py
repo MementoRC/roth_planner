@@ -60,6 +60,8 @@ from .ytd import (
     fetch_ytd_snapshot,
     load_ytd_snapshot,
     save_ytd_snapshot,
+    ytd_from_dict,
+    ytd_to_dict,
 )
 
 __all__ = [
@@ -115,6 +117,8 @@ __all__ = [
     "save_snapshot",
     "save_ssa_snapshot",
     "save_ytd_snapshot",
+    "ytd_from_dict",
+    "ytd_to_dict",
 ]
 
 # --- Test-monkeypatch propagation hook ---
@@ -214,6 +218,8 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "save_snapshot": _portfolio,
     "save_ssa_snapshot": _social_security,
     "save_ytd_snapshot": _ytd,
+    "ytd_from_dict": _ytd,
+    "ytd_to_dict": _ytd,
 }
 
 

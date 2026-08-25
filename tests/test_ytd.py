@@ -901,3 +901,83 @@ class TestSumIncomeEvents:
 
     def test_empty_list_sums_to_zero(self):
         assert sum_income_events([], kind="conversion", owner="you") == 0.0
+
+
+class TestYTDToFromDictRoundtrip:
+    """ytd_to_dict/ytd_from_dict (audit-0823: "YTD in the data-bridge bundle") --
+    extracted, pure counterparts of save_ytd_snapshot/load_ytd_snapshot's body.
+    Both the on-disk cache AND the bridge_bundle "ytd" section go through these,
+    so a round-trip failure here would silently corrupt either path."""
+
+    def test_full_roundtrip_including_events(self):
+        from engine.portfolio_sync.ytd import ytd_from_dict, ytd_to_dict
+        from models.ytd_income import RealizedGainEvent, YTDSnapshot
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            snapshot_date="2026-06-12",
+            wages_ytd=150_000.0,
+            nec_income_ytd=5_000.0,
+            ira_conversions_ytd=25_000.0,
+            spouse_ira_conversions_ytd=7_500.0,
+            ira_distributions_ytd=10_000.0,
+            ltcg_ytd=50_000.0,
+            stcg_ytd=4_000.0,
+            qualified_dividends_ytd=2_000.0,
+            ordinary_dividends_ytd=3_000.0,
+            interest_ytd=600.0,
+            tax_exempt_interest_ytd=1_500.0,
+            nqo_exercise_ytd=96_000.0,
+            federal_withholding_ytd=42_000.0,
+            hsa_contribution_ytd=1_000.0,
+            deductible_ira_contribution_ytd=500.0,
+            crypto_stcg_ytd=10_000.0,
+            crypto_ltcg_ytd=20_000.0,
+            crypto_income_ytd=5_000.0,
+            gain_events=[
+                RealizedGainEvent(
+                    date="2026-03-15",
+                    description="TXN stop-loss",
+                    proceeds=250_000,
+                    cost_basis=150_000,
+                    holding_period="long",
+                    account_name="Schwab Brokerage",
+                )
+            ],
+            income_events=[
+                IncomeEvent(date="2026-02-01", amount=25_000.0, kind="conversion", owner="you"),
+            ],
+            manually_entered=False,
+        )
+
+        roundtripped = ytd_from_dict(ytd_to_dict(ytd))
+
+        assert roundtripped == ytd
+
+    def test_from_dict_migrates_legacy_dividends_key(self):
+        """Pre-split caches/bundles stored a single dividends_ytd key."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {"tax_year": 2026, "dividends_ytd": 4_500.0}
+        snap = ytd_from_dict(data)
+        assert snap.ordinary_dividends_ytd == 4_500.0
+        assert snap.qualified_dividends_ytd == 0.0
+
+    def test_from_dict_migrates_missing_nqo_exercise_ytd(self):
+        """Pre-PR1 caches/bundles lack nqo_exercise_ytd entirely."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {"tax_year": 2026, "wages_ytd": 10_000.0}
+        snap = ytd_from_dict(data)
+        assert snap.nqo_exercise_ytd == 0.0
+
+    def test_from_dict_does_not_mutate_caller_dict(self):
+        """ytd_from_dict must operate on a copy -- a bundle dict is reused
+        elsewhere (setup_scalars/portfolio/ledger sections) and popping keys
+        off the caller's own dict in place would corrupt those other reads."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {"tax_year": 2026, "gain_events": [], "income_events": []}
+        original = dict(data)
+        ytd_from_dict(data)
+        assert data == original

@@ -56,6 +56,87 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
     return mock_st
 
 
+class TestM1UnconditionalSaveGuard:
+    """audit-0823 M1 regression: render()'s final save_ytd_snapshot(ytd) must
+    run ONLY when session_state actually held a real "ytd_snapshot" going
+    into/through this render -- never for the blank YTDSnapshot() default
+    that render_manual_entry_partial's ``st.session_state.get("ytd_snapshot",
+    YTDSnapshot())`` substitutes when the key was never seeded (e.g. after
+    "Reset to demo", or any session that never loaded/synced one). An
+    unconditional save there overwrites a real .ytd_cache.json on disk with
+    blanks on the very first render.
+
+    Patches ``save_ytd_snapshot`` where it is LOOKED UP (``views.ytd_income``'s
+    own module-level binding from its ``from engine.portfolio_sync import
+    save_ytd_snapshot``), not at its definition site in
+    ``engine.portfolio_sync.ytd`` -- monkeypatch cannot reach a name via its
+    origin module once another module has already imported its own reference
+    to the same function object.
+    """
+
+    def _mock_st(self, *, seed_ytd_snapshot: YTDSnapshot | None) -> MagicMock:
+        """Minimal harness (checkbox/button both OFF, so nothing writes a
+        fresh value into session_state["ytd_snapshot"] during this render):
+        unlike the module-level ``_make_mock_st``, this one can represent
+        "the key is genuinely absent" via a real ``__contains__``."""
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state: dict = {"apply_ytd_to_projection": False}
+        if seed_ytd_snapshot is not None:
+            _state["ytd_snapshot"] = seed_ytd_snapshot
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        session_state.__contains__.side_effect = lambda key: key in _state
+        mock_st.session_state = session_state
+        mock_st.number_input.return_value = 0
+        mock_st.checkbox.return_value = False  # "Manual entry" OFF
+        mock_st.button.return_value = False  # "Sync"/"Scan folder" OFF
+
+        def _columns_side_effect(arg):
+            n = arg if isinstance(arg, int) else len(arg)
+            return [MagicMock() for _ in range(n)]
+
+        mock_st.columns.side_effect = _columns_side_effect
+        mock_st.expander.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.form.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_st.form.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.form_submit_button.return_value = False
+        return mock_st
+
+    def test_no_snapshot_in_session_state_skips_save(self):
+        hh = _stub_hh()
+        mock_st = self._mock_st(seed_ytd_snapshot=None)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save,
+        ):
+            ytd_income_mod.render(hh)
+
+        mock_save.assert_not_called()
+
+    def test_real_snapshot_in_session_state_triggers_save(self):
+        hh = _stub_hh()
+        real_ytd = YTDSnapshot(wages_ytd=80_000.0)
+        mock_st = self._mock_st(seed_ytd_snapshot=real_ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save,
+        ):
+            ytd_income_mod.render(hh)
+
+        mock_save.assert_called_once()
+
+
 class TestYtdIncomeNqoDisplay:
     """View-layer smoke tests for NQO exercises metric and per-grant breakdown."""
 
