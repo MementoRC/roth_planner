@@ -80,9 +80,15 @@ def apply_brokerage_statement_records(
 _YTD_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ytd_cache.json"
 
 
-def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
-    """Save YTD snapshot to disk as JSON."""
-    data = {
+def ytd_to_dict(ytd: YTDSnapshot) -> dict:
+    """Serialize a YTDSnapshot to its explicit JSON-able dict form.
+
+    Extracted from save_ytd_snapshot (audit-0823: "YTD in the data-bridge
+    bundle") so both the on-disk cache writer AND the data-bridge bundle
+    builder share one serialization -- otherwise the bundle would silently
+    drift from the cache format the first time either one gained a field.
+    """
+    return {
         "tax_year": ytd.tax_year,
         "snapshot_date": ytd.snapshot_date,
         "wages_ytd": ytd.wages_ytd,
@@ -107,18 +113,18 @@ def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
         "income_events": [asdict(e) for e in ytd.income_events],
         "manually_entered": ytd.manually_entered,
     }
-    write_pii_json(_YTD_CACHE_PATH, data)
 
 
-def load_ytd_snapshot() -> YTDSnapshot | None:
-    """Load cached YTD snapshot from disk, or None if not available."""
-    if not _YTD_CACHE_PATH.exists():
-        return None
-    try:
-        data = read_pii_json(_YTD_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
-        return None
+def ytd_from_dict(data: dict) -> YTDSnapshot:
+    """Parse a YTDSnapshot from its JSON dict form, applying legacy migrations.
 
+    Extracted from load_ytd_snapshot (audit-0823) so the data-bridge bundle
+    reader can reuse the SAME migration logic -- a bundle built by an older
+    peer (pre-nqo_exercise_ytd, pre-dividends_ytd-split, etc.) must still
+    load correctly here, exactly as an old on-disk cache file would.
+    Pure: operates on a copy, never mutates the caller's dict.
+    """
+    data = dict(data)
     events = [RealizedGainEvent(**e) for e in data.pop("gain_events", [])]
     income_events = [IncomeEvent(**e) for e in data.pop("income_events", [])]
     # Migrate old cache files that stored a single dividends_ytd key.
@@ -145,3 +151,19 @@ def load_ytd_snapshot() -> YTDSnapshot | None:
     if "crypto_income_ytd" not in data:
         data["crypto_income_ytd"] = 0.0
     return YTDSnapshot(**data, gain_events=events, income_events=income_events)
+
+
+def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
+    """Save YTD snapshot to disk as JSON."""
+    write_pii_json(_YTD_CACHE_PATH, ytd_to_dict(ytd))
+
+
+def load_ytd_snapshot() -> YTDSnapshot | None:
+    """Load cached YTD snapshot from disk, or None if not available."""
+    if not _YTD_CACHE_PATH.exists():
+        return None
+    try:
+        data = read_pii_json(_YTD_CACHE_PATH)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return ytd_from_dict(data)

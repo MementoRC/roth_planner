@@ -8,7 +8,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from engine.bridge_bundle import apply_bundle, read_format_version
+from engine.bridge_bundle import apply_bundle, read_bundle_ytd, read_format_version
 from engine.data_bridge_browser import (
     is_pyodide,
 )
@@ -20,11 +20,12 @@ from engine.data_bridge_keys import (
 from engine.data_sources.record import record_magi_candidates
 from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
-from engine.portfolio_sync import PortfolioSnapshot, save_ytd_snapshot
+from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
 from engine.portfolio_sync.portfolio import load_snapshot, save_snapshot
 from engine.upload_merge import extract_bundle_magi
 from models.household import Household
 from models.sourced import Source
+from models.ytd_income import YTDSnapshot
 
 from ._state import (
     _apply_user_defaults_to_session,
@@ -305,6 +306,27 @@ def _handle_personal_uploads() -> None:
                             )
                     st.session_state["portfolio_snapshot"] = new_snapshot
                     st.session_state.pop("_suppress_snapshot_autoload", None)
+                    # Seed session_state["ytd_snapshot"] from the bundle's own "ytd"
+                    # section BEFORE _rederive_ytd_from_ledger runs. We are not
+                    # deleting that function's `if snap is None: return` guard --
+                    # we are satisfying its precondition, which in Pyodide (no
+                    # persistent filesystem, so .ytd_cache.json never exists across
+                    # page loads) was previously NEVER satisfied, making the whole
+                    # re-derive a permanent no-op in the browser.
+                    incoming_ytd = read_bundle_ytd(data)
+                    if incoming_ytd is not None:
+                        st.session_state["ytd_snapshot"] = incoming_ytd
+                    ledger_slice = data["sections"].get("ledger") or {}
+                    ledger_has_data = bool(ledger_slice.get("koinly") or ledger_slice.get("brokerage"))
+                    if "ytd_snapshot" not in st.session_state and ledger_has_data:
+                        # v2 bundle (or a v3 bundle exported with ytd=None): no "ytd"
+                        # section but real ledger data to re-derive from. In Pyodide
+                        # load_ytd_snapshot() always returns None, so without seeding
+                        # a blank snapshot here, the ledger-derived YTD figures are
+                        # silently dropped on every first upload of every browser
+                        # session -- there is nothing for _rederive_ytd_from_ledger
+                        # to overwrite onto.
+                        st.session_state["ytd_snapshot"] = YTDSnapshot()
                     _rederive_ytd_from_ledger(new_ledger)
                     st.success(f"Applied: {bundle_file.name} ({pc_role.lower()}). Rerunning…")
                     st.rerun()
@@ -421,7 +443,13 @@ def _handle_personal_exports() -> None:
             scalars = _user_defaults_from_session()
             snapshot = load_snapshot()
             ledger = _load_pdf_ledger()
-            bundle = build_bundle(scalars, snapshot, ledger, owner="you")
+            # Prefer the in-session YTD snapshot (authoritative, and the ONLY
+            # thing that exists at all in Pyodide -- there is no persistent
+            # filesystem there, so load_ytd_snapshot() always misses on the
+            # public site). Fall back to the on-disk cache for a local run
+            # where the YTD page hasn't been visited yet this session.
+            ytd = st.session_state.get("ytd_snapshot") or load_ytd_snapshot()
+            bundle = build_bundle(scalars, snapshot, ledger, owner="you", ytd=ytd)
             payload = json.dumps(bundle).encode("utf-8")
             st.download_button(
                 label="⬇️ Download my encrypted data (.enc)",

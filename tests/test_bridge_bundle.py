@@ -5,6 +5,7 @@ from engine.bridge_bundle import (
     BUNDLE_FORMAT_VERSION,
     apply_bundle,
     build_bundle,
+    read_bundle_ytd,
     read_format_version,
 )
 from engine.data_bridge_crypto import generate_keypair, open_uploaded_payload, seal
@@ -41,7 +42,7 @@ class TestBuildBundle:
         snap = _Snap(accounts=[_Acct("you", "IRA")])
         b = build_bundle({"age_self": 61}, snap, _ledger(), owner="you")
         assert b["format_version"] == BUNDLE_FORMAT_VERSION
-        assert set(b["sections"]) == {"setup_scalars", "portfolio", "ledger"}
+        assert set(b["sections"]) == {"setup_scalars", "portfolio", "ledger", "ytd"}
 
     def test_accounts_are_owner_filtered(self):
         snap = _Snap(accounts=[_Acct("you", "MyIRA"), _Acct("spouse", "TheirIRA")])
@@ -377,3 +378,51 @@ class TestExportImportRoundTrip:
         assert h2.dividends_by_year == {"2023": 789.01, "2024": 890.12}
         assert h2.dividends_window == {"from_date": "2023-01-01", "to_date": "2024-12-31"}
         assert h2.dividends_is_stale is False
+
+
+class TestBundleYtdSection:
+    """audit-0823: "YTD in the data-bridge bundle" -- build_bundle(ytd=...) /
+    read_bundle_ytd. YTD is household-wide, not per-owner, so there is no
+    owner-filtering step here, unlike portfolio/ledger."""
+
+    def test_format_version_bumped_to_3(self):
+        assert BUNDLE_FORMAT_VERSION == 3
+        assert read_format_version({"format_version": 3, "sections": {}}) == 3
+
+    def test_no_ytd_kwarg_emits_none_section(self):
+        b = build_bundle({}, _Snap(), _ledger(), owner="you")
+        assert b["sections"]["ytd"] is None
+        assert read_bundle_ytd(b) is None
+
+    def test_ytd_kwarg_roundtrips_through_read_bundle_ytd(self):
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=150_000.0, nqo_exercise_ytd=96_000.0)
+        b = build_bundle({}, _Snap(), _ledger(), owner="you", ytd=ytd)
+        assert b["sections"]["ytd"] is not None
+
+        recovered = read_bundle_ytd(b)
+        assert recovered == ytd
+
+    def test_v2_bundle_with_no_ytd_key_returns_none_not_raise(self):
+        """Back-compat: a hand-built v2 bundle predates the "ytd" section entirely."""
+        v2_bundle = {
+            "format_version": 2,
+            "sections": {
+                "setup_scalars": {},
+                "portfolio": {"accounts": []},
+                "ledger": {"koinly": {}, "brokerage": {}},
+            },
+        }
+        assert read_bundle_ytd(v2_bundle) is None
+
+    def test_malformed_ytd_section_string_returns_none(self):
+        b = {"format_version": 3, "sections": {"ytd": "not a dict"}}
+        assert read_bundle_ytd(b) is None
+
+    def test_malformed_ytd_section_empty_dict_returns_none(self):
+        b = {"format_version": 3, "sections": {"ytd": {}}}
+        assert read_bundle_ytd(b) is None
+
+    def test_non_dict_bundle_returns_none(self):
+        assert read_bundle_ytd([1, 2, 3]) is None
