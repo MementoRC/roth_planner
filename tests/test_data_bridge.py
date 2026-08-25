@@ -550,6 +550,115 @@ class TestThirdPartySeal:
             unseal(ct, other_priv)
 
 
+# ---------------------------------------------------------------------------
+# TestKeyPrecedence — audit-0823 regression: _resolved_pubkey() must mirror
+# _resolve_privkey_bytes() (session-pasted key first, disk fallback second),
+# or a session-pasted key seals a file it cannot later decrypt.
+# ---------------------------------------------------------------------------
+
+
+class TestKeyPrecedence:
+    def test_session_key_no_disk_key(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        pub, priv = generate_keypair()
+        priv_b64 = base64.b64encode(priv).decode("ascii")
+        monkeypatch.setattr(
+            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
+        )
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: None)
+        assert bridge_mod._resolved_pubkey() == pub
+
+    def test_session_key_wins_over_different_disk_key(self, monkeypatch):
+        """Regression for the live bug: session-pasted key must win over a
+        different on-disk public key."""
+        import views.setup.data_bridge as bridge_mod
+
+        session_pub, session_priv = generate_keypair()
+        disk_pub, _ = generate_keypair()
+        priv_b64 = base64.b64encode(session_priv).decode("ascii")
+        monkeypatch.setattr(
+            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
+        )
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
+        resolved = bridge_mod._resolved_pubkey()
+        assert resolved == session_pub
+        assert resolved != disk_pub
+
+    def test_no_session_key_falls_back_to_disk(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        disk_pub, _ = generate_keypair()
+        monkeypatch.setattr(bridge_mod.st, "session_state", {})
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
+        assert bridge_mod._resolved_pubkey() == disk_pub
+
+    def test_neither_key_returns_none(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        monkeypatch.setattr(bridge_mod.st, "session_state", {})
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: None)
+        assert bridge_mod._resolved_pubkey() is None
+
+    def test_round_trip_seal_with_session_unseal_with_session(self, monkeypatch):
+        """The important one: seal() via _resolved_pubkey() then unseal() via
+        _resolve_privkey_bytes() must succeed when a session key is pasted
+        AND a different disk keypair also exists. Before the fix this raised
+        DecryptionFailedError."""
+        import views.setup.data_bridge as bridge_mod
+
+        session_pub, session_priv = generate_keypair()
+        disk_pub, disk_priv = generate_keypair()
+        priv_b64 = base64.b64encode(session_priv).decode("ascii")
+        monkeypatch.setattr(
+            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
+        )
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
+        monkeypatch.setattr(bridge_mod, "load_privkey", lambda: disk_priv)
+
+        ct = seal(b"payload", bridge_mod._resolved_pubkey())
+        assert unseal(ct, bridge_mod._resolve_privkey_bytes()) == b"payload"
+
+    def test_malformed_session_key_falls_back_to_disk(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        disk_pub, _ = generate_keypair()
+        monkeypatch.setattr(
+            bridge_mod.st,
+            "session_state",
+            {"data_bridge_privkey_b64": "not-a-key-at-all!!!"},
+        )
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
+        assert bridge_mod._resolved_pubkey() == disk_pub
+
+
+class TestPubkeySourceLabel:
+    def test_session_key_present(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        _, priv = generate_keypair()
+        priv_b64 = base64.b64encode(priv).decode("ascii")
+        monkeypatch.setattr(
+            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
+        )
+        assert bridge_mod._pubkey_source_label() == "session key"
+
+    def test_falls_back_to_local_key_file(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        disk_pub, _ = generate_keypair()
+        monkeypatch.setattr(bridge_mod.st, "session_state", {})
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
+        assert bridge_mod._pubkey_source_label() == "local key file"
+
+    def test_neither_returns_none_label(self, monkeypatch):
+        import views.setup.data_bridge as bridge_mod
+
+        monkeypatch.setattr(bridge_mod.st, "session_state", {})
+        monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: None)
+        assert bridge_mod._pubkey_source_label() == "none"
+
+
 class TestGeneratedKeypairRoundTrip:
     def test_generated_keypair_b64_decodes_and_decrypts(self):
         from engine.data_bridge_crypto import derive_pubkey
@@ -565,3 +674,121 @@ class TestGeneratedKeypairRoundTrip:
         # End to end: sender seals to the shared public key, recipient unseals.
         ct = seal(b"recipient payload", _decode_keymaterial(pub_b64))
         assert unseal(ct, recovered_priv) == b"recipient payload"
+
+
+class TestPendingDefaultsDeferral:
+    """Regression for the deployed crash: StreamlitAPIException on
+    _survivor_enabled during data-bridge import. _apply_user_defaults_to_session
+    must never write directly to st.session_state — only to the non-widget
+    _pending_defaults staging key; _drain_pending_defaults applies it later,
+    before any widget is instantiated on the next script run."""
+
+    def test_writes_nothing_directly_only_stages_pending(self, monkeypatch):
+        import views.setup._state as state_mod
+
+        session_state: dict = {}
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        monkeypatch.setattr(
+            state_mod,
+            "_build_user_defaults_session_updates",
+            lambda data, *, as_spouse: {"your_age": 61, "living_expenses": 5000},
+        )
+        state_mod._apply_user_defaults_to_session({}, as_spouse=False)
+        assert "your_age" not in session_state
+        assert "living_expenses" not in session_state
+        assert session_state["_pending_defaults"] == {
+            "your_age": 61,
+            "living_expenses": 5000,
+        }
+
+    def test_two_successive_calls_merge_into_pending(self, monkeypatch):
+        import views.setup._state as state_mod
+
+        session_state: dict = {}
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        calls = iter(
+            [
+                {"your_age": 61},
+                {"living_expenses": 5000},
+            ]
+        )
+        monkeypatch.setattr(
+            state_mod,
+            "_build_user_defaults_session_updates",
+            lambda data, *, as_spouse: next(calls),
+        )
+        state_mod._apply_user_defaults_to_session({}, as_spouse=False)
+        state_mod._apply_user_defaults_to_session({}, as_spouse=False)
+        assert session_state["_pending_defaults"] == {
+            "your_age": 61,
+            "living_expenses": 5000,
+        }
+
+    def test_drain_applies_all_pending_and_removes_key(self, monkeypatch):
+        import views.setup._state as state_mod
+
+        session_state = {"_pending_defaults": {"your_age": 61, "living_expenses": 5000}}
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        state_mod._drain_pending_defaults()
+        assert session_state["your_age"] == 61
+        assert session_state["living_expenses"] == 5000
+        assert "_pending_defaults" not in session_state
+
+    def test_drain_with_nothing_pending_is_a_noop(self, monkeypatch):
+        import views.setup._state as state_mod
+
+        session_state: dict = {"unrelated": "value"}
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        state_mod._drain_pending_defaults()
+        assert session_state == {"unrelated": "value"}
+
+    def test_deferral_survives_a_widget_instantiated_key(self, monkeypatch):
+        """Regression: simulate the exact deployed crash. A session_state
+        stub raises StreamlitAPIException on direct assignment to
+        _survivor_enabled (as Streamlit does once that widget exists in the
+        current run). _apply_user_defaults_to_session must not touch that
+        key directly, so it must not raise."""
+        from streamlit.errors import StreamlitAPIException
+
+        import views.setup._state as state_mod
+
+        class _WidgetGuardedSessionState(dict):
+            def __setitem__(self, key: str, value: object) -> None:
+                if key == "_survivor_enabled":
+                    raise StreamlitAPIException(
+                        "st.session_state._survivor_enabled cannot be modified "
+                        "after the widget with key _survivor_enabled is "
+                        "instantiated."
+                    )
+                super().__setitem__(key, value)
+
+        session_state = _WidgetGuardedSessionState()
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        monkeypatch.setattr(
+            state_mod,
+            "_build_user_defaults_session_updates",
+            lambda data, *, as_spouse: {"_survivor_enabled": True},
+        )
+        state_mod._apply_user_defaults_to_session({}, as_spouse=False)
+        assert session_state["_pending_defaults"] == {"_survivor_enabled": True}
+
+    def test_as_spouse_true_still_skips_previously_skipped_keys(self, monkeypatch):
+        """Regression guard: the spouse cross-map rule (skip
+        _user_grant_strikes / prior_year_magi / joint fields) must survive
+        the deferral refactor — verified via the real (unmocked) mapper."""
+        import views.setup._state as state_mod
+
+        session_state: dict = {}
+        monkeypatch.setattr(state_mod.st, "session_state", session_state)
+        data = {
+            "your_age": 61,
+            "your_ira": 1_700_000,
+            "grant_strikes": {"2019": 104},
+            "prior_year_magi": {"2024": 200_000},
+        }
+        state_mod._apply_user_defaults_to_session(data, as_spouse=True)
+        pending = session_state["_pending_defaults"]
+        assert pending.get("spouse_age") == 61
+        assert pending.get("spouse_ira") == 1_700_000
+        assert "_user_grant_strikes" not in pending
+        assert "prior_year_magi" not in pending

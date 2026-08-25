@@ -26,7 +26,18 @@ def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict
 
 
 def _apply_user_defaults_to_session(data: dict, *, as_spouse: bool = False) -> None:
-    """Write JSON user-defaults keys into st.session_state.
+    """Stage JSON user-defaults keys for a deferred write into st.session_state.
+
+    IMPORTANT — do NOT write directly here. Streamlit raises
+    StreamlitAPIException if a session_state key is assigned after a widget
+    with that key has already been instantiated in the SAME script run
+    (e.g. ``_survivor_enabled``). The data-bridge upload handler that calls
+    this runs late in the script — well after such widgets exist — so a
+    direct write here reliably crashes the whole page on import. Instead we
+    stash the computed updates into the non-widget ``_pending_defaults`` key
+    and apply them via :func:`_drain_pending_defaults` at the very top of the
+    NEXT script run, before any widget is created. The caller is responsible
+    for triggering that next run (st.rerun()).
 
     When ``as_spouse=True``, cross-maps the file's ``your_*`` fields to the
     receiver's ``spouse_*`` slots and ignores joint / grant fields.
@@ -36,7 +47,23 @@ def _apply_user_defaults_to_session(data: dict, *, as_spouse: bool = False) -> N
     ``_user_grant_strikes`` from session_state; ``as_spouse=True`` deliberately
     skips that key so the receiver's own grants stay authoritative.
     """
-    for key, val in _build_user_defaults_session_updates(data, as_spouse=as_spouse).items():
+    pending = st.session_state.setdefault("_pending_defaults", {})
+    pending.update(_build_user_defaults_session_updates(data, as_spouse=as_spouse))
+
+
+def _drain_pending_defaults() -> None:
+    """Apply deferred user-defaults writes staged by _apply_user_defaults_to_session.
+
+    MUST be called at the very top of the script run — after imports and
+    st.set_page_config, but strictly BEFORE any widget is instantiated.
+    Calling it late defeats the whole point: the deferral exists precisely
+    because Streamlit forbids assigning to a session_state key once a widget
+    with that key already exists in the current run.
+    """
+    pending = st.session_state.pop("_pending_defaults", None)
+    if not pending:
+        return
+    for key, val in pending.items():
         st.session_state[key] = val
 
 

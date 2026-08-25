@@ -37,24 +37,42 @@ from ._state import (
 def _resolved_pubkey() -> bytes | None:
     """Resolve V2 public key for encryption.
 
-    Order: env/dotfile (:func:`load_pubkey`), then derive from the
-    session-state private key (browser paste flow). Returns ``None`` if
-    no key is available from any source.
+    Order: session-state pasted private key (browser paste flow, derived to
+    its public key) FIRST, then env/dotfile (:func:`load_pubkey`) as
+    fallback. Returns ``None`` if no key is available from any source.
+
+    Encrypt and decrypt must resolve from the same source, or a session that
+    pastes a key will seal a file it cannot open with that same pasted key.
+    The session-pasted key is the more explicit, more recent user intent,
+    and it is the only key available on the public Pyodide site (no
+    dotfiles in the browser). This ordering deliberately mirrors
+    :func:`_resolve_privkey_bytes` — keep the two in lockstep.
     """
     # Deferred: nacl unavailable in Pyodide
     from engine.data_bridge_crypto import derive_pubkey
 
-    pk = load_pubkey()
-    if pk is not None:
-        return pk
     priv_b64 = st.session_state.get("data_bridge_privkey_b64")
-    if not priv_b64:
-        return None
-    try:
-        priv_raw = decode_keymaterial(priv_b64)
-    except ValueError:
-        return None
-    return derive_pubkey(priv_raw)
+    if priv_b64:
+        try:
+            priv_raw = decode_keymaterial(priv_b64)
+        except ValueError:
+            pass  # fall through to disk rather than failing outright
+        else:
+            return derive_pubkey(priv_raw)
+    return load_pubkey()
+
+
+def _pubkey_source_label() -> str:
+    """Which key source _resolved_pubkey() will use — for honest UI captions."""
+    priv_b64 = st.session_state.get("data_bridge_privkey_b64")
+    if priv_b64:
+        try:
+            decode_keymaterial(priv_b64)
+        except ValueError:
+            pass
+        else:
+            return "session key"
+    return "local key file" if load_pubkey() is not None else "none"
 
 
 def _resolve_privkey_bytes() -> bytes | None:
@@ -62,6 +80,9 @@ def _resolve_privkey_bytes() -> bytes | None:
 
     Order: session-state pasted key, then disk dotfile/env via
     :func:`load_privkey`. Returns ``None`` if no key is available.
+
+    This ordering deliberately mirrors :func:`_resolved_pubkey` — keep the
+    two in lockstep.
     """
     priv_b64 = st.session_state.get("data_bridge_privkey_b64")
     if priv_b64:
@@ -370,6 +391,23 @@ def _handle_personal_exports() -> None:
         sealing_for_third_party = recipient_pubkey is not None
         pubkey = recipient_pubkey if sealing_for_third_party else _resolved_pubkey()
 
+        if not sealing_for_third_party:
+            priv_b64 = st.session_state.get("data_bridge_privkey_b64")
+            disk_pubkey = load_pubkey()
+            if priv_b64 and disk_pubkey is not None:
+                try:
+                    from engine.data_bridge_crypto import derive_pubkey
+
+                    session_pubkey = derive_pubkey(decode_keymaterial(priv_b64))
+                except ValueError:
+                    session_pubkey = None
+                if session_pubkey is not None and session_pubkey != disk_pubkey:
+                    st.warning(
+                        "⚠️ Both a session-pasted key and a local key file are "
+                        "present and differ — this export seals for the "
+                        "**session key**; the local key file will NOT open it."
+                    )
+
         if pubkey is not None:
             if sealing_for_third_party:
                 st.caption(
@@ -377,7 +415,9 @@ def _handle_personal_exports() -> None:
                     "key can open this file."
                 )
             else:
-                st.caption("🔐 V2 encrypted export active — file is sealed for your private key.")
+                st.caption(
+                    f"🔐 V2 encrypted export active — sealed with your {_pubkey_source_label()}."
+                )
             scalars = _user_defaults_from_session()
             snapshot = load_snapshot()
             ledger = _load_pdf_ledger()

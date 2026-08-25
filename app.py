@@ -22,6 +22,7 @@ from models.sourced import Source  # noqa: E402
 from views import (  # noqa: E402
     shells,  # intentionally eager (not lazy/per-branch like other page views) — shells.THEMES needed by sidebar selectbox before page dispatch
 )
+from views.setup._state import _drain_pending_defaults  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -84,6 +85,13 @@ def _seed_session_state() -> None:
 
 # Shared state: household parameters
 _seed_session_state()
+
+# Drain any user-defaults writes deferred by _apply_user_defaults_to_session
+# (data-bridge upload handler) on the PRIOR script run. Must run before any
+# st.* widget is instantiated — see views/setup/_state.py::_drain_pending_defaults
+# for why (Streamlit forbids assigning to a widget-backed session_state key
+# after that widget already exists in the run).
+_drain_pending_defaults()
 
 # Load cached snapshots on first run (silently — Setup page shows status)
 if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_suppress_snapshot_autoload"):
