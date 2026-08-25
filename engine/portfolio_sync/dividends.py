@@ -52,10 +52,37 @@ def apply_dividends_rollup(
 ) -> PortfolioSnapshot:
     """Merge dividends_rollup data into the snapshot's holdings in place.
 
+    SCOPE OF ``rollup.by_symbol`` (audit-0823 PS-2): each entry is the
+    HOUSEHOLD-WIDE dividend total for that symbol, summed across every account
+    and institution. It carries no account dimension, and it cannot:
+    :func:`fetch_dividends_rollup` issues a single request whose only parameter
+    is ``data_type``, so there is no way to ask for one account's figures. This
+    was undocumented, and stamping the undivided total onto each holding looked
+    correct as a result.
+
     For each holding whose symbol appears in rollup.by_symbol:
-      - dividends_by_year <- {year: yeardata['total']} (drops the count field)
+      - dividends_by_year <- {year: yeardata['total'] * this holding's share}
       - dividends_window  <- {'start': window['from'], 'end': window['to']}
       - dividends_is_stale <- bool(rollup.freshness.get('is_stale', False))
+
+    ALLOCATION: the symbol's total is split across the holdings of that symbol
+    in proportion to SHARE COUNT, so the per-holding figures sum back to the
+    household total. Assigning the full total to each holding multiplied a
+    symbol's projected income by the number of accounts holding it, because
+    ``forecast_portfolio`` deliberately SUMS same-ticker positions across
+    accounts (audit-0720 L1) and ``positions_for_forecast_multi`` feeds it every
+    brokerage account at once.
+
+    Shares are the right divisor because dividends are paid per share. Using
+    CURRENT share counts to apportion a TRAILING window is the same
+    approximation ``Position.ttm_per_share`` already makes and documents: exact
+    for a position whose share count was stable across the window, approximate
+    otherwise. Apportioning by market value instead would be wrong for any
+    symbol whose price differs from its dividend-weighted basis.
+
+    A symbol whose holdings have zero total shares is allocated 0.0 rather than
+    dividing by zero; such holdings contribute nothing downstream anyway
+    (``Position.ttm_per_share`` returns 0.0 when shares <= 0).
 
     Holdings whose symbol is absent from rollup.by_symbol keep their existing
     dividend fields (typically None).
@@ -84,6 +111,17 @@ def apply_dividends_rollup(
 
     is_stale = bool(rollup.freshness.get("is_stale", False))
 
+    # Household-wide share count per symbol — the denominator for the pro-rata
+    # split below. Negative quantities (short positions) are floored at 0 so
+    # they cannot produce a negative allocation or inflate a sibling's share.
+    shares_by_symbol: dict[str, float] = {}
+    for acct in snap.accounts:
+        for holding in acct.holdings:
+            sym = (holding.symbol or "").upper()
+            if not sym or sym not in by_symbol_upper:
+                continue
+            shares_by_symbol[sym] = shares_by_symbol.get(sym, 0.0) + max(holding.quantity, 0.0)
+
     for acct in snap.accounts:
         for holding in acct.holdings:
             sym = (holding.symbol or "").upper()
@@ -93,9 +131,11 @@ def apply_dividends_rollup(
             year_map: dict[str, Any] = sym_data.get("by_year", {})
             if not year_map:
                 continue
+            total_shares = shares_by_symbol.get(sym, 0.0)
+            share = (max(holding.quantity, 0.0) / total_shares) if total_shares > 0 else 0.0
             # Extract .total from {total, count} per-year objects; drop counts
             holding.dividends_by_year = {
-                year: float(yd.get("total", 0)) for year, yd in year_map.items()
+                year: float(yd.get("total", 0)) * share for year, yd in year_map.items()
             }
             if window_translated:
                 holding.dividends_window = dict(window_translated)
