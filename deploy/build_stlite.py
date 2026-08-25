@@ -31,7 +31,21 @@ REQUIREMENTS = [
     "pynacl",
 ]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 # Default stlite version (overridable via --stlite-version)
-DEFAULT_STLITE_VERSION = "0.83.0"
+#
+# WHY 0.90.0: views/ use the Streamlit width="stretch" API (st.dataframe /
+# st.plotly_chart / st.button), which requires Streamlit >=1.49. stlite 0.90.0
+# is the FIRST stlite release bundling Streamlit >=1.50 (CHANGELOG: "[0.90.0]
+# - 2025-11-13: Update Streamlit to 1.50.0, #1611"). stlite 0.83.0 only ships
+# Streamlit 1.45.1 and crashed the deployed site at runtime with
+# `TypeError: 'str' object cannot be interpreted as an integer` because
+# width="stretch" isn't valid on that older Streamlit.
+#
+# This pin MUST stay >= the stlite version bundling the newest Streamlit API
+# actually used in views/. pixi.toml separately pins streamlit>=1.50 for the
+# local dev environment — if this constant falls behind, the deployed stlite
+# bundle and the local dev environment diverge and the public site can crash
+# again while local tests stay green.
+DEFAULT_STLITE_VERSION = "0.90.0"
 
 
 def _collect_files(repo_root: Path) -> dict[str, str]:

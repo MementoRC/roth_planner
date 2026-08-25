@@ -12,6 +12,14 @@ python -m http.server --directory _site 8000
 # open http://localhost:8000
 ```
 
+Or via pixi: `pixi run build-stlite` runs the same command and writes a
+self-contained `_site/index.html` you can open directly in a browser — no
+web server needed. **Do this before merging to `development`**: the deployed
+site pins its own stlite/Streamlit version (see Caveats below), which can
+differ from the local pixi env, so a Streamlit API that works in `pixi run
+app` can still crash on the deployed bundle. Building and opening it locally
+catches that before it ships.
+
 ### Production deploy
 
 `.github/workflows/deploy-stlite.yml` runs on every push to `development`, regenerates `index.html`, and publishes to GitHub Pages. Enable Pages in repo settings → Pages → Source: "GitHub Actions".

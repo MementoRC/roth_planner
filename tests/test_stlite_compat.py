@@ -1,11 +1,18 @@
 """Tests for stlite / Streamlit version compatibility.
 
 Option 1 approach: the stlite bundle ships Streamlit >=1.50 (DEFAULT_STLITE_VERSION
->= 0.80.0), so width="stretch" is a valid API in views/.
+>= 0.90.0), so width="stretch" is a valid API in views/.
 
-A runtime test is not practical here because the defect only manifests inside a
-live Streamlit + stlite rendering loop (Pyodide-only), not in a headless pytest
-session.  Instead we use static source analysis.
+NOTE ON WHAT THIS FILE CAN AND CANNOT PROVE: every check below is a STATIC check
+of a constant (DEFAULT_STLITE_VERSION) and/or a source-text scan. None of it
+executes stlite/Pyodide, so it CANNOT detect whether the deployed bundle actually
+provides the API the views call at runtime. That gap is not hypothetical: this
+exact static check was green (MIN_STLITE_VERSION asserted only >= 0.80.0) while
+the live deployed site crashed, because 0.80.0-0.89.x do NOT bundle Streamlit
+>=1.50 despite an earlier comment here claiming otherwise. A runtime test is not
+practical because the defect only manifests inside a live Streamlit + stlite
+rendering loop (Pyodide-only), not in a headless pytest session — so treat these
+assertions as a floor, not a guarantee.
 """
 
 from __future__ import annotations
@@ -15,7 +22,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VIEWS_DIR = REPO_ROOT / "views"
-MIN_STLITE_VERSION = (0, 80, 0)  # first stlite release bundling Streamlit >=1.50
+# First stlite release bundling Streamlit >=1.50 (CHANGELOG: "[0.90.0] -
+# 2025-11-13: Update Streamlit to 1.50.0, #1611"). stlite 0.80.0 only bundles
+# Streamlit 1.41.0 -- the prior comment here claiming 0.80.0 was the minimum
+# was factually wrong and let a real runtime crash pass this test.
+MIN_STLITE_VERSION = (0, 90, 0)
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -44,15 +55,17 @@ def _load_build_stlite_mod():
 
 
 class TestStliteVersionMinimum:
-    """DEFAULT_STLITE_VERSION in deploy/build_stlite.py must be >=0.80.0.
+    """DEFAULT_STLITE_VERSION in deploy/build_stlite.py must be >=0.90.0.
 
-    stlite 0.80.0 is the first release that bundles Streamlit >=1.50, which
+    stlite 0.90.0 is the first release that bundles Streamlit >=1.50, which
     introduced the width="stretch" argument for st.dataframe / st.plotly_chart
-    / st.button.
+    / st.button. (stlite 0.80.0 only bundles Streamlit 1.41.0 and does NOT
+    have this API -- do not confuse the stlite version number with the
+    Streamlit version it bundles.)
     """
 
     def test_default_stlite_version_meets_minimum(self) -> None:
-        """DEFAULT_STLITE_VERSION must be >= 0.80.0 (bundles Streamlit >=1.50)."""
+        """DEFAULT_STLITE_VERSION must be >= 0.90.0 (bundles Streamlit >=1.50)."""
         mod = _load_build_stlite_mod()
         version_str = str(mod.DEFAULT_STLITE_VERSION)
         version = _parse_version(version_str)
@@ -81,6 +94,44 @@ class TestWidthStretchUsedInViews:
             "If views were reverted to use_container_width=True, also update "
             "DEFAULT_STLITE_VERSION and this test."
         )
+
+
+class TestStliteVersionCoversUsedStreamlitApis:
+    """Derive the required stlite floor from the Streamlit APIs actually used in
+    views/, rather than restating a hardcoded constant twice.
+
+    If a future contributor adopts a newer Streamlit-only API without bumping
+    DEFAULT_STLITE_VERSION to match, this test fails with an explanation of the
+    coupling -- instead of silently passing like the old MIN_STLITE_VERSION did.
+    """
+
+    # {marker string found in views/ source: (min Streamlit version, min stlite
+    # version that first bundles it)}. Extend this mapping when views/ starts
+    # relying on a newer Streamlit-only API.
+    API_STLITE_FLOORS: dict[str, tuple[str, tuple[int, int, int]]] = {
+        'width="stretch"': ("1.49", (0, 90, 0)),
+    }
+
+    def test_stlite_version_covers_apis_used_in_views(self) -> None:
+        sources = _collect_view_sources()
+        combined = "\n".join(sources.values())
+        mod = _load_build_stlite_mod()
+        actual_version = _parse_version(str(mod.DEFAULT_STLITE_VERSION))
+
+        for marker, (streamlit_min, stlite_min) in self.API_STLITE_FLOORS.items():
+            if marker not in combined:
+                continue
+            stlite_min_str = ".".join(str(v) for v in stlite_min)
+            assert actual_version >= stlite_min, (
+                f"views/ use {marker!r} (requires Streamlit >={streamlit_min}), "
+                f"which needs stlite >={stlite_min_str}, but "
+                f"DEFAULT_STLITE_VERSION={mod.DEFAULT_STLITE_VERSION!r} in "
+                "deploy/build_stlite.py is below that floor. Bump "
+                "DEFAULT_STLITE_VERSION (and its API_STLITE_FLOORS entry here "
+                "if you're adding a new API) so the deployed bundle actually "
+                "provides the API the views call, or the public site will "
+                "crash at runtime even though this file's other checks pass."
+            )
 
 
 class TestTemplateReferencesCurrentStlitePackage:
