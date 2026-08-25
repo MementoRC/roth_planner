@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import pickle
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from engine.data_sources.candidate_store import CandidateStore
+from engine.data_sources.candidate_store import CandidateStore, CorruptCandidateStoreError
 from engine.data_sources.choices import ChoiceMap, TrustChoice
 from engine.data_sources.committed import (
     COMMITTED_FIELD_ATTRS,
@@ -368,12 +369,74 @@ class TestCandidateStore:
         missing = tmp_path / "does_not_exist.json"
         store = CandidateStore.load(missing)
         assert store.field_keys() == []
+        # A missing file means "nothing has ever been saved" — not corrupt,
+        # so save() must NOT refuse to write over it (see the sibling
+        # test_load_corrupt_file_returns_empty_store_no_raise, where a
+        # genuinely corrupt file DOES set this).
+        assert store.load_corrupt is False
 
     def test_load_corrupt_file_returns_empty_store_no_raise(self, tmp_path: Path) -> None:
+        """audit-0823: an unparseable file previously returned an empty store
+        with no way for the caller to tell that apart from "nothing was ever
+        saved" — the missing-vs-corrupt distinction now lives on the
+        returned store's ``load_corrupt`` flag (load() itself still never
+        raises; save() is the authoritative guard that refuses to clobber).
+        """
         corrupt = tmp_path / "corrupt.json"
         corrupt.write_text("{not valid json!!")
         store = CandidateStore.load(corrupt)
         assert store.field_keys() == []
+        assert store.load_corrupt is True
+
+    def test_save_writes_atomically_no_stray_temp_file(self, tmp_path: Path) -> None:
+        store = CandidateStore()
+        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+        path = tmp_path / "candidates.json"
+
+        store.save(path)
+
+        assert json.loads(path.read_text())["your_ira"]
+        # Only look for save()'s own temp files — the cache-redirect fixture
+        # drops an unrelated _redirected_caches/ dir into tmp_path.
+        leftover = sorted(tmp_path.glob(f"{path.name}.tmp-*"))
+        assert leftover == [], f"stray temp file(s) left behind: {leftover!r}"
+
+    def test_save_refuses_to_overwrite_existing_corrupt_file(self, tmp_path: Path) -> None:
+        """audit-0823 — the load-bearing regression: save() must never
+        clobber an existing-but-unparseable candidate store with a
+        freshly-loaded (necessarily empty, per CandidateStore.load's
+        resilience) in-memory store. The on-disk bytes may be the user's
+        only copy of their candidates.
+        """
+        path = tmp_path / "corrupt.json"
+        corrupt_bytes = '{"your_ira": {"MANUAL": {"value": 100.0,'  # truncated mid-write
+        path.write_text(corrupt_bytes)
+        store = CandidateStore()
+
+        with pytest.raises(CorruptCandidateStoreError):
+            store.save(path)
+
+        assert path.read_text() == corrupt_bytes, "refused save must leave the corrupt file byte-identical"
+
+    def test_save_writes_normally_when_target_missing(self, tmp_path: Path) -> None:
+        path = tmp_path / "missing.json"
+        store = CandidateStore()
+        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+
+        store.save(path)
+
+        assert path.exists()
+        assert CandidateStore.load(path).candidates_for("your_ira")[0].value == 100.0
+
+    def test_save_writes_normally_when_target_valid(self, tmp_path: Path) -> None:
+        path = tmp_path / "valid.json"
+        path.write_text('{"your_ira": {}}')
+        store = CandidateStore()
+        store.record_candidate("your_ira", 200.0, Provenance(Source.MANUAL, FIXED_DT))
+
+        store.save(path)
+
+        assert CandidateStore.load(path).candidates_for("your_ira")[0].value == 200.0
 
 
 class TestChoiceMap:

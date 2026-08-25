@@ -228,7 +228,10 @@ if page != "⚙️ Setup":
     st.session_state.pop("_generated_priv_b64", None)
 
 # Build household from session state
-from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
+from engine.data_sources.candidate_store import (  # noqa: E402
+    CandidateStore,
+    CorruptCandidateStoreError,
+)
 from engine.data_sources.choices import ChoiceMap  # noqa: E402
 from engine.data_sources.committed import (  # noqa: E402
     CorruptCommittedCacheError,
@@ -404,7 +407,21 @@ def get_household() -> Household:
             "been left untouched and will NOT be overwritten this session — restore it "
             "from a backup if you have one, or contact support before deleting it."
         )
-    store.save(CANDIDATE_STORE_PATH)
+    # audit-0823: mirror the committed-baseline guard above — a corrupt
+    # on-disk candidate store must not be silently clobbered by the
+    # in-memory store (which, per CandidateStore.load's resilience, would
+    # be EMPTY on a corrupt read). store.save() itself refuses this write
+    # (see CorruptCandidateStoreError's docstring); this except is what
+    # surfaces that refusal to the user instead of it failing silently.
+    try:
+        store.save(CANDIDATE_STORE_PATH)
+    except CorruptCandidateStoreError as exc:
+        st.warning(
+            f"⚠️ Your candidate store at `{exc.path}` is unreadable "
+            "(corrupt or truncated) and could contain data with no other copy. It has "
+            "been left untouched and will NOT be overwritten this session — restore it "
+            "from a backup if you have one, or contact support before deleting it."
+        )
     choices.save(TRUST_CHOICES_PATH)
 
     # Expose the review gate to the sidebar/Command Center.
