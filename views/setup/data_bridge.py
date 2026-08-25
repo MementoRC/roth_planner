@@ -328,6 +328,23 @@ def _handle_personal_uploads() -> None:
                         # to overwrite onto.
                         st.session_state["ytd_snapshot"] = YTDSnapshot()
                     _rederive_ytd_from_ledger(new_ledger)
+                    # v3-or-older bundle (or a v4 bundle whose exporter had no
+                    # PortfolioSnapshot loaded): strike prices came through but no
+                    # grants to attach them to, so Household.grants is still the
+                    # synthetic Acme demo default_factory -- surface that loudly,
+                    # since it silently poisons every option/NQO income figure.
+                    strikes_present = bool(
+                        st.session_state.get("_user_grant_strikes")
+                        or data["sections"]["setup_scalars"].get("grant_strikes")
+                    )
+                    if strikes_present and not getattr(new_snapshot, "equity_grants", None):
+                        st.warning(
+                            "⚠️ Option strike prices were imported, but no stock-option "
+                            "grants came with them — option/NQO income is being computed "
+                            "from this app's built-in demo grants, not the real ones. "
+                            "Figures on the Conversion Planner and YTD pages will be wrong "
+                            "until the sender re-exports with a current version."
+                        )
                     st.success(f"Applied: {bundle_file.name} ({pc_role.lower()}). Rerunning…")
                     st.rerun()
             except (
@@ -449,7 +466,14 @@ def _handle_personal_exports() -> None:
             # public site). Fall back to the on-disk cache for a local run
             # where the YTD page hasn't been visited yet this session.
             ytd = st.session_state.get("ytd_snapshot") or load_ytd_snapshot()
-            bundle = build_bundle(scalars, snapshot, ledger, owner="you", ytd=ytd)
+            # Carry the exporter's real stock-option/RSU grants along too --
+            # without this, the recipient's Household.grants keeps its
+            # synthetic Acme demo-grant default_factory forever (the
+            # matching strike prices travel via setup_scalars["grant_strikes"]
+            # but sit inert with nothing to attach to), so their option/NQO
+            # income is computed off fake grants instead of the real ones.
+            grants = getattr(snapshot, "equity_grants", None)
+            bundle = build_bundle(scalars, snapshot, ledger, owner="you", ytd=ytd, grants=grants)
             payload = json.dumps(bundle).encode("utf-8")
             st.download_button(
                 label="⬇️ Download my encrypted data (.enc)",
