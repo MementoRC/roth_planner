@@ -16,6 +16,7 @@ pdfplumber = ">=0.10"
 
 [tasks]
 gen-data-bridge-keypair = "python scripts/gen_data_bridge_keypair.py"
+build-stlite = "python deploy/build_stlite.py --out-dir _site"
 
 [feature.ci.dependencies]
 ruff = ">=0.8.4"
