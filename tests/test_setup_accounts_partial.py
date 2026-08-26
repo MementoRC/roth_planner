@@ -1,14 +1,14 @@
-"""Tests for ``views/setup/_partials.py:render_accounts_partial`` — Task 4 of
-the ui-shell-theme-toggle plan.
+"""Tests for ``views/setup/_partials.py:render_accounts_partial`` — IRA/Roth/
+SS-FRA balance widgets.
 
-IRA/Roth/SS-FRA balance widgets plus their inline trust/manual/confirm
-governance card, extracted out of Command Center's old generic
-per-pending-field loop (see ``views/setup/command_center.py``'s module
-docstring for why that loop was removed entirely rather than filtered) so
-each of these six governed fields' card now co-locates with its own balance
-widget instead. Uses ``streamlit.testing.v1.AppTest.from_function`` (mirrors
-``tests/test_command_center_view.py``'s pattern this supersedes for
-``your_ira``).
+Task-4 reversal: this partial's inline trust/manual/confirm governance card
+was removed — those cards render exclusively in
+``views/setup/command_center.py``'s generic per-pending-field loop again
+(see that module's docstring; the behavioral tests moved to
+``tests/test_command_center_view.py``). This file keeps a negative
+regression test guarding against a silent re-introduction of the inline
+card, which would raise ``DuplicateWidgetID`` once Command Center's loop
+renders the same field too.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from streamlit.testing.v1 import AppTest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import load_committed
 from models.sourced import Provenance, Source, SourcedValue
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -52,63 +51,33 @@ def _render_your_accounts_with_pending_ira() -> None:
     from views.setup._partials import render_accounts_partial
 
     # your_ira/your_ss_fra are read unconditionally (st.session_state.<attr>,
-    # not .get()) by render_accounts_partial's own balance widgets -- unlike
-    # the old command_center.py card (which never touched these keys), this
-    # partial ALSO renders the balance number_input itself, so both must be
-    # pre-seeded (matching the committed baseline used below) or Streamlit
-    # raises AttributeError before the card ever renders. setdefault (not a
-    # plain assignment) so a later confirm-button click's rerun of this same
-    # function doesn't clobber the just-confirmed value back to the seed.
+    # not .get()) by render_accounts_partial's own balance widgets, so both
+    # must be pre-seeded (matching the committed baseline used below) or
+    # Streamlit raises AttributeError before the widgets ever render.
+    # setdefault (not a plain assignment) so a rerun of this same function
+    # doesn't clobber a since-changed value back to the seed.
     st.session_state.setdefault("your_ira", 1_700_000)
     st.session_state.setdefault("your_ss_fra", 2_000)
     st.session_state["_pending_review"] = {"your_ira"}
     render_accounts_partial(Household(), st, "your")
 
 
-def test_accounts_partial_renders_and_shows_pending_candidate(
+def test_accounts_partial_does_not_render_governance_card_even_when_pending(
     clean_command_center_caches,
 ) -> None:
-    """Was ``test_command_center_renders_and_shows_pending_candidate`` against
-    ``views/setup/command_center.py``'s generic loop (deleted in Task 4) —
-    the card renders inline inside ``render_accounts_partial`` now."""
+    """Task-4 reversal regression: render_accounts_partial must NOT render
+    the your_ira trust/manual/confirm governance card, even though your_ira
+    is pending review. That card renders exclusively in
+    views/setup/command_center.py's generic per-pending-field loop now (see
+    that module's docstring, and
+    tests/test_setup_shell_characterization.py's DuplicateWidgetID
+    regression test for why two renderers of the same widget key cannot
+    coexist).
+    """
     _seed_pending_your_ira()
 
     at = AppTest.from_function(_render_your_accounts_with_pending_ira)
     at.run()
 
     assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
-    assert "2,000,000" in rendered_text  # the FINEXTRACT_LIVE candidate value
-    assert "1,700,000" in rendered_text  # the currently-committed value
-
-
-def test_accounts_partial_confirm_button_commits_chosen_source_and_syncs_session(
-    clean_command_center_caches,
-) -> None:
-    """Was ``test_confirm_button_commits_chosen_source_and_syncs_session``
-    against ``command_center.py`` (deleted in Task 4) — same behavior, now
-    exercised through ``render_accounts_partial`` directly."""
-    _seed_pending_your_ira()
-
-    at = AppTest.from_function(_render_your_accounts_with_pending_ira)
-    at.run()
-    assert not at.exception
-
-    at.button(key="confirm_your_ira").click().run()
-
-    assert not at.exception
-    assert at.session_state["your_ira"] == 2_000_000.0
-
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
-    assert committed_json is not None
-    assert committed_json["your_ira"]["value"] == 2_000_000.0
-    assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
-
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    choice = choices.get("your_ira")
-    assert choice is not None
-    assert choice.source == Source.FINEXTRACT_LIVE
+    assert not any(w.key == "confirm_your_ira" for w in at.button)

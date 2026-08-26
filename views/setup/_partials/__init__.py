@@ -17,7 +17,9 @@ This package replaces the original flat ``views/setup/_partials.py`` module
 behavior change) with one module per partial:
 
 - ``_governance.py`` — shared sourced-field trust/manual-override/confirm
-  governance-card machinery used by every owning partial.
+  governance-card machinery, called exclusively by
+  ``views/setup/command_center.py``'s generic per-pending-field loop (not by
+  any partial here — see that module's docstring).
 - ``_household.py`` — Task 3: ``render_household_partial`` +
   ``filing_status_from_label``.
 - ``_accounts.py`` — Task 4: ``render_accounts_partial`` + ``_sync_ssa_for``.

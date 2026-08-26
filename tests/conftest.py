@@ -45,10 +45,8 @@ import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
 import views._shared as _views_shared_mod  # noqa: E402
 import views.option_exercise._partials._helpers as _option_exercise_helpers_mod  # noqa: E402
-import views.setup._partials._accounts as _setup_accounts_mod  # noqa: E402
-import views.setup._partials._assumptions as _setup_assumptions_mod  # noqa: E402
 import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
-import views.setup._partials._options as _setup_options_mod  # noqa: E402
+import views.setup.command_center as _command_center_mod  # noqa: E402
 
 _WATCHED_CACHE_PATHS: list[Path] = [
     _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
@@ -164,17 +162,11 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_views_shared_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_option_exercise_helpers_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_setup_assumptions_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_setup_assumptions_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
-    monkeypatch.setattr(_setup_assumptions_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
-    monkeypatch.setattr(_setup_options_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_setup_options_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
-    monkeypatch.setattr(_setup_options_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_setup_governance_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(_setup_governance_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
-    monkeypatch.setattr(_setup_accounts_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_setup_accounts_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
-    monkeypatch.setattr(_setup_accounts_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
+    monkeypatch.setattr(_command_center_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
+    monkeypatch.setattr(_command_center_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
+    monkeypatch.setattr(_command_center_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
 
     # 3. Functions whose default parameter value was baked from
     # CANDIDATE_STORE_PATH at their module's import time.
