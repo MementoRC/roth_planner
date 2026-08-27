@@ -1,4 +1,4 @@
-"""Brokerage monthly-statement PDF parser (Schwab, Vanguard, IBKR, Fidelity)
+"""Brokerage monthly-statement PDF parser (Schwab, Vanguard, IBKR, Fidelity, UBS)
 — extracts YTD income directly from each statement's own Income Summary /
 Gain-Loss Summary tables, and the account's stated tax treatment.
 
@@ -33,12 +33,32 @@ into dividends_taxable_ytd purely for informational/display completeness —
 it is NOT actually taxable, and there is no "Taxable" column in this
 statement's Income Summary at all (only "Tax-deferred"/"Tax-free").
 
+UBS statements are single-account, self-described in the header as
+"Account type: Company Sponsored Stock Plan" -- not one of ACCOUNT_TYPES,
+and almost certainly taxable (a stock-plan account is definitionally not an
+IRA or HSA), but the statement text never uses the word "taxable" about the
+account itself, so UBS records use account_type="unknown" pending UI
+confirmation -- same rule as Schwab. Don't guess what the source doesn't say.
+UBS gives NO tax-exempt split and NO qualified/ordinary dividend split
+anywhere in the document (verified across all 10 pages of a real statement),
+so both `*_tax_exempt_ytd` fields are always 0.0 for UBS -- same limitation
+as IBKR. CRITICAL LAYOUT TRAP: UBS's page 3 renders FOUR side-by-side panels
+that pdfplumber's extract_text() interleaves line-by-line with no column
+awareness, producing rows like "transferred in 0.00 50,125.82 Short term
+0.00 24,365.65 0.00" where the "Summary of gains and losses" panel is glued
+onto the "Change in account value" panel -- every UBS regex below MUST
+anchor on its own row label and must NOT rely on line ordering or on a row
+occupying its own line. Unlike Schwab, UBS does NOT collapse spaces in
+multi-word labels (verified: "Common stock" extracts with its space intact)
+-- UBS regexes match the spaced label form.
+
 pdfplumber import is DEFERRED into parse_statement_pdf to stay Pyodide-safe
 (same rationale as tax_return_pdf.py, PR #49 lesson).
 """
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 from dataclasses import dataclass, field
@@ -149,7 +169,12 @@ _MONEY = r"\$?\(?-?[\d,]+\.\d{2}\)?"
 
 
 def _parse_currency(raw: str) -> float:
-    """Strip commas/dollar signs; handle parenthesized negatives."""
+    """Strip commas/dollar signs; handle parenthesized negatives.
+
+    UBS uses a leading minus instead of parens (e.g. "-50,041.81") -- verified
+    this already round-trips correctly with no extension needed: after the
+    strip above, `float("-50041.81")` parses the sign natively.
+    """
     s = raw.strip().replace("$", "").replace(",", "")
     if s.startswith("(") and s.endswith(")"):
         return -float(s[1:-1])
@@ -159,20 +184,27 @@ def _parse_currency(raw: str) -> float:
 def detect_broker(text: str) -> str | None:
     """Return the broker key for *text*, or None if no recognized broker.
 
-    Content-based (filenames are unreliable). Check Schwab and IBKR before
-    Vanguard: both Schwab's and IBKR's holdings can include Vanguard-branded
-    funds (confirmed for IBKR: the sampled Roth account holds Vanguard Mid-Cap
-    Index Fund Admiral / VIMAX), so "Vanguard" alone is not a reliable signal.
-    Fidelity is checked last, on a bare "Fidelity" match (no more specific
-    single distinguishing phrase found in a real sample) -- safe regardless of
-    ordering here since a Schwab/IBKR/Vanguard statement that happens to mention
-    a Fidelity-branded fund in its holdings already matches its own broker check
-    above and returns before reaching this one.
+    Content-based (filenames are unreliable). UBS is checked FIRST, on its
+    full legal name "UBS Financial Services Inc." -- the most specific anchor
+    of the five, so a UBS statement that happens to name another fund family
+    (e.g. Vanguard) among its holdings is never misrouted to that broker's
+    parser before UBS gets a chance to match. Schwab and IBKR are checked
+    next, before Vanguard: both Schwab's and IBKR's holdings can include
+    Vanguard-branded funds (confirmed for IBKR: the sampled Roth account
+    holds Vanguard Mid-Cap Index Fund Admiral / VIMAX), so "Vanguard" alone
+    is not a reliable signal. Fidelity is checked last, on a bare "Fidelity"
+    match (no more specific single distinguishing phrase found in a real
+    sample) -- safe regardless of ordering here since a UBS/Schwab/IBKR/
+    Vanguard statement that happens to mention a Fidelity-branded fund in its
+    holdings already matches its own broker check above and returns before
+    reaching this one.
 
     Note: a TurboTax Form 1040 export can list these same broker names as 1099
     payers, so the document-level classifier (engine/pdf_import.py) runs its
     1040 check BEFORE calling this, ensuring a tax return is never misread as a
     brokerage statement."""
+    if re.search(r"UBS Financial Services Inc\.", text):
+        return "ubs"
     if re.search(r"Schwab One", text):
         return "schwab"
     if re.search(r"Interactive Brokers", text):
@@ -189,7 +221,9 @@ def _detect_broker(text: str) -> str:
     recognized. Used by the single-document parse path."""
     broker = detect_broker(text)
     if broker is None:
-        raise StatementParseError("Could not detect a recognized broker (Schwab, Vanguard, IBKR, Fidelity) in this PDF's text.")
+        raise StatementParseError(
+            "Could not detect a recognized broker (UBS, Schwab, Vanguard, IBKR, Fidelity) in this PDF's text."
+        )
     return broker
 
 
@@ -235,9 +269,9 @@ def extract_owner_key(full_text: str) -> str | None:
 def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
     """Detect broker, then dispatch to the broker-specific parser.
 
-    Returns one record per account found in the document. Schwab and
-    Vanguard statements are always single-account (one-element list); IBKR's
-    consolidated statements can contain multiple accounts.
+    Returns one record per account found in the document. Schwab, Vanguard
+    and UBS statements are always single-account (one-element list); IBKR
+    and Fidelity's consolidated statements can contain multiple accounts.
     """
     full_text = "\n".join(pages)
     broker = _detect_broker(full_text)
@@ -245,6 +279,8 @@ def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
         return [_parse_schwab(full_text)]
     if broker == "vanguard":
         return [_parse_vanguard(full_text)]
+    if broker == "ubs":
+        return [_parse_ubs(full_text)]
     if broker == "fidelity":
         return _parse_fidelity(full_text)
     return _parse_ibkr(full_text)
@@ -704,6 +740,90 @@ def _parse_fidelity(full_text: str) -> list[BrokerageStatementRecord]:
             )
         )
     return records
+
+
+# --- UBS -----------------------------------------------------------------
+#
+# UBS's account identity anchors ("Account number:", "Account type:") appear
+# verbatim and identically on every page, unlike Schwab's registration-type
+# indirection. UBS's page 3 interleaves FOUR side-by-side panels line-by-line
+# (see module docstring's CRITICAL LAYOUT TRAP paragraph) -- every regex here
+# anchors strictly on its own row label, never on line position or on a row
+# occupying its own line, so the glued-together panel text below is parsed
+# correctly:
+#   "transferred in 0.00 50,125.82 Short term 0.00 24,365.65 0.00"
+#   "Withdrawals and fees, Long term 0.00 0.00 406,840.68"
+
+_UBS_ACCOUNT_RE = re.compile(r"Account number:\s*([A-Z0-9][A-Z0-9 \-]*?)\s*$", re.MULTILINE)
+
+# UBS has no "Statement Period:" phrase anywhere -- the only recurring period
+# marker is the "<Month> <YYYY> ($) Year to date" column header on the
+# Dividend and interest income table, which is verbatim and appears on every
+# relevant page.
+_UBS_PERIOD_RE = re.compile(r"([A-Z][a-z]+)\s+(\d{4})\s+\(\$\)\s+Year to date")
+
+_UBS_TAXABLE_DIVIDENDS_RE = re.compile(rf"Taxable dividends\s+({_MONEY})\s+({_MONEY})")
+_UBS_TAXABLE_INTEREST_RE = re.compile(rf"Taxable interest\s+({_MONEY})\s+({_MONEY})")
+# "Short term"/"Long term" rows carry THREE columns after the label: this-period
+# realized, YTD realized, and unrealized gain/loss (from the interleaved
+# "Summary of gains and losses" panel) -- group(2) is YTD REALIZED. group(3)
+# (unrealized) must NEVER be read as a realized YTD figure: on the sampled
+# statement, long-term UNREALIZED is $406,840.68 while long-term REALIZED YTD
+# is $0.00 -- confusing the two columns overstates realized gains by six figures.
+_UBS_SHORT_TERM_RE = re.compile(rf"Short term\s+({_MONEY})\s+({_MONEY})\s+({_MONEY})")
+_UBS_LONG_TERM_RE = re.compile(rf"Long term\s+({_MONEY})\s+({_MONEY})\s+({_MONEY})")
+
+
+def _extract_ubs_account_number(text: str) -> str:
+    m = _UBS_ACCOUNT_RE.search(text)
+    if not m:
+        raise StatementParseError("No account number found. Ensure this is a complete UBS monthly statement export.")
+    return m.group(1)
+
+
+def _extract_ubs_period_end(text: str) -> str:
+    """UBS gives no explicit period-end date -- only a "<Month> <YYYY>"
+    column header. The period end is the LAST calendar day of that month."""
+    m = _UBS_PERIOD_RE.search(text)
+    if not m:
+        raise StatementParseError("No statement period found in UBS statement text.")
+    month_name, year_str = m.groups()
+    year = int(year_str)
+    month = datetime.strptime(month_name, "%B").month
+    last_day = calendar.monthrange(year, month)[1]
+    return datetime(year, month, last_day).date().isoformat()
+
+
+def _ubs_row_ytd(pattern: re.Pattern[str], text: str, group: int = 2) -> float:
+    """Extract one UBS row's YTD figure, degrading to 0.0 (not a parse error)
+    when the row is absent -- follows _row_ytd_pair's existing convention."""
+    m = pattern.search(text)
+    if not m:
+        return 0.0
+    return _parse_currency(m.group(group))
+
+
+def _parse_ubs(full_text: str) -> BrokerageStatementRecord:
+    return BrokerageStatementRecord(
+        account_number=_extract_ubs_account_number(full_text),
+        broker="ubs",
+        # UBS never states "taxable" about the account itself -- see module
+        # docstring. "Company Sponsored Stock Plan" is almost certainly
+        # taxable, but this parser does not guess -- same rule as Schwab.
+        account_type="unknown",
+        statement_period_end=_extract_ubs_period_end(full_text),
+        interest_taxable_ytd=_ubs_row_ytd(_UBS_TAXABLE_INTEREST_RE, full_text),
+        # UBS gives no tax-exempt split anywhere in the document (verified
+        # across all 10 pages of a real statement) -- same limitation as IBKR.
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=_ubs_row_ytd(_UBS_TAXABLE_DIVIDENDS_RE, full_text),
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=_ubs_row_ytd(_UBS_SHORT_TERM_RE, full_text),
+        ltcg_net_ytd=_ubs_row_ytd(_UBS_LONG_TERM_RE, full_text),
+        captured_at=datetime.now(UTC).isoformat(),
+        provenance={"pdf_pages_total": full_text.count("--- page")},
+        owner_key=None,  # UBS owner extraction out of scope -- see extract_owner_key TODO(verify)
+    )
 
 
 # ---------------------------------------------------------------------------
