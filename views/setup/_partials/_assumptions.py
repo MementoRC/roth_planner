@@ -1,14 +1,18 @@
-"""Assumptions Setup-domain partial (Task 7 of the ui-shell-theme-toggle plan).
+"""Assumptions Setup-domain partial (originally Task 7 of the
+ui-shell-theme-toggle plan).
 
 Extracted from ``views/setup/parameters.py``'s Joint sub-tab: growth rate,
 living expenses, ACA benchmark premium / enhanced-subsidies toggle / advance
 APTC, Medicare Part B base premium, CPI projection rate, the prior-year
-filed-MAGI IRMAA-lookback anchor (including its own inline sourced-field
-trust/manual/confirm governance card — the last of Command Center's governed
-field categories, removed from that module's old generic per-pending-field
-loop in Task 4; see ``views/setup/command_center.py``'s docstring), plus the
-Survivor-scenario and Inherited-IRAs expanders (both household-level, no
-better domain fit among Household/Accounts/Options).
+filed-MAGI IRMAA-lookback anchor, plus the Survivor-scenario and
+Inherited-IRAs expanders (both household-level, no better domain fit among
+Household/Accounts/Options).
+
+Per-field sourced-value governance cards (including the prior-year-MAGI
+anchor's) do NOT render here — they render exclusively in
+``views/setup/command_center.py``'s generic per-pending-field loop (one
+owner only, to avoid ``DuplicateWidgetID`` from ``st.tabs()`` executing
+every tab body every run; see that module's docstring).
 
 All of these fields are household-level (not per-person), so — like
 ``render_options_partial``/``render_portfolio_partial`` — this partial takes
@@ -27,14 +31,8 @@ from typing import TypeVar
 import streamlit as st
 
 from engine.aca import derive_couple_benchmark_annual
-from engine.data_sources.candidate_store import CandidateStore
-from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.irmaa import BASE_PART_B
 from models.household import Household
-
-from ._governance import _MAGI_PREFIX, _render_field_card
 
 _Num = TypeVar("_Num", int, float)
 
@@ -52,18 +50,13 @@ def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
     return min(max(value, lo), hi)
 
 
-def _render_prior_year_magi_anchor(
-    container,
-    base_year: int,
-    pending: set[str],
-    committed_json: dict,
-    store: CandidateStore,
-    choices: ChoiceMap,
-) -> None:
-    """Render the Prior-year filed MAGI anchor expander, plus an inline
-    trust/manual/confirm governance card for any ``prior_year_magi.<year>``
-    field currently pending review (moved from Command Center's old generic
-    per-pending-field loop, removed in Task 4).
+def _render_prior_year_magi_anchor(container, base_year: int) -> None:
+    """Render the Prior-year filed MAGI anchor expander.
+
+    The trust/manual/confirm governance card for any ``prior_year_magi.<year>``
+    field currently pending review does NOT render here — it renders
+    exclusively in ``views/setup/command_center.py``'s generic
+    per-pending-field loop.
     """
     with container.expander("Prior-year filed MAGI anchor (IRMAA lookback)", expanded=False):
         st.caption(
@@ -111,11 +104,6 @@ def _render_prior_year_magi_anchor(
             prior_magi.pop(base_year - 1, None)
 
         st.session_state["prior_year_magi"] = prior_magi
-
-        for field_key in sorted(pending):
-            if field_key.startswith(_MAGI_PREFIX):
-                with st.container(border=True):
-                    _render_field_card(field_key, committed_json, store, choices)
 
 
 def _render_survivor_scenario(container, base_year: int) -> None:
@@ -294,16 +282,6 @@ def render_assumptions_partial(hh: Household, container) -> None:
     source fields into one partial call; no test asserts widget order and
     no `key=`/behavior changes.
     """
-    pending: set[str] = st.session_state.get("_pending_review", set())
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
-    # only) — save_committed() is the actual guard against overwriting it.
-    try:
-        committed_json = load_committed(COMMITTED_PATH) or {}
-    except CorruptCommittedCacheError:
-        committed_json = {}
-
     st.session_state.growth_rate = container.slider(
         "Growth Rate %",
         3.0,
@@ -323,7 +301,8 @@ def render_assumptions_partial(hh: Household, container) -> None:
     # views/setup/_partials/_options.py:render_options_partial (called once
     # from views/setup/portfolio.py's Portfolio tab) as of Task 5 of the
     # ui-shell-theme-toggle plan — co-located with the stock-grants table
-    # it prices, alongside its own trust/manual/confirm governance card.
+    # it prices; its trust/manual/confirm governance card renders in
+    # views/setup/command_center.py, not here.
     # None means "derive" (national-average SLCSP, age-rated + CPI-indexed via
     # engine.aca.derive_couple_benchmark_annual) and an explicit float
     # (including 0.0) is a household override used verbatim -- see
@@ -438,6 +417,6 @@ def render_assumptions_partial(hh: Household, container) -> None:
         ),
     )
 
-    _render_prior_year_magi_anchor(container, hh.base_year, pending, committed_json, store, choices)
+    _render_prior_year_magi_anchor(container, hh.base_year)
     _render_survivor_scenario(container, hh.base_year)
     _render_inherited_iras(container, hh.base_year)

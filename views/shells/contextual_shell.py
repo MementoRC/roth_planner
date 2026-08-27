@@ -11,8 +11,8 @@ that is missing, stale, or in conflict with a pending Command Center
 candidate.
 
 Governed field set (``_governed_field_keys``): ``HOUSEHOLD_SCALAR_FIELDS``
-(the same Household-attribute scalar fields Command Center's per-partial
-governance cards already key off — see
+(the same Household-attribute scalar fields Command Center's governance
+cards already key off — see
 ``views/setup/_partials/_governance.py``) plus ``GRANTS_KEY`` plus one
 ``magi_field_key(year)`` per year currently present in
 ``hh.prior_year_magi``. The ``*_ytd`` fields in
@@ -34,12 +34,11 @@ programmatically selecting a tab from Python, unlike ``st.sidebar.radio``
 mechanism ``views/_shared.py:command_center_button`` already uses). Since
 Contextual wraps Classic's 4-tab body unchanged, a chip's jump button can
 only navigate to the Setup PAGE — it cannot also pre-select the specific tab
-(e.g. Accounts) the flagged field lives in. This is a real, acknowledged gap
-rather than an oversight: solving it would require either a Streamlit
-version with tab-selection support or reimplementing tabs as a manual
-radio/expander construct, out of scope for Task 9 (Domains/Hub already offer
-finer-grained navigation as a side effect of their own non-tab layouts).
-Reuses ``command_center_button`` as-is rather than inventing a new
+a flagged field lives in. This gap is now HARMLESS for every governed field:
+the Task-4/5/7 relocation of per-field governance cards into the owning
+partials was reversed, so all of them render again in Command Center, which
+is tab 1 — the default landing tab a plain "go to Setup" jump already lands
+on. Reuses ``command_center_button`` as-is rather than inventing a new
 navigation primitive for this one shell.
 """
 

@@ -1,14 +1,21 @@
-"""Tests for ``views/setup/_partials/_assumptions.py:render_assumptions_partial``
-— Task 7 of the ui-shell-theme-toggle plan.
+"""Tests for ``views/setup/_partials/_assumptions.py:render_assumptions_partial``.
 
 Growth rate, living expenses, ACA benchmark premium / enhanced-subsidies
 toggle / advance APTC, Medicare Part B base premium, CPI projection rate,
-the prior-year filed-MAGI IRMAA-lookback anchor (+ its own inline
-trust/manual/confirm governance card), the survivor-scenario expander, and
-the inherited-IRAs expander, extracted out of
+the prior-year filed-MAGI IRMAA-lookback anchor, the survivor-scenario
+expander, and the inherited-IRAs expander, extracted out of
 ``views/setup/parameters.py``'s Joint sub-tab. Uses
 ``streamlit.testing.v1.AppTest.from_function`` (mirrors
 ``tests/test_setup_options_partial.py``'s pattern).
+
+Task-7 reversal: the prior-year-MAGI anchor's inline trust/manual/confirm
+governance card was removed — it renders exclusively in
+``views/setup/command_center.py``'s generic per-pending-field loop again
+(see that module's docstring; the behavioral tests moved to
+``tests/test_command_center_view.py``). This file keeps a negative
+regression test guarding against a silent re-introduction of the inline
+card, which would raise ``DuplicateWidgetID`` once Command Center's loop
+renders the same field too.
 
 Unkeyed-widget safety net (Owner decision 5): the 7 top-level widgets plus
 the prior-year-MAGI anchor's two number_inputs are UNKEYED "controlled"
@@ -30,7 +37,6 @@ from streamlit.testing.v1 import AppTest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import load_committed
 from models.sourced import Provenance, Source
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -94,31 +100,13 @@ def test_assumptions_partial_renders_without_exception_when_nothing_pending(
     assert not at.exception
 
 
-def test_assumptions_partial_shows_pending_prior_year_magi_candidate(
+def test_assumptions_partial_does_not_render_magi_card_even_when_pending(
     clean_command_center_caches,
 ) -> None:
-    _seed_pending_prior_year_magi_2024()
-
-    at = AppTest.from_function(
-        _render_assumptions_with_pending, kwargs={"pending": {"prior_year_magi.2024"}}
-    )
-    at.run()
-
-    assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
-    assert "290,000" in rendered_text  # the Source.PDF candidate value
-    assert "200,000" in rendered_text  # the currently-committed value
-
-
-def test_assumptions_partial_confirm_prior_year_magi_syncs_session_state(
-    clean_command_center_caches,
-) -> None:
-    """Confirming prior_year_magi.2024 must update BOTH the on-disk committed
-    JSON and st.session_state["prior_year_magi"] (int-keyed dict), and clear
-    the field from _pending_review — same shape ``_apply_confirm_to_session``
-    already guarantees for the other governed fields.
+    """Task-7 reversal regression: render_assumptions_partial must NOT
+    render the prior_year_magi.2024 trust/manual/confirm governance card,
+    even though it is pending review. That card renders exclusively in
+    views/setup/command_center.py's generic per-pending-field loop now.
     """
     _seed_pending_prior_year_magi_2024()
 
@@ -126,20 +114,9 @@ def test_assumptions_partial_confirm_prior_year_magi_syncs_session_state(
         _render_assumptions_with_pending, kwargs={"pending": {"prior_year_magi.2024"}}
     )
     at.run()
-    assert not at.exception
-
-    at.button(key="confirm_prior_year_magi.2024").click().run()
 
     assert not at.exception
-    assert at.session_state["prior_year_magi"][2024] == 290_000.0
-    assert "prior_year_magi.2024" not in at.session_state["_pending_review"]
-
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
-    assert committed_json is not None
-    assert committed_json["prior_year_magi"]["data"]["2024"] == 290_000.0
-    assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
+    assert not any(w.key == "confirm_prior_year_magi.2024" for w in at.button)
 
 
 # --- Unkeyed-widget sentinel round-trip tests (Owner decision 5) ------------

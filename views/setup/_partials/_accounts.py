@@ -1,8 +1,13 @@
-"""Accounts (IRA/Roth/SS-FRA) Setup-domain partial (Task 4 of the
+"""Accounts (IRA/Roth/SS-FRA) Setup-domain partial (originally Task 4 of the
 ui-shell-theme-toggle plan).
 
 Split out of the original flat ``views/setup/_partials.py`` when that module
 grew to ~980 lines (pure mechanical reorganization, no behavior change).
+
+Per-field sourced-value governance cards do NOT render here — they render
+exclusively in ``views/setup/command_center.py``'s generic per-pending-field
+loop (one owner only, to avoid ``DuplicateWidgetID`` from ``st.tabs()``
+executing every tab body every run; see that module's docstring).
 """
 
 from __future__ import annotations
@@ -11,16 +16,10 @@ from datetime import datetime
 
 import streamlit as st
 
-from engine.data_sources.candidate_store import CandidateStore
-from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.record import record_ss_fra_candidate
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
 from models.household import Household
 from models.sourced import Source
-
-from ._governance import _render_field_card
 
 
 def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
@@ -49,27 +48,20 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
 
 
 def render_accounts_partial(hh: Household, container, owner: str) -> None:
-    """Render one owner's IRA/Roth/SS-FRA accounts widgets plus, inline right
-    after each field's own balance widget, that field's trust/manual-
-    override/confirm governance card if a sourced candidate is pending.
+    """Render one owner's IRA/Roth/SS-FRA accounts widgets.
 
     ``owner`` is ``"your"`` or ``"spouse"`` — every field here is per-person
     (unlike ``render_household_partial``, there is no ``"joint"`` case).
 
     ``your_ira``/``your_roth``/``your_ss_fra`` (and the spouse equivalents)
     are all in ``HOUSEHOLD_SCALAR_FIELDS`` — Command Center's governed
-    sourced fields — so each renders its card here instead of the old
-    generic per-pending-field loop that used to live in
-    ``views/setup/command_center.py``. That loop was REMOVED (not filtered)
-    in this same task: Classic mode's ``st.tabs()`` executes every tab's
-    body every script run regardless of which tab is visually selected, so
-    rendering the same ``trust_<field>``/``manual_<field>``/
-    ``confirm_<field>`` widget key from both that loop AND here in one run
-    would raise ``DuplicateWidgetID`` (see
-    ``tests/test_setup_shell_characterization.py``'s Task-4 regression
-    test). SS-start-age (``your_ss_start_age``/``spouse_ss_start_age``) is a
-    plain scalar, not governed/sourced, but stays co-located with SS-FRA
-    per the plan.
+    sourced fields — but their trust/manual-override/confirm governance
+    cards do NOT render here: they render exclusively in
+    ``views/setup/command_center.py``'s generic per-pending-field loop (one
+    owner only, to avoid ``DuplicateWidgetID`` — see that module's
+    docstring). SS-start-age (``your_ss_start_age``/``spouse_ss_start_age``)
+    is a plain scalar, not governed/sourced, but stays co-located with
+    SS-FRA per the plan.
 
     ``value=`` for SS-start-age reads from ``hh.<attr>`` (see
     ``render_household_partial``'s docstring for the general rule) —
@@ -87,22 +79,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
     these 6 widgets read ``st.session_state.<attr>`` instead — matching
     their exact pre-Task-4 shape.
     """
-    pending: set[str] = st.session_state.get("_pending_review", set())
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
-    # only) — save_committed() is the actual guard against overwriting it.
-    try:
-        committed_json = load_committed(COMMITTED_PATH) or {}
-    except CorruptCommittedCacheError:
-        committed_json = {}
-
-    def _maybe_card(field_key: str) -> None:
-        if field_key not in pending:
-            return
-        with container.container(border=True):
-            _render_field_card(field_key, committed_json, store, choices)
-
     if owner == "your":
         _synced = bool(st.session_state.get("portfolio_snapshot"))
         st.session_state.your_ira = container.number_input(
@@ -114,7 +90,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             disabled=_synced,
             help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
         )
-        _maybe_card("your_ira")
 
         st.session_state.your_roth = container.number_input(
             "Your Roth IRA" + (" (synced)" if _synced else ""),
@@ -125,7 +100,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             disabled=_synced,
             help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
-        _maybe_card("your_roth")
 
         _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
         your_fra_age = st.session_state.get("your_fra_age", 67)
@@ -138,7 +112,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             disabled=_ssa_synced_you,
             help="Auto-synced from FinExtract (SSA benefit estimate)" if _ssa_synced_you else None,
         )
-        _maybe_card("your_ss_fra")
         if container.button("Sync SS from FinExtract", key="_sync_ssa_you_btn"):
             _warning = _sync_ssa_for("you", your_fra_age)
             if _warning:
@@ -167,7 +140,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             disabled=_synced or _is_single,
             help="Auto-synced from FinExtract (IRA + 403b)" if _synced else None,
         )
-        _maybe_card("spouse_ira")
 
         st.session_state.spouse_roth = container.number_input(
             "Spouse Roth IRA" + (" (synced)" if _synced else ""),
@@ -178,7 +150,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             disabled=_synced or _is_single,
             help="Auto-synced from FinExtract (Roth IRA)" if _synced else None,
         )
-        _maybe_card("spouse_roth")
 
         _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
         spouse_fra_age = st.session_state.get("spouse_fra_age", 67)
@@ -194,7 +165,6 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             if _ssa_synced_spouse
             else None,
         )
-        _maybe_card("spouse_ss_fra")
         if container.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
             _warning = _sync_ssa_for("spouse", spouse_fra_age)
             if _warning:

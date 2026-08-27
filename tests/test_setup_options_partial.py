@@ -1,15 +1,14 @@
-"""Tests for ``views/setup/_partials.py:render_options_partial`` — Task 5 of
-the ui-shell-theme-toggle plan.
+"""Tests for ``views/setup/_partials.py:render_options_partial`` — the
+equity-grants table + ``txn_price_now`` stock-price widget.
 
-Equity-grants table + ``txn_price_now`` stock-price widget, plus each
-field's inline trust/manual/confirm governance card, extracted out of
-Command Center's old generic per-pending-field loop (see
-``views/setup/command_center.py``'s module docstring for why that loop was
-removed entirely rather than filtered) so both fields' cards now co-locate
-with their owning widgets instead. Uses
-``streamlit.testing.v1.AppTest.from_function`` (mirrors
-``tests/test_setup_accounts_partial.py``'s pattern this supersedes for
-``txn_price_now``/``grants``).
+Task-5 reversal: this partial's inline trust/manual/confirm governance
+cards (``txn_price_now``, grants) were removed — those cards render
+exclusively in ``views/setup/command_center.py``'s generic per-pending-field
+loop again (see that module's docstring; the behavioral tests moved to
+``tests/test_command_center_view.py``). This file keeps negative regression
+tests guarding against a silent re-introduction of the inline cards, which
+would raise ``DuplicateWidgetID`` once Command Center's loop renders the
+same fields too.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from streamlit.testing.v1 import AppTest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
-from engine.data_sources.committed import load_committed
 from engine.data_sources.resolver import GRANTS_KEY
 from models.grants import StockGrant
 from models.sourced import Provenance, Source, SourcedValue
@@ -101,32 +99,13 @@ def test_options_partial_renders_without_exception_when_nothing_pending(
     assert any("No grants loaded" in i.value for i in at.info)
 
 
-def test_options_partial_shows_pending_txn_price_now_candidate(
+def test_options_partial_does_not_render_txn_price_now_card_even_when_pending(
     clean_command_center_caches,
 ) -> None:
-    _seed_pending_txn_price_now()
-
-    at = AppTest.from_function(
-        _render_options_with_pending, kwargs={"pending": {"txn_price_now"}}
-    )
-    at.run()
-
-    assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
-    assert "250" in rendered_text  # the FINEXTRACT_LIVE candidate value
-    assert "100" in rendered_text  # the currently-committed value
-
-
-def test_options_partial_confirm_txn_price_now_syncs_the_aliased_session_key(
-    clean_command_center_caches,
-) -> None:
-    """Bug 2 regression: the Household attr is txn_price_now, but the Setup
-    number_input widget reads/writes session_state["txn_price"] (alias). The
-    confirm handler must write the SAME aliased key, or the next
-    reconcile_manual_edits sees session_state.txn_price still stale and
-    reverts the confirm.
+    """Task-5 reversal regression: render_options_partial must NOT render
+    the txn_price_now trust/manual/confirm governance card, even though it
+    is pending review. That card renders exclusively in
+    views/setup/command_center.py's generic per-pending-field loop now.
     """
     _seed_pending_txn_price_now()
 
@@ -134,20 +113,9 @@ def test_options_partial_confirm_txn_price_now_syncs_the_aliased_session_key(
         _render_options_with_pending, kwargs={"pending": {"txn_price_now"}}
     )
     at.run()
-    assert not at.exception
-
-    at.button(key="confirm_txn_price_now").click().run()
 
     assert not at.exception
-    assert at.session_state["txn_price"] == 250.0
-    assert "txn_price_now" not in at.session_state
-
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
-    assert committed_json is not None
-    assert committed_json["txn_price_now"]["value"] == 250.0
-    assert committed_json["txn_price_now"]["source"] == "FINEXTRACT_LIVE"
+    assert not any(w.key == "confirm_txn_price_now" for w in at.button)
 
 
 def test_options_partial_txn_price_widget_round_trip(clean_command_center_caches) -> None:
@@ -164,43 +132,21 @@ def test_options_partial_txn_price_widget_round_trip(clean_command_center_caches
     assert at.session_state["txn_price"] == 321
 
 
-def test_options_partial_shows_pending_grants_candidate(clean_command_center_caches) -> None:
-    _seed_pending_grants()
-
-    at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": {GRANTS_KEY}})
-    at.run()
-
-    assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
-    assert "2 grants" in rendered_text  # the FINEXTRACT_LIVE candidate value
-    assert "1 grants" in rendered_text  # the currently-committed value
-
-
-def test_options_partial_confirm_grants_commits_candidate_list(
+def test_options_partial_does_not_render_grants_card_even_when_pending(
     clean_command_center_caches,
 ) -> None:
+    """Task-5 reversal regression: render_options_partial must NOT render
+    the grants trust/manual/confirm governance card, even though it is
+    pending review. That card renders exclusively in
+    views/setup/command_center.py's generic per-pending-field loop now.
+    """
     _seed_pending_grants()
 
     at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": {GRANTS_KEY}})
     at.run()
-    assert not at.exception
-
-    at.button(key="confirm_grants").click().run()
 
     assert not at.exception
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
-    assert committed_json is not None
-    assert len(committed_json[GRANTS_KEY]["data"]) == 2
-    assert {g["year"] for g in committed_json[GRANTS_KEY]["data"]} == {2019, 2021}
-
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    choice = choices.get(GRANTS_KEY)
-    assert choice is not None
-    assert choice.source == Source.FINEXTRACT_LIVE
+    assert not any(w.key == "confirm_grants" for w in at.button)
 
 
 # --- Owner decision 6 (2026-07-24, post-hoc) regression pin -----------------

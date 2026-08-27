@@ -1,14 +1,17 @@
-"""Shared sourced-field governance-card rendering, used by every owning
-partial's inline trust/manual-override/confirm UI (Accounts in
-``_accounts.py``; Options in ``_options.py``; Assumptions in ``_assumptions.py``
-as of Task 7) — moved from ``views/setup/command_center.py``'s old generic
-per-pending-field loop (removed in Task 4; see that module's docstring for
-why).
+"""Shared sourced-field governance-card rendering.
+
+``_render_field_card`` is called ONLY from ``views/setup/command_center.py``'s
+generic per-pending-field loop (the sole renderer of these cards — the
+Accounts/Options/Assumptions partials deliberately do NOT render them
+inline; see that module's docstring for why: ``st.tabs()`` executes every
+tab body every script run, so two renderers of the same
+``trust_<field>``/``manual_<field>``/``confirm_<field>`` widget key would
+raise ``DuplicateWidgetID``).
 
 Split out of the original flat ``views/setup/_partials.py`` when that module
 grew to ~980 lines (pure mechanical reorganization, no behavior change) —
 this module holds only the generic, field-key-driven governance-card
-machinery that every per-domain partial module composes over.
+machinery.
 """
 
 from __future__ import annotations
@@ -167,10 +170,10 @@ def _render_field_card(
 ) -> None:
     """Render one pending-review card; defensive — never crashes the gate.
 
-    Shared by every owning partial's inline sourced-field governance UI
-    (Accounts here; Options in Task 5; Assumptions in Task 7) — moved from
-    ``views/setup/command_center.py``'s old generic per-pending-field loop
-    (removed in Task 4; see that module's docstring for why).
+    Called exclusively from ``views/setup/command_center.py``'s generic
+    per-pending-field loop — the owning partials (Accounts/Options/
+    Assumptions) do NOT call this, to avoid ``DuplicateWidgetID`` (see
+    module docstring).
     """
     try:
         candidates = store.candidates_for(field_key)

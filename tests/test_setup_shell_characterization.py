@@ -241,14 +241,14 @@ def test_household_partial_spouse_fields_round_trip(setup_app_test: AppTest) -> 
 # --- Task 4 supplementary safety net: render_accounts_partial -----------------
 #
 # ``views/setup/_partials.py:render_accounts_partial`` extracts IRA/Roth/SS-FRA
-# balance widgets (+ their inline sourced-field trust/manual/confirm card) and
-# SS-start-age out of ``views/setup/parameters.py``. SS-start-age is UNKEYED
-# (Owner decision 5) and not covered by the key-set test above — same sentinel
-# round-trip pattern as Task 3's tests. The IRA/Roth/SS-FRA fields ARE covered
-# by a key set (via their trust_*/manual_*/confirm_* card keys, exercised by
-# tests/test_setup_accounts_partial.py instead — this partial's card only
-# renders when a candidate is pending, so it's absent from the clean-checkout
-# baseline above).
+# balance widgets and SS-start-age out of ``views/setup/parameters.py``.
+# SS-start-age is UNKEYED (Owner decision 5) and not covered by the key-set
+# test above — same sentinel round-trip pattern as Task 3's tests. The
+# IRA/Roth/SS-FRA fields' trust_*/manual_*/confirm_* governance-card keys are
+# NOT rendered by this partial (Task 4's relocation was reversed — see
+# views/setup/command_center.py's docstring) — they're exercised by
+# tests/test_command_center_view.py instead, and this partial's negative
+# regression test (below) guards that it stays that way.
 
 
 def test_accounts_partial_ss_start_age_round_trip(setup_app_test: AppTest) -> None:
@@ -264,23 +264,25 @@ def test_accounts_partial_ss_start_age_round_trip(setup_app_test: AppTest) -> No
 def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fields(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """Task 4 regression: IRA/Roth/SS-FRA governance cards now render INLINE
-    inside ``render_accounts_partial`` (Parameters tab) instead of Command
-    Center's old generic per-pending-field loop. Classic mode's ``st.tabs()``
-    executes EVERY tab's body every script run regardless of which tab is
-    visually selected, so if that old loop had been left in place alongside
-    the new inline card, the same ``trust_<field>``/``manual_<field>``/
+    """Task-4 reversal regression: IRA/Roth/SS-FRA governance cards render in
+    ``views/setup/command_center.py``'s generic per-pending-field loop again
+    (Command Center tab) — NOT inline inside ``render_accounts_partial``
+    (Parameters tab) anymore. Classic mode's ``st.tabs()`` executes EVERY
+    tab's body every script run regardless of which tab is visually
+    selected, so if ``render_accounts_partial`` still rendered its own
+    inline card too, the same ``trust_<field>``/``manual_<field>``/
     ``confirm_<field>`` widget key would be registered TWICE in one run --
     Streamlit's ``DuplicateWidgetID``. Seeds TWO simultaneously-pending
     accounts fields (``your_ira``, ``your_ss_fra``) to actually exercise
     this, not just one.
 
-    Verified this would have failed against the naive "co-locate but don't
-    remove the old loop" version: temporarily re-adding
-    ``for field_key in sorted(pending): ...`` (calling the same
-    ``_render_field_card`` this partial calls inline) to
-    ``render_command_center`` reproduces a ``DuplicateWidgetID`` exception
-    here; removing it (the actual Task 4 fix) makes this test pass.
+    Verified this would fail against the naive "restore Command Center's
+    loop but leave the partial's inline card in place" version: temporarily
+    re-adding the removed ``_maybe_card``/call-sites (calling the same
+    ``_render_field_card`` Command Center's loop calls) to
+    ``render_accounts_partial`` reproduces a ``DuplicateWidgetID`` exception
+    here; the partial NOT rendering its own card (the actual reversal fix)
+    makes this test pass.
     """
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
@@ -329,9 +331,9 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
 
     assert not at.exception
     assert {"your_ira", "your_ss_fra"} <= at.session_state["_pending_review"]
-    # Each pending field's governance card renders exactly once (inline
-    # inside render_accounts_partial) -- proves the old Command Center loop
-    # is gone, not merely that AppTest silently swallowed a crash. Checking
+    # Each pending field's governance card renders exactly once (inside
+    # Command Center's loop) -- proves render_accounts_partial does NOT also
+    # render one, not merely that AppTest silently swallowed a crash. Checking
     # at.exception alone is NOT enough: _render_field_card wraps its own
     # widget calls in a defensive `except Exception` that swallows
     # DuplicateWidgetID into an "rejected" st.warning instead of propagating
