@@ -989,6 +989,88 @@ class TestExtractOwnerKeyAbsent:
         assert extract_owner_key("Some Broker Statement\nNo holder name here\n") is None
 
 
+# --- Real UBS page-3 dump excerpt, VERBATIM (pdfplumber extract_text()
+# interleaves four side-by-side panels line-by-line with no column awareness
+# -- this is copied exactly as extracted, not reformatted). Prepended with
+# the detection anchor and the account-identity lines (which appear
+# identically on every page of a real statement, not just page 3). ---
+UBS_PAGE_TEXT = """UBS Financial Services Inc.
+Account number: FA XXXXX XX
+Account type: Company Sponsored Stock Plan
+Change in the value of your account Summary of gains and losses
+July 2026 ($) Year to date ($)
+Realized gains and losses Unrealized
+Opening account value $677,893.75 $451,191.95
+July 2026 ($) Year to date ($) gains and losses ($)
+Deposits, including investments
+transferred in 0.00 50,125.82 Short term 0.00 24,365.65 0.00
+Withdrawals and fees, Long term 0.00 0.00 406,840.68
+Total $0.00 $24,365.65 $406,840.68
+Dividend and interest income 3.76 5,077.74
+Closing account value $638,172.44 $638,172.44
+
+Dividend and interest income earned
+July 2026 ($) Year to date ($)
+Taxable dividends 0.00 5,052.36
+Taxable interest 3.76 25.38
+Total current year $3.76 $5,077.74
+Total dividend & interest $3.76 $5,077.74
+"""
+
+
+class TestDetectBrokerUbs:
+    def test_detects_ubs_full_legal_name(self):
+        from engine.brokerage_statement_pdf import _detect_broker
+
+        assert _detect_broker(UBS_PAGE_TEXT) == "ubs"
+
+
+class TestParseUbs:
+    def test_account_identity(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.broker == "ubs"
+        assert rec.account_number == "FA XXXXX XX"
+        # UBS never states "taxable" about the account itself -- must default
+        # to unknown, same safety rule as Schwab.
+        assert rec.account_type == "unknown"
+
+    def test_taxable_income_ytd(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.interest_taxable_ytd == 25.38
+        assert rec.dividends_taxable_ytd == 5052.36
+
+    def test_tax_exempt_fields_are_always_zero(self):
+        # UBS gives no tax-exempt split anywhere in the document -- same
+        # limitation as IBKR.
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.interest_tax_exempt_ytd == 0.0
+        assert rec.dividends_tax_exempt_ytd == 0.0
+
+    def test_stcg_ytd_from_interleaved_panel(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.stcg_net_ytd == 24365.65
+
+    def test_ltcg_ytd_is_realized_not_unrealized(self):
+        # Regression test for the panel-interleaving trap: the third column
+        # on the "Long term" row (406,840.68) is UNREALIZED gain/loss, not
+        # realized YTD -- confusing them would overstate realized LTCG by
+        # six figures. Realized YTD long-term is $0.00 on this statement.
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.ltcg_net_ytd == 0.0
+        assert rec.ltcg_net_ytd != 406840.68
+
+    def test_statement_period_end(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-07-31"
+
+
 class TestAccountTypeOverrides:
     def test_save_and_apply_override(self, tmp_path, monkeypatch):
         import engine.brokerage_statement_pdf as mod
