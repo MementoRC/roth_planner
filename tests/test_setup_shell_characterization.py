@@ -70,7 +70,6 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "gen_keypair",
         "_v2_privkey_input",
         "save_v2_privkey",
-        "pc_role",
         "bundle_upload",
         "apply_uploads",
         "reset_demo",

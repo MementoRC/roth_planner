@@ -18,6 +18,7 @@ from engine.data_bridge_keys import (
     load_pubkey,
 )
 from engine.data_sources.record import record_magi_candidates
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
 from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
@@ -221,6 +222,31 @@ def _handle_v2_privkey() -> None:
             st.rerun()
 
 
+def _this_instance_owner() -> str | None:
+    """This instance's owner, or None when unset/corrupt.
+
+    A corrupt file degrades to None (same "unset" treatment as a first-run
+    install) rather than crashing the tab -- Command Center's identity gate
+    is where the user fixes it (see app.py's _seed_session_state, Task 4).
+    """
+    try:
+        return st.session_state.get("instance_owner") or load_instance_owner()
+    except CorruptInstanceOwnerError:
+        return None
+
+
+def _import_target_owner() -> str:
+    """An imported bundle always belongs to the OTHER household member.
+
+    Replaces the "Whose data?" pc_role radio: this instance's own identity is
+    already known, so asking again only invites a mis-click that overwrites
+    the wrong owner's slot. Defaults to a "you" instance (so imports target
+    "spouse") when identity is unset -- the Apply button is disabled in that
+    state anyway.
+    """
+    return "spouse" if (_this_instance_owner() or "you") == "you" else "you"
+
+
 def _handle_personal_uploads() -> None:
     """Widget to full-replace one owner's slot from a sealed ``roth_bridge.enc`` bundle.
 
@@ -249,21 +275,28 @@ def _handle_personal_uploads() -> None:
             "Upload your encrypted bundle for a personalized session. "
             "Values stay in this browser only; refresh = back to demo. "
             "`.enc` files require the private key configured above. "
-            'Use the "Whose data?" toggle when uploading your spouse\'s planner export.'
-        )
-        pc_role = st.radio(
-            "Whose data?",
-            ["Me", "Spouse"],
-            horizontal=True,
-            key="pc_role",
+            "An imported bundle is automatically attributed to the other "
+            "household member -- this instance's own identity never changes."
         )
         bundle_file = st.file_uploader(
             "roth_bridge.enc (setup scalars + portfolio + PDF ledger)",
             type=["enc"],
             key="bundle_upload",
         )
+        identity_set = bool(_this_instance_owner())
+        if not identity_set:
+            st.caption(
+                "Importing is unavailable until this planner instance has an "
+                "owner — set it on **🎛️ Command Center**."
+            )
         col_a, col_b = st.columns(2)
-        if col_a.button("Apply", key="apply_uploads", use_container_width=True) and bundle_file is not None:
+        apply_clicked = col_a.button(
+            "Apply",
+            key="apply_uploads",
+            use_container_width=True,
+            disabled=not identity_set,
+        )
+        if apply_clicked and bundle_file is not None:
             privkey = _resolve_privkey_bytes()
             try:
                 raw = bundle_file.read()
@@ -276,7 +309,7 @@ def _handle_personal_uploads() -> None:
                         "roth_bridge.enc."
                     )
                 else:
-                    target_owner = "spouse" if pc_role == "Spouse" else "you"
+                    target_owner = _import_target_owner()
                     incoming_snap = _portfolio_snapshot_from_dict(
                         {"accounts": data["sections"]["portfolio"]["accounts"]}
                     )
@@ -345,7 +378,7 @@ def _handle_personal_uploads() -> None:
                             "Figures on the Conversion Planner and YTD pages will be wrong "
                             "until the sender re-exports with a current version."
                         )
-                    st.success(f"Applied: {bundle_file.name} ({pc_role.lower()}). Rerunning…")
+                    st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")
                     st.rerun()
             except (
                 json.JSONDecodeError,
@@ -473,7 +506,8 @@ def _handle_personal_exports() -> None:
             # but sit inert with nothing to attach to), so their option/NQO
             # income is computed off fake grants instead of the real ones.
             grants = getattr(snapshot, "equity_grants", None)
-            bundle = build_bundle(scalars, snapshot, ledger, owner="you", ytd=ytd, grants=grants)
+            export_owner = _this_instance_owner() or "you"
+            bundle = build_bundle(scalars, snapshot, ledger, owner=export_owner, ytd=ytd, grants=grants)
             payload = json.dumps(bundle).encode("utf-8")
             st.download_button(
                 label="⬇️ Download my encrypted data (.enc)",

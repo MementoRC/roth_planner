@@ -637,6 +637,112 @@ def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
     assert any('bridge' in txt.lower() for txt in subheader_texts), subheader_texts
 
 
+# --- Task 8: bundle export/import symmetry ---------------------------------
+
+
+def test_export_stamps_owner_from_instance(monkeypatch) -> None:
+    """Export from a spouse-set instance stamps owner="spouse" in the bundle,
+    not the old hardcoded "you"."""
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_build_bundle(scalars, snapshot, ledger, *, owner="you", ytd=None, grants=None):
+        captured["owner"] = owner
+        return {"format_version": 4}
+
+    # build_bundle/seal are imported INSIDE _handle_personal_exports (deferred
+    # for Pyodide), so they must be patched on their defining modules.
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", _fake_build_bundle)
+    monkeypatch.setattr(data_bridge_crypto_mod, "seal", lambda payload, pubkey: b"sealed")
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {"koinly": {}, "brokerage": {}})
+    monkeypatch.setattr(data_bridge_mod, "load_ytd_snapshot", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_exports
+
+        st.session_state["instance_owner"] = "spouse"
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert captured["owner"] == "spouse"
+
+
+def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
+    """Import into a "you" instance targets "spouse" automatically; the
+    "Whose data?" pc_role radio no longer renders."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads, _import_target_owner
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+        # Stashed for assertion: AppTest cannot populate the file_uploader, so
+        # the Apply body never runs -- the derivation helper is checked directly.
+        st.session_state["_test_target_owner"] = _import_target_owner()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert not any(w.key == "pc_role" for w in at.radio)
+    assert at.session_state["_test_target_owner"] == "spouse"
+
+
+def _run_uploads(monkeypatch, instance_owner: str | None):
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str | None = None) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        if owner is not None:
+            st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+    return at
+
+
+def test_apply_uploads_disabled_when_instance_owner_unset(monkeypatch) -> None:
+    at = _run_uploads(monkeypatch, None)
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
+
+
+def test_apply_uploads_enabled_when_instance_owner_set(monkeypatch) -> None:
+    at = _run_uploads(monkeypatch, "you")
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is False
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 
