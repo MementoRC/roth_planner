@@ -692,7 +692,9 @@ from engine.instance_identity import CorruptInstanceOwnerError
 _CORRUPT = object()
 
 
-def _run_seed_session_state(defaults: dict, instance_owner: str | None = "you") -> _FakeSessionState:
+def _run_seed_session_state(
+    defaults: dict, instance_owner: str | None = "you", calls: list[str] | None = None
+) -> _FakeSessionState:
     """Extract and execute app.py's _seed_session_state against *defaults*.
 
     ``instance_owner`` stands in for engine.instance_identity.load_instance_owner's
@@ -700,6 +702,11 @@ def _run_seed_session_state(defaults: dict, instance_owner: str | None = "you") 
     CorruptInstanceOwnerError being raised instead. Defaults to "you" so
     every pre-existing call site in this file (which doesn't pass the new
     kwarg) keeps behaving as before.
+
+    ``calls``, if given, records each invocation of the fake
+    load_instance_owner so a test can prove the seeding code path actually
+    ran (rather than app.py's try/except block having been deleted, which
+    leaves "instance_owner" looking unset either way).
 
     Returns the resulting fake session_state for assertions.
     """
@@ -710,6 +717,8 @@ def _run_seed_session_state(defaults: dict, instance_owner: str | None = "you") 
     fake_st = _FakeSt()
 
     def _fake_load_instance_owner() -> str | None:
+        if calls is not None:
+            calls.append("load_instance_owner")
         if instance_owner is _CORRUPT:
             raise CorruptInstanceOwnerError(".instance_owner.json", ValueError("bad"))
         return instance_owner
@@ -741,13 +750,42 @@ class TestSeedSessionStateInstanceOwner:
         assert state.get("instance_owner") == "spouse"
 
     def test_unset_instance_owner_seeds_none(self) -> None:
-        state = _run_seed_session_state({}, instance_owner=None)
+        """``state.get("instance_owner") is None`` alone is vacuous: the fake
+        session_state's ``.get`` returns None for a key that was never set at
+        all, so this would pass identically if app.py's seeding block were
+        deleted entirely. Assert the key is actually PRESENT, and use
+        ``calls`` to prove load_instance_owner was actually invoked (it
+        wouldn't be, if the seeding block were removed)."""
+        calls: list[str] = []
+        state = _run_seed_session_state({}, instance_owner=None, calls=calls)
+        assert calls == ["load_instance_owner"], "load_instance_owner was never invoked"
+        assert "instance_owner" in state
         assert state.get("instance_owner") is None
 
     def test_corrupt_instance_owner_degrades_to_none(self) -> None:
-        state = _run_seed_session_state({}, instance_owner=_CORRUPT)
+        """Same vacuousness trap as above, compounded: with the seeding
+        block removed, the fake load_instance_owner is never called, so a
+        bare ``state.get(...) is None`` exercises nothing about the
+        corrupt-degrades-to-None behavior at all. ``calls`` proves the
+        exception-raising path was actually invoked; the test also relies on
+        exec() propagating CorruptInstanceOwnerError uncaught (failing this
+        test) if app.py's try/except doesn't actually catch it — so this
+        proves the exception is both raised AND caught, not merely raised."""
+        calls: list[str] = []
+        state = _run_seed_session_state({}, instance_owner=_CORRUPT, calls=calls)
+        assert calls == ["load_instance_owner"], "load_instance_owner was never invoked"
+        assert "instance_owner" in state
         assert state.get("instance_owner") is None
 ```
+
+**2026-08-31 amendment**: the original two test bodies above (`test_unset_instance_owner_seeds_none`,
+`test_corrupt_instance_owner_degrades_to_none`) were vacuous — `_FakeSessionState.get(key)` returns
+`None` for a key that was never set at all, identical to a key explicitly set to `None`. Both tests
+therefore passed whether or not `app.py`'s seeding block existed at all (the corrupt test additionally
+never invoked the fake `load_instance_owner`, so it exercised nothing about the except-path). Fixed
+versions above assert key *presence* (`"instance_owner" in state`) and use a `calls` recorder to prove
+`load_instance_owner` was actually invoked. Do not simplify this back to a bare
+`state.get("instance_owner") is None` — it silently stops testing anything.
 
 - [ ] Run it and confirm it FAILS — `_seed_session_state` doesn't reference `load_instance_owner` yet, so `state.get("instance_owner")` is `None` in the "spouse" case too (assertion fails, no crash):
 
