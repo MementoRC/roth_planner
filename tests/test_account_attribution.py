@@ -113,3 +113,10 @@ class TestResolveAccountOwner:
         import engine.account_attribution as mod
 
         assert mod.resolve_account_owner("vanguard", "9999", {}, "spouse") is not None
+
+
+class TestAccountAttributionPathIsGloballyRedirected:
+    def test_no_local_monkeypatch_still_avoids_the_real_repo_file(self) -> None:
+        from engine.account_attribution import save_account_override
+
+        save_account_override("schwab", "****-*123", "spouse")

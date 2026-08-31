@@ -51,3 +51,14 @@ class TestInstanceOwnerRoundTrip:
         with pytest.raises(mod.CorruptInstanceOwnerError):
             mod.save_instance_owner("you")
         assert bad.read_text() == "{not json"
+
+
+class TestInstanceOwnerPathIsGloballyRedirected:
+    def test_no_local_monkeypatch_still_avoids_the_real_repo_file(self) -> None:
+        """Proves tests/conftest.py's autouse _redirect_cache_paths_to_tmp
+        fixture redirects INSTANCE_OWNER_PATH on its own. Before that
+        registration exists, this call touches the real repo-root
+        .instance_owner.json and _forbid_real_cache_writes fails the test."""
+        from engine.instance_identity import save_instance_owner
+
+        save_instance_owner("you")

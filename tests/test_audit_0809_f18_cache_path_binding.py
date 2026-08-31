@@ -146,6 +146,8 @@ class TestSite2ConftestCommandCenterFixtureCallTimeResolution:
             _paths_mod.CANDIDATE_STORE_PATH,
             _paths_mod.TRUST_CHOICES_PATH,
             _paths_mod.COMMITTED_PATH,
+            conftest_mod._instance_identity_mod.INSTANCE_OWNER_PATH,
+            conftest_mod._account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
         }
         for p in recorded:
             assert p in redirected, (

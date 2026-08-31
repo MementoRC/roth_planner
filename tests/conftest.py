@@ -30,11 +30,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # production code never reaches the real path, but the watch-list itself
 # below is captured once and is immune to that later patching.
 import config.loader as _config_loader_mod  # noqa: E402
+import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.brokerage_statement_pdf as _brokerage_mod  # noqa: E402
 import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
 import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
+import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
 import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
@@ -64,6 +66,8 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _paths_mod.COMMITTED_PATH,
     _exercise_schedule_store_mod._EXERCISE_SCHEDULE_CACHE_PATH,
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
+    _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
+    _instance_identity_mod.INSTANCE_OWNER_PATH,
 ]
 
 
@@ -148,6 +152,8 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _exercise_schedule_store_mod, "_EXERCISE_SCHEDULE_CACHE_PATH", _tmp(".exercise_schedule_cache.json")
     )
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
+    monkeypatch.setattr(_account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json"))
+    monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
 
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
@@ -248,6 +254,8 @@ def _command_center_cache_files() -> list[Path]:
         _paths_mod.CANDIDATE_STORE_PATH,
         _paths_mod.TRUST_CHOICES_PATH,
         _paths_mod.COMMITTED_PATH,
+        _instance_identity_mod.INSTANCE_OWNER_PATH,
+        _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
     ]
 
 
