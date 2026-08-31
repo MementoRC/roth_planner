@@ -338,3 +338,50 @@ def test_scan_button_enabled_when_instance_owner_set(monkeypatch) -> None:
 
     assert not at.exception
     assert next(b for b in at.button if b.key == "scan_pdf_folder_btn").disabled is False
+
+
+def test_apply_button_disabled_when_instance_owner_unset(monkeypatch, tmp_path) -> None:
+    """The "Apply to YTD snapshot" button re-resolves owners independently of
+    the scan gate (resolve_account_owner at ~:300-302), so it must be gated
+    too -- not just "Scan folder". Reproduces the reported sequence: a prior
+    scan already persisted statement records to disk, a later render finds
+    identity unset, and the Apply button must not be clickable.
+    """
+    import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
+
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+
+    # statement_by_account is cached into session_state on first render (see
+    # "statement_by_account" not in st.session_state) and never reloaded
+    # from disk again this session -- clear it so the rerun below picks up
+    # the freshly-patched disk record, mirroring "records persisted from an
+    # earlier scan, identity now unset in a later render".
+    monkeypatch.setattr(
+        brokerage_statement_pdf_mod,
+        "load_statement_records",
+        lambda: {"****-*123": _brokerage_record()},
+    )
+    del at.session_state["statement_by_account"]
+    at.run()
+
+    assert not at.exception
+    apply_btn = next(b for b in at.button if b.key == "apply_statements_btn")
+    assert apply_btn.disabled is True
+
+
+def test_apply_button_enabled_when_instance_owner_set(monkeypatch, tmp_path) -> None:
+    import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
+
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    monkeypatch.setattr(
+        brokerage_statement_pdf_mod,
+        "load_statement_records",
+        lambda: {"****-*123": _brokerage_record()},
+    )
+    at.session_state["instance_owner"] = "you"
+    del at.session_state["statement_by_account"]
+    at.run()
+
+    assert not at.exception
+    apply_btn = next(b for b in at.button if b.key == "apply_statements_btn")
+    assert apply_btn.disabled is False

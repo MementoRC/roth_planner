@@ -295,7 +295,20 @@ def render_sync_scan_partial(hh: Household) -> None:
 
             if stmt_taxable:
                 st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
-                if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
+                if not identity_set:
+                    st.caption(
+                        "Applying is unavailable until this planner instance has an "
+                        "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+                    )
+                # disabled=True (not hidden), same convention as "Scan folder" above --
+                # this button independently re-resolves owners from disk-loaded
+                # records (resolve_account_owner below), so gating the scan alone
+                # would leave this a live write path to "household" attribution.
+                if st.button(
+                    "Apply to YTD snapshot",
+                    key="apply_statements_btn",
+                    disabled=not identity_set,
+                ):
                     for account_number, rec in stmt_taxable.items():
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner

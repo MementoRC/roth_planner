@@ -1319,7 +1319,20 @@ with:
 with:
 
 ```python
-                if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
+                if not identity_set:
+                    st.caption(
+                        "Applying is unavailable until this planner instance has an "
+                        "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+                    )
+                # disabled=True (not hidden), same convention as "Scan folder" above --
+                # this button independently re-resolves owners from disk-loaded
+                # records (resolve_account_owner below), so gating the scan alone
+                # would leave this a live write path to "household" attribution.
+                if st.button(
+                    "Apply to YTD snapshot",
+                    key="apply_statements_btn",
+                    disabled=not identity_set,
+                ):
                     for account_number, rec in stmt_taxable.items():
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner
@@ -1328,7 +1341,7 @@ with:
                     save_ledger(ledger)
 ```
 
-**Scope note:** this "Apply to YTD snapshot" button is deliberately NOT gated by `identity_set` — like the rest of this file it falls back to `instance_owner or "household"` — because the spec's disable list covers scan/sync/import only, not this button; this is intentional scope, not an oversight.
+**Amended scope note (post-review correction, 2026-08-31):** the original version of this task deliberately left "Apply to YTD snapshot" UNGATED, reasoning that the spec's disable list covered scan/sync/import only. A quality review found a concrete silent-misattribution path this created: `statement_by_account` is loaded from disk UNCONDITIONALLY every render (no identity check), so records from an earlier scan (made while identity WAS set) remain populated even after identity later reads unset (session_state cleared, `CorruptInstanceOwnerError`, or a fresh tab before Command Center's gate has run). The Apply button then independently re-resolves owners via `resolve_account_owner(..., instance_owner)` with `instance_owner` having fallen back to `"household"` — silently misattributing real records to the wrong owner through a second entry point that bypassed the scan gate entirely. Gating the scan button alone was therefore insufficient: both write paths call `resolve_account_owner`, so both must be gated identically. Fixed and both buttons gated together; see `fix(instance-identity): gate the Apply button so unset identity cannot attribute to household`.
 
 - [ ] Leave the `if stmt_unknown:` / `key=f"account_type_confirm_{account_number}"` block (:300-321) completely untouched — verify by re-reading it after your edits.
 
