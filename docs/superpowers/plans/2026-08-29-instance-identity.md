@@ -841,6 +841,25 @@ mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instanc
 **Files:**
 - Modify: `views/setup/command_center.py`
 - Test: `tests/test_command_center_view.py`
+- Test (ripple, see note below): `tests/test_setup_shell_characterization.py`
+- Test (ripple, see note below): `tests/test_shells.py`
+
+**Ripple note:** `render_command_center` renders inside every Setup shell tab
+body on every run (Classic's `st.tabs()` executes every branch regardless of
+which tab is visually selected — see `views/setup/command_center.py`'s
+module docstring), so its two new widget keys and its new unconditional
+`st.warning` are visible to every test that walks the Setup page's full
+widget/warning tree, not just `test_command_center_view.py`. Confirmed this
+broke two pre-existing tests when Task 5 shipped without running them:
+`tests/test_setup_shell_characterization.py::test_setup_widget_key_set_unchanged`
+(its frozen `EXPECTED_WIDGET_KEYS` needs the two new keys,
+`instance_owner_gate_choice`/`instance_owner_gate_save`, added) and
+`tests/test_shells.py::test_contextual_all_good_household_shows_affirmation_no_chips`
+(its `_render_contextual_all_good` fixture never seeded `instance_owner`, so
+the new warning broke its "zero warnings" assertion — fixed by seeding
+`st.session_state.setdefault("instance_owner", "you")`, matching how
+`app.py` seeds it at real startup). Both files must be included in this
+task's verification run, not just `tests/test_command_center_view.py`.
 
 - [ ] Append the failing tests to `tests/test_command_center_view.py`, mirroring its existing `AppTest.from_function` pattern:
 
@@ -948,10 +967,13 @@ with:
 pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE -k identity
 ```
 
-- [ ] Run the full Command Center test file to confirm no regression in the existing pending-review/sync-summary tests:
+- [ ] Run the full Command Center test file, plus the two ripple-affected
+  Setup-shell test files (see "Ripple note" above), to confirm no regression
+  in the existing pending-review/sync-summary tests OR in every other Setup
+  shell test that renders Command Center's tab body:
 
 ```bash
-pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE
+pixi run -e ci python -m pytest tests/test_command_center_view.py tests/test_setup_shell_characterization.py tests/test_shells.py -q -rE
 ```
 
 - [ ] Lint and type-check:
@@ -964,7 +986,7 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py"]})
+mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py", "tests/test_setup_shell_characterization.py", "tests/test_shells.py"]})
 mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): gate Command Center sync on instance owner"})
 ```
 

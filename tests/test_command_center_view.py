@@ -459,8 +459,33 @@ def test_command_center_identity_unset_shows_gate_and_disables_sync(
 
 
 def test_command_center_identity_set_hides_gate_and_enables_sync(
-    clean_command_center_caches,
+    clean_command_center_caches, monkeypatch
 ) -> None:
+    """Non-vacuous by construction: identity is set on DISK (via
+    ``save_instance_owner``), never in ``session_state`` directly, so
+    ``render_command_center``'s ``st.session_state.get("instance_owner") or
+    load_instance_owner()`` line MUST fall through to the ``load_instance_owner``
+    call to resolve it. ``load_instance_owner`` is wrapped in a spy (not
+    stubbed -- it still returns the real "you") so ``spy.assert_called_once()``
+    can only pass if that exact line actually executed.
+
+    This replaces a prior version that asserted only ``len(at.radio) == 0``
+    and ``sync_button.disabled is False`` -- proven vacuous: those are also
+    the exact defaults when the gate feature doesn't exist at all (no radio
+    is ever rendered, and a plain ``st.button`` with no ``disabled=`` kwarg
+    defaults to ``disabled=False``), so the assertions passed identically
+    with the entire gate implementation commented out. Its sibling,
+    ``test_command_center_identity_unset_shows_gate_and_disables_sync``,
+    still carries the real black-box coverage for the gate's un-set/visible
+    branch, where a radio actually appearing IS a positive signal.
+    """
+    import views.setup.command_center as command_center_mod
+    from engine.instance_identity import save_instance_owner
+
+    save_instance_owner("you")
+    spy = MagicMock(wraps=command_center_mod.load_instance_owner)
+    monkeypatch.setattr(command_center_mod, "load_instance_owner", spy)
+
     def _render() -> None:
         import streamlit as st
 
@@ -468,7 +493,6 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
         from views.setup.command_center import render_command_center
 
         st.session_state["_pending_review"] = set()
-        st.session_state["instance_owner"] = "you"
         render_command_center(Household())
 
     at = AppTest.from_function(_render)
@@ -478,3 +502,4 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     assert len(at.radio) == 0
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is False
+    spy.assert_called_once()

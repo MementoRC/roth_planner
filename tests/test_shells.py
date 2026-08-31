@@ -376,6 +376,13 @@ def _render_contextual_all_good() -> None:
     st.session_state.setdefault("cpi_assumption", 0.025)
     st.session_state.setdefault("_pending_review", set())
     st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+    # Task 5's Command Center identity gate fires an unconditional st.warning
+    # whenever instance_owner is unset, and Command Center renders inside
+    # every Setup shell tab body on every run (see
+    # views/setup/command_center.py's module docstring) -- so this "zero
+    # warnings" assertion needs the same instance_owner seed app.py's real
+    # startup performs, or the gate's warning breaks it.
+    st.session_state.setdefault("instance_owner", "you")
 
     recent = datetime.now() - timedelta(hours=1)
     prov = Provenance(source=Source.MANUAL, recorded_at=recent, detail="test fixture")
