@@ -82,12 +82,28 @@ def render_command_center(hh: Household) -> None:
             "This planner instance has no owner set yet. Scanning and "
             "syncing are unavailable until you answer below."
         )
+        # index=None (no preselection) is deliberate and load-bearing -- do
+        # NOT restore a default here. Streamlit's default radio behavior
+        # preselects option 0 ("Me"), which would let a reflexive Save click
+        # irrevocably commit an unread default: save_instance_owner() has no
+        # other caller and identity_set latches permanently True once saved,
+        # so this gate never reappears to let the user correct a wrong
+        # answer. On a spouse's install that misattributes their accounts to
+        # "you" -- the design doc calls picking wrong "a real footgun:
+        # picking wrong overwrites your own half of the household"
+        # (docs/superpowers/specs/2026-08-29-instance-identity-design.md:97).
+        # Streamlit >=1.50 is pinned (pixi.toml), well past the 1.27 minimum
+        # for index=None, so the "keep index unset + gate Save on
+        # session_state" fallback for pre-1.27 Streamlit is not needed here.
         choice = st.radio(
             "Which person's data does this planner instance hold?",
             ["Me", "Spouse"],
+            index=None,
             key="instance_owner_gate_choice",
         )
-        if st.button("Save", key="instance_owner_gate_save"):
+        if st.button(
+            "Save", key="instance_owner_gate_save", disabled=choice is None
+        ):
             resolved_owner = "you" if choice == "Me" else "spouse"
             save_instance_owner(resolved_owner)
             st.session_state["instance_owner"] = resolved_owner

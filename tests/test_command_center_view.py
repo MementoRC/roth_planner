@@ -466,8 +466,12 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     ``render_command_center``'s ``st.session_state.get("instance_owner") or
     load_instance_owner()`` line MUST fall through to the ``load_instance_owner``
     call to resolve it. ``load_instance_owner`` is wrapped in a spy (not
-    stubbed -- it still returns the real "you") so ``spy.assert_called_once()``
-    can only pass if that exact line actually executed.
+    stubbed -- it still returns the real "you") so ``spy.assert_called()``
+    can only pass if that exact line actually executed. ``assert_called()``
+    (not ``assert_called_once()``) is deliberate: the property being proven
+    is that the identity-check line executed at all, not today's
+    exactly-once call pattern -- a future memoized or double-read refactor
+    should not break this assertion spuriously.
 
     This replaces a prior version that asserted only ``len(at.radio) == 0``
     and ``sync_button.disabled is False`` -- proven vacuous: those are also
@@ -502,4 +506,4 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     assert len(at.radio) == 0
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is False
-    spy.assert_called_once()
+    spy.assert_called()

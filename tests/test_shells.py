@@ -344,9 +344,17 @@ def _render_contextual_stale_field() -> None:
     render_setup(hh, "Contextual")
 
 
-def _render_contextual_all_good() -> None:
+def _render_contextual_all_good(seed_identity: bool = True) -> None:
     """AppTest target: every governed field confirmed recently, nothing
     pending -> the "All set" affirmation and zero chips.
+
+    ``seed_identity=False`` skips the ``instance_owner`` seed below, so the
+    Command Center identity gate's warning fires instead -- used by
+    ``test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset``
+    to prove the gate's warning actually renders during a full Setup-shell
+    walk when identity is unset (the default ``seed_identity=True`` path
+    exists specifically to steer every OTHER fixture using this function away
+    from that scenario, per the comment below).
     """
     from datetime import datetime, timedelta
 
@@ -382,7 +390,8 @@ def _render_contextual_all_good() -> None:
     # views/setup/command_center.py's module docstring) -- so this "zero
     # warnings" assertion needs the same instance_owner seed app.py's real
     # startup performs, or the gate's warning breaks it.
-    st.session_state.setdefault("instance_owner", "you")
+    if seed_identity:
+        st.session_state.setdefault("instance_owner", "you")
 
     recent = datetime.now() - timedelta(hours=1)
     prov = Provenance(source=Source.MANUAL, recorded_at=recent, detail="test fixture")
@@ -399,9 +408,13 @@ def _render_contextual_all_good() -> None:
     render_setup(hh, "Contextual")
 
 
-def _run_contextual(target, monkeypatch) -> AppTest:
+def _run_contextual(target, monkeypatch, kwargs: dict | None = None) -> AppTest:
     """Same disk-source neutralization as ``_run_shell``, for a bespoke
     Contextual target function that doesn't go through ``_render_shell``.
+
+    ``kwargs`` forwards to ``AppTest.from_function`` (mirrors ``_run_shell``'s
+    own kwargs-forwarding), so a bespoke target can be parametrized the same
+    way ``_render_shell``'s ``seed_1040_scanned`` is.
     """
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
@@ -411,7 +424,7 @@ def _run_contextual(target, monkeypatch) -> AppTest:
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_function(target)
+    at = AppTest.from_function(target, kwargs=kwargs or {})
     at.run()
     return at
 
@@ -481,6 +494,27 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     # warning can fire here; the all-good household simply has none to filter.
     warnings = [w.value for w in at.warning]
     assert warnings == []
+
+
+def test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Command Center's identity gate (Task 5) must render its ``st.warning``
+    during a FULL Setup-shell walk when ``instance_owner`` is unset --
+    ``_render_contextual_all_good``'s default ``seed_identity=True`` path
+    steers every OTHER fixture using it away from this scenario, so this test
+    is the only coverage of the gate's warning actually surfacing through a
+    real shell render rather than a bespoke Command-Center-only AppTest.
+    """
+    at = _run_contextual(
+        _render_contextual_all_good, monkeypatch, kwargs={"seed_identity": False}
+    )
+    assert not at.exception
+
+    warnings = [w.value for w in at.warning]
+    assert any("no owner set yet" in w for w in warnings), (
+        f"expected the identity gate warning, got: {warnings}"
+    )
 
 
 def test_wizard_next_advances_step() -> None:

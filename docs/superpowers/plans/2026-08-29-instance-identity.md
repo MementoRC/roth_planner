@@ -861,6 +861,34 @@ the new warning broke its "zero warnings" assertion — fixed by seeding
 `app.py` seeds it at real startup). Both files must be included in this
 task's verification run, not just `tests/test_command_center_view.py`.
 
+**Amendment (post-ship quality review, 2026-08-31):** three Important issues
+found in the shipped Task 5 gate, all fixed:
+
+1. The radio below originally had NO `index=` kwarg, so Streamlit
+   pre-selected "Me". Because `save_instance_owner` has no other caller and
+   `identity_set` latches permanently `True` once saved, a reflexive Save
+   click on a spouse's install would irrevocably misattribute the household
+   to "you" with no way back through this gate — the design doc calls
+   picking wrong "a real footgun: picking wrong overwrites your own half of
+   the household" (`docs/superpowers/specs/2026-08-29-instance-identity-design.md:97`).
+   Fixed by adding `index=None` (nothing preselected; Streamlit >=1.50 is
+   pinned in `pixi.toml`, well past the 1.27 minimum for `index=None`) and
+   `disabled=choice is None` on the Save button, so Save is impossible until
+   the user has actively picked. The code block below reflects this fix — do
+   NOT revert it to an unset `index=`.
+2. `tests/test_command_center_view.py`'s
+   `test_command_center_identity_set_hides_gate_and_enables_sync` used
+   `spy.assert_called_once()`; loosened to `spy.assert_called()` since the
+   property being proven ("the identity-check line executed") doesn't
+   depend on today's exactly-once call pattern.
+3. Added
+   `tests/test_shells.py::test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset`
+   — nothing previously asserted the gate's `st.warning` actually renders
+   during a full Setup-shell walk with identity unset, since
+   `_render_contextual_all_good` (see ripple note above) now always seeds
+   `instance_owner`. The new test calls that same fixture with its added
+   `seed_identity=False` kwarg to exercise the un-seeded path.
+
 - [ ] Append the failing tests to `tests/test_command_center_view.py`, mirroring its existing `AppTest.from_function` pattern:
 
 ```python
@@ -943,12 +971,28 @@ with:
             "This planner instance has no owner set yet. Scanning and "
             "syncing are unavailable until you answer below."
         )
+        # index=None (no preselection) is deliberate and load-bearing -- do
+        # NOT restore a default here. Streamlit's default radio behavior
+        # preselects option 0 ("Me"), which would let a reflexive Save click
+        # irrevocably commit an unread default: save_instance_owner() has no
+        # other caller and identity_set latches permanently True once saved,
+        # so this gate never reappears to let the user correct a wrong
+        # answer. On a spouse's install that misattributes their accounts to
+        # "you" -- the design doc calls picking wrong "a real footgun:
+        # picking wrong overwrites your own half of the household"
+        # (docs/superpowers/specs/2026-08-29-instance-identity-design.md:97).
+        # Streamlit >=1.50 is pinned (pixi.toml), well past the 1.27 minimum
+        # for index=None -- verify the pin before touching this if it ever
+        # drops.
         choice = st.radio(
             "Which person's data does this planner instance hold?",
             ["Me", "Spouse"],
+            index=None,
             key="instance_owner_gate_choice",
         )
-        if st.button("Save", key="instance_owner_gate_save"):
+        if st.button(
+            "Save", key="instance_owner_gate_save", disabled=choice is None
+        ):
             resolved_owner = "you" if choice == "Me" else "spouse"
             save_instance_owner(resolved_owner)
             st.session_state["instance_owner"] = resolved_owner
