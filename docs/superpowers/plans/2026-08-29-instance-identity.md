@@ -1041,6 +1041,16 @@ mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instanc
 **Files:**
 - Modify: `views/ytd_income/_partials/_sync_scan.py`
 - Test: `tests/test_ytd_shell.py` (or a new `tests/test_sync_scan_owner_resolution.py` — either is fine, reuse the `_run_ytd`/`_render_ytd` harness from `tests/test_ytd_shell.py`)
+- Test: `tests/test_views_ytd_income.py` — this file already has three pre-existing tests that hard-code the 2026-07-13 manual owner-confirm selectbox this task retires:
+  `TestOwnerAttributionScanFlow::test_two_owner_koinly_scan_sums_not_overrides`,
+  `TestOwnerAttributionScanFlow::test_no_owner_key_falls_back_to_manual_selectbox`, and
+  `TestCombinedKoinlyAndBrokerageScanFlow::test_combined_koinly_and_brokerage_scan_resolves_both_owners`.
+  They go RED the moment the resolver blocks below land and must be rewritten against `resolve_account_owner`
+  (account override → `instance_owner`, via `save_account_override`/`save_instance_owner`) in the SAME PR as
+  this task — NOT deferred — because the first two encode a real surviving invariant (two owners' amounts
+  must SUM, not overwrite) that must keep failing loudly if attribution ever regresses. Only the second test's
+  NAME/mechanism (manual-selectbox fallback) is retired; rename it to assert the new no-owner-key →
+  `instance_owner` fallback instead of deleting it, so that path keeps coverage.
 
 **CRITICAL WARNING — read before editing:** the selectbox at `_sync_scan.py:300-321` (`key=f"account_type_confirm_{account_number}"`) is the account TAX-STATUS confirm (taxable / traditional_ira / roth_ira), NOT an owner selectbox. It must NOT be touched or deleted. Only the two owner selectboxes go: `brokerage_owner_confirm_{account_number}` / `brokerage_owner_correct_{account_number}` (:150-175) and `koinly_owner_confirm_{report.captured_at}` / `koinly_owner_correct_{report.captured_at}` (:191-219).
 
@@ -1326,6 +1336,15 @@ with:
 
 ```bash
 pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k "owner_selectbox or account_type_confirm or scan_button"
+```
+
+**NOTE:** the `-k` filter above does NOT catch the three pre-existing `tests/test_views_ytd_income.py`
+tests named in the Files list — they go RED under this task's changes but a `-k`-scoped run silently
+misses them (this is exactly how they shipped RED once already). Rewrite them (see Files list above)
+BEFORE running the full-file check below, and confirm that check explicitly by name:
+
+```bash
+pixi run -e ci python -m pytest tests/test_views_ytd_income.py -q -rE -k "OwnerAttributionScanFlow or CombinedKoinlyAndBrokerageScanFlow"
 ```
 
 - [ ] Run the full YTD shell + views test files to confirm no regression:

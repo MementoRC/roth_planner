@@ -1569,7 +1569,13 @@ class TestOwnerAttributionScanFlow:
     """Regression coverage for the Koinly override bug (docs/superpowers/specs/
     2026-07-13-spouse-pdf-owner-attribution-design.md): scanning a second
     owner's Koinly report must ADD to crypto_stcg_ytd/crypto_ltcg_ytd/
-    crypto_income_ytd, not overwrite them."""
+    crypto_income_ytd, not overwrite them.
+
+    Owner attribution here is driven by engine.instance_identity's
+    instance_owner (via save_instance_owner) rather than the 2026-07-13
+    manual owner-confirm selectbox, which the instance-identity plan's
+    Task 6 retired -- resolve_account_owner (engine/account_attribution.py)
+    is now the sole non-interactive attribution authority."""
 
     def _run_scan(self, hh, mock_st, canned_result, ledger_path, owner_map_path, tmp_path, monkeypatch):
         import engine.pdf_ledger as ledger_mod
@@ -1596,31 +1602,39 @@ class TestOwnerAttributionScanFlow:
             ytd_income_mod.render(hh)
 
     def test_two_owner_koinly_scan_sums_not_overrides(self, tmp_path, monkeypatch):
-        """Core regression: scan 'you' Koinly, then scan 'spouse' Koinly in a
-        SEPARATE render call -- final crypto_*_ytd must be the SUM, matching
-        the design's derive-sum contract, not the second report's raw value."""
+        """Core regression: scan under instance_owner 'you', then scan under
+        instance_owner 'spouse' in a SEPARATE render call -- final
+        crypto_*_ytd must be the SUM, matching the design's derive-sum
+        contract, not the second report's raw value. Neither report's
+        owner_key has an account override, so resolve_account_owner falls
+        back to instance_owner each time -- this is the automatic-attribution
+        equivalent of the retired "scan as you / scan as spouse" selectbox
+        flow."""
+        from engine.instance_identity import save_instance_owner
+
         hh = _stub_hh()
 
-        # First render: "you" scans a Koinly report.
+        # First render: this instance is "you".
+        save_instance_owner("you")
         ytd1 = YTDSnapshot()
         mock_st1 = _make_mock_st(ytd1)
         mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st1.text_input.return_value = str(tmp_path)
-        mock_st1.selectbox.return_value = "you"
         result1 = PdfImportResult(koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)])
         self._run_scan(
             hh, mock_st1, result1,
             tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
         )
 
-        # Second render: "spouse" scans a separate Koinly report. Ledger/owner
-        # map persist on disk between renders (same tmp_path), same as two
-        # separate Streamlit sessions on the same machine.
+        # Second render: this instance is now "spouse" (a second household
+        # member's session on the same machine). Ledger persists on disk
+        # between renders (same tmp_path), same as two separate Streamlit
+        # sessions.
+        save_instance_owner("spouse")
         ytd2 = YTDSnapshot()
         mock_st2 = _make_mock_st(ytd2)
         mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st2.text_input.return_value = str(tmp_path)
-        mock_st2.selectbox.return_value = "spouse"
         result2 = PdfImportResult(koinly_reports=[_koinly_report("jane r cirba", 10.0, 20.0, 5.0)])
         self._run_scan(
             hh, mock_st2, result2,
@@ -1658,26 +1672,41 @@ class TestOwnerAttributionScanFlow:
         final_snap = mock_st2.session_state.ytd_snapshot
         assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
 
-    def test_no_owner_key_falls_back_to_manual_selectbox(self, tmp_path, monkeypatch):
-        """A Koinly report with owner_key=None must not silently apply --
-        the UI's manual role selectbox must be consulted."""
+    def test_no_owner_key_falls_back_to_instance_owner(self, tmp_path, monkeypatch):
+        """A Koinly report with owner_key=None has no per-account override
+        (broker='koinly', account_number='unknown' -- see
+        views/ytd_income/_partials/_sync_scan.py's `report.owner_key or
+        "unknown"`) -- resolve_account_owner must fall back to
+        instance_owner rather than defaulting to "household" or prompting.
+        Replaces the retired manual-confirm selectbox path; asserting
+        against "spouse" (not the "household" default) proves the fallback
+        actually engaged instance_owner rather than passing by coincidence."""
+        from engine.instance_identity import save_instance_owner
+        from engine.pdf_ledger import load_ledger
+
         hh = _stub_hh()
+        save_instance_owner("spouse")
         ytd1 = YTDSnapshot()
         mock_st1 = _make_mock_st(ytd1)
         mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st1.text_input.return_value = str(tmp_path)
-        mock_st1.selectbox.return_value = "household"
         result = PdfImportResult(koinly_reports=[_koinly_report(None, 100.0, 200.0, 50.0)])
+        ledger_path = tmp_path / ".pdf_import_ledger.json"
         self._run_scan(
             hh, mock_st1, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            ledger_path, tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
         )
-        # Manual role selectbox must have been invoked with the owner options.
-        selectbox_calls = mock_st1.selectbox.call_args_list
-        assert any(
-            "you" in (c.args[1] if len(c.args) > 1 else c.kwargs.get("options", []))
-            for c in selectbox_calls
-        )
+
+        # Resolved owner fell back to instance_owner ("spouse") -- confirmed
+        # via the persisted ledger, since the UI itself never surfaces the
+        # resolved owner directly.
+        import engine.pdf_ledger as ledger_mod
+
+        with patch.object(ledger_mod, "_LEDGER_PATH", ledger_path):
+            persisted_ledger = load_ledger()
+        assert set(persisted_ledger["koinly"].keys()) == {"spouse"}
+        final_snap = mock_st1.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
 
 
 def _brokerage_record(
@@ -1825,11 +1854,16 @@ class TestBrokerageOwnerAttributionScanFlow:
 
 
 class TestCombinedKoinlyAndBrokerageScanFlow:
-    """Regression coverage for the shared owner_map/ledger threading across
-    the brokerage loop (views/ytd_income.py runs first) and the Koinly loop
-    (runs second) within a SINGLE render, per the spouse-pdf-owner-attribution
-    design. Neither loop may clobber the other's owner_map learning or ledger
-    writes when both doc types appear in one scan_pdf_folder result."""
+    """Regression coverage for the shared ledger threading across the
+    brokerage loop (runs first) and the Koinly loop (runs second) within a
+    SINGLE render, per the spouse-pdf-owner-attribution design. Neither loop
+    may clobber the other's ledger writes when both doc types appear in one
+    scan_pdf_folder result.
+
+    Owner attribution is automatic (engine.account_attribution's
+    resolve_account_owner: account override -> instance_owner fallback),
+    per the instance-identity plan's Task 6, which retired the 2026-07-13
+    manual owner-confirm selectbox this class previously drove."""
 
     def _run_scan(
         self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
@@ -1856,31 +1890,27 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
             ytd_income_mod.render(hh)
 
     def test_combined_koinly_and_brokerage_scan_resolves_both_owners(self, tmp_path, monkeypatch):
-        """One scan_pdf_folder result containing BOTH a Koinly report (owner
-        'you') and a taxable brokerage record (owner 'spouse') -- both must
-        resolve via the manual-confirm selectbox, both must apply to the
-        snapshot, and both must persist to the ledger/owner_map without the
+        """One scan_pdf_folder result containing BOTH a Koinly report and a
+        taxable brokerage record -- both must resolve to DIFFERENT owners
+        via automatic attribution within the SAME render, both must apply
+        to the snapshot, and both must persist to the ledger without the
         brokerage loop (which runs first) being overwritten by the later
         Koinly loop, or vice versa."""
+        from engine.account_attribution import save_account_override
+        from engine.instance_identity import save_instance_owner
+
         hh = _stub_hh()
+        # instance_owner is a single value for the whole render, so the two
+        # loops are split via an explicit per-account override for the
+        # brokerage account ("spouse") plus the instance_owner fallback for
+        # the Koinly report, which has no override ("you").
+        save_instance_owner("you")
+        save_account_override("schwab", "A1", "spouse")
+
         ytd = YTDSnapshot()
         mock_st = _make_mock_st(ytd)
         mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st.text_input.return_value = str(tmp_path)
-
-        # Neither owner_key is in the (empty) learned map yet, so both loops
-        # fall into the "no recognized owner" branch and consult the manual
-        # confirm selectbox. Route by the selectbox label so the brokerage
-        # account resolves to "spouse" and the Koinly report resolves to
-        # "you" within the SAME render.
-        def _selectbox_router(label, *args, **kwargs):
-            if "account" in label.lower():
-                return "spouse"
-            if "koinly" in label.lower():
-                return "you"
-            raise AssertionError(f"unexpected selectbox call: {label!r}")
-
-        mock_st.selectbox.side_effect = _selectbox_router
 
         result = PdfImportResult(
             brokerage_records=[_brokerage_record("A1", "jane r cirba", interest=20.0, dividends=8.0)],
@@ -1899,19 +1929,13 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
         assert final_snap.crypto_ltcg_ytd == pytest.approx(200.0)
         assert final_snap.crypto_income_ytd == pytest.approx(50.0)
 
-        # Both owners persisted to the on-disk ledger -- neither loop clobbered
-        # the other's writes (brokerage under "spouse", Koinly under "you").
+        # Both owners persisted to the on-disk ledger -- neither loop
+        # clobbered the other's writes (brokerage under "spouse", Koinly
+        # under "you").
         import engine.pdf_ledger as ledger_mod
-        import engine.pdf_owner as owner_mod
 
-        with (
-            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
-        ):
+        with patch.object(ledger_mod, "_LEDGER_PATH", ledger_path):
             persisted_ledger = ledger_mod.load_ledger()
-            persisted_owner_map = owner_mod.load_owner_map()
 
         assert set(persisted_ledger["brokerage"].keys()) == {"spouse"}
         assert set(persisted_ledger["koinly"].keys()) == {"you"}
-        assert persisted_owner_map.get("jane r cirba") == "spouse"
-        assert persisted_owner_map.get("claude r cirba") == "you"
