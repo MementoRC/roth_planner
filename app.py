@@ -15,6 +15,7 @@ from pathlib import Path  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
 from engine.irmaa import BASE_PART_B  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
@@ -80,6 +81,16 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("filing_status", "MFJ")
     # Cache ticker for sidebar label (avoids re-importing config on every render)
     st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
+    # 2026-08-29: instance identity is set once per machine/install (see
+    # engine.instance_identity) and is never silently re-derived on a
+    # corrupt cache -- a corrupt file degrades to None here (same "unset"
+    # treatment as a first-run install) so Command Center's identity gate
+    # (views/setup/command_center.py) can re-prompt instead of the whole
+    # app crashing on session start.
+    try:
+        st.session_state.setdefault("instance_owner", load_instance_owner())
+    except CorruptInstanceOwnerError:
+        st.session_state.setdefault("instance_owner", None)
     st.session_state.setdefault("_seeded", True)
 
 

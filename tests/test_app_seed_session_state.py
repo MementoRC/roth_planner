@@ -21,10 +21,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from engine.instance_identity import CorruptInstanceOwnerError
 from engine.irmaa import BASE_PART_B
 from engine.upload_merge import SCALAR_KEYS
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
+
+_CORRUPT = object()
 
 
 class _FakeSessionState:
@@ -63,8 +66,14 @@ class _FakeSt:
         self.session_state = _FakeSessionState()
 
 
-def _run_seed_session_state(defaults: dict) -> _FakeSessionState:
+def _run_seed_session_state(defaults: dict, instance_owner: str | None = "you") -> _FakeSessionState:
     """Extract and execute app.py's _seed_session_state against *defaults*.
+
+    ``instance_owner`` stands in for engine.instance_identity.load_instance_owner's
+    return value; pass the sentinel ``_CORRUPT`` to simulate
+    CorruptInstanceOwnerError being raised instead. Defaults to "you" so
+    every pre-existing call site in this file (which doesn't pass the new
+    kwarg) keeps behaving as before.
 
     Returns the resulting fake session_state for assertions.
     """
@@ -73,11 +82,19 @@ def _run_seed_session_state(defaults: dict) -> _FakeSessionState:
     end = text.index("\n\n\n# Shared state: household parameters")
     source = text[start:end]
     fake_st = _FakeSt()
+
+    def _fake_load_instance_owner() -> str | None:
+        if instance_owner is _CORRUPT:
+            raise CorruptInstanceOwnerError(".instance_owner.json", ValueError("bad"))
+        return instance_owner
+
     namespace: dict[str, Any] = {
         "st": fake_st,
         "load_defaults": lambda: defaults,
         "BASE_PART_B": BASE_PART_B,
         "SCALAR_KEYS": SCALAR_KEYS,
+        "load_instance_owner": _fake_load_instance_owner,
+        "CorruptInstanceOwnerError": CorruptInstanceOwnerError,
     }
     exec(compile(source, "<_seed_session_state>", "exec"), namespace)
     namespace["_seed_session_state"]()
@@ -155,3 +172,22 @@ class TestSeedSessionStateComplexKeysFirstRun:
         assert state.get("survivor") is None
         assert state.get("inherited_iras") == []
         assert state.get("account_type_overrides") == {}
+
+
+class TestSeedSessionStateInstanceOwner:
+    """2026-08-29: instance identity (engine.instance_identity) must be
+    seeded so views/setup/command_center.py's identity gate and the
+    account-attribution resolvers can read st.session_state["instance_owner"]
+    without re-deriving it themselves."""
+
+    def test_persisted_instance_owner_is_seeded(self) -> None:
+        state = _run_seed_session_state({}, instance_owner="spouse")
+        assert state.get("instance_owner") == "spouse"
+
+    def test_unset_instance_owner_seeds_none(self) -> None:
+        state = _run_seed_session_state({}, instance_owner=None)
+        assert state.get("instance_owner") is None
+
+    def test_corrupt_instance_owner_degrades_to_none(self) -> None:
+        state = _run_seed_session_state({}, instance_owner=_CORRUPT)
+        assert state.get("instance_owner") is None
