@@ -222,8 +222,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["engine/instance_identity.py", "tests/test_instance_identity.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): add engine.instance_identity module"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["engine/instance_identity.py", "tests/test_instance_identity.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add engine.instance_identity module"})
 ```
 
 ---
@@ -563,8 +563,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["engine/account_attribution.py", "tests/test_account_attribution.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): add engine.account_attribution module"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["engine/account_attribution.py", "tests/test_account_attribution.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add engine.account_attribution module"})
 ```
 
 ---
@@ -670,8 +670,8 @@ pixi run -e ci lint
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["tests/conftest.py", "tests/test_instance_identity.py", "tests/test_account_attribution.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "test(instance-identity): register new cache paths in conftest redirect/guard"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["tests/conftest.py", "tests/test_instance_identity.py", "tests/test_account_attribution.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "test(instance-identity): register new cache paths in conftest redirect/guard"})
 ```
 
 ---
@@ -830,8 +830,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["app.py", "tests/test_app_seed_session_state.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): seed instance_owner in app.py session state"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["app.py", "tests/test_app_seed_session_state.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): seed instance_owner in app.py session state"})
 ```
 
 ---
@@ -1030,8 +1030,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py", "tests/test_setup_shell_characterization.py", "tests/test_shells.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): gate Command Center sync on instance owner"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py", "tests/test_setup_shell_characterization.py", "tests/test_shells.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): gate Command Center sync on instance owner"})
 ```
 
 ---
@@ -1376,8 +1376,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): resolve scan owners from instance and gate the scan button"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): resolve scan owners from instance and gate the scan button"})
 ```
 
 ---
@@ -1560,8 +1560,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): add per-account attribution table to Command Center"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add per-account attribution table to Command Center"})
 ```
 
 ---
@@ -1638,7 +1638,15 @@ confirmed the corresponding new test failed for the expected reason
 
 **There is no `tests/test_data_bridge_view.py` — do not create one.** `tests/test_shells.py` is the only file that exercises `views/setup/data_bridge.py` under `AppTest`, and it does so ONLY via `monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)` so the embedding Setup shell renders — there is no export or Apply harness anywhere in this repo, and nothing clicks "Apply". So this task must BUILD a new `AppTest.from_function` harness in `tests/test_shells.py`, written in the `_render_ytd`/`_run_shell` style (all imports inside the target function; the target's own source is exec'd in a fresh namespace, so no module-level names from the test file are visible inside it). Copy the `load_pubkey` monkeypatch idiom from `_run_shell` (:122-128).
 
-**The import "Apply" path cannot be driven end-to-end under `AppTest`** — it requires `bundle_file is not None` from an `st.file_uploader`, which `AppTest` cannot populate. So the target-owner derivation is extracted into a testable module-level helper (`_import_target_owner`, added below) and the test asserts on the helper's value plus the absence of the `pc_role` radio, rather than on an `apply_bundle(...)` call it cannot trigger. Removing the `pc_role` radio also leaves a second, untested reference to it at `data_bridge.py:348` (the post-Apply success message) — see the dedicated sub-step below for that edit; no test in this file can catch a miss there.
+**CORRECTION (2026-08-31, during execution) — the original rationale here was factually wrong.** It claimed: *"The import 'Apply' path cannot be driven end-to-end under `AppTest`** — it requires `bundle_file is not None` from an `st.file_uploader`, which `AppTest` cannot populate. So the target-owner derivation is extracted into a testable module-level helper (`_import_target_owner`, added below) and the test asserts on the helper's value plus the absence of the `pc_role` radio, rather than on an `apply_bundle(...)` call it cannot trigger. Removing the `pc_role` radio also leaves a second, untested reference to it at `data_bridge.py:348` (the post-Apply success message) — see the dedicated sub-step below for that edit; no test in this file can catch a miss there."* That claim has been retracted.
+
+A direct probe REFUTED it. `AppTest` **can** populate `st.file_uploader`: `streamlit.testing.v1` exposes `FileUploader` elements, and both `.upload(name, content, mime_type=...)` and `.set_value(...)` work, verified end-to-end with real bytes readable via `bundle_file.read()` inside the Apply body. Empirically confirmed during execution: the `file_uploader` and `button` widget states apply together in a single `.run()`.
+
+Consequences:
+
+1. The `_import_target_owner` / `_this_instance_owner` extraction (`views/setup/data_bridge.py:238` and `:225`) is **unnecessary, though not incorrect**. It shipped and is RETAINED — it reads well, and `_this_instance_owner` has an independent job degrading a corrupt identity file to None — but it is no longer load-bearing for testability, and nothing should cite untestability as its reason to exist.
+2. The post-Apply success message — `views/setup/data_bridge.py:381`, which this plan tracked as the dangling `pc_role` line at `:348` — IS coverable. The retracted claim that "no test in this file can catch a miss there" was wrong. It is now covered by `test_apply_uploads_end_to_end_imports_as_other_owner`. Mutation-proven: reverting that line to reference an undefined `pc_role` turns the test RED with `NameError: name 'pc_role' is not defined`. This line had never been executed by any test in the repo before.
+3. An end-to-end Apply test is strictly stronger than a helper-only assertion, because it exercises the derivation THROUGH its call site rather than beside it.
 
 - [ ] Append the failing export/import tests to `tests/test_shells.py`:
 
@@ -1699,8 +1707,10 @@ def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
 
         st.session_state["instance_owner"] = "you"
         _handle_personal_uploads()
-        # Stashed for assertion: AppTest cannot populate the file_uploader, so
-        # the Apply body never runs -- the derivation helper is checked directly.
+        # The derivation helper is asserted directly here as a focused unit
+        # check (AppTest *can* populate the file_uploader and drive the real
+        # Apply body -- see test_apply_uploads_end_to_end_imports_as_other_owner
+        # below, which covers that end-to-end path instead).
         st.session_state["_test_target_owner"] = _import_target_owner()
 
     at = AppTest.from_function(_render)
@@ -1742,11 +1752,95 @@ def test_apply_uploads_disabled_when_instance_owner_unset(monkeypatch) -> None:
     assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
 
 
-def test_apply_uploads_enabled_when_instance_owner_set(monkeypatch) -> None:
-    at = _run_uploads(monkeypatch, "you")
+The block above originally ended with `test_apply_uploads_enabled_when_instance_owner_set`, which was VACUOUS and has since been removed from the codebase. `disabled` defaults to `False` when the `disabled=` kwarg is absent entirely, so with identity set, the expected value and the deleted-gate value are indistinguishable — no assertion about the *enabled* state can detect deletion of the gate. `test_apply_uploads_disabled_when_instance_owner_unset` above is structurally the only possible guard for this gate. Deleting the `disabled=not identity_set` kwarg from the shipped code leaves the end-to-end test below GREEN, and that is correct by design, not a gap. This is the third instance of this container-default trap in this plan (Tasks 4, 5, and 8) — and this instance was copied verbatim out of the plan's own test code, so plan review reproduces the trap rather than catching it.
+
+The real shipped replacement is `test_apply_uploads_end_to_end_imports_as_other_owner` (`tests/test_shells.py:741-824`, committed as `e48eb866`), pasted verbatim below:
+
+```python
+def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
+    """Supersedes the removed test_apply_uploads_enabled_when_instance_owner_set.
+
+    That test was vacuous: it asserted ``disabled is False`` on the Apply
+    button, but ``False`` is ALSO exactly what Streamlit produces when the
+    ``disabled=`` kwarg is omitted entirely (the container-default trap) --
+    it passed identically against code with the gate deleted (a mutation
+    check confirmed 3/4, not 4/4). No assertion about the *enabled* state
+    can distinguish ``disabled=not identity_set`` (with identity set) from a
+    missing kwarg; they are behaviourally identical.
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` above remains
+    the gate's only real guard and is unchanged.
+
+    This test instead drives the real Apply path end to end: it populates
+    the ``bundle_upload`` file_uploader with real bytes and clicks Apply,
+    asserting the import ran as "spouse". This also newly covers the
+    success message rendered at ``views/setup/data_bridge.py:381``
+    (``st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")``),
+    which had never had test coverage in this repo before this test.
+    """
+    import json
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    minimal_bundle = {
+        "format_version": 4,
+        "sections": {
+            "setup_scalars": {},
+            "portfolio": {"accounts": []},
+        },
+    }
+    payload_bytes = json.dumps(minimal_bundle).encode("utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
+        captured["target_owner"] = target_owner
+        return existing_snapshot, existing_ledger
+
+    # open_uploaded_payload is imported INSIDE _handle_personal_uploads (deferred
+    # for Pyodide), so it must be patched on its defining module -- same idiom
+    # as `seal` in test_export_stamps_owner_from_instance above.
+    monkeypatch.setattr(
+        data_bridge_crypto_mod, "open_uploaded_payload", lambda raw, privkey: payload_bytes
+    )
+    monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
+    monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
+    monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    # Neutralise st.rerun() at data_bridge.py:382 so the success element
+    # (rendered immediately before it) survives to the end of this run
+    # instead of being wiped by a fresh script execution.
+    monkeypatch.setattr(st_mod, "rerun", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    uploader = next(w for w in at.file_uploader if w.key == "bundle_upload")
+    uploader.set_value(("roth_bridge.enc", payload_bytes, "application/octet-stream"))
+    apply_button = next(b for b in at.button if b.key == "apply_uploads")
+    apply_button.set_value(True)
+    at.run()
 
     assert not at.exception
-    assert next(b for b in at.button if b.key == "apply_uploads").disabled is False
+    assert captured["target_owner"] == "spouse"
+
+    success_texts = [s.value for s in at.success]
+    assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
 ```
 
 - [ ] Run them and confirm they FAIL — `_import_target_owner` does not exist yet (ImportError), export hardcodes `owner="you"`, a `pc_role` radio still renders, and `apply_uploads` has no `disabled` kwarg:
@@ -1899,8 +1993,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/setup/data_bridge.py", "tests/test_shells.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): derive bundle owner from instance and gate import on identity"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/data_bridge.py", "tests/test_shells.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): derive bundle owner from instance and gate import on identity"})
 ```
 
 ---
@@ -1912,6 +2006,8 @@ mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instanc
 - Test: `tests/test_ytd_shell.py`
 
 **Rule to hold onto:** WARN, NEVER BLOCK. Silence never means agreement — it only means no name was available to check (IBKR/Fidelity/UBS statements return `owner_key=None` today; only Schwab and Vanguard populate it).
+
+**Standing-defect check performed for this task (2026-08-31):** this plan has a recorded standing defect across Tasks 3, 5, and 6 — per-task verification steps omit the tests the change will break; Tasks 5 and 6 both shipped a RED branch this exact way. Before writing this task, `tests/` was grepped for scan-path tests asserting on `at.warning` via an exact list, an empty list, or a count (`assert not at.warning`, `assert at.warning == []`, `len(at.warning) ==`), prioritising `tests/test_ytd_shell.py` and `tests/test_views_ytd_income.py` and sweeping all of `tests/`. **Result: ZERO such tests exist anywhere in the repo.** The only `at.warning` assertions found are in `tests/test_shells.py` (Command Center Contextual status-chip warnings, e.g. `test_contextual_all_good_household_shows_affirmation_no_chips` at `warnings == []`), `tests/test_setup_shell_characterization.py` (governance-card rejection warnings), and `tests/test_roth_eligibility_view.py` (Roth contribution-limit warnings) — none of these touch the YTD scan path, so a new unconditional `st.warning` in `_sync_scan.py`'s scan path cannot ripple into them. This is a verified negative, not silence: no additional files need to be added to this task's **Files:** list or verification command on that account.
 
 - [ ] Append failing tests to `tests/test_ytd_shell.py`, reusing Task 6's `_patch_scan`/`_brokerage_record`/`_scan` helpers:
 
@@ -2060,8 +2156,8 @@ pixi run -e ci type-check
 - [ ] Commit:
 
 ```
-mcp__git__execute_tool("git_add", {"repo_path": ".", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
-mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instance-identity): warn-only holder-name cross-check against resolved owner"})
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): warn-only holder-name cross-check against resolved owner"})
 ```
 
 ---
