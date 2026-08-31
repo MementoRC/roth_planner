@@ -1,6 +1,8 @@
 import streamlit as st
 
+from engine.account_attribution import load_account_overrides, resolve_account_owner
 from engine.data_bridge_browser import is_pyodide
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.pdf_ledger import (
     derive_brokerage_totals,
     derive_koinly_totals,
@@ -8,13 +10,6 @@ from engine.pdf_ledger import (
     save_ledger,
     write_brokerage_contribution,
     write_koinly_contribution,
-)
-from engine.pdf_owner import (
-    OWNER_ROLES,
-    learn_owner,
-    load_owner_map,
-    resolve_owner,
-    save_owner_map,
 )
 from engine.portfolio_sync import save_ytd_snapshot
 from models.household import Household
@@ -24,6 +19,22 @@ from views._shared import run_folder_scan
 
 
 def render_sync_scan_partial(hh: Household) -> None:
+    # Resolve once per render. "household" is a defensive last-resort only
+    # (mirrors the old ad-hoc `or "household"` default this replaces) --
+    # Command Center's identity gate (views/setup/command_center.py) is the
+    # real prevention for instance_owner being unset by the time a scan runs.
+    instance_owner = st.session_state.get("instance_owner")
+    if not instance_owner:
+        try:
+            instance_owner = load_instance_owner()
+        except CorruptInstanceOwnerError:
+            instance_owner = None
+    # identity_set is computed BEFORE the "household" fallback below -- after
+    # it, the value is always truthy and the gate would never fire.
+    identity_set = bool(instance_owner)
+    instance_owner = instance_owner or "household"
+    account_overrides = load_account_overrides()
+
     # --- Section 1: YTD Income Entry ---
     st.markdown("### YTD Income Entry")
 
@@ -110,7 +121,14 @@ def render_sync_scan_partial(hh: Household) -> None:
         # per-owner breakdown expander reflects on-disk ledger state even on
         # renders where "Scan folder" was not clicked this run.
         ledger = load_ledger()
-        if st.button("Scan folder", key="scan_pdf_folder_btn"):
+        if not identity_set:
+            st.caption(
+                "Scanning is unavailable until this planner instance has an "
+                "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+            )
+        # disabled=True (not hidden), same convention as Command Center's
+        # "⟳ Sync everything" button in Task 5.
+        if st.button("Scan folder", key="scan_pdf_folder_btn", disabled=not identity_set):
             # Local single-user desktop tool: path validation (under $HOME, no
             # '..') lives in validate_local_folder.
             folder_path, folder_err = validate_local_folder(folder_input)
@@ -142,40 +160,17 @@ def render_sync_scan_partial(hh: Household) -> None:
                 applied_bits: list[str] = []
                 _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
 
-                owner_map = load_owner_map()
-
                 stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
                     partition_by_account_type(by_account) if by_account else ({}, {}, {})
                 )
                 if stmt_taxable_now:
                     for account_number, rec in stmt_taxable_now.items():
-                        resolved = resolve_owner(rec.owner_key, owner_map)
-                        if resolved is None:
-                            st.warning(
-                                f"Account {account_number} ({rec.broker}) has no recognized "
-                                f"owner ({rec.owner_key!r}) — confirm whose it is:"
-                            )
-                            resolved = st.selectbox(
-                                f"Owner for account {account_number} ({rec.broker})",
-                                sorted(OWNER_ROLES),
-                                key=f"brokerage_owner_confirm_{account_number}",
-                            )
-                            if rec.owner_key is not None:
-                                owner_map = learn_owner(rec.owner_key, resolved, owner_map)
-                        elif rec.owner_key is not None:
-                            corrected = st.selectbox(
-                                f"Owner for account {account_number} (auto-resolved: {resolved})",
-                                sorted(OWNER_ROLES),
-                                index=sorted(OWNER_ROLES).index(resolved),
-                                key=f"brokerage_owner_correct_{account_number}",
-                            )
-                            if corrected != resolved:
-                                owner_map = learn_owner(rec.owner_key, corrected, owner_map)
-                                resolved = corrected
+                        resolved = resolve_account_owner(
+                            rec.broker, account_number, account_overrides, instance_owner
+                        )
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
 
                     save_ledger(ledger)
-                    save_owner_map(owner_map)
 
                     brokerage_totals = derive_brokerage_totals(ledger)
                     _snap.interest_ytd = brokerage_totals["interest_ytd"]
@@ -192,34 +187,12 @@ def render_sync_scan_partial(hh: Household) -> None:
                     from engine.koinly_report_pdf import save_koinly_report
 
                     for report in result.koinly_reports:
-                        resolved = resolve_owner(report.owner_key, owner_map)
-                        if resolved is None:
-                            st.warning(
-                                f"Koinly report {report.tax_year} has no recognized owner "
-                                f"({report.owner_key!r}) — confirm whose it is:"
-                            )
-                            resolved = st.selectbox(
-                                f"Owner for Koinly report ({report.owner_key or 'unknown'})",
-                                sorted(OWNER_ROLES),
-                                key=f"koinly_owner_confirm_{report.captured_at}",
-                            )
-                            if report.owner_key is not None:
-                                owner_map = learn_owner(report.owner_key, resolved, owner_map)
-                        elif report.owner_key is not None:
-                            # Auto-resolved -- still show a correction control.
-                            corrected = st.selectbox(
-                                f"Owner (auto-resolved: {resolved})",
-                                sorted(OWNER_ROLES),
-                                index=sorted(OWNER_ROLES).index(resolved),
-                                key=f"koinly_owner_correct_{report.captured_at}",
-                            )
-                            if corrected != resolved:
-                                owner_map = learn_owner(report.owner_key, corrected, owner_map)
-                                resolved = corrected
+                        resolved = resolve_account_owner(
+                            "koinly", report.owner_key or "unknown", account_overrides, instance_owner
+                        )
                         ledger = write_koinly_contribution(ledger, resolved, report)
 
                     save_ledger(ledger)
-                    save_owner_map(owner_map)
                     save_koinly_report(result.koinly_reports[-1])
 
                     koinly_totals = derive_koinly_totals(ledger)
@@ -323,9 +296,10 @@ def render_sync_scan_partial(hh: Household) -> None:
             if stmt_taxable:
                 st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
                 if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
-                    owner_map = load_owner_map()
-                    for rec in stmt_taxable.values():
-                        resolved = resolve_owner(rec.owner_key, owner_map) or "household"
+                    for account_number, rec in stmt_taxable.items():
+                        resolved = resolve_account_owner(
+                            rec.broker, account_number, account_overrides, instance_owner
+                        )
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
                     save_ledger(ledger)
 
