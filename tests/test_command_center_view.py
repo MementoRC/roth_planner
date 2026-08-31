@@ -435,3 +435,46 @@ def test_command_center_confirm_prior_year_magi_syncs_session_state(
     assert committed_json is not None
     assert committed_json["prior_year_magi"]["data"]["2024"] == 290_000.0
     assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
+
+
+def test_command_center_identity_unset_shows_gate_and_disables_sync(
+    clean_command_center_caches,
+) -> None:
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert len(at.radio) == 1
+    sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
+    assert sync_button.disabled is True
+
+
+def test_command_center_identity_set_hides_gate_and_enables_sync(
+    clean_command_center_caches,
+) -> None:
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert len(at.radio) == 0
+    sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
+    assert sync_button.disabled is False

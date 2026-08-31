@@ -31,6 +31,11 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
 from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.instance_identity import (
+    CorruptInstanceOwnerError,
+    load_instance_owner,
+    save_instance_owner,
+)
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
@@ -66,7 +71,33 @@ def render_command_center(hh: Household) -> None:
     """
     st.header("🎛️ Command Center")
 
-    if st.button("⟳ Sync everything", key="sync_everything_btn"):
+    try:
+        instance_owner = st.session_state.get("instance_owner") or load_instance_owner()
+    except CorruptInstanceOwnerError:
+        instance_owner = None
+    identity_set = bool(instance_owner)
+
+    if not identity_set:
+        st.warning(
+            "This planner instance has no owner set yet. Scanning and "
+            "syncing are unavailable until you answer below."
+        )
+        choice = st.radio(
+            "Which person's data does this planner instance hold?",
+            ["Me", "Spouse"],
+            key="instance_owner_gate_choice",
+        )
+        if st.button("Save", key="instance_owner_gate_save"):
+            resolved_owner = "you" if choice == "Me" else "spouse"
+            save_instance_owner(resolved_owner)
+            st.session_state["instance_owner"] = resolved_owner
+            st.rerun()
+
+    # disabled=True (not hidden) while identity is unset -- a hidden control
+    # is indistinguishable from a missing feature (see views/planner.py's
+    # column_config disabled=True convention for the same "visible but
+    # inert" preference over hiding a widget entirely).
+    if st.button("⟳ Sync everything", key="sync_everything_btn", disabled=not identity_set):
         with st.spinner("Syncing all sources…"):
             summary = sync_everything(hh)
         # P4-1: the only other clearer of this Reset-to-demo sentinel
