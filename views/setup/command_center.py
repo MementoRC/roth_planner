@@ -28,6 +28,7 @@ from __future__ import annotations
 import streamlit as st
 
 from engine.account_attribution import (
+    CorruptAccountAttributionError,
     delete_account_override,
     load_account_overrides,
     resolve_account_owner,
@@ -90,13 +91,47 @@ def _render_attribution_table(instance_owner: str) -> None:
             label_visibility="collapsed",
         )
         if choice != resolved:
-            save_account_override(rec.broker, account_number, choice)
-            st.rerun()
+            try:
+                save_account_override(rec.broker, account_number, choice)
+            except CorruptAccountAttributionError as exc:
+                st.error(
+                    f"⚠️ Account attribution store at `{exc.path}` is unreadable "
+                    "(corrupt or truncated); this override was NOT saved. Restore "
+                    "the file from a backup or contact support before retrying."
+                )
+            else:
+                # No session-state pop needed here: on the immediate rerun,
+                # resolve_account_owner() will read back the override we just
+                # wrote, so `resolved` will equal `choice` and this keyed
+                # selectbox's already-current session-state value (`choice`,
+                # set by Streamlit when the user interacted with it) matches
+                # it exactly. Desync only arises on the Clear path below,
+                # where the override disappears but the widget key does not.
+                st.rerun()
         if (rec.broker, account_number) in overrides and col_clear.button(
             "Clear", key=f"attribution_clear_{account_number}"
         ):
-            delete_account_override(rec.broker, account_number)
-            st.rerun()
+            try:
+                delete_account_override(rec.broker, account_number)
+            except CorruptAccountAttributionError as exc:
+                st.error(
+                    f"⚠️ Account attribution store at `{exc.path}` is unreadable "
+                    "(corrupt or truncated); this override was NOT cleared. Restore "
+                    "the file from a backup or contact support before retrying."
+                )
+            else:
+                # Streamlit only honours a keyed widget's index= kwarg on its
+                # FIRST creation; on every later rerun the persisted
+                # session_state[key] value wins over index=, even though
+                # `resolved` (computed above from the now-overrideless store)
+                # has already fallen back to instance_owner. Without this
+                # pop, the next render's `choice` stays the stale overridden
+                # value, `choice != resolved` fires again, and the override
+                # we just deleted gets immediately re-saved -- Clear becomes
+                # a no-op with two redundant disk writes. Popping forces the
+                # widget to re-derive from index=resolved on the next render.
+                st.session_state.pop(f"attribution_owner_{account_number}", None)
+                st.rerun()
 
 
 def render_command_center(hh: Household) -> None:

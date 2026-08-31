@@ -541,3 +541,157 @@ def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
     assert any("****-*123" in c.value for c in at.caption) or any(
         "****-*123" in m.value for m in at.markdown
     )
+
+
+def test_attribution_clear_actually_clears_and_does_not_resave(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Regression for Defect 1 (Task 7 follow-up): Streamlit only honours a
+    keyed widget's ``index=`` kwarg on its FIRST creation -- on every later
+    rerun the persisted ``session_state[key]`` value wins. Without popping
+    that key on Clear, the selectbox keeps showing the just-deleted override
+    on the next render, ``choice != resolved`` fires again, and the override
+    gets silently re-saved -- Clear becomes a no-op. This test genuinely
+    exercises the interaction (``.click()`` + rerun), not a static render.
+    """
+    import views.setup.command_center as command_center_mod
+    from engine.account_attribution import load_account_overrides, save_account_override
+
+    monkeypatch.setattr(
+        command_center_mod,
+        "load_statement_records",
+        lambda: {
+            "****-*123": type(
+                "Rec", (), {"broker": "schwab", "account_type": "taxable", "owner_key": None}
+            )()
+        },
+    )
+    # Seed an existing override so `resolved` starts overridden and Clear renders.
+    save_account_override("schwab", "****-*123", "spouse")
+
+    save_spy = MagicMock(wraps=command_center_mod.save_account_override)
+    monkeypatch.setattr(command_center_mod, "save_account_override", save_spy)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    at.button(key="attribution_clear_****-*123").click().run()
+    assert not at.exception
+
+    # The override is actually gone on disk.
+    assert ("schwab", "****-*123") not in load_account_overrides()
+    # Clear must NOT re-save the override it just deleted.
+    save_spy.assert_not_called()
+    # The selectbox now shows the instance-owner fallback, not the stale
+    # overridden value that would have re-triggered a save.
+    owner_box = next(w for w in at.selectbox if w.key == "attribution_owner_****-*123")
+    assert owner_box.value == "you"
+
+
+def test_attribution_save_corrupt_store_shows_error_not_exception(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Regression for Defect 2 (save path): CorruptAccountAttributionError
+    must degrade to a visible st.error, not crash the whole Command Center
+    render -- mirrors this module's existing CorruptInstanceOwnerError and
+    CorruptCommittedCacheError handling idiom."""
+    import views.setup.command_center as command_center_mod
+    from engine.account_attribution import CorruptAccountAttributionError
+
+    monkeypatch.setattr(
+        command_center_mod,
+        "load_statement_records",
+        lambda: {
+            "****-*123": type(
+                "Rec", (), {"broker": "schwab", "account_type": "taxable", "owner_key": None}
+            )()
+        },
+    )
+    monkeypatch.setattr(
+        command_center_mod,
+        "save_account_override",
+        MagicMock(
+            side_effect=CorruptAccountAttributionError(
+                ".account_attribution.json", ValueError("bad json")
+            )
+        ),
+    )
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    at.selectbox(key="attribution_owner_****-*123").select("spouse").run()
+
+    assert not at.exception
+    assert any("account attribution store" in e.value.lower() for e in at.error)
+
+
+def test_attribution_delete_corrupt_store_shows_error_not_exception(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Regression for Defect 2 (delete/Clear path): same as the save-path
+    test above, but for delete_account_override raising on Clear."""
+    import views.setup.command_center as command_center_mod
+    from engine.account_attribution import CorruptAccountAttributionError, save_account_override
+
+    monkeypatch.setattr(
+        command_center_mod,
+        "load_statement_records",
+        lambda: {
+            "****-*123": type(
+                "Rec", (), {"broker": "schwab", "account_type": "taxable", "owner_key": None}
+            )()
+        },
+    )
+    # An override must exist so the Clear button renders at all.
+    save_account_override("schwab", "****-*123", "spouse")
+    monkeypatch.setattr(
+        command_center_mod,
+        "delete_account_override",
+        MagicMock(
+            side_effect=CorruptAccountAttributionError(
+                ".account_attribution.json", ValueError("bad json")
+            )
+        ),
+    )
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    at.button(key="attribution_clear_****-*123").click().run()
+
+    assert not at.exception
+    assert any("account attribution store" in e.value.lower() for e in at.error)

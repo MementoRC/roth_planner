@@ -1566,6 +1566,70 @@ mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instanc
 
 ---
 
+#### Task 7 follow-up (post-merge fix): Clear no-op + uncaught corrupt-store crash
+
+Two defects were found in the attribution table shipped above and fixed in a
+follow-up commit (`fix(instance-identity): make Clear actually clear and
+survive a corrupt override store`):
+
+**Defect 1 — Clear was a no-op.** `delete_account_override` removed the
+override on disk, but the selectbox's `key`-bound session-state entry
+(`attribution_owner_{account_number}`) was never cleared. **Streamlit only
+honours a keyed widget's `index=` kwarg on that widget's FIRST creation —
+on every later rerun, the persisted `session_state[key]` value wins over
+`index=`, unconditionally.** So on the render right after Clear: `resolved`
+correctly fell back to `instance_owner` (the override was gone), but the
+selectbox's `choice` still returned the stale pre-Clear value from
+session-state → `choice != resolved` fired → `save_account_override`
+immediately re-wrote the override that had just been deleted. Net effect:
+two redundant disk writes and Clear did nothing observable.
+
+Fix: `st.session_state.pop(f"attribution_owner_{account_number}", None)`
+before `st.rerun()` on the Clear success path, forcing the widget to
+re-derive its value from `index=resolved` on the next render.
+
+The SET path (choosing a new owner from the dropdown) does **not** need the
+same pop. Reasoning: Streamlit itself sets `session_state[key]` to `choice`
+the moment the user interacts with the widget, and after a successful
+`save_account_override(..., choice)`, the very next render's `resolved`
+recomputes to that same `choice` (the override now on disk matches it) — so
+the keyed widget's already-current session-state value and the freshly
+resolved value agree trivially. The desync is specific to Clear, where the
+override disappears out from under a session-state value that predates the
+deletion.
+
+**Defect 2 — an uncaught `CorruptAccountAttributionError` crashed the whole
+Command Center render**, not just the table. Neither `save_account_override`
+nor `delete_account_override` was wrapped, even though this module already
+has an established idiom for exactly this situation: `CorruptInstanceOwnerError`
+is caught at the instance-identity gate, and `CorruptCommittedCacheError` is
+caught around `load_committed` (both degrade to a visible `st.warning`/read
+fallback rather than propagating). `app.py`'s `save_committed` guard follows
+the same pattern with an `st.warning` naming the corrupt path.
+
+Fix: wrap both calls in `try/except CorruptAccountAttributionError as exc:
+st.error(...)`, naming `exc.path` and stating the override was NOT
+saved/cleared, then continue rendering (no `st.rerun()` on the exception
+path — the widget's current selection stays as the user last set it,
+nothing was persisted).
+
+Tests added to `tests/test_command_center_view.py`:
+`test_attribution_clear_actually_clears_and_does_not_resave` (genuinely
+drives `.click()` + rerun, then asserts the override is gone on disk AND a
+spy on `save_account_override` was never re-invoked — a static render
+assertion would not have caught Defect 1),
+`test_attribution_save_corrupt_store_shows_error_not_exception`, and
+`test_attribution_delete_corrupt_store_shows_error_not_exception` (both
+mock the respective function with `side_effect=CorruptAccountAttributionError`
+and assert `at.error` fires with no `at.exception`).
+
+Mutation check performed: each fix was independently commented out,
+confirmed the corresponding new test failed for the expected reason
+(stale override re-saved / uncaught exception propagated through
+`AppTest`), then restored and confirmed all three tests green again.
+
+---
+
 ### Task 8: Bundle export/import symmetry
 
 **Files:**
