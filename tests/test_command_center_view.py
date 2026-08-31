@@ -507,3 +507,37 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is False
     spy.assert_called()
+
+
+def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    import views.setup.command_center as command_center_mod
+
+    monkeypatch.setattr(
+        command_center_mod,
+        "load_statement_records",
+        lambda: {
+            "****-*123": type(
+                "Rec", (), {"broker": "schwab", "account_type": "taxable", "owner_key": None}
+            )()
+        },
+    )
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert any("****-*123" in c.value for c in at.caption) or any(
+        "****-*123" in m.value for m in at.markdown
+    )

@@ -27,6 +27,13 @@ from __future__ import annotations
 
 import streamlit as st
 
+from engine.account_attribution import (
+    delete_account_override,
+    load_account_overrides,
+    resolve_account_owner,
+    save_account_override,
+)
+from engine.brokerage_statement_pdf import load_statement_records
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
@@ -60,6 +67,36 @@ def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
         scan = f"scan: skipped ({summary.scan.error})"
 
     return " · ".join([portfolio, ss, scan])
+
+
+def _render_attribution_table(instance_owner: str) -> None:
+    """List statement-derived accounts with their resolved owner and tax
+    status, letting the user set/clear a per-account override. FinExtract
+    portfolio accounts are NOT included -- see this task's scope note."""
+    by_account = load_statement_records()
+    if not by_account:
+        return
+    overrides = load_account_overrides()
+    st.subheader("Account attribution")
+    for account_number, rec in sorted(by_account.items()):
+        resolved = resolve_account_owner(rec.broker, account_number, overrides, instance_owner)
+        col_label, col_owner, col_clear = st.columns([3, 2, 1])
+        col_label.caption(f"{account_number} ({rec.broker}, {rec.account_type})")
+        choice = col_owner.selectbox(
+            f"Owner for {account_number}",
+            ["you", "spouse", "household"],
+            index=["you", "spouse", "household"].index(resolved),
+            key=f"attribution_owner_{account_number}",
+            label_visibility="collapsed",
+        )
+        if choice != resolved:
+            save_account_override(rec.broker, account_number, choice)
+            st.rerun()
+        if (rec.broker, account_number) in overrides and col_clear.button(
+            "Clear", key=f"attribution_clear_{account_number}"
+        ):
+            delete_account_override(rec.broker, account_number)
+            st.rerun()
 
 
 def render_command_center(hh: Household) -> None:
@@ -128,17 +165,22 @@ def render_command_center(hh: Household) -> None:
     st.metric("Fields awaiting review", len(pending))
     if not pending:
         st.success("All data sources reconciled ✓")
-        return
+    else:
+        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+        # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
+        # only) — save_committed() is the actual guard against overwriting it.
+        try:
+            committed_json = load_committed(COMMITTED_PATH) or {}
+        except CorruptCommittedCacheError:
+            committed_json = {}
 
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
-    # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
-    # only) — save_committed() is the actual guard against overwriting it.
-    try:
-        committed_json = load_committed(COMMITTED_PATH) or {}
-    except CorruptCommittedCacheError:
-        committed_json = {}
+        for field_key in sorted(pending):
+            with st.container(border=True):
+                _render_field_card(field_key, committed_json, store, choices)
 
-    for field_key in sorted(pending):
-        with st.container(border=True):
-            _render_field_card(field_key, committed_json, store, choices)
+    # Reachable in BOTH branches -- this is why the early return above became
+    # an else. instance_owner/identity_set come from Task 5's gate at the top
+    # of this function.
+    if identity_set:
+        _render_attribution_table(instance_owner)
