@@ -696,8 +696,10 @@ def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
 
         st.session_state["instance_owner"] = "you"
         _handle_personal_uploads()
-        # Stashed for assertion: AppTest cannot populate the file_uploader, so
-        # the Apply body never runs -- the derivation helper is checked directly.
+        # The derivation helper is asserted directly here as a focused unit
+        # check (AppTest *can* populate the file_uploader and drive the real
+        # Apply body -- see test_apply_uploads_end_to_end_imports_as_other_owner
+        # below, which covers that end-to-end path instead).
         st.session_state["_test_target_owner"] = _import_target_owner()
 
     at = AppTest.from_function(_render)
@@ -736,11 +738,90 @@ def test_apply_uploads_disabled_when_instance_owner_unset(monkeypatch) -> None:
     assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
 
 
-def test_apply_uploads_enabled_when_instance_owner_set(monkeypatch) -> None:
-    at = _run_uploads(monkeypatch, "you")
+def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
+    """Supersedes the removed test_apply_uploads_enabled_when_instance_owner_set.
+
+    That test was vacuous: it asserted ``disabled is False`` on the Apply
+    button, but ``False`` is ALSO exactly what Streamlit produces when the
+    ``disabled=`` kwarg is omitted entirely (the container-default trap) --
+    it passed identically against code with the gate deleted (a mutation
+    check confirmed 3/4, not 4/4). No assertion about the *enabled* state
+    can distinguish ``disabled=not identity_set`` (with identity set) from a
+    missing kwarg; they are behaviourally identical.
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` above remains
+    the gate's only real guard and is unchanged.
+
+    This test instead drives the real Apply path end to end: it populates
+    the ``bundle_upload`` file_uploader with real bytes and clicks Apply,
+    asserting the import ran as "spouse". This also newly covers the
+    success message rendered at ``views/setup/data_bridge.py:381``
+    (``st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")``),
+    which had never had test coverage in this repo before this test.
+    """
+    import json
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    minimal_bundle = {
+        "format_version": 4,
+        "sections": {
+            "setup_scalars": {},
+            "portfolio": {"accounts": []},
+        },
+    }
+    payload_bytes = json.dumps(minimal_bundle).encode("utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
+        captured["target_owner"] = target_owner
+        return existing_snapshot, existing_ledger
+
+    # open_uploaded_payload is imported INSIDE _handle_personal_uploads (deferred
+    # for Pyodide), so it must be patched on its defining module -- same idiom
+    # as `seal` in test_export_stamps_owner_from_instance above.
+    monkeypatch.setattr(
+        data_bridge_crypto_mod, "open_uploaded_payload", lambda raw, privkey: payload_bytes
+    )
+    monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
+    monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
+    monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    # Neutralise st.rerun() at data_bridge.py:382 so the success element
+    # (rendered immediately before it) survives to the end of this run
+    # instead of being wiped by a fresh script execution.
+    monkeypatch.setattr(st_mod, "rerun", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    uploader = next(w for w in at.file_uploader if w.key == "bundle_upload")
+    uploader.set_value(("roth_bridge.enc", payload_bytes, "application/octet-stream"))
+    apply_button = next(b for b in at.button if b.key == "apply_uploads")
+    apply_button.set_value(True)
+    at.run()
 
     assert not at.exception
-    assert next(b for b in at.button if b.key == "apply_uploads").disabled is False
+    assert captured["target_owner"] == "spouse"
+
+    success_texts = [s.value for s in at.success]
+    assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
 
 
 def test_wizard_registered_and_renders() -> None:
