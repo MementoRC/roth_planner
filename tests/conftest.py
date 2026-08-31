@@ -238,7 +238,7 @@ def _forbid_real_cache_writes(_redirect_cache_paths_to_tmp):
 
 
 def _command_center_cache_files() -> list[Path]:
-    """The 3 Setup/Command Center cache paths, resolved at CALL time.
+    """The 5 Setup/Command Center cache paths, resolved at CALL time.
 
     audit-0809 F18: this used to be a module-level ``_COMMAND_CENTER_CACHE_FILES``
     list built from ``_REPO_ROOT`` at CONFTEST IMPORT time, which escaped
@@ -261,13 +261,15 @@ def _command_center_cache_files() -> list[Path]:
 
 @pytest.fixture
 def clean_command_center_caches():
-    """Delete the 3 Setup/Command Center cache files before AND after a test.
+    """Delete the 5 Setup/Command Center cache files before AND after a test.
 
     Repo-root-anchored (mirrors the existing ``__file__``-anchored cache-path
     convention used throughout ``engine/*``), so cwd is irrelevant — cleanup
     targets the exact files ``app.py``'s ``get_household()`` writes
     (``.candidate_store.json``, ``.trust_choices.json``,
-    ``.committed_household.json``). Deleting BEFORE (not just after) guards
+    ``.committed_household.json``), plus the instance-identity gate and
+    account-attribution table (``.instance_owner.json``,
+    ``.account_attribution.json``). Deleting BEFORE (not just after) guards
     against a developer's personal committed/candidate state, from running
     ``pixi run app`` locally, leaking into a test's pending-review/migration
     assertions. Shared by every test module that drives the real ``app.py``

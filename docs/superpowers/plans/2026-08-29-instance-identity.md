@@ -577,6 +577,7 @@ mcp__git__execute_tool("git_commit", {"repo_path": ".", "message": "feat(instanc
 - Modify: `tests/conftest.py`
 - Modify: `tests/test_instance_identity.py`
 - Modify: `tests/test_account_attribution.py`
+- Modify: `tests/test_audit_0809_f18_cache_path_binding.py` — widening `_command_center_cache_files()` from 3 to 5 paths breaks its hard-coded 3-path assertion; update the expected count/list to match.
 
 - [ ] Append a redirection-proof failing test to `tests/test_instance_identity.py` (no local monkeypatch — this is the point):
 
@@ -657,7 +658,7 @@ pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_accou
 - [ ] Run the cache-write-guard's own unit test plus these two files together to confirm nothing regressed:
 
 ```bash
-pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_account_attribution.py tests/test_pdf_owner.py tests/test_cache_write_guard.py -q -rE
+pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_account_attribution.py tests/test_pdf_owner.py tests/test_cache_write_guard.py tests/test_audit_0809_f18_cache_path_binding.py -q -rE
 ```
 
 - [ ] Lint:
