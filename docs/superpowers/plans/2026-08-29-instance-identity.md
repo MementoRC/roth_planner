@@ -2030,7 +2030,7 @@ Committed together with this plan-doc amendment in one commit: `test(instance-id
 
 **Standing-defect check performed for this task (2026-08-31):** this plan has a recorded standing defect across Tasks 3, 5, and 6 — per-task verification steps omit the tests the change will break; Tasks 5 and 6 both shipped a RED branch this exact way. Before writing this task, `tests/` was grepped for scan-path tests asserting on `at.warning` via an exact list, an empty list, or a count (`assert not at.warning`, `assert at.warning == []`, `len(at.warning) ==`), prioritising `tests/test_ytd_shell.py` and `tests/test_views_ytd_income.py` and sweeping all of `tests/`. **Result: ZERO such tests exist anywhere in the repo.** The only `at.warning` assertions found are in `tests/test_shells.py` (Command Center Contextual status-chip warnings, e.g. `test_contextual_all_good_household_shows_affirmation_no_chips` at `warnings == []`), `tests/test_setup_shell_characterization.py` (governance-card rejection warnings), and `tests/test_roth_eligibility_view.py` (Roth contribution-limit warnings) — none of these touch the YTD scan path, so a new unconditional `st.warning` in `_sync_scan.py`'s scan path cannot ripple into them. This is a verified negative, not silence: no additional files need to be added to this task's **Files:** list or verification command on that account.
 
-- [ ] Append failing tests to `tests/test_ytd_shell.py`, reusing Task 6's `_patch_scan`/`_brokerage_record`/`_scan` helpers:
+- [x] Append failing tests to `tests/test_ytd_shell.py`, reusing Task 6's `_patch_scan`/`_brokerage_record`/`_scan` helpers:
 
 ```python
 def _mismatch_warnings(at) -> list[str]:
@@ -2088,19 +2088,19 @@ def test_absent_holder_name_is_silent(monkeypatch, tmp_path) -> None:
     assert _mismatch_warnings(at) == []
 ```
 
-- [ ] Run them and confirm they FAIL (no cross-check exists yet):
+- [x] Run them and confirm they FAIL (no cross-check exists yet):
 
 ```bash
 pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k holder_name
 ```
 
-- [ ] In `views/ytd_income/_partials/_sync_scan.py`, re-add the read-only `owner_map` import (narrowed to cross-checking only, per this plan's architecture note):
+- [x] In `views/ytd_income/_partials/_sync_scan.py`, re-add the read-only `owner_map` import (narrowed to cross-checking only, per this plan's architecture note):
 
 ```python
 from engine.pdf_owner import load_owner_map
 ```
 
-- [ ] Add a small helper near the top of the module:
+- [x] Add a small helper near the top of the module:
 
 ```python
 def _warn_on_holder_name_mismatch(
@@ -2120,13 +2120,13 @@ def _warn_on_holder_name_mismatch(
         )
 ```
 
-- [ ] In `render_sync_scan_partial`, load `owner_map` once near the top (alongside `account_overrides`):
+- [x] In `render_sync_scan_partial`, load `owner_map` once near the top (alongside `account_overrides`):
 
 ```python
     owner_map = load_owner_map()
 ```
 
-- [ ] In the brokerage block from Task 6, add the cross-check call right after resolving `resolved`:
+- [x] In the brokerage block from Task 6, add the cross-check call right after resolving `resolved`:
 
 ```python
                 if stmt_taxable_now:
@@ -2138,7 +2138,7 @@ def _warn_on_holder_name_mismatch(
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
 ```
 
-- [ ] Do the same in the Koinly block:
+- [x] Do the same in the Koinly block:
 
 ```python
                     for report in result.koinly_reports:
@@ -2151,35 +2151,43 @@ def _warn_on_holder_name_mismatch(
                         ledger = write_koinly_contribution(ledger, resolved, report)
 ```
 
-- [ ] Run the three new tests and confirm they PASS:
+- [x] Run the three new tests and confirm they PASS:
 
 ```bash
 pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k holder_name
 ```
 
-- [ ] **Review the two existing entries in `.pdf_owner_map.json`** (both `household`) per this plan's closing note below — confirm during this task whether they were artifacts of the removed `or "household"` default rather than deliberate choices; if a live household account is genuinely joint, add it as an account-level override (`save_account_override(..., "household")`) instead of relying on the name map.
+- [x] **Review the two existing entries in `.pdf_owner_map.json`** (both `household`) per this plan's closing note below — confirm during this task whether they were artifacts of the removed `or "household"` default rather than deliberate choices; if a live household account is genuinely joint, add it as an account-level override (`save_account_override(..., "household")`) instead of relying on the name map.
 
-- [ ] Run the full YTD shell + views test files:
+- [x] Run the full YTD shell + views test files:
 
 ```bash
 pixi run -e ci python -m pytest tests/test_ytd_shell.py tests/test_views_ytd_income.py -q -rE
 ```
 
-- [ ] Lint and type-check:
+- [x] Lint and type-check:
 
 ```bash
 pixi run -e ci lint
 pixi run -e ci type-check
 ```
 
-- [ ] Run both sharded full-suite commands from "Verification commands" above and confirm both are green.
+- [x] Run both sharded full-suite commands from "Verification commands" above and confirm both are green.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```
 mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
 mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): warn-only holder-name cross-check against resolved owner"})
 ```
+
+**Shipped (2026-08-31).** Implemented exactly as planned: `_warn_on_holder_name_mismatch` added to `views/ytd_income/_partials/_sync_scan.py`, called from both the brokerage loop and the Koinly loop inside the "Scan folder" branch of `render_sync_scan_partial`. `st` was already imported at module scope; `resolve_owner`'s 2-arg signature was intact and unused elsewhere, exactly as Task 6 left it. Three tests added to `tests/test_ytd_shell.py`. Mutation-proven 3/3: dropping the call from the brokerage loop turns `test_holder_name_mismatch_warns_but_does_not_block` red (no warning text found — the assertion, not an exception); dropping the `named_owner is not None` guard turns `test_absent_holder_name_is_silent` red (a spurious warning appears for `owner_key=None`); dropping the `!= resolved` comparison turns `test_holder_name_match_is_silent` red (a spurious warning appears on a genuine match). `_sync_scan.py` verified byte-identical after each revert via `git diff`. The repo-wide `at.warning` sweep recorded above was re-confirmed empty for the YTD scan path; no ripple.
+
+**`.pdf_owner_map.json` reviewed, NOT modified** (real user data — this task reports, does not write). Contents: `{"claude r cirba": "household", "claudecirba": "household"}` — two entries, both `household`, and both are almost certainly artifacts of the removed `or "household"` default (`_sync_scan.py:328` pre-Task-6): the household has no jointly-titled accounts per this plan's own note above, and the two keys look like the same name captured with and without a space (consistent with the recorded Schwab pdfplumber space-stripping lesson), not two distinct household members. Recommendation: delete both entries (or leave inert — they are read-only inputs to the new cross-check and will only ever fire a mismatch warning, never block anything) rather than promoting them to account-level overrides. Left for the user to decide; no write was made.
+
+Sharded full-suite confirmed green: 21 `AppTest` files together (196 passed) + the other ~165 files via `--ignore=` (2427 passed) = 2623, matching baseline 2620 + 3 new tests. `tests/test_ytd_shell.py tests/test_views_ytd_income.py` together: 58 passed. `ruff check .`: all checks passed. `mypy engine/ models/`: no issues in 67 source files. `git status` after the full run showed only the two intended files modified — no gitignored cache (`.pdf_owner_map.json`, `.ytd_cache.json`, `.portfolio_cache.json`, `.tax_pdf_cache.json`, `.candidate_store.json`, `.instance_owner.json`, `.account_attribution.json`) changed.
+
+Committed together with this plan-doc amendment in one commit: `feat(instance-identity): warn-only holder-name cross-check against resolved owner`.
 
 ---
 

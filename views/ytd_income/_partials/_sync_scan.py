@@ -11,11 +11,30 @@ from engine.pdf_ledger import (
     write_brokerage_contribution,
     write_koinly_contribution,
 )
+from engine.pdf_owner import load_owner_map
 from engine.portfolio_sync import save_ytd_snapshot
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
 from views._shared import run_folder_scan
+
+
+def _warn_on_holder_name_mismatch(
+    owner_key: str | None, resolved: str, owner_map: dict[str, str], account_label: str
+) -> None:
+    """WARN, never block. A name absent from owner_map (or no name at all --
+    IBKR/Fidelity/UBS return owner_key=None) is silent: silence never means
+    agreement, only that there was nothing to check against.
+    """
+    from engine.pdf_owner import resolve_owner
+
+    named_owner = resolve_owner(owner_key, owner_map)
+    if named_owner is not None and named_owner != resolved:
+        st.warning(
+            f"Account {account_label}: the statement's holder name maps to "
+            f"'{named_owner}' but this instance attributes it to '{resolved}'. "
+            "Double check the account attribution table on Setup ▸ Command Center."
+        )
 
 
 def render_sync_scan_partial(hh: Household) -> None:
@@ -34,6 +53,7 @@ def render_sync_scan_partial(hh: Household) -> None:
     identity_set = bool(instance_owner)
     instance_owner = instance_owner or "household"
     account_overrides = load_account_overrides()
+    owner_map = load_owner_map()
 
     # --- Section 1: YTD Income Entry ---
     st.markdown("### YTD Income Entry")
@@ -168,6 +188,7 @@ def render_sync_scan_partial(hh: Household) -> None:
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner
                         )
+                        _warn_on_holder_name_mismatch(rec.owner_key, resolved, owner_map, account_number)
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
 
                     save_ledger(ledger)
@@ -189,6 +210,9 @@ def render_sync_scan_partial(hh: Household) -> None:
                     for report in result.koinly_reports:
                         resolved = resolve_account_owner(
                             "koinly", report.owner_key or "unknown", account_overrides, instance_owner
+                        )
+                        _warn_on_holder_name_mismatch(
+                            report.owner_key, resolved, owner_map, f"Koinly {report.tax_year}"
                         )
                         ledger = write_koinly_contribution(ledger, resolved, report)
 

@@ -385,3 +385,61 @@ def test_apply_button_enabled_when_instance_owner_set(monkeypatch, tmp_path) -> 
     assert not at.exception
     apply_btn = next(b for b in at.button if b.key == "apply_statements_btn")
     assert apply_btn.disabled is False
+
+
+# --- Task 9: holder-name cross-check tests -----------------------------------
+
+
+def _mismatch_warnings(at) -> list[str]:
+    """Only the holder-name cross-check warnings (its wording is unique --
+    the scan's other st.warning calls are about unrecognized/failed files)."""
+    return [w.value for w in at.warning if "holder name" in w.value]
+
+
+def test_holder_name_mismatch_warns_but_does_not_block(monkeypatch, tmp_path) -> None:
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    # The name says "spouse"; this instance attributes the account to "you".
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    warnings = _mismatch_warnings(at)
+    assert any("****-*123" in text and "spouse" in text for text in warnings)
+    # WARN, NEVER BLOCK: the scan still ran to completion and still applied
+    # the account to the YTD snapshot.
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert any(s.value.startswith("Applied to YTD snapshot:") for s in at.success)
+
+
+def test_holder_name_match_is_silent(monkeypatch, tmp_path) -> None:
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "you"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert _mismatch_warnings(at) == []
+
+
+def test_absent_holder_name_is_silent(monkeypatch, tmp_path) -> None:
+    """owner_key=None (IBKR/Fidelity/UBS today) -- absence of a name is not
+    evidence of anything, so it must never warn."""
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key=None)])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert _mismatch_warnings(at) == []
