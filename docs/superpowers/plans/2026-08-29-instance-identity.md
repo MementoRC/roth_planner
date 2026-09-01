@@ -1,0 +1,2204 @@
+# Instance Identity Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make each planner instance know which person it belongs to, so scanned statements are attributed automatically instead of prompting per account on every scan.
+
+**Architecture:** A durable machine-local setting `instance_owner ∈ {"you","spouse"}` in a dedicated file. Attribution resolves as `account override → instance_owner`, never prompting. The existing name-keyed `owner_map` is narrowed to identity cross-checking only. Bundle export and import both derive owner from the instance instead of hardcoding or asking.
+
+**Tech Stack:** Python 3.11/3.12, Streamlit (Classic `st.tabs`), pytest + `streamlit.testing.v1.AppTest`, pixi for task running.
+
+**Spec:** `docs/superpowers/specs/2026-08-29-instance-identity-design.md`
+
+---
+
+## Verification commands
+
+Used throughout. The `test` pixi task CANNOT be scoped — it runs `pytest tests/` unconditionally and OOMs in one process. Always shard:
+
+```bash
+pixi run -e ci lint          # ruff check .
+pixi run -e ci type-check    # mypy engine/ models/
+# Full suite, sharded — BOTH must pass before any PR:
+pixi run -e ci python -m pytest tests/ -q -rE -k "apptest or shell or view or partial or command_center or flow"
+pixi run -e ci python -m pytest tests/ -q -rE -k "not (apptest or shell or view or partial or command_center or flow)"
+```
+
+---
+
+### Task 1: `engine/instance_identity.py`
+
+**Files:**
+- Create: `engine/instance_identity.py`
+- Test: `tests/test_instance_identity.py`
+
+- [ ] Write the failing test file `tests/test_instance_identity.py`:
+
+```python
+"""Tests for engine.instance_identity -- durable per-instance owner identity."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+
+class TestInstanceOwnerRoundTrip:
+    def test_save_load_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.instance_identity as mod
+
+        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / ".instance_owner.json")
+        mod.save_instance_owner("you")
+        assert mod.load_instance_owner() == "you"
+
+    def test_load_missing_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.instance_identity as mod
+
+        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / "nope.json")
+        assert mod.load_instance_owner() is None
+
+    def test_load_corrupt_raises_and_is_not_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.instance_identity as mod
+
+        bad = tmp_path / ".instance_owner.json"
+        bad.write_text("{not json")
+        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", bad)
+        with pytest.raises(mod.CorruptInstanceOwnerError):
+            mod.load_instance_owner()
+        assert bad.read_text() == "{not json"
+
+    def test_save_rejects_household(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.instance_identity as mod
+
+        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / ".instance_owner.json")
+        with pytest.raises(ValueError, match="Invalid instance owner"):
+            mod.save_instance_owner("household")
+
+    def test_save_refuses_to_clobber_corrupt_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.instance_identity as mod
+
+        bad = tmp_path / ".instance_owner.json"
+        bad.write_text("{not json")
+        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", bad)
+        with pytest.raises(mod.CorruptInstanceOwnerError):
+            mod.save_instance_owner("you")
+        assert bad.read_text() == "{not json"
+```
+
+- [ ] Run it and confirm it fails on import (module does not exist yet):
+
+```bash
+pixi run -e ci python -m pytest tests/test_instance_identity.py -q -rE
+```
+
+- [ ] Create `engine/instance_identity.py`:
+
+```python
+"""Durable machine-local record of which person this planner instance belongs to.
+
+Pure module: stdlib only. No streamlit, no other engine imports beyond
+engine.pdf_owner's role vocabulary (mirrors engine/data_sources/paths.py's
+purity rule). Sits directly in engine/, not engine/data_sources/, so
+_REPO_ROOT climbs one fewer parent than paths.py does.
+
+An "instance" is a single deployment/session of this planner (a dev laptop
+install, one browser's session on the public site). This value never changes
+automatically and is deliberately narrower than engine.pdf_owner.OwnerRole:
+an instance can be "you" or "spouse" but never "household" -- an instance
+belongs to a single person, even though a specific ACCOUNT it later observes
+may be jointly titled (see engine/account_attribution.py for that distinct,
+per-account concept).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from engine.pdf_owner import OwnerRole
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+INSTANCE_OWNER_PATH = _REPO_ROOT / ".instance_owner.json"
+
+_VALID_INSTANCE_OWNERS = frozenset({OwnerRole.YOU.value, OwnerRole.SPOUSE.value})
+
+__all__ = [
+    "INSTANCE_OWNER_PATH",
+    "CorruptInstanceOwnerError",
+    "load_instance_owner",
+    "save_instance_owner",
+]
+
+
+class CorruptInstanceOwnerError(Exception):
+    """Raised when INSTANCE_OWNER_PATH exists but its content is not a valid
+    instance_owner payload (truncated/malformed JSON, missing key, or an
+    invalid value).
+
+    Deliberately NOT the same outcome as a missing file: a missing file means
+    "this instance has never been assigned an owner yet" -- safe for a
+    caller to treat as a first-run prompt case. A file that exists but fails
+    to parse means real data is sitting on disk in an unreadable state, and
+    silently treating it as "unset" would let save_instance_owner clobber the
+    only copy. Mirrors
+    engine.data_sources.committed.CorruptCommittedCacheError's shape exactly.
+    """
+
+    def __init__(self, path: str | Path, cause: Exception) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"instance owner cache at {path!r} is corrupt: {cause!r}")
+
+
+def load_instance_owner() -> str | None:
+    """Return the persisted instance owner ("you"/"spouse"), or None if unset.
+
+    None means "this instance has no identity yet" -- callers must treat
+    that as a first-run prompt case, never silently default it. Raises
+    CorruptInstanceOwnerError if the file exists but its content is
+    unreadable or invalid -- callers must not silently re-prompt over broken
+    data (see CorruptInstanceOwnerError's docstring).
+    """
+    try:
+        raw = INSTANCE_OWNER_PATH.read_text()
+    except OSError:
+        return None
+    try:
+        payload = json.loads(raw)
+        owner = payload["instance_owner"]
+        if owner not in _VALID_INSTANCE_OWNERS:
+            raise ValueError(f"invalid instance_owner value {owner!r}")
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+        raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
+    return str(owner)
+
+
+def save_instance_owner(owner: str) -> None:
+    """Persist *owner* ("you" or "spouse" only) atomically.
+
+    Rejects "household" and any other value -- an instance belongs to one
+    person, never a joint identity (see module docstring). Pre-checks that
+    an existing file still parses before writing: if it exists but is
+    corrupt, this raises rather than silently clobbering the only copy of
+    whatever is on disk (mirrors
+    engine.data_sources.committed.save_committed's audit-0809 #11 guard).
+    Writes via a tmp file + os.replace() so a crash mid-write cannot
+    truncate a previously-good file.
+    """
+    if owner not in _VALID_INSTANCE_OWNERS:
+        raise ValueError(
+            f"Invalid instance owner {owner!r}, must be one of {sorted(_VALID_INSTANCE_OWNERS)}"
+        )
+    if INSTANCE_OWNER_PATH.exists():
+        try:
+            json.loads(INSTANCE_OWNER_PATH.read_text())
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
+    tmp_path = INSTANCE_OWNER_PATH.with_name(f"{INSTANCE_OWNER_PATH.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps({"version": 1, "instance_owner": owner}))
+    os.replace(tmp_path, INSTANCE_OWNER_PATH)
+```
+
+- [ ] Run the test file again and confirm all 5 tests pass:
+
+```bash
+pixi run -e ci python -m pytest tests/test_instance_identity.py -q -rE
+```
+
+- [ ] Lint and type-check the new module:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["engine/instance_identity.py", "tests/test_instance_identity.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add engine.instance_identity module"})
+```
+
+---
+
+### Task 2: `engine/account_attribution.py`
+
+**Files:**
+- Create: `engine/account_attribution.py`
+- Test: `tests/test_account_attribution.py`
+
+- [ ] Write the failing test file `tests/test_account_attribution.py`:
+
+```python
+"""Tests for engine.account_attribution -- per-account owner overrides."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+
+class TestSaveOverrideRejectsAmbiguousBroker:
+    def test_broker_containing_delimiter_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        with pytest.raises(ValueError, match=r"\|"):
+            mod.save_account_override("schwab|evil", "****-*123", "spouse")
+
+
+class TestOverridesRoundTrip:
+    def test_save_load_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        mod.save_account_override("schwab", "****-*123", "spouse")
+        assert mod.load_account_overrides() == {("schwab", "****-*123"): "spouse"}
+
+    def test_delete_removes_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        mod.save_account_override("schwab", "****-*123", "spouse")
+        mod.delete_account_override("schwab", "****-*123")
+        assert mod.load_account_overrides() == {}
+
+    def test_load_missing_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / "nope.json")
+        assert mod.load_account_overrides() == {}
+
+    def test_load_corrupt_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import engine.account_attribution as mod
+
+        bad = tmp_path / ".account_attribution.json"
+        bad.write_text("{not json")
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", bad)
+        assert mod.load_account_overrides() == {}
+
+    def test_save_two_different_keys_both_persist(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        mod.save_account_override("schwab", "****-*123", "spouse")
+        mod.save_account_override("vanguard", "****-*456", "you")
+        assert mod.load_account_overrides() == {
+            ("schwab", "****-*123"): "spouse",
+            ("vanguard", "****-*456"): "you",
+        }
+
+    def test_save_invalid_owner_role_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.account_attribution as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        with pytest.raises(ValueError, match="Invalid owner role"):
+            mod.save_account_override("schwab", "****-*123", "bogus")
+
+
+class TestRefusesToClobberCorruptStore:
+    def test_save_refuses_to_clobber_corrupt_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.account_attribution as mod
+
+        bad = tmp_path / ".account_attribution.json"
+        bad.write_text("{not json")
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", bad)
+        with pytest.raises(mod.CorruptAccountAttributionError):
+            mod.save_account_override("schwab", "****-*123", "spouse")
+        assert bad.read_text() == "{not json"
+
+    def test_delete_refuses_to_clobber_corrupt_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import engine.account_attribution as mod
+
+        bad = tmp_path / ".account_attribution.json"
+        bad.write_text("{not json")
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", bad)
+        with pytest.raises(mod.CorruptAccountAttributionError):
+            mod.delete_account_override("schwab", "****-*123")
+        assert bad.read_text() == "{not json"
+
+
+class TestResolveAccountOwner:
+    def test_resolves_to_instance_owner_when_no_override(self) -> None:
+        import engine.account_attribution as mod
+
+        assert mod.resolve_account_owner("schwab", "****-*123", {}, "you") == "you"
+
+    def test_override_wins_over_instance_owner(self) -> None:
+        import engine.account_attribution as mod
+
+        overrides = {("schwab", "****-*123"): "spouse"}
+        assert mod.resolve_account_owner("schwab", "****-*123", overrides, "you") == "spouse"
+
+    def test_never_returns_none(self) -> None:
+        import engine.account_attribution as mod
+
+        assert mod.resolve_account_owner("vanguard", "9999", {}, "spouse") is not None
+```
+
+- [ ] Run it and confirm it fails on import:
+
+```bash
+pixi run -e ci python -m pytest tests/test_account_attribution.py -q -rE
+```
+
+- [ ] Create `engine/account_attribution.py`:
+
+```python
+"""Per-account owner-attribution overrides, keyed by (broker, account_number).
+
+Holds account numbers, so persisted via engine.secure_io's PII helpers (0o600
++ O_NOFOLLOW). NOTE: this is filesystem hardening only, NOT encryption -- the
+file itself is plaintext JSON, readable by anyone with local access to this
+machine/account, same as engine/pdf_owner.py's .pdf_owner_map.json.
+
+Narrower and account-scoped compared to engine/instance_identity.py's
+per-instance default: resolve_account_owner() falls back to instance_owner
+whenever no per-account override exists.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from engine.pdf_owner import OWNER_ROLES
+from engine.secure_io import read_pii_json, write_pii_json
+
+_ACCOUNT_ATTRIBUTION_PATH = Path(__file__).resolve().parent.parent / ".account_attribution.json"
+
+_KEY_DELIMITER = "|"
+
+__all__ = [
+    "CorruptAccountAttributionError",
+    "delete_account_override",
+    "load_account_overrides",
+    "resolve_account_owner",
+    "save_account_override",
+]
+
+
+class CorruptAccountAttributionError(Exception):
+    """Raised by ``save_account_override``/``delete_account_override`` when
+    ``_ACCOUNT_ATTRIBUTION_PATH`` exists but its content is not valid JSON
+    (truncated/malformed write, e.g. process killed mid-write).
+
+    Mirrors ``CorruptCommittedCacheError`` (engine/data_sources/committed.py,
+    audit-0809 #11 / PR #442) and ``CandidateStore.save``'s
+    ``CorruptCandidateStoreError`` (engine/data_sources/candidate_store.py,
+    audit-0823 / PR #447): ``load_account_overrides`` tolerates a corrupt
+    file by degrading to ``{}`` (callers depend on that resilience -- a
+    broken cache must not crash the app), but if a write then merged onto
+    that degraded empty dict and saved it, every prior override on disk
+    would be permanently destroyed and replaced with just the one entry
+    being written. Once this plan's account-attribution table retires the
+    interactive owner-confirm selectboxes, ``resolve_account_owner`` becomes
+    the sole non-interactive authority -- a lost override would silently
+    reattribute an account with no human step left to catch it.
+    """
+
+    def __init__(self, path: str | Path, cause: Exception) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"account attribution store at {path!r} is corrupt: {cause!r}")
+
+
+def _encode_key(broker: str, account_number: str) -> str:
+    if _KEY_DELIMITER in broker:
+        raise ValueError(
+            f"broker name {broker!r} may not contain {_KEY_DELIMITER!r} (used as the key delimiter)"
+        )
+    return f"{broker}{_KEY_DELIMITER}{account_number}"
+
+
+def _decode_key(raw: str) -> tuple[str, str] | None:
+    broker, sep, account_number = raw.partition(_KEY_DELIMITER)
+    if not sep:
+        return None
+    return broker, account_number
+
+
+def load_account_overrides() -> dict[tuple[str, str], str]:
+    """Return {(broker, account_number): owner}.
+
+    Read-path only: any read/parse failure or wrong shape degrades to {}
+    rather than raising, so a broken cache file can't crash the app
+    (mirrors engine/pdf_owner.py's load_owner_map tolerant shape). This is
+    deliberately NOT mirrored on the write path -- see
+    CorruptAccountAttributionError's docstring for why a write must raise
+    instead of silently compounding a corrupt read into permanent loss.
+    """
+    if not _ACCOUNT_ATTRIBUTION_PATH.exists():
+        return {}
+    try:
+        raw = read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    overrides_raw = raw.get("overrides")
+    if not isinstance(overrides_raw, dict):
+        return {}
+    result: dict[tuple[str, str], str] = {}
+    for key, owner in overrides_raw.items():
+        decoded = _decode_key(str(key))
+        if decoded is not None:
+            result[decoded] = str(owner)
+    return result
+
+
+def _refuse_if_corrupt() -> None:
+    """Raise CorruptAccountAttributionError if the store exists but its
+    current on-disk content fails to parse.
+
+    Called by both write paths before they merge onto whatever
+    ``load_account_overrides()`` (tolerant) returns, so a corrupt file
+    stops the write instead of being silently replaced by a fresh dict
+    holding only the one entry being saved/deleted (see
+    CorruptAccountAttributionError's docstring). A missing file is not
+    corrupt -- first run, nothing to protect.
+    """
+    if not _ACCOUNT_ATTRIBUTION_PATH.exists():
+        return
+    try:
+        read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise CorruptAccountAttributionError(_ACCOUNT_ATTRIBUTION_PATH, exc) from exc
+
+
+def _write(overrides: dict[tuple[str, str], str]) -> None:
+    """Write *overrides* atomically via a tmp file + ``os.replace``.
+
+    Callers must call ``_refuse_if_corrupt()`` first -- this function does
+    not pre-check, it only writes.
+    """
+    encoded = {
+        _encode_key(broker, account_number): owner
+        for (broker, account_number), owner in overrides.items()
+    }
+    tmp_path = _ACCOUNT_ATTRIBUTION_PATH.with_name(
+        f"{_ACCOUNT_ATTRIBUTION_PATH.name}.tmp-{os.getpid()}"
+    )
+    write_pii_json(tmp_path, {"version": 1, "overrides": encoded})
+    os.replace(tmp_path, _ACCOUNT_ATTRIBUTION_PATH)
+
+
+def save_account_override(broker: str, account_number: str, owner: str) -> None:
+    """Persist an override for ``(broker, account_number)``, atomically.
+
+    Raises CorruptAccountAttributionError (without writing) if the file
+    already exists but fails to parse -- see that class's docstring for why
+    this refuses rather than clobbers.
+    """
+    if owner not in OWNER_ROLES:
+        raise ValueError(f"Invalid owner role {owner!r}, must be one of {sorted(OWNER_ROLES)}")
+    _refuse_if_corrupt()
+    overrides = load_account_overrides()
+    overrides[(broker, account_number)] = owner
+    _write(overrides)
+
+
+def delete_account_override(broker: str, account_number: str) -> None:
+    """Remove any override for ``(broker, account_number)``, atomically.
+
+    Raises CorruptAccountAttributionError (without writing) if the file
+    already exists but fails to parse -- see that class's docstring for why
+    this refuses rather than clobbers.
+    """
+    _refuse_if_corrupt()
+    overrides = load_account_overrides()
+    overrides.pop((broker, account_number), None)
+    _write(overrides)
+
+
+def resolve_account_owner(
+    broker: str,
+    account_number: str,
+    account_overrides: dict[tuple[str, str], str],
+    instance_owner: str,
+) -> str:
+    """TOTAL: an override wins, otherwise fall back to instance_owner.
+
+    Never returns None and never prompts -- this is the single replacement
+    for the ad-hoc st.selectbox owner-confirm prompts this plan retires (see
+    views/ytd_income/_partials/_sync_scan.py, Task 6).
+    """
+    return account_overrides.get((broker, account_number)) or instance_owner
+```
+
+**Write-path hardening (added after initial implementation, before this task shipped):** the first draft of this module had `save_account_override`/`delete_account_override` call the tolerant `load_account_overrides()` directly and write the merged result straight back -- against a corrupted store this would silently destroy every prior valid override. A quality review caught this as the exact incident class `engine/data_sources/candidate_store.py` (audit-0823, PR #447) and `engine/data_sources/committed.py` (PR #442) were hardened against, and it matters more here because this plan retires the interactive owner-confirm selectboxes that would otherwise catch a silent reattribution. `load_account_overrides()` itself keeps its tolerant read semantics unchanged -- only the two write paths gained a pre-write parse check (`_refuse_if_corrupt`) and atomic tmp-file + `os.replace` writes.
+
+- [ ] Run the test file again and confirm all 12 tests pass:
+
+```bash
+pixi run -e ci python -m pytest tests/test_account_attribution.py -q -rE
+```
+
+- [ ] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["engine/account_attribution.py", "tests/test_account_attribution.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add engine.account_attribution module"})
+```
+
+---
+
+### Task 3: conftest registration — DO THIS BEFORE ANY UI WORK
+
+**Why this task comes third, not last:** `_forbid_real_cache_writes` (an autouse fixture in `tests/conftest.py`) fails any test that creates/modifies/deletes a real repo-root cache file that isn't in `_WATCHED_CACHE_PATHS`/redirected by `_redirect_cache_paths_to_tmp`. Tasks 1-2's own tests were safe because each test locally monkeypatched the module's path constant directly (same pattern as `tests/test_pdf_owner.py`). Task 4 onward drives real app code (`app.py`, `views/setup/command_center.py`, `views/ytd_income/_partials/_sync_scan.py`) through `AppTest`, which calls `load_instance_owner()`/`load_account_overrides()` with NO per-test monkeypatch — without global redirection those calls would read/write the developer's REAL `.instance_owner.json` / `.account_attribution.json`, which git cannot restore (same class of defect as audit-0805 C98/C67-C69).
+
+**Files:**
+- Modify: `tests/conftest.py`
+- Modify: `tests/test_instance_identity.py`
+- Modify: `tests/test_account_attribution.py`
+- Modify: `tests/test_audit_0809_f18_cache_path_binding.py` — widening `_command_center_cache_files()` from 3 to 5 paths breaks its hard-coded 3-path assertion; update the expected count/list to match.
+
+- [ ] Append a redirection-proof failing test to `tests/test_instance_identity.py` (no local monkeypatch — this is the point):
+
+```python
+class TestInstanceOwnerPathIsGloballyRedirected:
+    def test_no_local_monkeypatch_still_avoids_the_real_repo_file(self) -> None:
+        """Proves tests/conftest.py's autouse _redirect_cache_paths_to_tmp
+        fixture redirects INSTANCE_OWNER_PATH on its own. Before that
+        registration exists, this call touches the real repo-root
+        .instance_owner.json and _forbid_real_cache_writes fails the test."""
+        from engine.instance_identity import save_instance_owner
+
+        save_instance_owner("you")
+```
+
+- [ ] Append the same style proof to `tests/test_account_attribution.py`:
+
+```python
+class TestAccountAttributionPathIsGloballyRedirected:
+    def test_no_local_monkeypatch_still_avoids_the_real_repo_file(self) -> None:
+        from engine.account_attribution import save_account_override
+
+        save_account_override("schwab", "****-*123", "spouse")
+```
+
+- [ ] Run both and confirm they FAIL with a `_forbid_real_cache_writes`-style message naming the real `.instance_owner.json` / `.account_attribution.json` paths:
+
+```bash
+pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_account_attribution.py -q -rE -k GloballyRedirected
+```
+
+- [ ] Immediately delete whichever real file(s) the failing run just created at the repo root (`.instance_owner.json`, `.account_attribution.json`) before proceeding — this is exactly the destructive write the guard exists to catch, don't leave it on disk.
+
+- [ ] Edit `tests/conftest.py` — add two module imports to the existing `noqa: E402` block (:32-49), alphabetically ordered:
+
+```python
+import engine.account_attribution as _account_attribution_mod  # noqa: E402
+```
+placed immediately after `import config.loader as _config_loader_mod` (before `engine.brokerage_statement_pdf`), and:
+
+```python
+import engine.instance_identity as _instance_identity_mod  # noqa: E402
+```
+placed immediately after `import engine.exercise_schedule_store as _exercise_schedule_store_mod` (before `engine.koinly_report_pdf`).
+
+- [ ] Add both new path constants to `_WATCHED_CACHE_PATHS` (:51-67 list literal), as two new entries before the closing `]`:
+
+```python
+    _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
+    _instance_identity_mod.INSTANCE_OWNER_PATH,
+```
+
+- [ ] Add matching `monkeypatch.setattr` redirect lines inside `_redirect_cache_paths_to_tmp`'s "1. Defining-module attributes." block (:134-150), immediately after the `_config_loader_mod` line:
+
+```python
+    monkeypatch.setattr(_account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json"))
+    monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
+```
+
+- [ ] Extend `_command_center_cache_files()` (:234-251) to also return the two new paths. This is a FUNCTION resolved at call time (per its own docstring, audit-0809 F18 — a module-level constant built at conftest import time would escape the redirect fixture), so keep it a function and just widen its return list — Command Center now owns both files (the identity gate in Task 5, the attribution table in Task 7):
+
+```python
+    return [
+        _paths_mod.CANDIDATE_STORE_PATH,
+        _paths_mod.TRUST_CHOICES_PATH,
+        _paths_mod.COMMITTED_PATH,
+        _instance_identity_mod.INSTANCE_OWNER_PATH,
+        _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
+    ]
+```
+
+- [ ] Re-run the two redirection-proof tests and confirm they now PASS:
+
+```bash
+pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_account_attribution.py -q -rE
+```
+
+- [ ] Run the cache-write-guard's own unit test plus these two files together to confirm nothing regressed:
+
+```bash
+pixi run -e ci python -m pytest tests/test_instance_identity.py tests/test_account_attribution.py tests/test_pdf_owner.py tests/test_cache_write_guard.py tests/test_audit_0809_f18_cache_path_binding.py -q -rE
+```
+
+- [ ] Lint:
+
+```bash
+pixi run -e ci lint
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["tests/conftest.py", "tests/test_instance_identity.py", "tests/test_account_attribution.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "test(instance-identity): register new cache paths in conftest redirect/guard"})
+```
+
+---
+
+### Task 4: `app.py` seeding
+
+**Files:**
+- Modify: `app.py`
+- Modify: `tests/test_app_seed_session_state.py`
+
+**Note:** `app.py` is a Streamlit script with heavy import-time side effects, so `tests/test_app_seed_session_state.py` already extracts and `exec`s just `_seed_session_state`'s source text into an isolated namespace rather than using `AppTest` directly (see that file's module docstring). This task extends that exact established harness rather than introducing a new `AppTest.from_file("app.py")` pattern with no precedent in this repo.
+
+- [ ] Read `tests/test_app_seed_session_state.py`'s `_run_seed_session_state` helper (:66-84) and extend its signature to accept an `instance_owner` parameter, injecting a fake `load_instance_owner`/`CorruptInstanceOwnerError` into the exec namespace:
+
+```python
+from engine.instance_identity import CorruptInstanceOwnerError
+
+_CORRUPT = object()
+
+
+def _run_seed_session_state(
+    defaults: dict, instance_owner: str | None = "you", calls: list[str] | None = None
+) -> _FakeSessionState:
+    """Extract and execute app.py's _seed_session_state against *defaults*.
+
+    ``instance_owner`` stands in for engine.instance_identity.load_instance_owner's
+    return value; pass the sentinel ``_CORRUPT`` to simulate
+    CorruptInstanceOwnerError being raised instead. Defaults to "you" so
+    every pre-existing call site in this file (which doesn't pass the new
+    kwarg) keeps behaving as before.
+
+    ``calls``, if given, records each invocation of the fake
+    load_instance_owner so a test can prove the seeding code path actually
+    ran (rather than app.py's try/except block having been deleted, which
+    leaves "instance_owner" looking unset either way).
+
+    Returns the resulting fake session_state for assertions.
+    """
+    text = APP_PATH.read_text()
+    start = text.index("def _seed_session_state()")
+    end = text.index("\n\n\n# Shared state: household parameters")
+    source = text[start:end]
+    fake_st = _FakeSt()
+
+    def _fake_load_instance_owner() -> str | None:
+        if calls is not None:
+            calls.append("load_instance_owner")
+        if instance_owner is _CORRUPT:
+            raise CorruptInstanceOwnerError(".instance_owner.json", ValueError("bad"))
+        return instance_owner
+
+    namespace: dict[str, Any] = {
+        "st": fake_st,
+        "load_defaults": lambda: defaults,
+        "BASE_PART_B": BASE_PART_B,
+        "SCALAR_KEYS": SCALAR_KEYS,
+        "load_instance_owner": _fake_load_instance_owner,
+        "CorruptInstanceOwnerError": CorruptInstanceOwnerError,
+    }
+    exec(compile(source, "<_seed_session_state>", "exec"), namespace)
+    namespace["_seed_session_state"]()
+    return fake_st.session_state
+```
+
+- [ ] Append the failing test class to the same file:
+
+```python
+class TestSeedSessionStateInstanceOwner:
+    """2026-08-29: instance identity (engine.instance_identity) must be
+    seeded so views/setup/command_center.py's identity gate and the
+    account-attribution resolvers can read st.session_state["instance_owner"]
+    without re-deriving it themselves."""
+
+    def test_persisted_instance_owner_is_seeded(self) -> None:
+        state = _run_seed_session_state({}, instance_owner="spouse")
+        assert state.get("instance_owner") == "spouse"
+
+    def test_unset_instance_owner_seeds_none(self) -> None:
+        """``state.get("instance_owner") is None`` alone is vacuous: the fake
+        session_state's ``.get`` returns None for a key that was never set at
+        all, so this would pass identically if app.py's seeding block were
+        deleted entirely. Assert the key is actually PRESENT, and use
+        ``calls`` to prove load_instance_owner was actually invoked (it
+        wouldn't be, if the seeding block were removed)."""
+        calls: list[str] = []
+        state = _run_seed_session_state({}, instance_owner=None, calls=calls)
+        assert calls == ["load_instance_owner"], "load_instance_owner was never invoked"
+        assert "instance_owner" in state
+        assert state.get("instance_owner") is None
+
+    def test_corrupt_instance_owner_degrades_to_none(self) -> None:
+        """Same vacuousness trap as above, compounded: with the seeding
+        block removed, the fake load_instance_owner is never called, so a
+        bare ``state.get(...) is None`` exercises nothing about the
+        corrupt-degrades-to-None behavior at all. ``calls`` proves the
+        exception-raising path was actually invoked; the test also relies on
+        exec() propagating CorruptInstanceOwnerError uncaught (failing this
+        test) if app.py's try/except doesn't actually catch it — so this
+        proves the exception is both raised AND caught, not merely raised."""
+        calls: list[str] = []
+        state = _run_seed_session_state({}, instance_owner=_CORRUPT, calls=calls)
+        assert calls == ["load_instance_owner"], "load_instance_owner was never invoked"
+        assert "instance_owner" in state
+        assert state.get("instance_owner") is None
+```
+
+**2026-08-31 amendment**: the original two test bodies above (`test_unset_instance_owner_seeds_none`,
+`test_corrupt_instance_owner_degrades_to_none`) were vacuous — `_FakeSessionState.get(key)` returns
+`None` for a key that was never set at all, identical to a key explicitly set to `None`. Both tests
+therefore passed whether or not `app.py`'s seeding block existed at all (the corrupt test additionally
+never invoked the fake `load_instance_owner`, so it exercised nothing about the except-path). Fixed
+versions above assert key *presence* (`"instance_owner" in state`) and use a `calls` recorder to prove
+`load_instance_owner` was actually invoked. Do not simplify this back to a bare
+`state.get("instance_owner") is None` — it silently stops testing anything.
+
+- [ ] Run it and confirm it FAILS — `_seed_session_state` doesn't reference `load_instance_owner` yet, so `state.get("instance_owner")` is `None` in the "spouse" case too (assertion fails, no crash):
+
+```bash
+pixi run -e ci python -m pytest tests/test_app_seed_session_state.py -q -rE -k InstanceOwner
+```
+
+- [ ] In `app.py`, add the import to the existing `noqa: E402` block (:13-25), between `engine.data_sources.record` and `engine.irmaa` (alphabetical: `instance_identity` < `irmaa`):
+
+```python
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
+```
+
+- [ ] In `_seed_session_state()` (:28-83), add this immediately before the final `st.session_state.setdefault("_seeded", True)` line:
+
+```python
+    # 2026-08-29: instance identity is set once per machine/install (see
+    # engine.instance_identity) and is never silently re-derived on a
+    # corrupt cache -- a corrupt file degrades to None here (same "unset"
+    # treatment as a first-run install) so Command Center's identity gate
+    # (views/setup/command_center.py) can re-prompt instead of the whole
+    # app crashing on session start.
+    try:
+        st.session_state.setdefault("instance_owner", load_instance_owner())
+    except CorruptInstanceOwnerError:
+        st.session_state.setdefault("instance_owner", None)
+```
+
+- [ ] Run the test file again and confirm all tests (old + new) pass:
+
+```bash
+pixi run -e ci python -m pytest tests/test_app_seed_session_state.py -q -rE
+```
+
+- [ ] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["app.py", "tests/test_app_seed_session_state.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): seed instance_owner in app.py session state"})
+```
+
+---
+
+### Task 5: Command Center identity gate
+
+**Files:**
+- Modify: `views/setup/command_center.py`
+- Test: `tests/test_command_center_view.py`
+- Test (ripple, see note below): `tests/test_setup_shell_characterization.py`
+- Test (ripple, see note below): `tests/test_shells.py`
+
+**Ripple note:** `render_command_center` renders inside every Setup shell tab
+body on every run (Classic's `st.tabs()` executes every branch regardless of
+which tab is visually selected — see `views/setup/command_center.py`'s
+module docstring), so its two new widget keys and its new unconditional
+`st.warning` are visible to every test that walks the Setup page's full
+widget/warning tree, not just `test_command_center_view.py`. Confirmed this
+broke two pre-existing tests when Task 5 shipped without running them:
+`tests/test_setup_shell_characterization.py::test_setup_widget_key_set_unchanged`
+(its frozen `EXPECTED_WIDGET_KEYS` needs the two new keys,
+`instance_owner_gate_choice`/`instance_owner_gate_save`, added) and
+`tests/test_shells.py::test_contextual_all_good_household_shows_affirmation_no_chips`
+(its `_render_contextual_all_good` fixture never seeded `instance_owner`, so
+the new warning broke its "zero warnings" assertion — fixed by seeding
+`st.session_state.setdefault("instance_owner", "you")`, matching how
+`app.py` seeds it at real startup). Both files must be included in this
+task's verification run, not just `tests/test_command_center_view.py`.
+
+**Amendment (post-ship quality review, 2026-08-31):** three Important issues
+found in the shipped Task 5 gate, all fixed:
+
+1. The radio below originally had NO `index=` kwarg, so Streamlit
+   pre-selected "Me". Because `save_instance_owner` has no other caller and
+   `identity_set` latches permanently `True` once saved, a reflexive Save
+   click on a spouse's install would irrevocably misattribute the household
+   to "you" with no way back through this gate — the design doc calls
+   picking wrong "a real footgun: picking wrong overwrites your own half of
+   the household" (`docs/superpowers/specs/2026-08-29-instance-identity-design.md:97`).
+   Fixed by adding `index=None` (nothing preselected; Streamlit >=1.50 is
+   pinned in `pixi.toml`, well past the 1.27 minimum for `index=None`) and
+   `disabled=choice is None` on the Save button, so Save is impossible until
+   the user has actively picked. The code block below reflects this fix — do
+   NOT revert it to an unset `index=`.
+2. `tests/test_command_center_view.py`'s
+   `test_command_center_identity_set_hides_gate_and_enables_sync` used
+   `spy.assert_called_once()`; loosened to `spy.assert_called()` since the
+   property being proven ("the identity-check line executed") doesn't
+   depend on today's exactly-once call pattern.
+3. Added
+   `tests/test_shells.py::test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset`
+   — nothing previously asserted the gate's `st.warning` actually renders
+   during a full Setup-shell walk with identity unset, since
+   `_render_contextual_all_good` (see ripple note above) now always seeds
+   `instance_owner`. The new test calls that same fixture with its added
+   `seed_identity=False` kwarg to exercise the un-seeded path.
+
+- [ ] Append the failing tests to `tests/test_command_center_view.py`, mirroring its existing `AppTest.from_function` pattern:
+
+```python
+def test_command_center_identity_unset_shows_gate_and_disables_sync(
+    clean_command_center_caches,
+) -> None:
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert len(at.radio) == 1
+    sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
+    assert sync_button.disabled is True
+
+
+def test_command_center_identity_set_hides_gate_and_enables_sync(
+    clean_command_center_caches,
+) -> None:
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert len(at.radio) == 0
+    sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
+    assert sync_button.disabled is False
+```
+
+- [ ] Run them and confirm both FAIL (the gate doesn't exist yet — no radio renders, `sync_everything_btn` has no `disabled` kwarg so `disabled is True` fails):
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE -k identity
+```
+
+- [ ] In `views/setup/command_center.py`, add the import alongside the existing engine imports (:30-36):
+
+```python
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner, save_instance_owner
+```
+
+- [ ] Modify `render_command_center` (:60-97): insert the identity gate right after `st.header(...)`, and pass `disabled=` to the sync button. Replace:
+
+```python
+    st.header("🎛️ Command Center")
+
+    if st.button("⟳ Sync everything", key="sync_everything_btn"):
+```
+
+with:
+
+```python
+    st.header("🎛️ Command Center")
+
+    try:
+        instance_owner = st.session_state.get("instance_owner") or load_instance_owner()
+    except CorruptInstanceOwnerError:
+        instance_owner = None
+    identity_set = bool(instance_owner)
+
+    if not identity_set:
+        st.warning(
+            "This planner instance has no owner set yet. Scanning and "
+            "syncing are unavailable until you answer below."
+        )
+        # index=None (no preselection) is deliberate and load-bearing -- do
+        # NOT restore a default here. Streamlit's default radio behavior
+        # preselects option 0 ("Me"), which would let a reflexive Save click
+        # irrevocably commit an unread default: save_instance_owner() has no
+        # other caller and identity_set latches permanently True once saved,
+        # so this gate never reappears to let the user correct a wrong
+        # answer. On a spouse's install that misattributes their accounts to
+        # "you" -- the design doc calls picking wrong "a real footgun:
+        # picking wrong overwrites your own half of the household"
+        # (docs/superpowers/specs/2026-08-29-instance-identity-design.md:97).
+        # Streamlit >=1.50 is pinned (pixi.toml), well past the 1.27 minimum
+        # for index=None -- verify the pin before touching this if it ever
+        # drops.
+        choice = st.radio(
+            "Which person's data does this planner instance hold?",
+            ["Me", "Spouse"],
+            index=None,
+            key="instance_owner_gate_choice",
+        )
+        if st.button(
+            "Save", key="instance_owner_gate_save", disabled=choice is None
+        ):
+            resolved_owner = "you" if choice == "Me" else "spouse"
+            save_instance_owner(resolved_owner)
+            st.session_state["instance_owner"] = resolved_owner
+            st.rerun()
+
+    # disabled=True (not hidden) while identity is unset -- a hidden control
+    # is indistinguishable from a missing feature (see views/planner.py's
+    # column_config disabled=True convention for the same "visible but
+    # inert" preference over hiding a widget entirely).
+    if st.button("⟳ Sync everything", key="sync_everything_btn", disabled=not identity_set):
+```
+
+- [ ] Run the two new tests and confirm they PASS:
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE -k identity
+```
+
+- [ ] Run the full Command Center test file, plus the two ripple-affected
+  Setup-shell test files (see "Ripple note" above), to confirm no regression
+  in the existing pending-review/sync-summary tests OR in every other Setup
+  shell test that renders Command Center's tab body:
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py tests/test_setup_shell_characterization.py tests/test_shells.py -q -rE
+```
+
+- [ ] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py", "tests/test_setup_shell_characterization.py", "tests/test_shells.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): gate Command Center sync on instance owner"})
+```
+
+---
+
+### Task 6: Replace the three owner-resolution paths in `_sync_scan.py`
+
+**Files:**
+- Modify: `views/ytd_income/_partials/_sync_scan.py`
+- Test: `tests/test_ytd_shell.py` (or a new `tests/test_sync_scan_owner_resolution.py` — either is fine, reuse the `_run_ytd`/`_render_ytd` harness from `tests/test_ytd_shell.py`)
+- Test: `tests/test_views_ytd_income.py` — this file already has three pre-existing tests that hard-code the 2026-07-13 manual owner-confirm selectbox this task retires:
+  `TestOwnerAttributionScanFlow::test_two_owner_koinly_scan_sums_not_overrides`,
+  `TestOwnerAttributionScanFlow::test_no_owner_key_falls_back_to_manual_selectbox`, and
+  `TestCombinedKoinlyAndBrokerageScanFlow::test_combined_koinly_and_brokerage_scan_resolves_both_owners`.
+  They go RED the moment the resolver blocks below land and must be rewritten against `resolve_account_owner`
+  (account override → `instance_owner`, via `save_account_override`/`save_instance_owner`) in the SAME PR as
+  this task — NOT deferred — because the first two encode a real surviving invariant (two owners' amounts
+  must SUM, not overwrite) that must keep failing loudly if attribution ever regresses. Only the second test's
+  NAME/mechanism (manual-selectbox fallback) is retired; rename it to assert the new no-owner-key →
+  `instance_owner` fallback instead of deleting it, so that path keeps coverage.
+
+**CRITICAL WARNING — read before editing:** the selectbox at `_sync_scan.py:300-321` (`key=f"account_type_confirm_{account_number}"`) is the account TAX-STATUS confirm (taxable / traditional_ira / roth_ira), NOT an owner selectbox. It must NOT be touched or deleted. Only the two owner selectboxes go: `brokerage_owner_confirm_{account_number}` / `brokerage_owner_correct_{account_number}` (:150-175) and `koinly_owner_confirm_{report.captured_at}` / `koinly_owner_correct_{report.captured_at}` (:191-219).
+
+**These tests MUST actually click "Scan folder".** `_run_ytd`'s default mocks leave `by_account` empty, so a test that only calls `_run_ytd(...)` never enters the owner-selectbox branch at all and passes identically before AND after this change — a worthless test. Every negative assertion below is therefore paired with a positive control (`"Imported:"` success banner) proving the scan branch really executed.
+
+- [ ] Append these shared fixture builders to `tests/test_ytd_shell.py` (they feed `run_folder_scan`, which `_sync_scan.py` imports at module level from `views._shared`, so it is monkeypatchable on `sync_scan_mod` itself; the `engine.brokerage_statement_pdf` helpers are imported INSIDE `render_sync_scan_partial`, so those must be patched on that engine module instead):
+
+```python
+def _canned_scan_result(brokerage_records=(), koinly_reports=()):
+    """A ScanIngestResult whose ``.raw`` carries the given parsed records.
+
+    ``run_folder_scan`` returns ScanIngestResult and ``_sync_scan.py`` reads
+    ``.raw`` (a PdfImportResult) off it -- see engine/data_sources/scan_ingest.py.
+    """
+    from engine.data_sources.scan_ingest import ScanIngestResult
+    from engine.pdf_import import PdfImportResult
+
+    raw = PdfImportResult(
+        brokerage_records=list(brokerage_records),
+        koinly_reports=list(koinly_reports),
+    )
+    return ScanIngestResult(
+        brokerage_count=len(raw.brokerage_records),
+        form_1040_count=0,
+        koinly_count=len(raw.koinly_reports),
+        skipped_count=0,
+        unrecognized_count=0,
+        magi_candidates_recorded=0,
+        errors=[],
+        raw=raw,
+        pdf_cache={},
+    )
+
+
+def _brokerage_record(account_number="****-*123", account_type="taxable", owner_key=None):
+    from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+    return BrokerageStatementRecord(
+        account_number=account_number,
+        broker="schwab",
+        account_type=account_type,
+        statement_period_end="2026-06-30",
+        interest_taxable_ytd=10.0,
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=20.0,
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=0.0,
+        ltcg_net_ytd=0.0,
+        captured_at="2026-06-30T00:00:00",
+        owner_key=owner_key,
+    )
+
+
+def _koinly_report(owner_key=None):
+    from engine.koinly_report_pdf import KoinlyReport
+
+    return KoinlyReport(
+        tax_year=2026,
+        crypto_stcg=100.0,
+        crypto_ltcg=200.0,
+        crypto_income=50.0,
+        captured_at="2026-06-30T00:00:00",
+        owner_key=owner_key,
+    )
+
+
+def _patch_scan(monkeypatch, tmp_path, *, brokerage_records=(), koinly_reports=()):
+    """Make the "Scan folder" button branch runnable and write-free."""
+    import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
+    import engine.koinly_report_pdf as koinly_report_pdf_mod
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    monkeypatch.setattr(
+        brokerage_statement_pdf_mod, "validate_local_folder", lambda raw: (tmp_path, None)
+    )
+    monkeypatch.setattr(brokerage_statement_pdf_mod, "save_statement_folder_path", lambda p: None)
+    monkeypatch.setattr(brokerage_statement_pdf_mod, "save_statement_records", lambda d: None)
+    monkeypatch.setattr(brokerage_statement_pdf_mod, "load_account_type_overrides", lambda: {})
+    monkeypatch.setattr(koinly_report_pdf_mod, "save_koinly_report", lambda r: None)
+    monkeypatch.setattr(sync_scan_mod, "save_ledger", lambda ledger: None)
+    monkeypatch.setattr(sync_scan_mod, "save_ytd_snapshot", lambda snap: None)
+    monkeypatch.setattr(
+        sync_scan_mod,
+        "run_folder_scan",
+        lambda folder_path: _canned_scan_result(
+            brokerage_records=brokerage_records, koinly_reports=koinly_reports
+        ),
+    )
+
+
+def _scan(at):
+    """Click "Scan folder" and rerun. Requires instance_owner already set --
+    the button is disabled while identity is unset (see the gating step below).
+    """
+    at.button(key="scan_pdf_folder_btn").click().run()
+    return at
+```
+
+- [ ] Append the failing behavior tests to the same file:
+
+```python
+def test_no_brokerage_owner_selectbox_renders_after_scan(monkeypatch, tmp_path) -> None:
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    # Positive control: the scan branch really ran (otherwise the negative
+    # assertions below would pass trivially).
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert not any(w.key == "brokerage_owner_confirm_****-*123" for w in at.selectbox)
+    assert not any(w.key == "brokerage_owner_correct_****-*123" for w in at.selectbox)
+
+
+def test_no_koinly_owner_selectbox_renders_after_scan(monkeypatch, tmp_path) -> None:
+    _patch_scan(monkeypatch, tmp_path, koinly_reports=[_koinly_report(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert not any(w.key == "koinly_owner_confirm_2026-06-30T00:00:00" for w in at.selectbox)
+    assert not any(w.key == "koinly_owner_correct_2026-06-30T00:00:00" for w in at.selectbox)
+
+
+def test_account_type_confirm_selectbox_still_renders_for_unknown_tax_status(
+    monkeypatch, tmp_path
+) -> None:
+    """The tax-status confirm selectbox is NOT an owner prompt and must survive.
+
+    ``"unknown"`` IS a valid ``ACCOUNT_TYPES`` member
+    (engine/brokerage_statement_pdf.py:80), so the fixture states it directly.
+    """
+    _patch_scan(
+        monkeypatch,
+        tmp_path,
+        brokerage_records=[_brokerage_record(account_number="****-*999", account_type="unknown")],
+    )
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(w.key == "account_type_confirm_****-*999" for w in at.selectbox)
+```
+
+- [ ] Append the scan-gating tests (spec requirement: scan is unavailable while `instance_owner` is unset, exactly like Command Center's sync button in Task 5):
+
+```python
+def test_scan_button_disabled_when_instance_owner_unset(monkeypatch) -> None:
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "scan_pdf_folder_btn").disabled is True
+
+
+def test_scan_button_enabled_when_instance_owner_set(monkeypatch) -> None:
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    at.run()
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "scan_pdf_folder_btn").disabled is False
+```
+
+- [ ] Run and confirm they currently FAIL — the owner selectboxes still render today, and `scan_pdf_folder_btn` has no `disabled` kwarg so `disabled is True` fails:
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k "owner_selectbox or account_type_confirm or scan_button"
+```
+
+- [ ] In `views/ytd_income/_partials/_sync_scan.py`, replace the `engine.pdf_owner` import block (:12-18) with the new resolvers:
+
+```python
+from engine.account_attribution import load_account_overrides, resolve_account_owner
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
+```
+
+- [ ] At the top of `render_sync_scan_partial` (:26-27), resolve `instance_owner`/`account_overrides` once for the whole render:
+
+```python
+def render_sync_scan_partial(hh: Household) -> None:
+    # Resolve once per render. "household" is a defensive last-resort only
+    # (mirrors the old ad-hoc `or "household"` default this replaces) --
+    # Command Center's identity gate (views/setup/command_center.py) is the
+    # real prevention for instance_owner being unset by the time a scan runs.
+    instance_owner = st.session_state.get("instance_owner")
+    if not instance_owner:
+        try:
+            instance_owner = load_instance_owner()
+        except CorruptInstanceOwnerError:
+            instance_owner = None
+    # identity_set is computed BEFORE the "household" fallback below -- after
+    # it, the value is always truthy and the gate would never fire.
+    identity_set = bool(instance_owner)
+    instance_owner = instance_owner or "household"
+    account_overrides = load_account_overrides()
+
+    # --- Section 1: YTD Income Entry ---
+    st.markdown("### YTD Income Entry")
+```
+
+- [ ] Gate the "Scan folder" button on the same identity, matching Task 5's `disabled=` precedent (visible but inert — never hide the control). Replace `_sync_scan.py:113`:
+
+```python
+        if st.button("Scan folder", key="scan_pdf_folder_btn"):
+```
+
+with:
+
+```python
+        if not identity_set:
+            st.caption(
+                "Scanning is unavailable until this planner instance has an "
+                "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+            )
+        # disabled=True (not hidden), same convention as Command Center's
+        # "⟳ Sync everything" button in Task 5.
+        if st.button("Scan folder", key="scan_pdf_folder_btn", disabled=not identity_set):
+```
+
+- [ ] Replace the brokerage owner block (:150-178, from `if stmt_taxable_now:` through `save_owner_map(owner_map)`) with:
+
+```python
+                if stmt_taxable_now:
+                    for account_number, rec in stmt_taxable_now.items():
+                        resolved = resolve_account_owner(
+                            rec.broker, account_number, account_overrides, instance_owner
+                        )
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+
+                    save_ledger(ledger)
+```
+
+- [ ] Replace the Koinly owner block (**:191-223**, from `if result.koinly_reports:` through and INCLUDING `save_koinly_report(result.koinly_reports[-1])` at :223) with the block below. **Boundary warning:** the replacement text below already ends with its own `save_koinly_report(result.koinly_reports[-1])`. Stopping the replacement at :222 (`save_owner_map(owner_map)`) leaves the original :223 in place and you get that call TWICE — a duplicated Koinly-report write. Delete through :223 inclusive.
+
+```python
+                if result.koinly_reports:
+                    from engine.koinly_report_pdf import save_koinly_report
+
+                    for report in result.koinly_reports:
+                        resolved = resolve_account_owner(
+                            "koinly", report.owner_key or "unknown", account_overrides, instance_owner
+                        )
+                        ledger = write_koinly_contribution(ledger, resolved, report)
+
+                    save_ledger(ledger)
+                    save_koinly_report(result.koinly_reports[-1])
+```
+
+- [ ] Replace the `owner_map = load_owner_map()` line that preceded the brokerage block (:145) — delete it, it's no longer used in this file until Task 9 reintroduces it read-only.
+
+- [ ] Replace the Apply handler's silent default (:325-330):
+
+```python
+                if st.button("Apply to YTD snapshot", key="apply_statements_btn"):
+                    owner_map = load_owner_map()
+                    for rec in stmt_taxable.values():
+                        resolved = resolve_owner(rec.owner_key, owner_map) or "household"
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+                    save_ledger(ledger)
+```
+
+with:
+
+```python
+                if not identity_set:
+                    st.caption(
+                        "Applying is unavailable until this planner instance has an "
+                        "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+                    )
+                # disabled=True (not hidden), same convention as "Scan folder" above --
+                # this button independently re-resolves owners from disk-loaded
+                # records (resolve_account_owner below), so gating the scan alone
+                # would leave this a live write path to "household" attribution.
+                if st.button(
+                    "Apply to YTD snapshot",
+                    key="apply_statements_btn",
+                    disabled=not identity_set,
+                ):
+                    for account_number, rec in stmt_taxable.items():
+                        resolved = resolve_account_owner(
+                            rec.broker, account_number, account_overrides, instance_owner
+                        )
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+                    save_ledger(ledger)
+```
+
+**Amended scope note (post-review correction, 2026-08-31):** the original version of this task deliberately left "Apply to YTD snapshot" UNGATED, reasoning that the spec's disable list covered scan/sync/import only. A quality review found a concrete silent-misattribution path this created: `statement_by_account` is loaded from disk UNCONDITIONALLY every render (no identity check), so records from an earlier scan (made while identity WAS set) remain populated even after identity later reads unset (session_state cleared, `CorruptInstanceOwnerError`, or a fresh tab before Command Center's gate has run). The Apply button then independently re-resolves owners via `resolve_account_owner(..., instance_owner)` with `instance_owner` having fallen back to `"household"` — silently misattributing real records to the wrong owner through a second entry point that bypassed the scan gate entirely. Gating the scan button alone was therefore insufficient: both write paths call `resolve_account_owner`, so both must be gated identically. Fixed and both buttons gated together; see `fix(instance-identity): gate the Apply button so unset identity cannot attribute to household`.
+
+- [ ] Leave the `if stmt_unknown:` / `key=f"account_type_confirm_{account_number}"` block (:300-321) completely untouched — verify by re-reading it after your edits.
+
+- [ ] Run the five new tests and confirm the negative ones now PASS, the account-type-confirm positive check still passes, and both scan-gating tests pass:
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k "owner_selectbox or account_type_confirm or scan_button"
+```
+
+**NOTE:** the `-k` filter above does NOT catch the three pre-existing `tests/test_views_ytd_income.py`
+tests named in the Files list — they go RED under this task's changes but a `-k`-scoped run silently
+misses them (this is exactly how they shipped RED once already). Rewrite them (see Files list above)
+BEFORE running the full-file check below, and confirm that check explicitly by name:
+
+```bash
+pixi run -e ci python -m pytest tests/test_views_ytd_income.py -q -rE -k "OwnerAttributionScanFlow or CombinedKoinlyAndBrokerageScanFlow"
+```
+
+- [ ] Run the full YTD shell + views test files to confirm no regression:
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py tests/test_views_ytd_income.py -q -rE
+```
+
+- [ ] Lint and type-check (this step will surface any now-unused import, e.g. leftover `OWNER_ROLES`/`resolve_owner`/`learn_owner`/`save_owner_map` references — remove them):
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): resolve scan owners from instance and gate the scan button"})
+```
+
+---
+
+### Task 7: Attribution table in Command Center
+
+**Files:**
+- Modify: `views/setup/command_center.py`
+- Test: `tests/test_command_center_view.py`
+
+**Scope note:** FinExtract portfolio accounts are NOT included in this table — `engine/portfolio_sync/shapes.py:80-92`'s `AccountSummary` has no `account_number` field (only `account_type`/`account_name`/`owner`), so it cannot be joined against the statement-PDF ledger's `(broker, account_number)` keys. This table covers statement-derived accounts only.
+
+- [ ] Append a failing test to `tests/test_command_center_view.py`:
+
+```python
+def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    import views.setup.command_center as command_center_mod
+
+    monkeypatch.setattr(
+        command_center_mod,
+        "load_statement_records",
+        lambda: {
+            "****-*123": type(
+                "Rec", (), {"broker": "schwab", "account_type": "taxable", "owner_key": None}
+            )()
+        },
+    )
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        st.session_state["instance_owner"] = "you"
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert any("****-*123" in c.value for c in at.caption + at.markdown)
+```
+
+- [ ] Run it and confirm it FAILS (no attribution table exists yet):
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE -k attribution_table
+```
+
+- [ ] In `views/setup/command_center.py`, add the imports:
+
+```python
+from engine.account_attribution import (
+    delete_account_override,
+    load_account_overrides,
+    save_account_override,
+)
+from engine.brokerage_statement_pdf import load_statement_records
+```
+
+**Blocker you must handle first — `render_command_center` has an early `return`.** At `views/setup/command_center.py:82-84` the function does:
+
+```python
+    if not pending:
+        st.success("All data sources reconciled ✓")
+        return
+```
+
+and the function body then ends with the card loop at `:95-97`. So code appended "at the end" is unreachable whenever `_pending_review` is empty — which is exactly what this task's test (and Task 5's) sets up. You MUST convert that early return into an `if/else` first, or your new test will fail for a reason that has nothing to do with your code.
+
+- [ ] Add a new render helper and call it from `render_command_center`, after the existing pending-review loop (end of the function, :95-97):
+
+```python
+def _render_attribution_table(instance_owner: str) -> None:
+    """List statement-derived accounts with their resolved owner and tax
+    status, letting the user set/clear a per-account override. FinExtract
+    portfolio accounts are NOT included -- see this task's scope note."""
+    by_account = load_statement_records()
+    if not by_account:
+        return
+    overrides = load_account_overrides()
+    st.subheader("Account attribution")
+    for account_number, rec in sorted(by_account.items()):
+        resolved = resolve_account_owner(rec.broker, account_number, overrides, instance_owner)
+        col_label, col_owner, col_clear = st.columns([3, 2, 1])
+        col_label.caption(f"{account_number} ({rec.broker}, {rec.account_type})")
+        choice = col_owner.selectbox(
+            f"Owner for {account_number}",
+            ["you", "spouse", "household"],
+            index=["you", "spouse", "household"].index(resolved),
+            key=f"attribution_owner_{account_number}",
+            label_visibility="collapsed",
+        )
+        if choice != resolved:
+            save_account_override(rec.broker, account_number, choice)
+            st.rerun()
+        if (rec.broker, account_number) in overrides and col_clear.button(
+            "Clear", key=f"attribution_clear_{account_number}"
+        ):
+            delete_account_override(rec.broker, account_number)
+            st.rerun()
+```
+
+Add the missing `resolve_account_owner` import alongside the others.
+
+- [ ] Now remove the early `return` so the tail of `render_command_center` is reachable, and call the helper there. Replace the whole block from `if not pending:` (:82) through the end of the function (:97):
+
+```python
+    if not pending:
+        st.success("All data sources reconciled ✓")
+        return
+
+    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
+    # only) — save_committed() is the actual guard against overwriting it.
+    try:
+        committed_json = load_committed(COMMITTED_PATH) or {}
+    except CorruptCommittedCacheError:
+        committed_json = {}
+
+    for field_key in sorted(pending):
+        with st.container(border=True):
+            _render_field_card(field_key, committed_json, store, choices)
+```
+
+with:
+
+```python
+    if not pending:
+        st.success("All data sources reconciled ✓")
+    else:
+        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+        # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
+        # only) — save_committed() is the actual guard against overwriting it.
+        try:
+            committed_json = load_committed(COMMITTED_PATH) or {}
+        except CorruptCommittedCacheError:
+            committed_json = {}
+
+        for field_key in sorted(pending):
+            with st.container(border=True):
+                _render_field_card(field_key, committed_json, store, choices)
+
+    # Reachable in BOTH branches -- this is why the early return above became
+    # an else. instance_owner/identity_set come from Task 5's gate at the top
+    # of this function.
+    if identity_set:
+        _render_attribution_table(instance_owner)
+```
+
+This is a pure control-flow change: the `if not pending` branch still renders only the success message, and the loop body is byte-identical apart from indentation. The stores are still not loaded when nothing is pending.
+
+END OF REPLACEMENT.
+
+- [ ] Run the new test and confirm it PASSES:
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE -k attribution_table
+```
+
+- [ ] Run the full Command Center test file:
+
+```bash
+pixi run -e ci python -m pytest tests/test_command_center_view.py -q -rE
+```
+
+- [ ] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/command_center.py", "tests/test_command_center_view.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): add per-account attribution table to Command Center"})
+```
+
+---
+
+#### Task 7 follow-up (post-merge fix): Clear no-op + uncaught corrupt-store crash
+
+Two defects were found in the attribution table shipped above and fixed in a
+follow-up commit (`fix(instance-identity): make Clear actually clear and
+survive a corrupt override store`):
+
+**Defect 1 — Clear was a no-op.** `delete_account_override` removed the
+override on disk, but the selectbox's `key`-bound session-state entry
+(`attribution_owner_{account_number}`) was never cleared. **Streamlit only
+honours a keyed widget's `index=` kwarg on that widget's FIRST creation —
+on every later rerun, the persisted `session_state[key]` value wins over
+`index=`, unconditionally.** So on the render right after Clear: `resolved`
+correctly fell back to `instance_owner` (the override was gone), but the
+selectbox's `choice` still returned the stale pre-Clear value from
+session-state → `choice != resolved` fired → `save_account_override`
+immediately re-wrote the override that had just been deleted. Net effect:
+two redundant disk writes and Clear did nothing observable.
+
+Fix: `st.session_state.pop(f"attribution_owner_{account_number}", None)`
+before `st.rerun()` on the Clear success path, forcing the widget to
+re-derive its value from `index=resolved` on the next render.
+
+The SET path (choosing a new owner from the dropdown) does **not** need the
+same pop. Reasoning: Streamlit itself sets `session_state[key]` to `choice`
+the moment the user interacts with the widget, and after a successful
+`save_account_override(..., choice)`, the very next render's `resolved`
+recomputes to that same `choice` (the override now on disk matches it) — so
+the keyed widget's already-current session-state value and the freshly
+resolved value agree trivially. The desync is specific to Clear, where the
+override disappears out from under a session-state value that predates the
+deletion.
+
+**Defect 2 — an uncaught `CorruptAccountAttributionError` crashed the whole
+Command Center render**, not just the table. Neither `save_account_override`
+nor `delete_account_override` was wrapped, even though this module already
+has an established idiom for exactly this situation: `CorruptInstanceOwnerError`
+is caught at the instance-identity gate, and `CorruptCommittedCacheError` is
+caught around `load_committed` (both degrade to a visible `st.warning`/read
+fallback rather than propagating). `app.py`'s `save_committed` guard follows
+the same pattern with an `st.warning` naming the corrupt path.
+
+Fix: wrap both calls in `try/except CorruptAccountAttributionError as exc:
+st.error(...)`, naming `exc.path` and stating the override was NOT
+saved/cleared, then continue rendering (no `st.rerun()` on the exception
+path — the widget's current selection stays as the user last set it,
+nothing was persisted).
+
+Tests added to `tests/test_command_center_view.py`:
+`test_attribution_clear_actually_clears_and_does_not_resave` (genuinely
+drives `.click()` + rerun, then asserts the override is gone on disk AND a
+spy on `save_account_override` was never re-invoked — a static render
+assertion would not have caught Defect 1),
+`test_attribution_save_corrupt_store_shows_error_not_exception`, and
+`test_attribution_delete_corrupt_store_shows_error_not_exception` (both
+mock the respective function with `side_effect=CorruptAccountAttributionError`
+and assert `at.error` fires with no `at.exception`).
+
+Mutation check performed: each fix was independently commented out,
+confirmed the corresponding new test failed for the expected reason
+(stale override re-saved / uncaught exception propagated through
+`AppTest`), then restored and confirmed all three tests green again.
+
+---
+
+### Task 8: Bundle export/import symmetry
+
+**Files:**
+- Modify: `views/setup/data_bridge.py`
+- Test: `tests/test_shells.py`
+
+**There is no `tests/test_data_bridge_view.py` — do not create one.** `tests/test_shells.py` is the only file that exercises `views/setup/data_bridge.py` under `AppTest`, and it does so ONLY via `monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)` so the embedding Setup shell renders — there is no export or Apply harness anywhere in this repo, and nothing clicks "Apply". So this task must BUILD a new `AppTest.from_function` harness in `tests/test_shells.py`, written in the `_render_ytd`/`_run_shell` style (all imports inside the target function; the target's own source is exec'd in a fresh namespace, so no module-level names from the test file are visible inside it). Copy the `load_pubkey` monkeypatch idiom from `_run_shell` (:122-128).
+
+**CORRECTION (2026-08-31, during execution) — the original rationale here was factually wrong.** It claimed: *"The import 'Apply' path cannot be driven end-to-end under `AppTest`** — it requires `bundle_file is not None` from an `st.file_uploader`, which `AppTest` cannot populate. So the target-owner derivation is extracted into a testable module-level helper (`_import_target_owner`, added below) and the test asserts on the helper's value plus the absence of the `pc_role` radio, rather than on an `apply_bundle(...)` call it cannot trigger. Removing the `pc_role` radio also leaves a second, untested reference to it at `data_bridge.py:348` (the post-Apply success message) — see the dedicated sub-step below for that edit; no test in this file can catch a miss there."* That claim has been retracted.
+
+A direct probe REFUTED it. `AppTest` **can** populate `st.file_uploader`: `streamlit.testing.v1` exposes `FileUploader` elements, and both `.upload(name, content, mime_type=...)` and `.set_value(...)` work, verified end-to-end with real bytes readable via `bundle_file.read()` inside the Apply body. Empirically confirmed during execution: the `file_uploader` and `button` widget states apply together in a single `.run()`.
+
+Consequences:
+
+1. The `_import_target_owner` / `_this_instance_owner` extraction (`views/setup/data_bridge.py:238` and `:225`) is **unnecessary, though not incorrect**. It shipped and is RETAINED — it reads well, and `_this_instance_owner` has an independent job degrading a corrupt identity file to None — but it is no longer load-bearing for testability, and nothing should cite untestability as its reason to exist.
+2. The post-Apply success message — `views/setup/data_bridge.py:381`, which this plan tracked as the dangling `pc_role` line at `:348` — IS coverable. The retracted claim that "no test in this file can catch a miss there" was wrong. It is now covered by `test_apply_uploads_end_to_end_imports_as_other_owner`. Mutation-proven: reverting that line to reference an undefined `pc_role` turns the test RED with `NameError: name 'pc_role' is not defined`. This line had never been executed by any test in the repo before.
+3. An end-to-end Apply test is strictly stronger than a helper-only assertion, because it exercises the derivation THROUGH its call site rather than beside it.
+
+- [ ] Append the failing export/import tests to `tests/test_shells.py`:
+
+```python
+def test_export_stamps_owner_from_instance(monkeypatch) -> None:
+    """Export from a spouse-set instance stamps owner="spouse" in the bundle,
+    not the old hardcoded "you"."""
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_build_bundle(scalars, snapshot, ledger, *, owner="you", ytd=None, grants=None):
+        captured["owner"] = owner
+        return {"format_version": 4}
+
+    # build_bundle/seal are imported INSIDE _handle_personal_exports (deferred
+    # for Pyodide), so they must be patched on their defining modules.
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", _fake_build_bundle)
+    monkeypatch.setattr(data_bridge_crypto_mod, "seal", lambda payload, pubkey: b"sealed")
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {"koinly": {}, "brokerage": {}})
+    monkeypatch.setattr(data_bridge_mod, "load_ytd_snapshot", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_exports
+
+        st.session_state["instance_owner"] = "spouse"
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert captured["owner"] == "spouse"
+
+
+def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
+    """Import into a "you" instance targets "spouse" automatically; the
+    "Whose data?" pc_role radio no longer renders."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads, _import_target_owner
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+        # The derivation helper is asserted directly here as a focused unit
+        # check (AppTest *can* populate the file_uploader and drive the real
+        # Apply body -- see test_apply_uploads_end_to_end_imports_as_other_owner
+        # below, which covers that end-to-end path instead).
+        st.session_state["_test_target_owner"] = _import_target_owner()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert not any(w.key == "pc_role" for w in at.radio)
+    assert at.session_state["_test_target_owner"] == "spouse"
+```
+
+- [ ] Append the import-gating tests (spec requirement: import is unavailable while `instance_owner` is unset, same `disabled=` precedent as Task 5's sync button and Task 6's scan button):
+
+```python
+def _run_uploads(monkeypatch, instance_owner: str | None):
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str | None = None) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        if owner is not None:
+            st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+    return at
+
+
+def test_apply_uploads_disabled_when_instance_owner_unset(monkeypatch) -> None:
+    at = _run_uploads(monkeypatch, None)
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
+
+
+The block above originally ended with `test_apply_uploads_enabled_when_instance_owner_set`, which was VACUOUS and has since been removed from the codebase. `disabled` defaults to `False` when the `disabled=` kwarg is absent entirely, so with identity set, the expected value and the deleted-gate value are indistinguishable — no assertion about the *enabled* state can detect deletion of the gate. `test_apply_uploads_disabled_when_instance_owner_unset` above is structurally the only possible guard for this gate. Deleting the `disabled=not identity_set` kwarg from the shipped code leaves the end-to-end test below GREEN, and that is correct by design, not a gap. This is the third instance of this container-default trap in this plan (Tasks 4, 5, and 8) — and this instance was copied verbatim out of the plan's own test code, so plan review reproduces the trap rather than catching it.
+
+The real shipped replacement is `test_apply_uploads_end_to_end_imports_as_other_owner` (`tests/test_shells.py:741-824`, committed as `e48eb866`), pasted verbatim below:
+
+```python
+def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
+    """Supersedes the removed test_apply_uploads_enabled_when_instance_owner_set.
+
+    That test was vacuous: it asserted ``disabled is False`` on the Apply
+    button, but ``False`` is ALSO exactly what Streamlit produces when the
+    ``disabled=`` kwarg is omitted entirely (the container-default trap) --
+    it passed identically against code with the gate deleted (a mutation
+    check confirmed 3/4, not 4/4). No assertion about the *enabled* state
+    can distinguish ``disabled=not identity_set`` (with identity set) from a
+    missing kwarg; they are behaviourally identical.
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` above remains
+    the gate's only real guard and is unchanged.
+
+    This test instead drives the real Apply path end to end: it populates
+    the ``bundle_upload`` file_uploader with real bytes and clicks Apply,
+    asserting the import ran as "spouse". This also newly covers the
+    success message rendered at ``views/setup/data_bridge.py:381``
+    (``st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")``),
+    which had never had test coverage in this repo before this test.
+    """
+    import json
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    minimal_bundle = {
+        "format_version": 4,
+        "sections": {
+            "setup_scalars": {},
+            "portfolio": {"accounts": []},
+        },
+    }
+    payload_bytes = json.dumps(minimal_bundle).encode("utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
+        captured["target_owner"] = target_owner
+        return existing_snapshot, existing_ledger
+
+    # open_uploaded_payload is imported INSIDE _handle_personal_uploads (deferred
+    # for Pyodide), so it must be patched on its defining module -- same idiom
+    # as `seal` in test_export_stamps_owner_from_instance above.
+    monkeypatch.setattr(
+        data_bridge_crypto_mod, "open_uploaded_payload", lambda raw, privkey: payload_bytes
+    )
+    monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
+    monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
+    monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    # Neutralise st.rerun() at data_bridge.py:382 so the success element
+    # (rendered immediately before it) survives to the end of this run
+    # instead of being wiped by a fresh script execution.
+    monkeypatch.setattr(st_mod, "rerun", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    uploader = next(w for w in at.file_uploader if w.key == "bundle_upload")
+    uploader.set_value(("roth_bridge.enc", payload_bytes, "application/octet-stream"))
+    apply_button = next(b for b in at.button if b.key == "apply_uploads")
+    apply_button.set_value(True)
+    at.run()
+
+    assert not at.exception
+    assert captured["target_owner"] == "spouse"
+
+    success_texts = [s.value for s in at.success]
+    assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
+```
+
+- [ ] Run them and confirm they FAIL — `_import_target_owner` does not exist yet (ImportError), export hardcodes `owner="you"`, a `pc_role` radio still renders, and `apply_uploads` has no `disabled` kwarg:
+
+```bash
+pixi run -e ci python -m pytest tests/test_shells.py -q -rE -k "export_stamps_owner or import_targets or apply_uploads"
+```
+
+- [ ] In `views/setup/data_bridge.py`, add the import (the module imports nothing from `engine.instance_identity` today) alongside the other engine imports (:11-25, alphabetically between `engine.data_sources.record` and `engine.pdf_ledger`):
+
+```python
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
+```
+
+- [ ] Add the two module-level helpers just above `_handle_personal_uploads` (:224):
+
+```python
+def _this_instance_owner() -> str | None:
+    """This instance's owner, or None when unset/corrupt.
+
+    A corrupt file degrades to None (same "unset" treatment as a first-run
+    install) rather than crashing the tab -- Command Center's identity gate
+    is where the user fixes it (see app.py's _seed_session_state, Task 4).
+    """
+    try:
+        return st.session_state.get("instance_owner") or load_instance_owner()
+    except CorruptInstanceOwnerError:
+        return None
+
+
+def _import_target_owner() -> str:
+    """An imported bundle always belongs to the OTHER household member.
+
+    Replaces the "Whose data?" pc_role radio: this instance's own identity is
+    already known, so asking again only invites a mis-click that overwrites
+    the wrong owner's slot. Defaults to a "you" instance (so imports target
+    "spouse") when identity is unset -- the Apply button is disabled in that
+    state anyway.
+    """
+    return "spouse" if (_this_instance_owner() or "you") == "you" else "you"
+```
+
+- [ ] At the export call site (:476), replace:
+
+```python
+            bundle = build_bundle(scalars, snapshot, ledger, owner="you", ytd=ytd, grants=grants)
+```
+
+with:
+
+```python
+            export_owner = _this_instance_owner() or "you"
+            bundle = build_bundle(scalars, snapshot, ledger, owner=export_owner, ytd=ytd, grants=grants)
+```
+
+- [ ] At the import block (:247-259), remove the `pc_role` radio:
+
+```python
+        pc_role = st.radio(
+            "Whose data?",
+            ["Me", "Spouse"],
+            horizontal=True,
+            key="pc_role",
+        )
+```
+
+and replace its caption line's mention of the toggle:
+
+```python
+        st.caption(
+            "Upload your encrypted bundle for a personalized session. "
+            "Values stay in this browser only; refresh = back to demo. "
+            "`.enc` files require the private key configured above. "
+            "An imported bundle is automatically attributed to the other "
+            "household member -- this instance's own identity never changes."
+        )
+```
+
+- [ ] `pc_role` is also referenced later in this same block, at `data_bridge.py:348`, inside the success message printed after a successful bundle apply:
+
+```python
+                    st.success(f"Applied: {bundle_file.name} ({pc_role.lower()}). Rerunning…")
+```
+
+  Replace it with:
+
+```python
+                    st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")
+```
+
+  **Warning: this line is NOT covered by any test in this plan.** The Apply body is unreachable under `AppTest` (no `st.file_uploader` support), so none of this task's tests can catch a missed reference here. `target_owner` (assigned at :279, becoming `_import_target_owner()` after the next sub-step below) is in scope at :348 at the same indentation level, and its value is already lowercase ("you"/"spouse"), so `.lower()` is dropped, not kept. Skipping this edit leaves a dangling `pc_role` name that raises `NameError: name 'pc_role' is not defined` — but only on a real upload, silently, since no test exercises the Apply body.
+
+- [ ] At the import target-owner derivation (:279), replace:
+
+```python
+                    target_owner = "spouse" if pc_role == "Spouse" else "you"
+```
+
+with:
+
+```python
+                    target_owner = _import_target_owner()
+```
+
+- [ ] Gate the Apply button on identity, same `disabled=` precedent as Task 5 (visible but inert — never hide it). Replace `data_bridge.py:265-266`:
+
+```python
+        col_a, col_b = st.columns(2)
+        if col_a.button("Apply", key="apply_uploads", use_container_width=True) and bundle_file is not None:
+```
+
+with:
+
+```python
+        identity_set = bool(_this_instance_owner())
+        if not identity_set:
+            st.caption(
+                "Importing is unavailable until this planner instance has an "
+                "owner — set it on **🎛️ Command Center**."
+            )
+        col_a, col_b = st.columns(2)
+        apply_clicked = col_a.button(
+            "Apply",
+            key="apply_uploads",
+            use_container_width=True,
+            disabled=not identity_set,
+        )
+        if apply_clicked and bundle_file is not None:
+```
+
+- [ ] Run the new tests and confirm they PASS:
+
+```bash
+pixi run -e ci python -m pytest tests/test_shells.py -q -rE -k "export_stamps_owner or import_targets or apply_uploads"
+```
+
+- [ ] Run the full shells test file to confirm the existing Setup-shell tests still pass:
+
+```bash
+pixi run -e ci python -m pytest tests/test_shells.py -q -rE
+```
+
+- [ ] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [ ] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/setup/data_bridge.py", "tests/test_shells.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): derive bundle owner from instance and gate import on identity"})
+```
+
+**Post-shipment spec-gate fix (2026-08-31) — two real gaps found against this design doc:**
+
+**Gap 1 — export had no identity gate.** `_handle_personal_exports` gated nothing on `identity_set`: `export_owner = _this_instance_owner() or "you"` (old `:509`) was reachable whenever identity was unset OR `.instance_owner.json` was corrupt (`_this_instance_owner` degrades both to `None`), stamping `"you"` from a possibly spouse-owned instance. That poisons the RECEIVING instance — design spec:127-131 says a bundle self-identifying as yours is exactly what must be eliminated. `st.download_button`'s `data=` argument is evaluated EAGERLY on every render, so `disabled=True` alone would stop the download but NOT stop the mislabelled bundle from being *built*. Fix: `identity_set = bool(_this_instance_owner())` computed once, an `if not identity_set:` caption ("Export is unavailable until this planner instance has an owner..."), and the entire `build_bundle`/`seal`/`json.dumps` sequence moved inside `if identity_set:` (with `export_data = b""` in the `else`), so no bundle is built at all when identity is unset — plus `disabled=not identity_set` on the `st.download_button` itself, mirroring the `apply_uploads` gate precedent. The `or "you"` fallback is left in place as defence in depth with a comment noting the gate makes it unreachable.
+
+**Gap 2 — the "Whose data?" replacement caption never named a concrete owner.** Design spec:97 requires "a statement of what will happen (\"Importing as: Spouse's data\") with no control", but the shipped caption only said an import "is automatically attributed to the other household member" — no concrete name before Apply. Fix: when `identity_set`, `_handle_personal_uploads` now renders `f"Importing as: **{label}** — this instance's own identity never changes."` where `label` is `"Spouse's data"` or `"Your data"` derived from `_import_target_owner()`. When identity is unset, the existing "Importing is unavailable..." caption is unchanged (the target would be meaningless).
+
+Tests added to `tests/test_shells.py`: `test_export_disabled_and_build_skipped_when_instance_owner_unset` (spies `st.download_button` directly, since `AppTest`'s element-tree parser has no case for the `download_button` proto type and exposes no `at.download_button` accessor — verified against `streamlit/testing/v1/element_tree.py`; asserts `disabled is True` AND that a `build_bundle` spy is never called) and `test_import_statement_names_concrete_target_owner` (parametrized over `instance_owner="you"`/`"spouse"`, asserts the caption text names the opposite owner). Mutation-proven 3/3: reverting `disabled=not identity_set` turns the export test red (`KeyError: 'disabled'`); reverting the `if identity_set:` build gate to unconditional turns it red (`TypeError: Object of type MagicMock is not JSON serializable`, proving `build_bundle` was in fact called); reverting the "Importing as" caption to the old generic text turns both parametrized naming-test cases red. Ripple-checked (no changes needed): `tests/test_shells.py`, `tests/test_setup_shell_characterization.py` (`EXPECTED_WIDGET_KEYS` unaffected — no widget keys added/removed, only caption text and a `disabled=` kwarg on the existing `export_bundle`/`apply_uploads` keys), `tests/test_command_center_view.py`, `tests/test_ytd_shell.py`, `tests/test_views_ytd_income.py`, `tests/test_app_seed_session_state.py`, `tests/conftest.py`, `tests/test_account_attribution.py`, `tests/test_instance_identity.py`.
+
+Committed together with this plan-doc amendment in one commit: `fix(instance-identity): gate export on identity and name the import target`.
+
+**Post-shipment coverage gap fix (2026-08-31) — corrupt-identity path was untested at the `data_bridge.py` call sites.** `_this_instance_owner()`'s `except CorruptInstanceOwnerError: return None` handler (`views/setup/data_bridge.py:225-235`) is unit-tested for `load_instance_owner` itself (`tests/test_instance_identity.py`), but before this fix nothing drove a genuinely corrupt `.instance_owner.json` through the export or import gates in `tests/test_shells.py` — `grep CorruptInstanceOwnerError tests/test_shells.py` returned zero matches, so a refactor that broke the degradation specifically at these two call sites would not turn anything red.
+
+Added two tests to `tests/test_shells.py`, mirroring the unset-identity tests above with `monkeypatch.setattr(data_bridge_mod, "load_instance_owner", <raises CorruptInstanceOwnerError>)` instead of leaving `instance_owner` unset (both explicitly assert `"instance_owner" not in st.session_state` first, since `_this_instance_owner()` reads session_state before calling `load_instance_owner()` and a seeded value would short-circuit the corrupt path):
+
+- `test_export_disabled_and_build_skipped_when_instance_owner_corrupt` — asserts the `export_bundle` download control is `disabled=True` and `build_bundle` is never called.
+- `test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt` — asserts the `apply_uploads` button is `disabled=True` and no "Importing as" caption renders (guards against `_import_target_owner()`'s `or "you"` fallback confidently naming a target on corrupt data).
+
+Mutation-proven 3/3: removing the `except CorruptInstanceOwnerError: return None` handler so the error propagates turns BOTH tests red with the raised `CorruptInstanceOwnerError` (not an assertion failure); reverting the export's `if identity_set:` build gate to unconditional turns the export test red (`TypeError: Object of type MagicMock is not JSON serializable`, proving `build_bundle` was reached); ungating the "Importing as" caption from `identity_set` turns the import test red, rendering `"Importing as: **Spouse's data**"` on corrupt data. `views/setup/data_bridge.py` verified byte-identical after each revert via `git diff`.
+
+Committed together with this plan-doc amendment in one commit: `test(instance-identity): cover corrupt-identity degradation in export and import gates`.
+
+---
+
+### Task 9: Holder-name cross-check
+
+**Files:**
+- Modify: `views/ytd_income/_partials/_sync_scan.py`
+- Test: `tests/test_ytd_shell.py`
+
+**Rule to hold onto:** WARN, NEVER BLOCK. Silence never means agreement — it only means no name was available to check (IBKR/Fidelity/UBS statements return `owner_key=None` today; only Schwab and Vanguard populate it).
+
+**Standing-defect check performed for this task (2026-08-31):** this plan has a recorded standing defect across Tasks 3, 5, and 6 — per-task verification steps omit the tests the change will break; Tasks 5 and 6 both shipped a RED branch this exact way. Before writing this task, `tests/` was grepped for scan-path tests asserting on `at.warning` via an exact list, an empty list, or a count (`assert not at.warning`, `assert at.warning == []`, `len(at.warning) ==`), prioritising `tests/test_ytd_shell.py` and `tests/test_views_ytd_income.py` and sweeping all of `tests/`. **Result: ZERO such tests exist anywhere in the repo.** The only `at.warning` assertions found are in `tests/test_shells.py` (Command Center Contextual status-chip warnings, e.g. `test_contextual_all_good_household_shows_affirmation_no_chips` at `warnings == []`), `tests/test_setup_shell_characterization.py` (governance-card rejection warnings), and `tests/test_roth_eligibility_view.py` (Roth contribution-limit warnings) — none of these touch the YTD scan path, so a new unconditional `st.warning` in `_sync_scan.py`'s scan path cannot ripple into them. This is a verified negative, not silence: no additional files need to be added to this task's **Files:** list or verification command on that account.
+
+- [x] Append failing tests to `tests/test_ytd_shell.py`, reusing Task 6's `_patch_scan`/`_brokerage_record`/`_scan` helpers:
+
+```python
+def _mismatch_warnings(at) -> list[str]:
+    """Only the holder-name cross-check warnings (its wording is unique --
+    the scan's other st.warning calls are about unrecognized/failed files)."""
+    return [w.value for w in at.warning if "holder name" in w.value]
+
+
+def test_holder_name_mismatch_warns_but_does_not_block(monkeypatch, tmp_path) -> None:
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    # The name says "spouse"; this instance attributes the account to "you".
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    warnings = _mismatch_warnings(at)
+    assert any("****-*123" in text and "spouse" in text for text in warnings)
+    # WARN, NEVER BLOCK: the scan still ran to completion and still applied
+    # the account to the YTD snapshot.
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert any(s.value.startswith("Applied to YTD snapshot:") for s in at.success)
+
+
+def test_holder_name_match_is_silent(monkeypatch, tmp_path) -> None:
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "you"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert _mismatch_warnings(at) == []
+
+
+def test_absent_holder_name_is_silent(monkeypatch, tmp_path) -> None:
+    """owner_key=None (IBKR/Fidelity/UBS today) -- absence of a name is not
+    evidence of anything, so it must never warn."""
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
+    _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key=None)])
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at.session_state["instance_owner"] = "you"
+    _scan(at)
+
+    assert not at.exception
+    assert any(s.value.startswith("Imported:") for s in at.success)
+    assert _mismatch_warnings(at) == []
+```
+
+- [x] Run them and confirm they FAIL (no cross-check exists yet):
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k holder_name
+```
+
+- [x] In `views/ytd_income/_partials/_sync_scan.py`, re-add the read-only `owner_map` import (narrowed to cross-checking only, per this plan's architecture note):
+
+```python
+from engine.pdf_owner import load_owner_map
+```
+
+- [x] Add a small helper near the top of the module:
+
+```python
+def _warn_on_holder_name_mismatch(
+    owner_key: str | None, resolved: str, owner_map: dict[str, str], account_label: str
+) -> None:
+    """WARN, never block. A name absent from owner_map (or no name at all --
+    IBKR/Fidelity/UBS return owner_key=None) is silent: silence never means
+    agreement, only that there was nothing to check against."""
+    from engine.pdf_owner import resolve_owner
+
+    named_owner = resolve_owner(owner_key, owner_map)
+    if named_owner is not None and named_owner != resolved:
+        st.warning(
+            f"Account {account_label}: the statement's holder name maps to "
+            f"'{named_owner}' but this instance attributes it to '{resolved}'. "
+            "Double check the account attribution table on Setup ▸ Command Center."
+        )
+```
+
+- [x] In `render_sync_scan_partial`, load `owner_map` once near the top (alongside `account_overrides`):
+
+```python
+    owner_map = load_owner_map()
+```
+
+- [x] In the brokerage block from Task 6, add the cross-check call right after resolving `resolved`:
+
+```python
+                if stmt_taxable_now:
+                    for account_number, rec in stmt_taxable_now.items():
+                        resolved = resolve_account_owner(
+                            rec.broker, account_number, account_overrides, instance_owner
+                        )
+                        _warn_on_holder_name_mismatch(rec.owner_key, resolved, owner_map, account_number)
+                        ledger = write_brokerage_contribution(ledger, resolved, rec)
+```
+
+- [x] Do the same in the Koinly block:
+
+```python
+                    for report in result.koinly_reports:
+                        resolved = resolve_account_owner(
+                            "koinly", report.owner_key or "unknown", account_overrides, instance_owner
+                        )
+                        _warn_on_holder_name_mismatch(
+                            report.owner_key, resolved, owner_map, f"Koinly {report.tax_year}"
+                        )
+                        ledger = write_koinly_contribution(ledger, resolved, report)
+```
+
+- [x] Run the three new tests and confirm they PASS:
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py -q -rE -k holder_name
+```
+
+- [x] **Review the two existing entries in `.pdf_owner_map.json`** (both `household`) per this plan's closing note below — confirm during this task whether they were artifacts of the removed `or "household"` default rather than deliberate choices; if a live household account is genuinely joint, add it as an account-level override (`save_account_override(..., "household")`) instead of relying on the name map.
+
+- [x] Run the full YTD shell + views test files:
+
+```bash
+pixi run -e ci python -m pytest tests/test_ytd_shell.py tests/test_views_ytd_income.py -q -rE
+```
+
+- [x] Lint and type-check:
+
+```bash
+pixi run -e ci lint
+pixi run -e ci type-check
+```
+
+- [x] Run both sharded full-suite commands from "Verification commands" above and confirm both are green.
+
+- [x] Commit:
+
+```
+mcp__git__execute_tool("git_add", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "files": ["views/ytd_income/_partials/_sync_scan.py", "tests/test_ytd_shell.py"]})
+mcp__git__execute_tool("git_commit", {"repo_path": "/home/memento/PycharmProjects/roth_planner", "message": "feat(instance-identity): warn-only holder-name cross-check against resolved owner"})
+```
+
+**Shipped (2026-08-31).** Implemented exactly as planned: `_warn_on_holder_name_mismatch` added to `views/ytd_income/_partials/_sync_scan.py`, called from both the brokerage loop and the Koinly loop inside the "Scan folder" branch of `render_sync_scan_partial`. `st` was already imported at module scope; `resolve_owner`'s 2-arg signature was intact and unused elsewhere, exactly as Task 6 left it. Three tests added to `tests/test_ytd_shell.py`. Mutation-proven 3/3: dropping the call from the brokerage loop turns `test_holder_name_mismatch_warns_but_does_not_block` red (no warning text found — the assertion, not an exception); dropping the `named_owner is not None` guard turns `test_absent_holder_name_is_silent` red (a spurious warning appears for `owner_key=None`); dropping the `!= resolved` comparison turns `test_holder_name_match_is_silent` red (a spurious warning appears on a genuine match). `_sync_scan.py` verified byte-identical after each revert via `git diff`. The repo-wide `at.warning` sweep recorded above was re-confirmed empty for the YTD scan path; no ripple.
+
+**`.pdf_owner_map.json` reviewed, NOT modified** (real user data — this task reports, does not write). Contents: `{"claude r cirba": "household", "claudecirba": "household"}` — two entries, both `household`, and both are almost certainly artifacts of the removed `or "household"` default (`_sync_scan.py:328` pre-Task-6): the household has no jointly-titled accounts per this plan's own note above, and the two keys look like the same name captured with and without a space (consistent with the recorded Schwab pdfplumber space-stripping lesson), not two distinct household members. Recommendation: delete both entries (or leave inert — they are read-only inputs to the new cross-check and will only ever fire a mismatch warning, never block anything) rather than promoting them to account-level overrides. Left for the user to decide; no write was made.
+
+Sharded full-suite confirmed green: 21 `AppTest` files together (196 passed) + the other ~165 files via `--ignore=` (2427 passed) = 2623, matching baseline 2620 + 3 new tests. `tests/test_ytd_shell.py tests/test_views_ytd_income.py` together: 58 passed. `ruff check .`: all checks passed. `mypy engine/ models/`: no issues in 67 source files. `git status` after the full run showed only the two intended files modified — no gitignored cache (`.pdf_owner_map.json`, `.ytd_cache.json`, `.portfolio_cache.json`, `.tax_pdf_cache.json`, `.candidate_store.json`, `.instance_owner.json`, `.account_attribution.json`) changed.
+
+Committed together with this plan-doc amendment in one commit: `feat(instance-identity): warn-only holder-name cross-check against resolved owner`.
+
+**Correction (2026-08-31, same day) — a third call site was missed.** This task's plan text above named only two wiring sites (the brokerage loop and the Koinly loop inside the "Scan folder" branch). It missed the **"Apply to YTD snapshot"** button block (~`_sync_scan.py:337`), which independently re-resolves owners via `resolve_account_owner` on disk-loaded `statement_by_account` records and writes to the ledger with no cross-check of its own — the exact same two-write-paths blind spot this plan's own Task 6 quality gate had already caught and fixed once (commit `7f5dfa06`, where Scan was gated on identity and Apply was not, until corrected). `_warn_on_holder_name_mismatch` is now also called from the Apply loop, matching the brokerage-loop idiom exactly. One additional wrinkle surfaced only by writing the test: the Apply block already called `st.rerun()` unconditionally right after its `st.success(...)`, which — verified empirically under `AppTest` — discards elements from the pre-rerun script execution, silently swallowing any warning emitted in the same click. `_warn_on_holder_name_mismatch` was changed to return `bool` (scan-loop callers ignore it; unaffected), and the Apply block now withholds its `st.rerun()` only when a mismatch fired, mirroring the existing `views/setup/_partials/_accounts.py` SSA-sync idiom of skipping an immediate rerun so the user actually sees the warning. WARN, NEVER BLOCK preserved: the ledger write and `save_ytd_snapshot` both still happen unconditionally before this check. One test added: `test_apply_button_warns_on_holder_name_mismatch_but_does_not_block`, driving the Apply button on disk-loaded records with no scan in the same render (mutation-proven: removing the new call turns it RED; the three original Task 9 tests stay green unchanged). Sharded suite: 21 `AppTest` files (197 passed) + ~165 files via `--ignore=` (2427 passed) = 2624, matching baseline 2623 + 1 new test. `ruff check` clean; `mypy engine/ models/` clean (67 source files). `git status` confirmed only `views/ytd_income/_partials/_sync_scan.py`, `tests/test_ytd_shell.py`, and this plan doc changed — `.pdf_owner_map.json` and every other gitignored cache untouched.
+
+---
+
+## Deferred — not implemented by this plan
+
+- Changing `instance_owner` after data has been scanned: already-ingested ledger rows keep their old attribution and will not move. Decide before shipping a UI that permits the change.
+- Adding an override for an account never yet scanned.
+- Bulk accept-all for first-run mismatches: NOT needed — `.pdf_owner_map.json` was measured and holds exactly 2 entries, both `household`, so first run yields at most 2 flagged mismatches.
+
+## Note on the two existing `household` entries
+
+`.pdf_owner_map.json` holds 2 entries, both `household`, though the household has no jointly-titled accounts. These are most likely artifacts of the silent `or "household"` default at `_sync_scan.py:328` that Task 6 removes, not deliberate choices. They are invisible today because `derive_brokerage_totals` sums all owner slots into one household-wide figure, but would start affecting numbers once YTD income is partitioned by owner in a later sub-project. Review them during Task 6.

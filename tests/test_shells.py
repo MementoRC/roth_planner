@@ -344,9 +344,17 @@ def _render_contextual_stale_field() -> None:
     render_setup(hh, "Contextual")
 
 
-def _render_contextual_all_good() -> None:
+def _render_contextual_all_good(seed_identity: bool = True) -> None:
     """AppTest target: every governed field confirmed recently, nothing
     pending -> the "All set" affirmation and zero chips.
+
+    ``seed_identity=False`` skips the ``instance_owner`` seed below, so the
+    Command Center identity gate's warning fires instead -- used by
+    ``test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset``
+    to prove the gate's warning actually renders during a full Setup-shell
+    walk when identity is unset (the default ``seed_identity=True`` path
+    exists specifically to steer every OTHER fixture using this function away
+    from that scenario, per the comment below).
     """
     from datetime import datetime, timedelta
 
@@ -376,6 +384,14 @@ def _render_contextual_all_good() -> None:
     st.session_state.setdefault("cpi_assumption", 0.025)
     st.session_state.setdefault("_pending_review", set())
     st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+    # Task 5's Command Center identity gate fires an unconditional st.warning
+    # whenever instance_owner is unset, and Command Center renders inside
+    # every Setup shell tab body on every run (see
+    # views/setup/command_center.py's module docstring) -- so this "zero
+    # warnings" assertion needs the same instance_owner seed app.py's real
+    # startup performs, or the gate's warning breaks it.
+    if seed_identity:
+        st.session_state.setdefault("instance_owner", "you")
 
     recent = datetime.now() - timedelta(hours=1)
     prov = Provenance(source=Source.MANUAL, recorded_at=recent, detail="test fixture")
@@ -392,9 +408,13 @@ def _render_contextual_all_good() -> None:
     render_setup(hh, "Contextual")
 
 
-def _run_contextual(target, monkeypatch) -> AppTest:
+def _run_contextual(target, monkeypatch, kwargs: dict | None = None) -> AppTest:
     """Same disk-source neutralization as ``_run_shell``, for a bespoke
     Contextual target function that doesn't go through ``_render_shell``.
+
+    ``kwargs`` forwards to ``AppTest.from_function`` (mirrors ``_run_shell``'s
+    own kwargs-forwarding), so a bespoke target can be parametrized the same
+    way ``_render_shell``'s ``seed_1040_scanned`` is.
     """
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
@@ -404,7 +424,7 @@ def _run_contextual(target, monkeypatch) -> AppTest:
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_function(target)
+    at = AppTest.from_function(target, kwargs=kwargs or {})
     at.run()
     return at
 
@@ -474,6 +494,27 @@ def test_contextual_all_good_household_shows_affirmation_no_chips(
     # warning can fire here; the all-good household simply has none to filter.
     warnings = [w.value for w in at.warning]
     assert warnings == []
+
+
+def test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Command Center's identity gate (Task 5) must render its ``st.warning``
+    during a FULL Setup-shell walk when ``instance_owner`` is unset --
+    ``_render_contextual_all_good``'s default ``seed_identity=True`` path
+    steers every OTHER fixture using it away from this scenario, so this test
+    is the only coverage of the gate's warning actually surfacing through a
+    real shell render rather than a bespoke Command-Center-only AppTest.
+    """
+    at = _run_contextual(
+        _render_contextual_all_good, monkeypatch, kwargs={"seed_identity": False}
+    )
+    assert not at.exception
+
+    warnings = [w.value for w in at.warning]
+    assert any("no owner set yet" in w for w in warnings), (
+        f"expected the identity gate warning, got: {warnings}"
+    )
 
 
 def test_wizard_next_advances_step() -> None:
@@ -594,6 +635,377 @@ def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
     subheader_texts = [sh.value for sh in at.subheader]
     assert any('1040' in lbl for lbl in expander_labels), expander_labels
     assert any('bridge' in txt.lower() for txt in subheader_texts), subheader_texts
+
+
+# --- Task 8: bundle export/import symmetry ---------------------------------
+
+
+def test_export_stamps_owner_from_instance(monkeypatch) -> None:
+    """Export from a spouse-set instance stamps owner="spouse" in the bundle,
+    not the old hardcoded "you"."""
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_build_bundle(scalars, snapshot, ledger, *, owner="you", ytd=None, grants=None):
+        captured["owner"] = owner
+        return {"format_version": 4}
+
+    # build_bundle/seal are imported INSIDE _handle_personal_exports (deferred
+    # for Pyodide), so they must be patched on their defining modules.
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", _fake_build_bundle)
+    monkeypatch.setattr(data_bridge_crypto_mod, "seal", lambda payload, pubkey: b"sealed")
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {"koinly": {}, "brokerage": {}})
+    monkeypatch.setattr(data_bridge_mod, "load_ytd_snapshot", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_exports
+
+        st.session_state["instance_owner"] = "spouse"
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert captured["owner"] == "spouse"
+
+
+def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
+    """Import into a "you" instance targets "spouse" automatically; the
+    "Whose data?" pc_role radio no longer renders."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads, _import_target_owner
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+        # The derivation helper is asserted directly here as a focused unit
+        # check (AppTest *can* populate the file_uploader and drive the real
+        # Apply body -- see test_apply_uploads_end_to_end_imports_as_other_owner
+        # below, which covers that end-to-end path instead).
+        st.session_state["_test_target_owner"] = _import_target_owner()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert not any(w.key == "pc_role" for w in at.radio)
+    assert at.session_state["_test_target_owner"] == "spouse"
+
+
+def _run_uploads(monkeypatch, instance_owner: str | None):
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str | None = None) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        if owner is not None:
+            st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+    return at
+
+
+def test_apply_uploads_disabled_when_instance_owner_unset(monkeypatch) -> None:
+    at = _run_uploads(monkeypatch, None)
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
+
+
+def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
+    """Supersedes the removed test_apply_uploads_enabled_when_instance_owner_set.
+
+    That test was vacuous: it asserted ``disabled is False`` on the Apply
+    button, but ``False`` is ALSO exactly what Streamlit produces when the
+    ``disabled=`` kwarg is omitted entirely (the container-default trap) --
+    it passed identically against code with the gate deleted (a mutation
+    check confirmed 3/4, not 4/4). No assertion about the *enabled* state
+    can distinguish ``disabled=not identity_set`` (with identity set) from a
+    missing kwarg; they are behaviourally identical.
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` above remains
+    the gate's only real guard and is unchanged.
+
+    This test instead drives the real Apply path end to end: it populates
+    the ``bundle_upload`` file_uploader with real bytes and clicks Apply,
+    asserting the import ran as "spouse". This also newly covers the
+    success message rendered at ``views/setup/data_bridge.py:381``
+    (``st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")``),
+    which had never had test coverage in this repo before this test.
+    """
+    import json
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    minimal_bundle = {
+        "format_version": 4,
+        "sections": {
+            "setup_scalars": {},
+            "portfolio": {"accounts": []},
+        },
+    }
+    payload_bytes = json.dumps(minimal_bundle).encode("utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
+        captured["target_owner"] = target_owner
+        return existing_snapshot, existing_ledger
+
+    # open_uploaded_payload is imported INSIDE _handle_personal_uploads (deferred
+    # for Pyodide), so it must be patched on its defining module -- same idiom
+    # as `seal` in test_export_stamps_owner_from_instance above.
+    monkeypatch.setattr(
+        data_bridge_crypto_mod, "open_uploaded_payload", lambda raw, privkey: payload_bytes
+    )
+    monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
+    monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
+    monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    # Neutralise st.rerun() at data_bridge.py:382 so the success element
+    # (rendered immediately before it) survives to the end of this run
+    # instead of being wiped by a fresh script execution.
+    monkeypatch.setattr(st_mod, "rerun", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    uploader = next(w for w in at.file_uploader if w.key == "bundle_upload")
+    uploader.set_value(("roth_bridge.enc", payload_bytes, "application/octet-stream"))
+    apply_button = next(b for b in at.button if b.key == "apply_uploads")
+    apply_button.set_value(True)
+    at.run()
+
+    assert not at.exception
+    assert captured["target_owner"] == "spouse"
+
+    success_texts = [s.value for s in at.success]
+    assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
+
+
+def test_export_disabled_and_build_skipped_when_instance_owner_unset(monkeypatch) -> None:
+    """Spec gap 1: the export control is gated on instance identity the same
+    way scan/sync/import are gated (design spec:52, :127-131). An export
+    built while identity is unset would poison the RECEIVING instance by
+    stamping the ``or "you"`` fallback onto a bundle that may actually be
+    the spouse's -- so this asserts BOTH that the download control is
+    disabled AND that ``build_bundle`` is never called, since
+    ``st.download_button``'s ``data=`` argument is evaluated eagerly on
+    every render regardless of the ``disabled``/clicked state, and
+    ``disabled=True`` alone would still let a mislabelled bundle be built.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    # AppTest's element_tree parser has no case for the "download_button"
+    # proto type (verified against streamlit/testing/v1/element_tree.py --
+    # unlike st.button, st.download_button is not exposed via an
+    # `at.download_button` accessor), so the disabled kwarg is asserted by
+    # spying on st.download_button itself rather than walking the AppTest
+    # element tree. `streamlit.download_button` is a plain module attribute
+    # bound to `_main.download_button` (`streamlit/__init__.py:205`), and
+    # `views/setup/data_bridge.py` does `import streamlit as st`, so
+    # patching the streamlit module's attribute is visible there.
+    download_button_spy = MagicMock(return_value=False)
+    monkeypatch.setattr(st_mod, "download_button", download_button_spy)
+    build_bundle_spy = MagicMock()
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", build_bundle_spy)
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        from views.setup.data_bridge import _handle_personal_exports
+
+        # instance_owner deliberately left unset -- this is the gate's guard.
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    download_button_spy.assert_called_once()
+    call_kwargs = download_button_spy.call_args.kwargs
+    assert call_kwargs["key"] == "export_bundle"
+    assert call_kwargs["disabled"] is True
+    build_bundle_spy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("instance_owner", "expected_label"),
+    [("you", "Spouse's data"), ("spouse", "Your data")],
+)
+def test_import_statement_names_concrete_target_owner(
+    monkeypatch, instance_owner: str, expected_label: str
+) -> None:
+    """Spec gap 2: design spec:97 requires the "Whose data?" radio be
+    replaced by "a statement of what will happen ('Importing as: Spouse's
+    data') with no control" -- not a generic caption that never names WHICH
+    person before Apply is clicked."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any(f"Importing as: **{expected_label}**" in c for c in captions), captions
+
+
+def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypatch) -> None:
+    """Corrupt-identity companion to
+    ``test_export_disabled_and_build_skipped_when_instance_owner_unset``: a
+    genuinely corrupt ``.instance_owner.json`` must degrade through
+    ``_this_instance_owner()``'s ``except CorruptInstanceOwnerError: return
+    None`` handler to the exact same "unset" treatment -- export gated and
+    ``build_bundle`` never called -- rather than crashing the tab or, worse,
+    silently exporting under a guessed owner.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import engine.instance_identity as instance_identity_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    def _raise_corrupt() -> str | None:
+        raise instance_identity_mod.CorruptInstanceOwnerError(
+            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+        )
+
+    download_button_spy = MagicMock(return_value=False)
+    monkeypatch.setattr(st_mod, "download_button", download_button_spy)
+    build_bundle_spy = MagicMock()
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", build_bundle_spy)
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_instance_owner", _raise_corrupt)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_exports
+
+        # instance_owner deliberately left unset in session_state --
+        # _this_instance_owner() reads session_state FIRST and a seeded
+        # value would short-circuit load_instance_owner(), making the
+        # corrupt path (and this test) vacuous.
+        assert "instance_owner" not in st.session_state
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    download_button_spy.assert_called_once()
+    call_kwargs = download_button_spy.call_args.kwargs
+    assert call_kwargs["key"] == "export_bundle"
+    assert call_kwargs["disabled"] is True
+    build_bundle_spy.assert_not_called()
+
+
+def test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt(
+    monkeypatch,
+) -> None:
+    """Corrupt-identity companion to
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` and
+    ``test_import_statement_names_concrete_target_owner``: a genuinely
+    corrupt ``.instance_owner.json`` must disable Apply AND suppress the
+    "Importing as" statement entirely -- not render it naming a guessed
+    target. ``_import_target_owner()`` falls back through ``or "you"`` and
+    would confidently report "spouse" even on a corrupt file, so the
+    statement must be gated on ``identity_set``, not derived independently.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    import engine.instance_identity as instance_identity_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    def _raise_corrupt() -> str | None:
+        raise instance_identity_mod.CorruptInstanceOwnerError(
+            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+        )
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_instance_owner", _raise_corrupt)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        # instance_owner deliberately left unset in session_state -- see
+        # the corrupt-export test above for why a seeded value would make
+        # this vacuous.
+        assert "instance_owner" not in st.session_state
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
+    captions = [c.value for c in at.caption]
+    assert not any("Importing as" in c for c in captions), captions
 
 
 def test_wizard_registered_and_renders() -> None:

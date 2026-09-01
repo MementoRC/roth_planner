@@ -64,11 +64,12 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "iira_add",
         # Command Center tab
         "sync_everything_btn",
+        "instance_owner_gate_choice",
+        "instance_owner_gate_save",
         # Data bridge tab
         "gen_keypair",
         "_v2_privkey_input",
         "save_v2_privkey",
-        "pc_role",
         "bundle_upload",
         "apply_uploads",
         "reset_demo",
