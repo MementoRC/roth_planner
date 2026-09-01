@@ -824,6 +824,91 @@ def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
     assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
 
 
+def test_export_disabled_and_build_skipped_when_instance_owner_unset(monkeypatch) -> None:
+    """Spec gap 1: the export control is gated on instance identity the same
+    way scan/sync/import are gated (design spec:52, :127-131). An export
+    built while identity is unset would poison the RECEIVING instance by
+    stamping the ``or "you"`` fallback onto a bundle that may actually be
+    the spouse's -- so this asserts BOTH that the download control is
+    disabled AND that ``build_bundle`` is never called, since
+    ``st.download_button``'s ``data=`` argument is evaluated eagerly on
+    every render regardless of the ``disabled``/clicked state, and
+    ``disabled=True`` alone would still let a mislabelled bundle be built.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    # AppTest's element_tree parser has no case for the "download_button"
+    # proto type (verified against streamlit/testing/v1/element_tree.py --
+    # unlike st.button, st.download_button is not exposed via an
+    # `at.download_button` accessor), so the disabled kwarg is asserted by
+    # spying on st.download_button itself rather than walking the AppTest
+    # element tree. `streamlit.download_button` is a plain module attribute
+    # bound to `_main.download_button` (`streamlit/__init__.py:205`), and
+    # `views/setup/data_bridge.py` does `import streamlit as st`, so
+    # patching the streamlit module's attribute is visible there.
+    download_button_spy = MagicMock(return_value=False)
+    monkeypatch.setattr(st_mod, "download_button", download_button_spy)
+    build_bundle_spy = MagicMock()
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", build_bundle_spy)
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        from views.setup.data_bridge import _handle_personal_exports
+
+        # instance_owner deliberately left unset -- this is the gate's guard.
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    download_button_spy.assert_called_once()
+    call_kwargs = download_button_spy.call_args.kwargs
+    assert call_kwargs["key"] == "export_bundle"
+    assert call_kwargs["disabled"] is True
+    build_bundle_spy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("instance_owner", "expected_label"),
+    [("you", "Spouse's data"), ("spouse", "Your data")],
+)
+def test_import_statement_names_concrete_target_owner(
+    monkeypatch, instance_owner: str, expected_label: str
+) -> None:
+    """Spec gap 2: design spec:97 requires the "Whose data?" radio be
+    replaced by "a statement of what will happen ('Importing as: Spouse's
+    data') with no control" -- not a generic caption that never names WHICH
+    person before Apply is clicked."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any(f"Importing as: **{expected_label}**" in c for c in captions), captions
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 

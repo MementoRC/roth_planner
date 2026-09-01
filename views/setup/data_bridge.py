@@ -274,9 +274,7 @@ def _handle_personal_uploads() -> None:
         st.caption(
             "Upload your encrypted bundle for a personalized session. "
             "Values stay in this browser only; refresh = back to demo. "
-            "`.enc` files require the private key configured above. "
-            "An imported bundle is automatically attributed to the other "
-            "household member -- this instance's own identity never changes."
+            "`.enc` files require the private key configured above."
         )
         bundle_file = st.file_uploader(
             "roth_bridge.enc (setup scalars + portfolio + PDF ledger)",
@@ -284,7 +282,15 @@ def _handle_personal_uploads() -> None:
             key="bundle_upload",
         )
         identity_set = bool(_this_instance_owner())
-        if not identity_set:
+        if identity_set:
+            _import_target_label = (
+                "Spouse's data" if _import_target_owner() == "spouse" else "Your data"
+            )
+            st.caption(
+                f"Importing as: **{_import_target_label}** — this instance's "
+                "own identity never changes."
+            )
+        else:
             st.caption(
                 "Importing is unavailable until this planner instance has an "
                 "owner — set it on **🎛️ Command Center**."
@@ -445,6 +451,8 @@ def _handle_personal_exports() -> None:
     from engine.bridge_bundle import build_bundle
     from engine.data_bridge_crypto import seal
 
+    identity_set = bool(_this_instance_owner())
+
     with st.expander("📦 Export my data", expanded=False):
         # Optional: seal for a third-party recipient instead of yourself.
         recipient_raw = st.text_input(
@@ -490,31 +498,56 @@ def _handle_personal_exports() -> None:
                 st.caption(
                     f"🔐 V2 encrypted export active — sealed with your {_pubkey_source_label()}."
                 )
-            scalars = _user_defaults_from_session()
-            snapshot = load_snapshot()
-            ledger = _load_pdf_ledger()
-            # Prefer the in-session YTD snapshot (authoritative, and the ONLY
-            # thing that exists at all in Pyodide -- there is no persistent
-            # filesystem there, so load_ytd_snapshot() always misses on the
-            # public site). Fall back to the on-disk cache for a local run
-            # where the YTD page hasn't been visited yet this session.
-            ytd = st.session_state.get("ytd_snapshot") or load_ytd_snapshot()
-            # Carry the exporter's real stock-option/RSU grants along too --
-            # without this, the recipient's Household.grants keeps its
-            # synthetic Acme demo-grant default_factory forever (the
-            # matching strike prices travel via setup_scalars["grant_strikes"]
-            # but sit inert with nothing to attach to), so their option/NQO
-            # income is computed off fake grants instead of the real ones.
-            grants = getattr(snapshot, "equity_grants", None)
-            export_owner = _this_instance_owner() or "you"
-            bundle = build_bundle(scalars, snapshot, ledger, owner=export_owner, ytd=ytd, grants=grants)
-            payload = json.dumps(bundle).encode("utf-8")
+            if not identity_set:
+                st.caption(
+                    "Export is unavailable until this planner instance has an "
+                    "owner — set it on **🎛️ Command Center**."
+                )
+            if identity_set:
+                # Poisons-the-receiver defence: an export built from a
+                # spouse-owned instance while identity is unset (or degraded
+                # by a corrupt .instance_owner.json -- _this_instance_owner()
+                # collapses both to None) would stamp "you" onto a bundle
+                # that belongs to the other person, mislabelling every
+                # account the RECEIVING instance imports it into. Skip the
+                # build entirely when identity is unset rather than relying
+                # solely on the button's disabled state, since
+                # st.download_button's ``data=`` argument is evaluated
+                # eagerly on every render regardless of disabled/clicked.
+                scalars = _user_defaults_from_session()
+                snapshot = load_snapshot()
+                ledger = _load_pdf_ledger()
+                # Prefer the in-session YTD snapshot (authoritative, and the ONLY
+                # thing that exists at all in Pyodide -- there is no persistent
+                # filesystem there, so load_ytd_snapshot() always misses on the
+                # public site). Fall back to the on-disk cache for a local run
+                # where the YTD page hasn't been visited yet this session.
+                ytd = st.session_state.get("ytd_snapshot") or load_ytd_snapshot()
+                # Carry the exporter's real stock-option/RSU grants along too --
+                # without this, the recipient's Household.grants keeps its
+                # synthetic Acme demo-grant default_factory forever (the
+                # matching strike prices travel via setup_scalars["grant_strikes"]
+                # but sit inert with nothing to attach to), so their option/NQO
+                # income is computed off fake grants instead of the real ones.
+                grants = getattr(snapshot, "equity_grants", None)
+                # The gate above (identity_set) makes this fallback
+                # unreachable -- _this_instance_owner() cannot be falsy here.
+                # Left in place as defence in depth only.
+                export_owner = _this_instance_owner() or "you"
+                bundle = build_bundle(
+                    scalars, snapshot, ledger, owner=export_owner, ytd=ytd, grants=grants
+                )
+                payload = json.dumps(bundle).encode("utf-8")
+                export_data: bytes = seal(payload, pubkey)
+            else:
+                export_data = b""
             st.download_button(
                 label="⬇️ Download my encrypted data (.enc)",
-                data=seal(payload, pubkey),
+                data=export_data,
                 file_name="roth_bridge.enc",
                 mime="application/octet-stream",
                 key="export_bundle",
+                disabled=not identity_set,
             )
             return
 
