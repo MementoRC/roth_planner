@@ -909,6 +909,105 @@ def test_import_statement_names_concrete_target_owner(
     assert any(f"Importing as: **{expected_label}**" in c for c in captions), captions
 
 
+def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypatch) -> None:
+    """Corrupt-identity companion to
+    ``test_export_disabled_and_build_skipped_when_instance_owner_unset``: a
+    genuinely corrupt ``.instance_owner.json`` must degrade through
+    ``_this_instance_owner()``'s ``except CorruptInstanceOwnerError: return
+    None`` handler to the exact same "unset" treatment -- export gated and
+    ``build_bundle`` never called -- rather than crashing the tab or, worse,
+    silently exporting under a guessed owner.
+    """
+    from unittest.mock import MagicMock
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.bridge_bundle as bridge_bundle_mod
+    import engine.instance_identity as instance_identity_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    def _raise_corrupt() -> str | None:
+        raise instance_identity_mod.CorruptInstanceOwnerError(
+            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+        )
+
+    download_button_spy = MagicMock(return_value=False)
+    monkeypatch.setattr(st_mod, "download_button", download_button_spy)
+    build_bundle_spy = MagicMock()
+    monkeypatch.setattr(bridge_bundle_mod, "build_bundle", build_bundle_spy)
+    monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_instance_owner", _raise_corrupt)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_exports
+
+        # instance_owner deliberately left unset in session_state --
+        # _this_instance_owner() reads session_state FIRST and a seeded
+        # value would short-circuit load_instance_owner(), making the
+        # corrupt path (and this test) vacuous.
+        assert "instance_owner" not in st.session_state
+        _handle_personal_exports()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    download_button_spy.assert_called_once()
+    call_kwargs = download_button_spy.call_args.kwargs
+    assert call_kwargs["key"] == "export_bundle"
+    assert call_kwargs["disabled"] is True
+    build_bundle_spy.assert_not_called()
+
+
+def test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt(
+    monkeypatch,
+) -> None:
+    """Corrupt-identity companion to
+    ``test_apply_uploads_disabled_when_instance_owner_unset`` and
+    ``test_import_statement_names_concrete_target_owner``: a genuinely
+    corrupt ``.instance_owner.json`` must disable Apply AND suppress the
+    "Importing as" statement entirely -- not render it naming a guessed
+    target. ``_import_target_owner()`` falls back through ``or "you"`` and
+    would confidently report "spouse" even on a corrupt file, so the
+    statement must be gated on ``identity_set``, not derived independently.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    import engine.instance_identity as instance_identity_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    def _raise_corrupt() -> str | None:
+        raise instance_identity_mod.CorruptInstanceOwnerError(
+            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+        )
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_instance_owner", _raise_corrupt)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        # instance_owner deliberately left unset in session_state -- see
+        # the corrupt-export test above for why a seeded value would make
+        # this vacuous.
+        assert "instance_owner" not in st.session_state
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert next(b for b in at.button if b.key == "apply_uploads").disabled is True
+    captions = [c.value for c in at.caption]
+    assert not any("Importing as" in c for c in captions), captions
+
+
 def test_wizard_registered_and_renders() -> None:
     from streamlit.testing.v1 import AppTest
 

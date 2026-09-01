@@ -2007,6 +2007,17 @@ Tests added to `tests/test_shells.py`: `test_export_disabled_and_build_skipped_w
 
 Committed together with this plan-doc amendment in one commit: `fix(instance-identity): gate export on identity and name the import target`.
 
+**Post-shipment coverage gap fix (2026-08-31) — corrupt-identity path was untested at the `data_bridge.py` call sites.** `_this_instance_owner()`'s `except CorruptInstanceOwnerError: return None` handler (`views/setup/data_bridge.py:225-235`) is unit-tested for `load_instance_owner` itself (`tests/test_instance_identity.py`), but before this fix nothing drove a genuinely corrupt `.instance_owner.json` through the export or import gates in `tests/test_shells.py` — `grep CorruptInstanceOwnerError tests/test_shells.py` returned zero matches, so a refactor that broke the degradation specifically at these two call sites would not turn anything red.
+
+Added two tests to `tests/test_shells.py`, mirroring the unset-identity tests above with `monkeypatch.setattr(data_bridge_mod, "load_instance_owner", <raises CorruptInstanceOwnerError>)` instead of leaving `instance_owner` unset (both explicitly assert `"instance_owner" not in st.session_state` first, since `_this_instance_owner()` reads session_state before calling `load_instance_owner()` and a seeded value would short-circuit the corrupt path):
+
+- `test_export_disabled_and_build_skipped_when_instance_owner_corrupt` — asserts the `export_bundle` download control is `disabled=True` and `build_bundle` is never called.
+- `test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt` — asserts the `apply_uploads` button is `disabled=True` and no "Importing as" caption renders (guards against `_import_target_owner()`'s `or "you"` fallback confidently naming a target on corrupt data).
+
+Mutation-proven 3/3: removing the `except CorruptInstanceOwnerError: return None` handler so the error propagates turns BOTH tests red with the raised `CorruptInstanceOwnerError` (not an assertion failure); reverting the export's `if identity_set:` build gate to unconditional turns the export test red (`TypeError: Object of type MagicMock is not JSON serializable`, proving `build_bundle` was reached); ungating the "Importing as" caption from `identity_set` turns the import test red, rendering `"Importing as: **Spouse's data**"` on corrupt data. `views/setup/data_bridge.py` verified byte-identical after each revert via `git diff`.
+
+Committed together with this plan-doc amendment in one commit: `test(instance-identity): cover corrupt-identity degradation in export and import gates`.
+
 ---
 
 ### Task 9: Holder-name cross-check
