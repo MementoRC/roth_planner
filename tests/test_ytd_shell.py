@@ -429,6 +429,51 @@ def test_holder_name_match_is_silent(monkeypatch, tmp_path) -> None:
     assert _mismatch_warnings(at) == []
 
 
+def test_apply_button_warns_on_holder_name_mismatch_but_does_not_block(monkeypatch, tmp_path) -> None:
+    """The third call site (~:337 in ``_sync_scan.py``): the "Apply to YTD
+    snapshot" button re-resolves owners independently of any scan and must
+    carry its own cross-check.
+
+    This test never clicks "Scan folder" -- ``_patch_scan`` is reused only
+    for its write-free ``save_ledger``/``save_ytd_snapshot`` mocks, and its
+    canned scan result is never consumed because ``run_folder_scan`` is
+    never called. ``statement_by_account`` is seeded purely from a
+    disk-loaded record (mirrors ``test_apply_button_enabled_when_instance_
+    owner_set``'s "records persisted from an earlier scan" setup), so any
+    mismatch warning here can only come from the Apply block's own
+    cross-check -- not the scan loop's (which this test never executes).
+    """
+    import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
+    from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+    _patch_scan(monkeypatch, tmp_path)
+    monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
+
+    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    # Patched AFTER _run_ytd -- its own neutralizing patch
+    # (load_statement_records -> {}) runs during construction and would
+    # otherwise clobber this one if set beforehand (see the existing
+    # Apply-gating tests, which follow the same order).
+    monkeypatch.setattr(
+        brokerage_statement_pdf_mod,
+        "load_statement_records",
+        lambda: {"****-*123": _brokerage_record(owner_key="Jane Doe")},
+    )
+    at.session_state["instance_owner"] = "you"
+    del at.session_state["statement_by_account"]
+    at.run()
+
+    apply_btn = next(b for b in at.button if b.key == "apply_statements_btn")
+    apply_btn.click().run()
+
+    assert not at.exception
+    warnings = _mismatch_warnings(at)
+    assert any("****-*123" in text and "spouse" in text for text in warnings)
+    # WARN, NEVER BLOCK: the Apply still ran to completion and still wrote
+    # the account to the YTD snapshot.
+    assert any(s.value.startswith("Applied") and "taxable account" in s.value for s in at.success)
+
+
 def test_absent_holder_name_is_silent(monkeypatch, tmp_path) -> None:
     """owner_key=None (IBKR/Fidelity/UBS today) -- absence of a name is not
     evidence of anything, so it must never warn."""

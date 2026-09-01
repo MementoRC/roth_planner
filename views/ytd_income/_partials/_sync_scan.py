@@ -21,10 +21,16 @@ from views._shared import run_folder_scan
 
 def _warn_on_holder_name_mismatch(
     owner_key: str | None, resolved: str, owner_map: dict[str, str], account_label: str
-) -> None:
+) -> bool:
     """WARN, never block. A name absent from owner_map (or no name at all --
     IBKR/Fidelity/UBS return owner_key=None) is silent: silence never means
     agreement, only that there was nothing to check against.
+
+    Returns whether a warning was actually raised. The scan-loop call sites
+    ignore this; the Apply call site uses it to withhold its own immediate
+    ``st.rerun()`` -- otherwise the warning would be emitted and wiped by
+    that same-render rerun before ever reaching the user (see the SSA-sync
+    buttons in ``views/setup/_partials/_accounts.py`` for the same idiom).
     """
     from engine.pdf_owner import resolve_owner
 
@@ -35,6 +41,8 @@ def _warn_on_holder_name_mismatch(
             f"'{named_owner}' but this instance attributes it to '{resolved}'. "
             "Double check the account attribution table on Setup ▸ Command Center."
         )
+        return True
+    return False
 
 
 def render_sync_scan_partial(hh: Household) -> None:
@@ -333,10 +341,13 @@ def render_sync_scan_partial(hh: Household) -> None:
                     key="apply_statements_btn",
                     disabled=not identity_set,
                 ):
+                    _apply_had_mismatch = False
                     for account_number, rec in stmt_taxable.items():
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner
                         )
+                        if _warn_on_holder_name_mismatch(rec.owner_key, resolved, owner_map, account_number):
+                            _apply_had_mismatch = True
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
                     save_ledger(ledger)
 
@@ -352,7 +363,13 @@ def render_sync_scan_partial(hh: Household) -> None:
                     st.session_state["ytd_manual_entry"] = False
                     save_ytd_snapshot(prev_ytd)
                     st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
-                    st.rerun()
+                    # WARN, NEVER BLOCK: the write above already completed --
+                    # this only withholds the immediate rerun so a fired
+                    # mismatch warning survives to be seen, instead of being
+                    # wiped by a same-render st.rerun() (see
+                    # _warn_on_holder_name_mismatch's docstring).
+                    if not _apply_had_mismatch:
+                        st.rerun()
 
         if not is_pyodide():
             from engine.koinly_report_pdf import load_koinly_report
