@@ -803,7 +803,13 @@ def _project_year(
         )
         _ytd_ltcg_thresholds = _index_tuple(_base_ytd_ltcg_thresholds, year, cpi, round50=True)
         _ytd_ltcg_start = max(0.0, yr.taxable_income)
-        _ytd_ltcg_end = _ytd_ltcg_start + max(0.0, _ytd_ltcg_total)
+        # audit-0823 cluster 1: the end must be capped at TOTAL taxable income
+        # (ordinary + LTCG minus all deductions, floored at 0) -- mirroring the
+        # audit-0805 C1 fix in engine/tax.py::estimate_ytd_federal_tax (see
+        # tax.py:539-548). combined_gross is ordinary-only (preferential gains
+        # are excluded -- see the comment at combined_gross's assignment above),
+        # so adding _ytd_ltcg_total here does not double-count.
+        _ytd_ltcg_end = max(0.0, yr.combined_gross + _ytd_ltcg_total - yr.total_deductions)
         _ytd_ltcg_at_15 = max(
             0.0,
             min(_ytd_ltcg_end, _ytd_ltcg_thresholds[1])
@@ -820,7 +826,26 @@ def _project_year(
         # stacked from base_taxable (the no-conversion ordinary taxable income)
         # instead of yr.taxable_income (which includes this year's conversion).
         _ytd_ltcg_start_base = max(0.0, base_taxable)
-        _ytd_ltcg_end_base = _ytd_ltcg_start_base + max(0.0, _ytd_ltcg_total)
+        # audit-0823 cluster 1 (site A, differential follow-up): the end must be
+        # capped at the WITHOUT-conversion TOTAL taxable income (base ordinary
+        # gross + LTCG minus base deductions, floored at 0) -- mirroring the
+        # with-conversion cap immediately above (line ~812) and the audit-0805
+        # C1 fix in engine/tax.py::estimate_ytd_federal_tax. This leg is
+        # DIFFERENCED against the with-conversion leg to produce
+        # _ytd_ltcg_marginal_cost/conversion_ltcg_cost, so BOTH legs must use
+        # the same capped shape or the subtraction is statutorily meaningless:
+        # leaving this leg uncapped overstated base LTCG tax whenever ordinary
+        # income sat below the deduction, understating (or fully zeroing, via
+        # the max(0.0, ...) floor below) a real marginal cost.
+        # base_gross mirrors compute_federal_tax's own base_gross derivation
+        # (combined_gross with this year's conversions and SS delta backed out)
+        # so the without-conversion ordinary base is consistent with base_taxable.
+        _ytd_base_gross = (
+            yr.combined_gross - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
+        )
+        _ytd_ltcg_end_base = max(
+            0.0, _ytd_base_gross + _ytd_ltcg_total - base_total_deductions
+        )
         _ytd_ltcg_at_15_base = max(
             0.0,
             min(_ytd_ltcg_end_base, _ytd_ltcg_thresholds[1])

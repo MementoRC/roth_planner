@@ -15,7 +15,7 @@ import pytest
 from engine.scenario import ConversionPlan, run_scenario
 from engine.scenario_compute import compute_social_security
 from engine.sweet_spot_compute import estimate_ltcg_eligible
-from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ
+from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ, STD_DEDUCTION_MFJ, deductions
 from engine.tax_indexing import index_tuple
 from models.household import Household
 from models.ytd_income import YTDSnapshot
@@ -40,10 +40,14 @@ def _minimal_hh(**overrides: object) -> Household:
 
 
 def _ltcg_stack_tax(
-    start: float, total: float, thresholds: tuple[float, float], rates: tuple[float, float, float]
+    start: float, end: float, thresholds: tuple[float, float], rates: tuple[float, float, float]
 ) -> float:
-    """Replicates scenario.py's 0/15/20% LTCG stack-walk for a given total."""
-    end = start + max(0.0, total)
+    """Replicates scenario.py's 0/15/20% LTCG stack-walk for an explicit [start, end) band.
+
+    audit-0823 cluster 1: ``end`` must already be the C1-capped total taxable
+    income (ordinary + LTCG minus all deductions, floored at 0) -- callers compute
+    it, this helper no longer derives it from a raw ``total`` LTCG amount.
+    """
     at_15 = max(0.0, min(end, thresholds[1]) - max(start, thresholds[0]))
     at_20 = max(0.0, end - max(start, thresholds[1]))
     return at_15 * rates[1] + at_20 * rates[2]
@@ -93,7 +97,26 @@ class TestSite2ScenarioLTCGStackWalk:
 
         fixed_total = ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd  # 201,000
         thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, hh.base_year, hh.cpi_assumption, round50=True)
-        expected_tax = _ltcg_stack_tax(0.0, fixed_total, thresholds, LTCG_RATES_MFJ)
+
+        # audit-0823 cluster 1: the stack-walk end is capped at TOTAL taxable
+        # income (ordinary + LTCG minus all deductions, floored at 0), not
+        # "ordinary taxable income + full LTCG" unadjusted. Derive both from
+        # the engine's public deduction helper/constant -- never from yr.*
+        # outputs. ytd.ordinary_capital_gain_ytd is 0 here (the -50,000 STCG
+        # is fully absorbed into the 250,000 LTCG, net long-term 200,000), and
+        # every other combined_gross component in this fixture is 0, so
+        # combined_gross == ytd.ordinary_capital_gain_ytd == 0. Ages 61/55 are
+        # both under 65, so neither the senior extra nor the OBBBA bonus applies.
+        combined_gross = ytd.ordinary_capital_gain_ytd
+        total_deductions = deductions(
+            hh.your_age, hh.spouse_age, STD_DEDUCTION_MFJ, None, filing_status="MFJ",
+            year=hh.base_year, cpi=hh.cpi_assumption,
+        )
+        assert total_deductions == pytest.approx(32_200.0)  # sanity: no senior extra at these ages
+        start = max(0.0, combined_gross - total_deductions)
+        end = max(0.0, combined_gross + fixed_total - total_deductions)
+        expected_tax = _ltcg_stack_tax(start, end, thresholds, LTCG_RATES_MFJ)
+        assert expected_tax == pytest.approx(10_485.0)  # NEW (C1-capped): was 15,315.0 pre-C1
 
         assert yr.ytd_ltcg_tax == pytest.approx(expected_tax, abs=1.0), (
             f"ytd_ltcg_tax={yr.ytd_ltcg_tax:.2f} should be computed from the netted "
