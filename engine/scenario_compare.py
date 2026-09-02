@@ -80,12 +80,15 @@ def survivor_year_tax(
     ordinary_tax = federal_tax_single(taxable_ordinary, year=year, cpi=cpi)
 
     # (d) LTCG stack-walk: brok_ltcg_income taxed at 0/15/20% stacked on taxable_ordinary
-    # (IRC §1(h); mirrors estimate_ytd_federal_tax in engine/tax.py:391-405)
+    # (IRC §1(h); mirrors estimate_ytd_federal_tax in engine/tax.py::estimate_ytd_federal_tax,
+    # audit-0805 C1: the end is capped at TOTAL taxable income -- ordinary + LTCG minus
+    # all deductions, floored at 0 -- not taxable_ordinary + the full LTCG amount unadjusted.
+    # A standard deduction unused by ordinary income must offset LTCG too.)
     ltcg_tax = 0.0
     if brok_ltcg_income > 0.0:
         _ltcg_thresholds = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi, round50=True)
         ltcg_start = taxable_ordinary
-        ltcg_end = taxable_ordinary + brok_ltcg_income
+        ltcg_end = max(0.0, gross + brok_ltcg_income - ded)
         ltcg_at_15 = max(
             0.0,
             min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
