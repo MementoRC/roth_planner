@@ -239,6 +239,23 @@ class DividendsRollupSnapshot:
 
 
 @dataclass
+class HoldingsSnapshot:
+    """FinExtract /query/brokerage?data_type=holdings response.
+
+    ``server_available=False`` means transport failure (timeout, non-200,
+    malformed JSON, or a refused redirect); ``server_available=True`` with an
+    empty ``rows`` means the endpoint answered and the household genuinely
+    holds no positions. Collapsing the two is audit finding portfolio-sync/PS-1:
+    a swallowed HTTP 500 became ``accounts=[]`` and overwrote a good cache
+    behind a success toast.
+    """
+
+    server_available: bool = False
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
 class OptionExercisesSnapshot:
     """FinExtract /query/equity_compensation?data_type=order_detail_summary response.
 
