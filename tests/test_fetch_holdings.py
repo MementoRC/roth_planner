@@ -124,3 +124,102 @@ class TestFetchHoldingsRedirectGuard:
         monkeypatch.setattr(client_module.requests, "get", lambda *a, **kw: _BadJsonResp())
         result = fetch_holdings()
         assert result == []
+
+
+class TestFetchHoldingsDistinguishesFailureFromEmpty:
+    """audit-0823 portfolio-sync/PS-1 — failure must not look like "no holdings"."""
+
+    @staticmethod
+    def _resp(status: int, payload: dict | None = None) -> object:
+        class _Resp:
+            status_code = status
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return payload if payload is not None else {}
+
+        return _Resp()
+
+    def test_http_500_is_not_reported_as_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 500 must yield server_available=False, not an empty-but-available snapshot."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync.holdings import fetch_holdings_snapshot
+
+        monkeypatch.setattr(client_module.requests, "get", lambda *a, **kw: self._resp(500))
+        snap = fetch_holdings_snapshot()
+        assert snap.server_available is False
+        assert snap.rows == []
+        assert snap.error is not None
+        assert "500" in snap.error
+
+    def test_genuine_empty_is_reported_as_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 200 with no rows is a real answer: available, with an empty row list."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync.holdings import fetch_holdings_snapshot
+
+        monkeypatch.setattr(
+            client_module.requests, "get", lambda *a, **kw: self._resp(200, {"rows": []})
+        )
+        snap = fetch_holdings_snapshot()
+        assert snap.server_available is True
+        assert snap.rows == []
+        assert snap.error is None
+
+    def test_connection_error_is_not_reported_as_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Transport failure keeps the swallow (no raise) but flags unavailability."""
+        import requests as req
+
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync.holdings import fetch_holdings_snapshot
+
+        def _raise(*args: object, **kwargs: object) -> None:
+            raise req.exceptions.ConnectionError("refused")
+
+        monkeypatch.setattr(client_module.requests, "get", _raise)
+        snap = fetch_holdings_snapshot()
+        assert snap.server_available is False
+        assert snap.rows == []
+
+    def test_legacy_list_wrapper_still_swallows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The list-returning wrapper keeps its safe [] default for existing callers."""
+        from engine.portfolio_sync import client as client_module
+        from engine.portfolio_sync import fetch_holdings
+
+        monkeypatch.setattr(client_module.requests, "get", lambda *a, **kw: self._resp(500))
+        assert fetch_holdings() == []
+
+
+class TestFetchPortfolioDoesNotMaskHoldingsFailure:
+    """PS-1, caller half: a holdings failure must not reach save_snapshot()."""
+
+    def test_holdings_failure_marks_snapshot_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """/status OK + /query/brokerage 500 => snapshot flagged unavailable."""
+        from engine.portfolio_sync import portfolio as portfolio_module
+        from engine.portfolio_sync.shapes import HoldingsSnapshot
+
+        class _StatusResp:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        monkeypatch.setattr(portfolio_module, "_get", lambda *a, **kw: _StatusResp())
+        monkeypatch.setattr(
+            portfolio_module,
+            "fetch_holdings_snapshot",
+            lambda: HoldingsSnapshot(server_available=False, error="HTTP 500"),
+        )
+
+        snap = portfolio_module.fetch_portfolio()
+        assert snap.server_available is False
+        assert snap.accounts == []
+        assert snap.error is not None
+        assert "500" in snap.error

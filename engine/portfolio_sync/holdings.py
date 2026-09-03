@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     pass
 
 from .client import _flatten_query_rows, _get
-from .shapes import AccountSummary, Holding, PortfolioSnapshot
+from .shapes import AccountSummary, Holding, HoldingsSnapshot, PortfolioSnapshot
 
 
 def merge_snapshots(
@@ -161,12 +161,29 @@ def positions_for_forecast_multi(accounts: Iterable[AccountSummary]) -> list:
     return result
 
 
-def fetch_holdings() -> list[dict[str, Any]]:
-    """Fetch brokerage holdings from the ingestion server."""
+def fetch_holdings_snapshot() -> HoldingsSnapshot:
+    """Fetch brokerage holdings, distinguishing transport failure from "no holdings".
+
+    Mirrors the sibling idiom (:func:`fetch_dividends_rollup`,
+    :func:`fetch_option_exercises`): a non-200, a refused redirect, a transport
+    error or malformed JSON all yield ``server_available=False`` rather than an
+    empty-but-plausible result. See :class:`HoldingsSnapshot` (audit PS-1).
+    """
     try:
         resp = _get("/query/brokerage", params={"data_type": "holdings"}, timeout=5)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            return HoldingsSnapshot(server_available=False, error=f"HTTP {resp.status_code}")
         data: dict[str, Any] = resp.json()
-        return _flatten_query_rows(data)
-    except (requests.RequestException, ValueError):
-        return []
+        return HoldingsSnapshot(server_available=True, rows=_flatten_query_rows(data))
+    except (requests.RequestException, ValueError) as e:
+        return HoldingsSnapshot(server_available=False, error=str(e))
+
+
+def fetch_holdings() -> list[dict[str, Any]]:
+    """Backwards-compatible list view of :func:`fetch_holdings_snapshot`.
+
+    Retained for callers that cannot act on a failure anyway; it keeps the
+    historical safe ``[]`` default. Callers that persist the result MUST use
+    :func:`fetch_holdings_snapshot` and check ``server_available`` first.
+    """
+    return fetch_holdings_snapshot().rows

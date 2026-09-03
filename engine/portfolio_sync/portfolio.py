@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from .awards import fetch_equity_awards, fetch_shares
 from .classify import _classify_account, _classify_symbol, _parse_quantity
 from .client import _get
-from .holdings import fetch_holdings
+from .holdings import fetch_holdings_snapshot
 from .shapes import AccountSummary, EquityGrant, Holding, PortfolioSnapshot
 
 
@@ -42,7 +42,16 @@ def fetch_portfolio(
         return snap
 
     # --- Brokerage holdings ---
-    holdings_raw = fetch_holdings()
+    # PS-1: /status can succeed while /query/brokerage fails. Reporting that as
+    # an empty-but-available snapshot let the caller persist accounts=[] over a
+    # good cache behind a success toast, so surface it as unavailable instead —
+    # sync_portfolio_from_finextract() returns before save_snapshot() on this.
+    holdings = fetch_holdings_snapshot()
+    if not holdings.server_available:
+        snap.server_available = False
+        snap.error = f"holdings fetch failed: {holdings.error}"
+        return snap
+    holdings_raw = holdings.rows
     accounts_map: dict[str, AccountSummary] = {}
 
     for row in holdings_raw:
