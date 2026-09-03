@@ -3,6 +3,7 @@
 import pytest
 
 from engine.aca import (
+    aca_age_factor,
     aca_subsidy,
     aca_subsidy_loss,
     effective_benchmark_premium,
@@ -400,6 +401,14 @@ def test_timeline_survivor_who_dies_you_aca_follows_spouse() -> None:
         assert r.aca_subsidy is not None, (
             f"Surviving spouse enrolled + under 65 must keep ACA subsidy active in {r.year}"
         )
+        # audit-0823 core-tax/T1: `is not None` alone is satisfied by 0.0, which is
+        # exactly what the defect produced -- the row was admitted by the
+        # `you_on_aca or sp_on_aca` gate and then handed a 0.0 benchmark, so a $0
+        # subsidy passed as "active". Require a real subsidy.
+        assert r.aca_subsidy > 0.0, (
+            f"Surviving spouse must receive a NON-ZERO ACA subsidy in {r.year}, "
+            f"got {r.aca_subsidy}"
+        )
 
 
 def test_timeline_survivor_who_dies_spouse_aca_does_not_credit_deceased() -> None:
@@ -427,6 +436,127 @@ def test_timeline_survivor_who_dies_spouse_aca_does_not_credit_deceased() -> Non
         assert r.aca_subsidy is None, (
             f"Neither survivor nor deceased is ACA-enrolled — subsidy must be None in {r.year}"
         )
+
+
+def test_timeline_survivor_who_dies_you_uses_survivor_age_in_benchmark_blend() -> None:
+    """audit-0823 core-tax/T1, leg 2: the SURVIVOR's age must drive the age-rating.
+
+    `ya` is unconditionally `hh.your_age_in(year)`, and in the who_dies="you"
+    branch `_deceased_age` is ALSO `hh.your_age_in(year)`. Both age slots therefore
+    carried the DECEASED's age and the surviving spouse's age never reached
+    `resolve_couple_benchmark_annual` or the `effective_benchmark_premium` blend.
+    Fixing only the enrollment flags would still age-rate against a dead person, so
+    this pins the ages independently of leg 1.
+
+    The oracle is rebuilt from the PUBLIC helpers rather than read back off the
+    row, so it cannot go tautological on the patched code.
+    """
+    base_year = 2026
+    death_year = 2028
+    hh = Household()
+    hh.base_year = base_year
+    hh.your_age = 60
+    hh.spouse_age = 58
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = False
+    hh.spouse_aca_enrolled = True
+    hh.survivor = SurvivorScenario(who_dies="you", death_year=death_year)
+
+    base_magi = 60_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=6, cpi=0.0)
+
+    after = [r for r in rows if r.year > death_year]
+    assert len(after) > 0
+    checked = 0
+    for r in after:
+        survivor_age = hh.spouse_age_in(r.year)
+        deceased_age = hh.your_age_in(r.year)
+        if survivor_age >= 65:
+            # Survivor ages onto Medicare -- no ACA row. Not what this test pins.
+            continue
+        checked += 1
+        couple_bench = resolve_couple_benchmark_annual(
+            hh.aca_benchmark_premium_annual,
+            your_age=survivor_age,
+            spouse_age=deceased_age,
+            filing_status="MFJ",
+            year=r.year,
+            cpi=0.0,
+        )
+        survivor_factor = aca_age_factor(survivor_age)
+        total_factor = survivor_factor + aca_age_factor(deceased_age)
+        expected_bench = couple_bench * (survivor_factor / total_factor)
+        expected_sub = aca_subsidy(
+            base_magi,
+            benchmark=expected_bench,
+            enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+            filing_status="Single",
+            year=r.year,
+            cpi=0.0,
+        )
+        assert r.aca_subsidy == pytest.approx(expected_sub), (
+            f"{r.year}: subsidy must be age-rated on the SURVIVOR (age {survivor_age}), "
+            f"not the deceased (age {deceased_age})"
+        )
+
+    assert checked > 0, "no under-65 survivor year was actually asserted"
+
+
+def test_timeline_survivor_who_dies_spouse_benchmark_unchanged_by_t1_fix() -> None:
+    """audit-0823 core-tax/T1 guard: the who_dies="spouse" branch was already
+    correct and must come out byte-identical.
+
+    Both benchmark helpers sum symmetrically over their two age slots, so routing
+    the survivor into the `your_*` slot unconditionally must not perturb the branch
+    where the survivor already IS "you".
+    """
+    base_year = 2026
+    death_year = 2028
+    hh = Household()
+    hh.base_year = base_year
+    hh.your_age = 60
+    hh.spouse_age = 58
+    hh.filing_status = "MFJ"
+    hh.your_aca_enrolled = True
+    hh.spouse_aca_enrolled = False
+    hh.survivor = SurvivorScenario(who_dies="spouse", death_year=death_year)
+
+    base_magi = 60_000.0
+    rows = compute_year_by_year_timeline(hh, base_magi=base_magi, years=6, cpi=0.0)
+
+    after = [r for r in rows if r.year > death_year]
+    assert len(after) > 0
+    checked = 0
+    for r in after:
+        survivor_age = hh.your_age_in(r.year)
+        deceased_age = hh.spouse_age_in(r.year)
+        if survivor_age >= 65:
+            # Survivor ages onto Medicare -- aca_subsidy is legitimately None here.
+            continue
+        checked += 1
+        couple_bench = resolve_couple_benchmark_annual(
+            hh.aca_benchmark_premium_annual,
+            your_age=survivor_age,
+            spouse_age=deceased_age,
+            filing_status="MFJ",
+            year=r.year,
+            cpi=0.0,
+        )
+        survivor_factor = aca_age_factor(survivor_age)
+        total_factor = survivor_factor + aca_age_factor(deceased_age)
+        expected_sub = aca_subsidy(
+            base_magi,
+            benchmark=couple_bench * (survivor_factor / total_factor),
+            enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
+            filing_status="Single",
+            year=r.year,
+            cpi=0.0,
+        )
+        assert r.aca_subsidy == pytest.approx(expected_sub), (
+            f"{r.year}: who_dies='spouse' branch must be unchanged by the T1 fix"
+        )
+
+    assert checked > 0, "no under-65 survivor year was actually asserted"
 
 
 # ---------------------------------------------------------------------------

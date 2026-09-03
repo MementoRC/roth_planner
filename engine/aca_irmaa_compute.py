@@ -487,12 +487,33 @@ def compute_year_by_year_timeline(
             # MFJ partial-enrollment blend path instead — deceased's age still
             # counts toward the blend (not enrolled), survivor gets the
             # age-rated share of the couple benchmark.
-            _deceased_age = (
-                hh.spouse_age_in(year) if surv.who_dies == "spouse" else hh.your_age_in(year)
-            )
+            # audit-0823 core-tax/T1: two COUPLED errors lived here, and fixing
+            # either alone still yields a wrong number.
+            # (1) `spouse_on_aca` was hardcoded False while `you_on_aca` had already
+            #     been forced False by the who_dies=="you" gate above, so NEITHER
+            #     adult was flagged enrolled, effective_benchmark_premium found an
+            #     empty enrolled_ages and returned 0.0 -- a $0 subsidy for a survivor
+            #     that the `you_on_aca or sp_on_aca` gate below had just admitted.
+            # (2) `ya` is unconditionally YOUR age, and in the who_dies=="you" branch
+            #     `_deceased_age` was ALSO your age, so BOTH age slots carried the
+            #     DECEASED and the surviving spouse's age never reached the couple
+            #     benchmark or the age-rating blend at all.
+            # Route the SURVIVOR into the `your_*` slot and the deceased into the
+            # `spouse_*` slot unconditionally. Both helpers sum symmetrically over
+            # their two age slots (engine.aca derive_couple_benchmark_annual and
+            # effective_benchmark_premium), so the who_dies=="spouse" branch -- where
+            # the survivor already IS "you" -- comes out byte-identical.
+            if surv.who_dies == "spouse":
+                _survivor_age = ya
+                _deceased_age = hh.spouse_age_in(year)
+                _survivor_on_aca = you_on_aca
+            else:
+                _survivor_age = hh.spouse_age_in(year)
+                _deceased_age = hh.your_age_in(year)
+                _survivor_on_aca = sp_on_aca
             resolved_couple_bench_yr = resolve_couple_benchmark_annual(
                 hh.aca_benchmark_premium_annual,
-                your_age=ya,
+                your_age=_survivor_age,
                 spouse_age=_deceased_age,
                 filing_status="MFJ",
                 year=year,
@@ -500,8 +521,8 @@ def compute_year_by_year_timeline(
             )
             eff_bench_yr = effective_benchmark_premium(
                 resolved_couple_bench_yr,
-                your_age=ya,
-                your_on_aca=you_on_aca,
+                your_age=_survivor_age,
+                your_on_aca=_survivor_on_aca,
                 spouse_age=_deceased_age,
                 spouse_on_aca=False,
                 filing_status="MFJ",
