@@ -19,6 +19,7 @@ import streamlit as st
 
 from engine.data_sources.record import record_magi_candidates
 from engine.portfolio_sync import (
+    EmptySnapshotWriteRefusedError,
     MagiSnapshot,
     PortfolioSnapshot,
     apply_dividends_rollup,
@@ -84,7 +85,21 @@ def sync_portfolio_from_finextract(hh: Household) -> PortfolioSyncOutcome:
     div_rollup = fetch_dividends_rollup()
     if div_rollup.server_available:
         snap = apply_dividends_rollup(snap, div_rollup)
-    save_snapshot(snap)
+    try:
+        save_snapshot(snap)
+    except EmptySnapshotWriteRefusedError as exc:
+        # PS-2b: the write was refused to protect a populated cache. Route into
+        # the same failure branch the caller already handles for an unreachable
+        # server, rather than reporting a sync that did not persist.
+        snap.server_available = False
+        snap.error = str(exc)
+        return PortfolioSyncOutcome(
+            snap=snap,
+            magi_candidates_recorded=0,
+            ytd_synced=False,
+            dividend_history_synced=False,
+            option_exercises_synced=False,
+        )
     st.session_state.portfolio_snapshot = snap
 
     # MAGI 2-year history from FinExtract (IRMAA lookback anchor). Records

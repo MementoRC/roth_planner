@@ -789,7 +789,7 @@ def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
     )
     monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
     monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
-    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap, **kwargs: None)
     monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
     monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
     monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)

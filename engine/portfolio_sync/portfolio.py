@@ -128,7 +128,16 @@ def fetch_portfolio(
 _CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".portfolio_cache.json"
 
 
-def save_snapshot(snap: PortfolioSnapshot) -> None:
+class EmptySnapshotWriteRefusedError(RuntimeError):
+    """save_snapshot() refused to erase a populated cache with an empty snapshot.
+
+    Raised rather than skipped on purpose. A silent no-op would reproduce the
+    exact shape of the defect this guards against (audit-0823 PS-1): a caller
+    reporting success over a write that did not do what it claimed.
+    """
+
+
+def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -> None:
     """Save portfolio snapshot to disk as JSON.
 
     FinExtract-owned fields (equity_sales_lots, equity_sales_executions,
@@ -136,6 +145,18 @@ def save_snapshot(snap: PortfolioSnapshot) -> None:
     snapshot — live HTTP sync has no equivalent source for these.  Instead,
     the existing on-disk equity_sales and sources sections are preserved so
     FinExtract's rebuild writes are not clobbered.
+
+    ``allow_empty`` controls whether a snapshot carrying zero accounts may
+    erase a populated cache (audit-0823 PS-2b).  It defaults to
+    ``snap.server_available``: on the sync path that flag is live and truthful,
+    so a verified "the household holds nothing" still persists while an
+    unanswered fetch is refused.  Callers where the flag is stale — the
+    data-bridge import inherits it from disk through ``apply_bundle`` — must
+    pass it explicitly rather than depend on the inference.
+
+    Raises:
+        EmptySnapshotWriteRefusedError: the write would drop every account from a
+            cache that currently holds some, and emptiness was not verified.
     """
     existing: dict[str, Any] = {}
     if _CACHE_PATH.exists():
@@ -143,6 +164,17 @@ def save_snapshot(snap: PortfolioSnapshot) -> None:
             existing = read_pii_json(_CACHE_PATH)
         except (json.JSONDecodeError, OSError):
             existing = {}
+
+    if allow_empty is None:
+        allow_empty = snap.server_available
+    existing_accounts = existing.get("accounts") or []
+    if not snap.accounts and not allow_empty and existing_accounts:
+        raise EmptySnapshotWriteRefusedError(
+            f"Refusing to overwrite {_CACHE_PATH.name} "
+            f"({len(existing_accounts)} account(s) on disk) with a snapshot "
+            "holding none. The fetch that produced it never confirmed the "
+            "household actually holds nothing, so this would be data loss."
+        )
 
     data = asdict(snap)
     # Drop the fields that only FinExtract populates; they live under
