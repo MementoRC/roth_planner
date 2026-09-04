@@ -34,7 +34,13 @@ from .holdings import (
     positions_for_forecast_multi,
 )
 from .magi import apply_magi, fetch_magi
-from .portfolio import _CACHE_PATH, fetch_portfolio, load_snapshot, save_snapshot
+from .portfolio import (
+    _CACHE_PATH,
+    EmptySnapshotWriteRefusedError,
+    fetch_portfolio,
+    load_snapshot,
+    save_snapshot,
+)
 from .shapes import (
     ASSET_CLASS,
     EXPECTED_RETURNS,
@@ -72,6 +78,7 @@ __all__ = [
     "BASE_URL",
     "DividendsRollupSnapshot",
     "EXPECTED_RETURNS",
+    "EmptySnapshotWriteRefusedError",
     "EquityGrant",
     "Holding",
     "HoldingsSnapshot",
@@ -175,6 +182,7 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "BASE_URL": _client,
     "DividendsRollupSnapshot": _shapes,
     "EXPECTED_RETURNS": _shapes,
+    "EmptySnapshotWriteRefusedError": _portfolio,
     "EquityGrant": _shapes,
     "Holding": _shapes,
     "HoldingsSnapshot": _shapes,

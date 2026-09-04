@@ -22,7 +22,11 @@ from engine.instance_identity import CorruptInstanceOwnerError, load_instance_ow
 from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
 from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
-from engine.portfolio_sync.portfolio import load_snapshot, save_snapshot
+from engine.portfolio_sync.portfolio import (
+    EmptySnapshotWriteRefusedError,
+    load_snapshot,
+    save_snapshot,
+)
 from engine.upload_merge import extract_bundle_magi
 from models.household import Household
 from models.sourced import Source
@@ -327,7 +331,11 @@ def _handle_personal_uploads() -> None:
                         existing_snapshot=existing_snapshot,
                         existing_ledger=_load_pdf_ledger(),
                     )
-                    save_snapshot(new_snapshot)
+                    # PS-2b: a bundle import must never zero out a populated portfolio as a
+                    # side effect. server_available here is inherited from disk via
+                    # apply_bundle and says nothing about this import, so do not let the
+                    # default inference decide.
+                    save_snapshot(new_snapshot, allow_empty=False)
                     _save_pdf_ledger(new_ledger)
                     _apply_user_defaults_to_session(
                         data["sections"]["setup_scalars"], as_spouse=(target_owner == "spouse")
@@ -386,6 +394,14 @@ def _handle_personal_uploads() -> None:
                         )
                     st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")
                     st.rerun()
+            except EmptySnapshotWriteRefusedError:
+                st.error(
+                    "Import refused: this bundle would remove every account "
+                    "from your saved portfolio, and nothing on disk was "
+                    "changed. Re-export from the sender with its portfolio "
+                    "section populated, or clear the portfolio deliberately "
+                    "from Portfolio Sync first."
+                )
             except (
                 json.JSONDecodeError,
                 ValueError,
