@@ -308,6 +308,7 @@ def _handle_personal_uploads() -> None:
         )
         if apply_clicked and bundle_file is not None:
             privkey = _resolve_privkey_bytes()
+            bundle_parsed = False
             try:
                 raw = bundle_file.read()
                 plaintext = open_uploaded_payload(raw, privkey)
@@ -324,6 +325,15 @@ def _handle_personal_uploads() -> None:
                         {"accounts": data["sections"]["portfolio"]["accounts"]}
                     )
                     data["sections"]["portfolio"]["accounts"] = incoming_snap.accounts
+                    # The bundle's structural contract ends here. Touch every
+                    # top-level section the apply phase below will read
+                    # (setup_scalars is not otherwise read until lines ~341/349/385)
+                    # so a malformed bundle fails NOW, while "Invalid <file>" is
+                    # still the honest message. Past this point a KeyError /
+                    # TypeError / AttributeError is a defect in THIS app, not a
+                    # bad upload, and is re-raised below instead of disguised.
+                    _ = data["sections"]["setup_scalars"]
+                    bundle_parsed = True
                     existing_snapshot = load_snapshot() or PortfolioSnapshot()
                     new_snapshot, new_ledger = apply_bundle(
                         target_owner,
@@ -410,6 +420,12 @@ def _handle_personal_uploads() -> None:
                 AttributeError,
                 DataBridgeCryptoError,
             ) as e:
+                # audit-0823: this tuple used to cover ~85 lines, so a defect in
+                # our own apply phase was reported to the user as their file being
+                # invalid. It hid a real TypeError during PS-2b (PR #456). Only
+                # pre-validation failures are genuinely "invalid bundle".
+                if bundle_parsed:
+                    raise
                 st.error(f"Invalid {bundle_file.name}: {e}")
         if col_b.button("Reset to demo", key="reset_demo", use_container_width=True):
             _clear_personal_session_state()
