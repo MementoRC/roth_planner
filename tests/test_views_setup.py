@@ -801,6 +801,106 @@ class TestPersistenceRoundTripAudit0802:
             "removed inherited IRA resurrected from stale .user_defaults.json"
         )
 
+    def test_cleared_prior_year_magi_not_resurrected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """audit-0823 state/TRUTHY-GUARD: zeroing both prior-year MAGI inputs must
+        overwrite the on-disk anchor, not leave it to be reseeded on restart.
+
+        The Setup > Assumptions expander documents "Leave 0 to use projected MAGI"
+        as the way to clear the anchor; that path pops both years and writes an
+        empty dict to session_state (views/setup/_partials/_assumptions.py:96-106).
+        A truthy-only guard omitted the key from the autosave payload, and because
+        save_user_defaults merges onto disk the stale anchor survived and silently
+        re-anchored the IRMAA 2-year lookback on the next startup.
+        """
+        import views.setup._state as state_mod
+        from config.loader import load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        monkeypatch.setattr(
+            state_mod.st, "session_state", {"prior_year_magi": {2024: 210_000.0}}
+        )
+        save_user_defaults(state_mod._user_defaults_from_session())
+        assert load_defaults()["prior_year_magi"] == {"2024": 210_000.0}
+
+        # User zeroes both number_inputs -> both years popped -> {} written to session.
+        monkeypatch.setattr(state_mod.st, "session_state", {"prior_year_magi": {}})
+        save_user_defaults(state_mod._user_defaults_from_session())
+
+        assert load_defaults().get("prior_year_magi") == {}, (
+            "cleared prior-year MAGI anchor resurrected from stale "
+            ".user_defaults.json; IRMAA lookback silently re-anchored"
+        )
+
+    def test_cleared_account_type_overrides_not_resurrected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """audit-0823 state/TRUTHY-GUARD: an upload whose overrides are all rejected
+        leaves account_type_overrides == {} (engine/upload_merge.py:97-103). That
+        empty-but-present state must overwrite the on-disk map rather than let the
+        previous overrides reappear on restart.
+        """
+        import views.setup._state as state_mod
+        from config.loader import load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        overrides = {"Z123": {"type": "trad_ira", "owner": "you"}}
+        monkeypatch.setattr(
+            state_mod.st, "session_state", {"account_type_overrides": overrides}
+        )
+        save_user_defaults(state_mod._user_defaults_from_session())
+        assert load_defaults()["account_type_overrides"] == overrides
+
+        monkeypatch.setattr(
+            state_mod.st, "session_state", {"account_type_overrides": {}}
+        )
+        save_user_defaults(state_mod._user_defaults_from_session())
+
+        assert load_defaults().get("account_type_overrides") == {}, (
+            "cleared account-type overrides resurrected from stale .user_defaults.json"
+        )
+
+    def test_empty_grant_strikes_does_not_wipe_on_disk_strikes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """audit-0823 state/TRUTHY-GUARD, deliberate non-change.
+
+        _user_grant_strikes keeps its truthy-only guard on purpose. Strikes are
+        hand-editable in .user_defaults.json and an uploaded bundle carrying
+        ``grant_strikes: {}`` sets the session key to an empty dict
+        (engine/upload_merge.py:95-96). Emitting that empty map would merge
+        ``grant_strikes: {}`` over the file and drop the hand-edited strikes --
+        the exact regression config/loader.py:134-139 documents (the dropped 2019
+        grant). This test pins the guard so a future "consistency" sweep cannot
+        silently flip it.
+        """
+        import views.setup._state as state_mod
+        from config.loader import load_defaults, save_user_defaults
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
+        monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
+
+        monkeypatch.setattr(
+            state_mod.st, "session_state", {"_user_grant_strikes": {"2019": 104.0}}
+        )
+        save_user_defaults(state_mod._user_defaults_from_session())
+        assert load_defaults()["grant_strikes"] == {"2019": 104.0}
+
+        monkeypatch.setattr(state_mod.st, "session_state", {"_user_grant_strikes": {}})
+        save_user_defaults(state_mod._user_defaults_from_session())
+
+        assert load_defaults()["grant_strikes"] == {"2019": 104.0}, (
+            "empty session strikes wiped the hand-edited on-disk grant_strikes"
+        )
+
 
 class TestApplySingleFiler:
     """C9 / ui-streamlit-4: Single-filer zeroing happens on the derived Household,

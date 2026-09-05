@@ -75,14 +75,29 @@ def _user_defaults_from_session() -> dict:
         sess_key = "txn_price" if k == "stock_price_now" else k
         if sess_key in st.session_state:
             payload[k] = st.session_state[sess_key]
+    # grant_strikes DELIBERATELY keeps a truthy-only guard (unlike the keys
+    # below). Strikes are hand-editable in .user_defaults.json and an uploaded
+    # bundle carrying `grant_strikes: {}` sets this key to an empty dict
+    # (engine/upload_merge.py:95-96). Emitting that empty map would merge
+    # `grant_strikes: {}` over the file and drop the hand-edited strikes -- the
+    # exact regression config/loader.py:134-139 documents (the dropped 2019
+    # grant). Do not "normalise" this to a presence guard.
     strikes = st.session_state.get("_user_grant_strikes")
     if strikes:
         payload["grant_strikes"] = strikes
+    # Emit account_type_overrides / prior_year_magi whenever the session knows
+    # about them, even when cleared to {}, for the same reason survivor /
+    # inherited_iras are emitted below: save_user_defaults merges onto the
+    # existing file, so a truthy-only guard lets a stale on-disk value survive a
+    # clear and be resurrected on the next startup (audit-0802 F4/F5;
+    # audit-0823 state/TRUTHY-GUARD). prior_year_magi is the leg with teeth --
+    # "Leave 0 to use projected MAGI" pops both years and writes {}, and the
+    # resurrected anchor silently re-anchors the IRMAA 2-year lookback.
     overrides = st.session_state.get("account_type_overrides")
-    if overrides:
+    if overrides is not None:
         payload["account_type_overrides"] = overrides
     prior_magi = st.session_state.get("prior_year_magi")
-    if prior_magi:
+    if prior_magi is not None:
         payload["prior_year_magi"] = {str(k): v for k, v in prior_magi.items()}
     # Emit survivor / inherited_iras whenever the session knows about them, even
     # when cleared (None / []). save_user_defaults merges onto the existing file,
