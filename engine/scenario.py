@@ -921,7 +921,15 @@ def _project_year(
         + yr.extra_withdrawal
         + yr.spouse_extra_withdrawal
         + yr.combined_ss
-        + yr.option_income
+        # audit-0823 SC-1: credit the BOUNDED option income, not the raw scheduled
+        # figure. yr.option_income is the scheduled forecast; option_income_bounded
+        # (line ~436) floors it at realized nqo_exercise_ytd and is what feeds
+        # gross income / MAGI / yr.federal_tax_amt, which this sum subtracts below.
+        # Crediting the raw value while subtracting tax computed on the bounded one
+        # charged the household tax on realized NQO income it was never credited as
+        # cash. nqo_exercise_ytd is absent from the YTD add-back block below, so
+        # nothing else restored it.
+        + option_income_bounded
         # Inherited-IRA distributions are spendable, taxable cash (already in
         # combined_gross/MAGI, so already in federal_tax_amt). Omitting them here
         # subtracted their tax with no offsetting inflow, overstating income_needed
