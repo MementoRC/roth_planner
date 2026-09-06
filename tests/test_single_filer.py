@@ -267,15 +267,23 @@ class TestAcaIrmaaTimelineSingleFiler:
             )
 
     def test_single_filer_medicare_count_ignores_spouse_age(self):
-        """Single filer age 63 with spouse_age=65: IRMAA tier must be None (not on
-        Medicare yet) because only filer's age matters.
+        """Single filer age 60 (62 at the IRMAA payment year, year+2) with
+        spouse_age=65: IRMAA tier must be None (not on Medicare yet) because
+        only the filer's own age matters — the spouse's Medicare-eligible age
+        must never leak into the count.
 
-        Buggy: medicare_count = sum([63>=65, 65>=65]) = 1 → irmaa_tier is set
-        Correct: medicare_count = 0 for single filer (63 < 65) → irmaa_tier=None
+        audit-0823 core-tax/T2 moved the IRMAA gate from the income year to
+        the payment year (year + 2), so this filer age is chosen to stay
+        under 65 even at the payment year, isolating "spouse age is ignored"
+        from "the filer's own payment-year eligibility" (see the companion
+        test `test_single_filer_medicare_count_uses_payment_year_own_age`).
+
+        Buggy: medicare_count = sum([62>=65, 65>=65]) = 1 → irmaa_tier is set
+        Correct: medicare_count = 0 for single filer (62 < 65) → irmaa_tier=None
         """
         hh = Household(
-            your_age=63,
-            spouse_age=65,  # would trigger bug
+            your_age=60,
+            spouse_age=65,  # would trigger the bug if counted
             your_aca_enrolled=True,
             spouse_aca_enrolled=False,
             filing_status="Single",
@@ -287,5 +295,37 @@ class TestAcaIrmaaTimelineSingleFiler:
         )
         rows = compute_year_by_year_timeline(hh, base_magi=50_000, years=1, cpi=hh.cpi_assumption)
         assert rows[0].irmaa_tier is None, (
-            f"Single filer age 63: irmaa_tier should be None, got {rows[0].irmaa_tier}"
+            "Single filer age 60 (62 at payment year): irmaa_tier should be "
+            f"None, got {rows[0].irmaa_tier}"
+        )
+        assert rows[0].irmaa_room is None, (
+            "Single filer age 60 (62 at payment year): irmaa_room should be "
+            f"None, got {rows[0].irmaa_room}"
+        )
+
+    def test_single_filer_medicare_count_uses_payment_year_own_age(self):
+        """Single filer age 63 (65 at the IRMAA payment year, year+2): the
+        filer's OWN payment-year age must gate IRMAA — irmaa_tier must be
+        set, with spouse_age still None. Pins the payment-year-gate behaviour
+        (audit-0823 core-tax/T2) separately from spouse-age-ignored above.
+        """
+        hh = Household(
+            your_age=63,
+            spouse_age=65,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=False,
+            filing_status="Single",
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            txn_price_now=0.0,
+            txn_price_late=0.0,
+        )
+        rows = compute_year_by_year_timeline(hh, base_magi=50_000, years=1, cpi=hh.cpi_assumption)
+        assert rows[0].spouse_age is None, (
+            f"Single filer: expected spouse_age=None, got {rows[0].spouse_age}"
+        )
+        assert rows[0].irmaa_tier is not None, (
+            "Single filer age 63 (65 at payment year): irmaa_tier should be "
+            "set, got None"
         )
