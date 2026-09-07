@@ -442,17 +442,14 @@ def _rederive_ytd_from_ledger(ledger: object) -> None:
     session (nothing to overwrite onto).
     """
     from engine.pdf_ledger import derive_brokerage_totals, derive_koinly_totals
+    from engine.portfolio_sync.ytd import apply_brokerage_totals
 
     snap = st.session_state.get("ytd_snapshot")
     if snap is None:
         return
 
     brokerage_totals = derive_brokerage_totals(ledger)  # type: ignore[arg-type]
-    snap.interest_ytd = brokerage_totals["interest_ytd"]
-    snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
-    snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
-    snap.stcg_ytd = brokerage_totals["stcg_ytd"]
-    snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+    apply_brokerage_totals(snap, brokerage_totals)
 
     koinly_totals = derive_koinly_totals(ledger)  # type: ignore[arg-type]
     snap.crypto_stcg_ytd = koinly_totals["stcg"]

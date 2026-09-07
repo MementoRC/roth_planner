@@ -922,6 +922,13 @@ def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementReco
     dividends_tax_exempt_ytd and interest_tax_exempt_ytd both fold into
     tax_exempt_interest_ytd -- IRS 1040 line 2a treats exempt-interest
     dividends from muni funds the same as tax-exempt interest.
+
+    WARNING: the returned "ordinary_dividends_ytd" key holds the FULL taxable
+    dividend total (Form 1040 line 3b in substance), NOT the non-qualified
+    remainder that YTDSnapshot.ordinary_dividends_ytd expects. Callers must
+    land this dict via engine.portfolio_sync.ytd.apply_brokerage_totals,
+    which subtracts qualified_dividends_ytd -- assigning it directly
+    double-counts qualified dividends (audit-0823 C1).
     """
     records = taxable_by_account.values()
     return {

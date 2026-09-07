@@ -56,6 +56,41 @@ def fetch_ytd_snapshot() -> YTDSnapshot:
     return ytd
 
 
+def apply_brokerage_totals(ytd: YTDSnapshot, totals: dict[str, float]) -> YTDSnapshot:
+    """Land derived brokerage totals onto *ytd*. THE one place that mapping lives.
+
+    ``totals["ordinary_dividends_ytd"]`` is the statement's FULL taxable
+    dividend total -- Form 1040 line 3b in substance. No brokerage statement
+    splits qualified from ordinary (see engine.brokerage_statement_pdf module
+    docstring: verified absent for Schwab, Vanguard, IBKR and UBS).
+
+    ``YTDSnapshot.ordinary_dividends_ytd`` means something different: the
+    NON-qualified remainder. ``dividends_ytd`` returns qualified + ordinary,
+    and both ``magi_ytd`` and ``total_investment_income`` consume that sum.
+    Assigning the full statement total straight across therefore counted the
+    user's separately-entered qualified dividends twice, inflating MAGI
+    (IRMAA/ACA thresholds), the NIIT base and ordinary brackets at once
+    (audit-0823 C1).
+
+    Subtracting here -- in ONE place every caller routes through -- is what
+    keeps that from being re-introduced at the next call site. Floored at zero
+    so a stale qualified entry larger than the scanned total cannot drive
+    ordinary dividends negative. Idempotent: it reads qualified_dividends_ytd
+    and *totals*, never the previous ordinary value, so re-deriving is safe.
+
+    NOTE: editing qualified_dividends_ytd afterwards does NOT retroactively
+    re-split an already-applied total; re-scan or re-derive to refresh it.
+    """
+    ytd.interest_ytd = totals["interest_ytd"]
+    ytd.tax_exempt_interest_ytd = totals["tax_exempt_interest_ytd"]
+    ytd.ordinary_dividends_ytd = max(
+        0.0, totals["ordinary_dividends_ytd"] - ytd.qualified_dividends_ytd
+    )
+    ytd.stcg_ytd = totals["stcg_ytd"]
+    ytd.ltcg_ytd = totals["ltcg_ytd"]
+    return ytd
+
+
 def apply_brokerage_statement_records(
     ytd: YTDSnapshot, taxable_by_account: dict[str, BrokerageStatementRecord]
 ) -> YTDSnapshot:
@@ -67,14 +102,11 @@ def apply_brokerage_statement_records(
     here. Fields not covered by brokerage statements (wages, NEC income, IRA
     conversions/distributions, qualified dividends) are left untouched,
     mirroring apply_option_exercises' overlay pattern.
+
+    The qualified-dividend subtraction (statement total -> non-qualified
+    remainder) happens inside apply_brokerage_totals, not here.
     """
-    totals = aggregate_to_ytd_fields(taxable_by_account)
-    ytd.interest_ytd = totals["interest_ytd"]
-    ytd.tax_exempt_interest_ytd = totals["tax_exempt_interest_ytd"]
-    ytd.ordinary_dividends_ytd = totals["ordinary_dividends_ytd"]
-    ytd.stcg_ytd = totals["stcg_ytd"]
-    ytd.ltcg_ytd = totals["ltcg_ytd"]
-    return ytd
+    return apply_brokerage_totals(ytd, aggregate_to_ytd_fields(taxable_by_account))
 
 
 _YTD_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ytd_cache.json"

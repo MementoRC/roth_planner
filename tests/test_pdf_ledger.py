@@ -36,12 +36,18 @@ def _koinly(stcg: float, ltcg: float, income: float) -> KoinlyReport:
     )
 
 
-def _brokerage(account_number: str, interest: float = 0.0) -> BrokerageStatementRecord:
+def _brokerage(
+    account_number: str,
+    interest: float = 0.0,
+    *,
+    broker: str = "schwab",
+    period_end: str = "2026-06-30",
+) -> BrokerageStatementRecord:
     return BrokerageStatementRecord(
         account_number=account_number,
-        broker="schwab",
+        broker=broker,
         account_type="taxable",
-        statement_period_end="2026-06-30",
+        statement_period_end=period_end,
         interest_taxable_ytd=interest,
         interest_tax_exempt_ytd=0.0,
         dividends_taxable_ytd=0.0,
@@ -232,3 +238,67 @@ class TestOwnerSlice:
         snapshot = copy.deepcopy(led)
         replace_owner(led, "spouse", {"koinly": {}, "brokerage": {}})
         assert led == snapshot
+
+
+class TestAccountIdentityAcrossOwners:
+    """audit-0823 C2: ledger slots are keyed (owner, account_number) but
+    derive_brokerage_totals sums across EVERY owner. resolve_account_owner
+    (engine/account_attribution.py:181) falls back to `instance_owner`, which
+    the user sets -- and can change -- at Setup > Command Center. Re-scanning
+    after an owner change therefore writes a SECOND slot for the same account
+    instead of replacing the first, doubling interest/dividends/STCG/LTCG.
+
+    Account identity is (broker, account_number), matching how
+    account_overrides is keyed -- NOT account_number alone.
+    """
+
+    def test_same_account_rescanned_under_new_owner_replaces(self) -> None:
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(ledger, "you", _brokerage("111", interest=10.0))
+        ledger = write_brokerage_contribution(ledger, "spouse", _brokerage("111", interest=10.0))
+        totals = derive_brokerage_totals(ledger)
+        assert totals["interest_ytd"] == pytest.approx(10.0), (
+            "the same account re-scanned under a new owner must MOVE, not duplicate"
+        )
+
+    def test_owner_move_leaves_exactly_one_slot(self) -> None:
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(ledger, "you", _brokerage("111", interest=10.0))
+        ledger = write_brokerage_contribution(ledger, "spouse", _brokerage("111", interest=10.0))
+        holders = [o for o, accts in ledger["brokerage"].items() if "111" in accts]
+        assert holders == ["spouse"]
+
+    def test_distinct_accounts_across_owners_still_additive(self) -> None:
+        """Non-regression: the module's whole purpose (two owners' DISTINCT
+        accounts both survive) must be untouched."""
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(ledger, "you", _brokerage("111", interest=10.0))
+        ledger = write_brokerage_contribution(ledger, "spouse", _brokerage("222", interest=20.0))
+        totals = derive_brokerage_totals(ledger)
+        assert totals["interest_ytd"] == pytest.approx(30.0)
+
+    def test_same_number_at_different_brokers_stays_distinct(self) -> None:
+        """Account identity is (broker, account_number): two brokers reusing a
+        number string are two real accounts and must both count."""
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(
+            ledger, "you", _brokerage("111", interest=10.0, broker="schwab")
+        )
+        ledger = write_brokerage_contribution(
+            ledger, "spouse", _brokerage("111", interest=20.0, broker="vanguard")
+        )
+        totals = derive_brokerage_totals(ledger)
+        assert totals["interest_ytd"] == pytest.approx(30.0)
+
+    def test_older_statement_under_new_owner_does_not_clobber_newer(self) -> None:
+        """The C14 staleness guard must survive an owner change: an older
+        statement arriving under a different owner must not replace newer data."""
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(
+            ledger, "you", _brokerage("111", interest=500.0, period_end="2026-12-31")
+        )
+        ledger = write_brokerage_contribution(
+            ledger, "spouse", _brokerage("111", interest=50.0, period_end="2026-01-31")
+        )
+        totals = derive_brokerage_totals(ledger)
+        assert totals["interest_ytd"] == pytest.approx(500.0)
