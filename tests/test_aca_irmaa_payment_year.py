@@ -396,3 +396,63 @@ class TestScenarioIrmaaRoomPaymentYear:
             f"got {yr.irmaa_room:.2f}, expected {room_payment_year:.2f} "
             f"(income-year value was {room_income_year:.2f})"
         )
+
+
+class TestTimelineIrmaaMedicareGatePaymentYearAge:
+    """audit-0823 core-tax/T2: the timeline's IRMAA gate must use the
+    PAYMENT-year age (year + 2), not the income-year age. A 63-year-old is
+    pre-Medicare in the income year but turns 65 by the payment year, so the
+    IRMAA surcharge that lands two years later is real and must be reflected
+    in that base row's tier/room -- while the `system` label (a same-year
+    coverage description) deliberately still reports the income-year age.
+    """
+
+    def test_timeline_irmaa_room_populated_for_63_pre_medicare_income_year_but_65_at_payment_year(
+        self,
+    ) -> None:
+        """Base-year row: your_age=spouse_age=63 (both <65 in the income
+        year) but 65 by year+2 (payment year) -- irmaa_tier/irmaa_room must
+        be populated and must equal the directly-computed payment-year value,
+        not merely non-None (a prior fix, core-tax/T1, shipped an is-not-None
+        assertion on an Optional money field and the bug survived because
+        0.0 passed).
+        """
+        hh = Household(your_age=63, spouse_age=63)
+        cpi = 0.025
+        magi = 200_000
+
+        rows = compute_year_by_year_timeline(hh, magi, years=5, cpi=cpi)
+        row = rows[0]
+        assert row.year == hh.base_year
+
+        expected_tier = irmaa_tier(magi, filing_status="MFJ", year=row.year + 2, cpi=cpi)
+        expected_room = irmaa_next_threshold(magi, filing_status="MFJ", year=row.year + 2, cpi=cpi)
+
+        assert row.irmaa_room is not None, (
+            "irmaa_room must be populated for a 63-year-old who is 65 at the payment year"
+        )
+        assert row.irmaa_room == pytest.approx(expected_room, rel=1e-9), (
+            f"irmaa_room must equal irmaa_next_threshold(..., year={row.year + 2}), "
+            f"got {row.irmaa_room!r}, expected {expected_room!r}"
+        )
+        assert row.irmaa_tier == expected_tier, (
+            f"irmaa_tier must equal irmaa_tier(..., year={row.year + 2}), "
+            f"got {row.irmaa_tier!r}, expected {expected_tier!r}"
+        )
+
+    def test_timeline_system_label_still_uses_income_year_age_for_63(self) -> None:
+        """Same 63/63 household: the `system` label reports income-year
+        coverage (ACA/Employer, not Medicare) even though the IRMAA gate
+        above has moved to the payment year -- pinning the deliberate split
+        so a future sweep does not unify the two.
+        """
+        hh = Household(your_age=63, spouse_age=63)
+        cpi = 0.025
+        magi = 200_000
+
+        rows = compute_year_by_year_timeline(hh, magi, years=5, cpi=cpi)
+        row = rows[0]
+
+        assert "Medicare" not in row.system, (
+            f"system label must stay on income-year age (63, pre-Medicare), got {row.system!r}"
+        )

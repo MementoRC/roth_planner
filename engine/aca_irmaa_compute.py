@@ -440,7 +440,6 @@ def compute_year_by_year_timeline(
                 # not the deceased primary's continuing age/enrollment flag.
                 you_on_aca = False
                 sp_on_aca = aca_applies(hh.spouse_age_in(year), hh.spouse_aca_enrolled)
-        medicare_count = (1 if on_medicare_you else 0) + (1 if on_medicare_sp else 0)
 
         # Determine system per person
         parts = []
@@ -466,14 +465,39 @@ def compute_year_by_year_timeline(
         # thresholds published for, and paid in, year + 2. Mirror compute_cost_curves
         # (`_irmaa_year`) and engine.irmaa.irmaa_for_year so the timeline and cost-curve
         # views no longer disagree on tier/room for the same MAGI by ~2 CPI-years. ACA
-        # stays on `year` below (a same-year effect), as does the medicare_count gate
-        # and the system label (income-year insurance status).
+        # stays on `year` below (a same-year effect), as does the system label
+        # (income-year insurance status); the IRMAA Medicare gate has moved to
+        # `_irmaa_year` (see `_irmaa_medicare_count` below) since IRMAA is paid
+        # two years after the income that drives it.
         _irmaa_year = year + 2
+
+        # audit-0823 core-tax/T2: the IRMAA gate must ask whether the household
+        # will be ON MEDICARE IN THE PAYMENT YEAR (year + 2), not in the income
+        # year. Income realized at 63/64 is judged when the filer is 65/66, so an
+        # income-year gate zeroed out a surcharge that is really owed and left
+        # this function disagreeing with compute_cost_curves (:226-235), which
+        # already gates on `_irmaa_year`. The `system` label above deliberately
+        # stays on the income year -- it reports coverage while the income was
+        # earned, which is a different question from who pays the surcharge.
+        if survivor_active and surv is not None:
+            if surv.who_dies == "spouse":
+                _irmaa_medicare_count = 1 if hh.your_age_in(_irmaa_year) >= 65 else 0
+            else:
+                _irmaa_medicare_count = 1 if hh.spouse_age_in(_irmaa_year) >= 65 else 0
+        elif is_mfj:
+            _irmaa_medicare_count = sum(
+                1
+                for a in (hh.your_age_in(_irmaa_year), hh.spouse_age_in(_irmaa_year))
+                if a >= 65
+            )
+        else:
+            _irmaa_medicare_count = 1 if hh.your_age_in(_irmaa_year) >= 65 else 0
+
         irmaa_room = (
             irmaa_next_threshold(
                 base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
             )
-            if medicare_count > 0
+            if _irmaa_medicare_count > 0
             else None
         )
 
@@ -583,7 +607,7 @@ def compute_year_by_year_timeline(
                 irmaa_tier=irmaa_tier(
                     base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
                 )
-                if medicare_count > 0
+                if _irmaa_medicare_count > 0
                 else None,
                 irmaa_room=irmaa_room,
                 aca_subsidy=aca_sub,
