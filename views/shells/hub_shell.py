@@ -42,6 +42,7 @@ from views.setup._partials import (
     render_options_partial,
     render_portfolio_partial,
 )
+from views.setup._state import autosave_user_defaults
 from views.setup.data_bridge import render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
 
@@ -89,6 +90,10 @@ def render(hh: Household) -> None:
         # _render_pdf_1040_import() takes no container arg and opens its own
         # inner expander — see domains_shell.py's identical note.
         _render_pdf_1040_import()
+
+    # audit-0823 models-views/M2: see domains_shell.py's identical note on
+    # this same call — must run last, after every partial above.
+    autosave_user_defaults()
 
 
 __all__ = ["render"]

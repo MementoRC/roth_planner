@@ -1023,3 +1023,162 @@ def test_wizard_registered_and_renders() -> None:
 
     at = AppTest.from_function(_script).run()
     assert not at.exception
+
+
+# --- audit-0823 M2: shell autosave parity -----------------------------------
+#
+# Domains/Hub/Wizard compose views/setup/_partials/ directly and never routed
+# through views/setup/parameters.py:render_parameters_tab, so they never
+# reached the save_user_defaults() autosave Classic/Contextual get for free.
+# _render_shell()/_run_shell() above always seed _suppress_snapshot_autoload
+# = True (needed to keep the OTHER shell tests from touching disk-autoload
+# concerns), which would also suppress the autosave itself and make these
+# tests vacuous -- so this section uses its own no-suppress seed/runner pair
+# instead of reusing _run_shell.
+
+
+def _render_shell_no_suppress(theme: str) -> None:
+    """Same seed as ``_render_shell`` above, minus ``_suppress_snapshot_autoload``
+    -- needed so the real (non-suppressed) autosave path actually fires.
+    """
+    import streamlit as st
+
+    from config.defaults import DEFAULTS
+    from engine.irmaa import BASE_PART_B
+    from models.household import Household
+    from views.shells import render_setup
+
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
+    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
+    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
+    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
+    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
+    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
+    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+    st.session_state.setdefault("advance_aptc_annual", 0)
+    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+    st.session_state.setdefault("cpi_assumption", 0.025)
+    st.session_state.setdefault("_pending_review", set())
+    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
+
+    render_setup(Household(), theme)
+
+
+def _run_shell_no_suppress(shell_name: str, monkeypatch) -> AppTest:
+    """``_run_shell``'s disk-source neutralization, paired with the
+    no-suppress seed above instead of ``_render_shell``."""
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+
+    at = AppTest.from_function(
+        _render_shell_no_suppress, kwargs={"theme": _SHELL_NAME_TO_THEME[shell_name]}
+    )
+    at.run()
+    return at
+
+
+def _patch_state_autosave(monkeypatch):
+    """Patch ``save_user_defaults`` at ``views.setup._state``'s point of use --
+    the module the audit-0823/M2 fix binds the name into via
+    ``autosave_user_defaults()``. ``raising=False`` lets the same patch apply
+    whether or not the name is imported there yet, so one test body runs RED
+    before the fix (name absent / spy never reached) and GREEN after it
+    (spy is what actually gets called) without being rewritten in between.
+    """
+    from unittest.mock import MagicMock
+
+    import views.setup._state as state_mod
+
+    spy = MagicMock()
+    monkeypatch.setattr(state_mod, "save_user_defaults", spy, raising=False)
+    return spy
+
+
+@pytest.mark.parametrize("shell_name", ["domains", "hub", "wizard"])
+def test_shell_autosave_reaches_save_user_defaults(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
+    """audit-0823 M2: Domains/Hub/Wizard must persist session edits the same
+    way Classic/Contextual already do. Before the fix, none of these three
+    shells ever calls save_user_defaults -- edits made through them vanish on
+    restart. RED until views/setup/_state.py grows a shared
+    autosave_user_defaults() helper and each shell's render() calls it.
+    """
+    spy = _patch_state_autosave(monkeypatch)
+    at = _run_shell_no_suppress(shell_name, monkeypatch)
+    assert not at.exception
+    assert spy.called, f"{shell_name} shell did not reach save_user_defaults"
+
+
+@pytest.mark.parametrize("shell_name", ["classic", "contextual"])
+def test_classic_contextual_still_reach_save_user_defaults(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
+    """Non-regression companion: Classic/Contextual already reach the
+    autosave via views.setup.parameters.render_parameters_tab and must keep
+    doing so, both BEFORE and AFTER the audit-0823/M2 fix -- which moves the
+    call's point of use from views.setup.parameters (its own
+    ``from config.loader import save_user_defaults`` binding, pre-fix) to
+    views.setup._state (the new shared autosave_user_defaults() helper,
+    post-fix). Patches the SAME spy onto both possible points of use
+    (raising=False, since only one exists at a time) so this test is a real
+    interception -- and never risks a real disk write -- in either state.
+    """
+    from unittest.mock import MagicMock
+
+    import views.setup._state as state_mod
+    import views.setup.parameters as parameters_mod
+
+    spy = MagicMock()
+    monkeypatch.setattr(parameters_mod, "save_user_defaults", spy, raising=False)
+    monkeypatch.setattr(state_mod, "save_user_defaults", spy, raising=False)
+    at = _run_shell_no_suppress(shell_name, monkeypatch)
+    assert not at.exception
+    assert spy.called, f"{shell_name} shell no longer reaches save_user_defaults"
+
+
+@pytest.mark.parametrize("shell_name", ["domains", "hub", "wizard"])
+def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
+    """``_suppress_snapshot_autoload=True`` must suppress the save in the new
+    shells too, matching Classic (views/setup/parameters.py:184-185) -- the
+    sentinel is session-wide, not Classic-specific (app.py:108/122,
+    views/setup/_state.py:212). Uses ``_run_shell`` (not the no-suppress
+    variant), which already seeds the flag.
+    """
+    spy = _patch_state_autosave(monkeypatch)
+    at = _run_shell(shell_name, monkeypatch)
+    assert not at.exception
+    assert not spy.called, (
+        f"{shell_name} shell called save_user_defaults despite "
+        "_suppress_snapshot_autoload=True"
+    )
+
+
+def test_shell_autosave_payload_carries_session_edited_value(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Non-vacuous companion to test_shell_autosave_reaches_save_user_defaults:
+    proves the ACTUAL payload dict reaching save_user_defaults carries a
+    session-edited value, not merely that the function was called with
+    something."""
+    spy = _patch_state_autosave(monkeypatch)
+    at = _run_shell_no_suppress("domains", monkeypatch)
+    assert not at.exception
+
+    _number_input_by_label(at, "Your Trad IRA").set_value(999_000).run()
+    assert not at.exception
+
+    assert spy.called
+    payload = spy.call_args.args[0]
+    assert payload.get("your_ira") == 999_000

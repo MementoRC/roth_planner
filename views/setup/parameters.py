@@ -14,7 +14,6 @@ from dataclasses import replace
 
 import streamlit as st
 
-from config.loader import save_user_defaults
 from engine.data_bridge_browser import (
     is_pyodide,
 )
@@ -30,7 +29,7 @@ from views.setup._partials import (
     render_assumptions_partial,
     render_household_partial,
 )
-from views.setup._state import _user_defaults_from_session
+from views.setup._state import autosave_user_defaults
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -181,5 +180,4 @@ def render_parameters_tab(hh: Household) -> None:
         render_assumptions_partial(hh, joint_sub)
         _render_pdf_1040_import()
 
-    if not st.session_state.get("_suppress_snapshot_autoload"):
-        save_user_defaults(_user_defaults_from_session())
+    autosave_user_defaults()
