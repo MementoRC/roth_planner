@@ -55,6 +55,7 @@ from views.setup._partials import (
     render_options_partial,
     render_portfolio_partial,
 )
+from views.setup._state import autosave_user_defaults
 from views.setup.data_bridge import render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
 
@@ -118,6 +119,12 @@ def render(hh: Household) -> None:
         # _render_pdf_1040_import() takes no container arg — same reason as
         # render_data_bridge_tab above.
         _render_pdf_1040_import()
+
+    # audit-0823 models-views/M2: this shell composes views/setup/_partials/
+    # directly and never routes through render_parameters_tab, so it never
+    # reached the autosave Classic/Contextual get for free. Must run last,
+    # after every partial above has had a chance to mutate session_state.
+    autosave_user_defaults()
 
 
 __all__ = ["render"]

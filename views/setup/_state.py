@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config.loader import clear_user_defaults
+from config.loader import clear_user_defaults, save_user_defaults
 from engine.portfolio_sync import (
     AccountSummary,
     EquityGrant,
@@ -108,6 +108,29 @@ def _user_defaults_from_session() -> dict:
     if "inherited_iras" in st.session_state:
         payload["inherited_iras"] = st.session_state["inherited_iras"]
     return payload
+
+
+def autosave_user_defaults() -> None:
+    """Persist the session's current household/account/assumption fields to
+    .user_defaults.json, honouring the same suppress guard
+    render_parameters_tab always has.
+
+    Pulled out of views/setup/parameters.py so every Setup shell can call it
+    (audit-0823 models-views/M2) -- Domains/Hub/Wizard compose
+    views/setup/_partials/ directly and never routed through
+    render_parameters_tab, so they never reached this save at all. Session
+    edits made through those three shells vanished on restart. Callers
+    should invoke this as the LAST statement of their render(), same
+    position render_parameters_tab already uses.
+
+    save_user_defaults merges the returned dict onto whatever is already on
+    disk, so a partial payload (e.g. the Wizard renders one step's fields per
+    run) only updates the keys the current run actually knows about and
+    leaves the rest of the file untouched.
+    """
+    if st.session_state.get("_suppress_snapshot_autoload"):
+        return
+    save_user_defaults(_user_defaults_from_session())
 
 
 def _portfolio_snapshot_from_dict(data: dict) -> object:

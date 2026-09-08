@@ -30,6 +30,7 @@ from views.setup._partials import (
     render_options_partial,
     render_portfolio_partial,
 )
+from views.setup._state import autosave_user_defaults
 from views.setup.data_bridge import render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
 
@@ -61,6 +62,11 @@ def render(hh: Household) -> None:
         st.caption("No sourced fields to validate on this step -- complete when ready.")
     _render_step(hh, key)
     _render_nav(n_steps)
+    # audit-0823 models-views/M2: see domains_shell.py's identical note on
+    # this same call. Runs on every step (not just the last) -- merge
+    # semantics make a partial per-step payload safe, and saving only on the
+    # final step would lose the edits of a user who closes mid-flow.
+    autosave_user_defaults()
 
 
 def _render_step(hh: Household, key: str) -> None:
