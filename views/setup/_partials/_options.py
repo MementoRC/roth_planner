@@ -17,6 +17,8 @@ import streamlit as st
 
 from models.household import Household
 
+from ._clamp import clamp as _clamp
+
 
 def render_options_partial(hh: Household, container) -> None:
     """Render the Options (Stock Grants) partial: the read-only equity-grants
@@ -114,7 +116,7 @@ def render_options_partial(hh: Household, container) -> None:
     st.session_state.txn_price = container.number_input(
         f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
         min_value=0,
-        value=st.session_state.txn_price,
+        value=_clamp(st.session_state.txn_price, 0),
         step=5,
         format="%d",
     )

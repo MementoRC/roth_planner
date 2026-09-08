@@ -132,6 +132,33 @@ def test_options_partial_txn_price_widget_round_trip(clean_command_center_caches
     assert at.session_state["txn_price"] == 321
 
 
+# --- audit-0823 M3: unclamped value= regression (min-only, StreamlitAPIException) --
+#
+# txn_price reads value=st.session_state.txn_price directly (not through
+# _clamp), min_value=0 -- a negative persisted value crashes the render with
+# no user interaction. Must FAIL on unmodified source.
+
+
+def _render_options_with_txn_price(txn_price: float) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_options_partial
+
+    st.session_state["txn_price"] = txn_price
+    render_options_partial(Household(), st)
+
+
+def test_txn_price_negative_persisted_value_does_not_crash(
+    clean_command_center_caches,
+) -> None:
+    at = AppTest.from_function(_render_options_with_txn_price, kwargs={"txn_price": -50})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label.endswith("Current Price"))
+    assert widget.value == 0
+
+
 def test_options_partial_does_not_render_grants_card_even_when_pending(
     clean_command_center_caches,
 ) -> None:

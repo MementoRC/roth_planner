@@ -26,28 +26,13 @@ per-partial-module package pattern going forward.
 
 from __future__ import annotations
 
-from typing import TypeVar
-
 import streamlit as st
 
 from engine.aca import derive_couple_benchmark_annual
 from engine.irmaa import BASE_PART_B
 from models.household import Household
 
-_Num = TypeVar("_Num", int, float)
-
-
-def _clamp(value: _Num, lo: _Num, hi: _Num) -> _Num:
-    """Clamp ``value`` into ``[lo, hi]``.
-
-    Cached/uploaded JSON (.user_defaults.json, .tax_pdf_cache.json) can seed a
-    widget ``value`` outside its ``[min_value, max_value]`` bounds, and Streamlit
-    raises ``StreamlitAPIException`` at render time — crashing the Joint sub-tab on
-    load with no user interaction (audit C4). The widget bounds are widened to
-    generous limits so no legitimate value is ever out of range; this clamp is a
-    final backstop so genuinely corrupt data still cannot crash the render.
-    """
-    return min(max(value, lo), hi)
+from ._clamp import clamp as _clamp
 
 
 def _render_prior_year_magi_anchor(container, base_year: int) -> None:
@@ -201,7 +186,7 @@ def _render_inherited_iras(container, base_year: int) -> None:
                 "Growth Rate (%)",
                 min_value=0.0,
                 max_value=15.0,
-                value=float(entry.get("growth_rate", 0.07)) * 100,
+                value=_clamp(float(entry.get("growth_rate", 0.07)) * 100, 0.0, 15.0),
                 step=0.5,
                 format="%.1f",
                 key=f"iira_rate_{idx}",
