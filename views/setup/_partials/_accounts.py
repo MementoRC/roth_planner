@@ -21,6 +21,8 @@ from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_s
 from models.household import Household
 from models.sourced import Source
 
+from ._clamp import clamp as _clamp
+
 
 def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     """Fetch, match, and record the FRA SSA benefit for *owner* ('you' or 'spouse').
@@ -84,7 +86,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
         st.session_state.your_ira = container.number_input(
             "Your Trad IRA" + (" (synced)" if _synced else ""),
             min_value=0,
-            value=st.session_state.your_ira,
+            value=_clamp(st.session_state.your_ira, 0),
             step=50_000,
             format="%d",
             disabled=_synced,
@@ -94,7 +96,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
         st.session_state.your_roth = container.number_input(
             "Your Roth IRA" + (" (synced)" if _synced else ""),
             min_value=0,
-            value=st.session_state.get("your_roth", 0),
+            value=_clamp(st.session_state.get("your_roth", 0), 0),
             step=50_000,
             format="%d",
             disabled=_synced,
@@ -106,7 +108,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
         st.session_state.your_ss_fra = container.number_input(
             f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
             min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.your_ss_fra)),
+            value=_clamp(int(round(st.session_state.your_ss_fra)), 0),
             step=100,
             format="%d",
             disabled=_ssa_synced_you,
@@ -122,7 +124,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             "Your SS claim age",
             min_value=62,
             max_value=70,
-            value=hh.your_ss_start_age,
+            value=_clamp(hh.your_ss_start_age, 62, 70),
             step=1,
             format="%d",
         )
@@ -134,7 +136,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
         st.session_state.spouse_ira = container.number_input(
             "Spouse Trad IRA" + (" (synced)" if _synced else ""),
             min_value=0,
-            value=st.session_state.spouse_ira,
+            value=_clamp(st.session_state.spouse_ira, 0),
             step=50_000,
             format="%d",
             disabled=_synced or _is_single,
@@ -144,7 +146,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
         st.session_state.spouse_roth = container.number_input(
             "Spouse Roth IRA" + (" (synced)" if _synced else ""),
             min_value=0,
-            value=st.session_state.get("spouse_roth", 0),
+            value=_clamp(st.session_state.get("spouse_roth", 0), 0),
             step=50_000,
             format="%d",
             disabled=_synced or _is_single,
@@ -157,7 +159,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             f"Spouse SS at FRA {spouse_fra_age} ($/mo)"
             + (" (synced)" if _ssa_synced_spouse else ""),
             min_value=0,  # UU2-UI-06
-            value=int(round(st.session_state.spouse_ss_fra)),
+            value=_clamp(int(round(st.session_state.spouse_ss_fra)), 0),
             step=100,
             format="%d",
             disabled=_is_single or _ssa_synced_spouse,
@@ -175,7 +177,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             "Spouse SS claim age",
             min_value=62,
             max_value=70,
-            value=hh.spouse_ss_start_age,
+            value=_clamp(hh.spouse_ss_start_age, 62, 70),
             step=1,
             format="%d",
             disabled=_is_single,

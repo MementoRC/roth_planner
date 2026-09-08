@@ -333,3 +333,62 @@ def test_inherited_iras_remove_preserves_survivor_values(clean_command_center_ca
         250_000.0,
         300_000.0,
     ], "removing row 0 corrupted survivor balances via stale position-keyed widget state"
+
+
+# --- audit-0823 M3: unclamped value= regression (StreamlitAPIException) -----
+#
+# Unlike this file's other number_inputs, the inherited-IRA growth-rate
+# widget's value= (line ~204) was never routed through _clamp -- a persisted
+# growth_rate outside [0.0, 15.0] (as a *100 percent) crashes the Joint
+# sub-tab render with no user interaction (audit-0823 M3, uncarried sibling
+# of audit C4). These must FAIL on unmodified source.
+
+
+def _render_assumptions_with_iira_growth_rate(growth_rate: float) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_assumptions_partial
+
+    st.session_state.setdefault("growth_rate", 7.0)
+    st.session_state.setdefault("living_expenses", 60_000)
+    st.session_state["inherited_iras"] = [
+        {
+            "balance": 50_000.0,
+            "inherited_year": 2030,
+            "owner": "you",
+            "growth_rate": growth_rate,
+        }
+    ]
+    st.session_state["_pending_review"] = set()
+    render_assumptions_partial(Household(), st)
+
+
+def test_iira_growth_rate_clamps_above_max(clean_command_center_caches) -> None:
+    """Persisted growth_rate=0.20 (20%) is above the widget's 15.0 max_value."""
+    at = AppTest.from_function(
+        _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": 0.20}
+    )
+    at.run()
+    assert not at.exception
+    assert at.number_input(key="iira_rate_0").value == 15.0
+
+
+def test_iira_growth_rate_clamps_below_min(clean_command_center_caches) -> None:
+    """Persisted growth_rate=-0.05 (-5%) is below the widget's 0.0 min_value."""
+    at = AppTest.from_function(
+        _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": -0.05}
+    )
+    at.run()
+    assert not at.exception
+    assert at.number_input(key="iira_rate_0").value == 0.0
+
+
+def test_iira_growth_rate_in_range_value_unchanged(clean_command_center_caches) -> None:
+    """Non-regression: an in-range persisted growth_rate round-trips unclamped."""
+    at = AppTest.from_function(
+        _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": 0.045}
+    )
+    at.run()
+    assert not at.exception
+    assert at.number_input(key="iira_rate_0").value == 4.5

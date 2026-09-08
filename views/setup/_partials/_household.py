@@ -11,6 +11,8 @@ import streamlit as st
 
 from models.household import Household
 
+from ._clamp import clamp as _clamp
+
 _HH_FILING_LABEL_MFJ = "Married filing jointly"
 _HH_FILING_LABEL_SINGLE = "Single"
 
@@ -117,7 +119,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             "Your FRA (Full Retirement Age)",
             min_value=65,
             max_value=70,
-            value=hh.your_fra_age,
+            value=_clamp(hh.your_fra_age, 65, 70),
             step=1,
             format="%d",
             help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",
@@ -183,7 +185,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             "Spouse FRA (Full Retirement Age)",
             min_value=65,
             max_value=70,
-            value=hh.spouse_fra_age,
+            value=_clamp(hh.spouse_fra_age, 65, 70),
             step=1,
             format="%d",
             help="67 for born 1960+ (SECURE/SS default); 66 or 66+N/12 for earlier cohorts",

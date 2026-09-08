@@ -81,3 +81,110 @@ def test_accounts_partial_does_not_render_governance_card_even_when_pending(
 
     assert not at.exception
     assert not any(w.key == "confirm_your_ira" for w in at.button)
+
+
+# --- audit-0823 M3: unclamped value= regression (StreamlitAPIException) -----
+#
+# your_ss_start_age/spouse_ss_start_age read value=hh.your_ss_start_age /
+# value=hh.spouse_ss_start_age directly (not through _clamp), bound [62, 70].
+# Both arrive via engine.upload_merge.SCALAR_KEYS from .user_defaults.json or
+# an uploaded bundle. These must FAIL on unmodified source. your_ira is the
+# representative min-only site (min_value=0) for the six min-only sites in
+# this file (your_ira/your_roth/your_ss_fra/spouse_ira/spouse_roth/
+# spouse_ss_fra) -- a negative persisted value crashes the same way.
+
+
+def _render_accounts_your_ss_start_age(ss_start_age: int) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state.setdefault("your_ira", 1_700_000)
+    st.session_state.setdefault("your_ss_fra", 2_000)
+    render_accounts_partial(Household(your_ss_start_age=ss_start_age), st, "your")
+
+
+def _render_accounts_spouse_ss_start_age(ss_start_age: int) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("spouse_ira", 1_700_000)
+    st.session_state.setdefault("spouse_ss_fra", 2_000)
+    render_accounts_partial(Household(spouse_ss_start_age=ss_start_age), st, "spouse")
+
+
+def _render_accounts_your_ira(your_ira: float) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state["your_ira"] = your_ira
+    st.session_state.setdefault("your_ss_fra", 2_000)
+    render_accounts_partial(Household(), st, "your")
+
+
+def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+    at = AppTest.from_function(
+        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 85}
+    )
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 70
+
+
+def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+    at = AppTest.from_function(
+        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 10}
+    )
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 62
+
+
+def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches) -> None:
+    at = AppTest.from_function(
+        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 65}
+    )
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 65
+
+
+def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+    at = AppTest.from_function(
+        _render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 85}
+    )
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")
+    assert widget.value == 70
+
+
+def test_spouse_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+    at = AppTest.from_function(
+        _render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 10}
+    )
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")
+    assert widget.value == 62
+
+
+def test_your_ira_negative_persisted_value_does_not_crash(
+    clean_command_center_caches,
+) -> None:
+    """Representative min-only-site regression (min_value=0) for the six
+    balance/SS-FRA widgets in this file."""
+    at = AppTest.from_function(_render_accounts_your_ira, kwargs={"your_ira": -500})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if "Your Trad IRA" in w.label)
+    assert widget.value == 0
