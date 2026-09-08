@@ -13,6 +13,7 @@ from engine.pdf_ledger import (
 )
 from engine.pdf_owner import load_owner_map
 from engine.portfolio_sync import save_ytd_snapshot
+from engine.portfolio_sync.ytd import apply_brokerage_totals
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
@@ -202,11 +203,7 @@ def render_sync_scan_partial(hh: Household) -> None:
                     save_ledger(ledger)
 
                     brokerage_totals = derive_brokerage_totals(ledger)
-                    _snap.interest_ytd = brokerage_totals["interest_ytd"]
-                    _snap.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
-                    _snap.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
-                    _snap.stcg_ytd = brokerage_totals["stcg_ytd"]
-                    _snap.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    apply_brokerage_totals(_snap, brokerage_totals)
                     applied_bits.append(
                         f"{len(stmt_taxable_now)} taxable brokerage account(s) "
                         f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
@@ -353,11 +350,7 @@ def render_sync_scan_partial(hh: Household) -> None:
 
                     brokerage_totals = derive_brokerage_totals(ledger)
                     prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-                    prev_ytd.interest_ytd = brokerage_totals["interest_ytd"]
-                    prev_ytd.tax_exempt_interest_ytd = brokerage_totals["tax_exempt_interest_ytd"]
-                    prev_ytd.ordinary_dividends_ytd = brokerage_totals["ordinary_dividends_ytd"]
-                    prev_ytd.stcg_ytd = brokerage_totals["stcg_ytd"]
-                    prev_ytd.ltcg_ytd = brokerage_totals["ltcg_ytd"]
+                    apply_brokerage_totals(prev_ytd, brokerage_totals)
                     prev_ytd.with_snapshot_date()
                     st.session_state.ytd_snapshot = prev_ytd
                     st.session_state["ytd_manual_entry"] = False

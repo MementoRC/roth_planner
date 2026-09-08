@@ -981,3 +981,90 @@ class TestYTDToFromDictRoundtrip:
         original = dict(data)
         ytd_from_dict(data)
         assert data == original
+
+
+class TestQualifiedDividendsNotDoubleCounted:
+    """audit-0823 C1: no brokerage statement splits qualified vs ordinary
+    dividends (engine/brokerage_statement_pdf.py module docstring, verified for
+    Schwab/Vanguard/IBKR/UBS), so `dividends_taxable_ytd` is the FULL taxable
+    dividend total -- Form 1040 line 3b in substance.
+
+    models.ytd_income treats `ordinary_dividends_ytd` as the NON-qualified
+    remainder: `dividends_ytd` returns qualified + ordinary, and both
+    `magi_ytd` and `total_investment_income` consume that sum. Writing the full
+    statement total into `ordinary_dividends_ytd` while the user's manually
+    entered `qualified_dividends_ytd` survives untouched therefore counts the
+    qualified portion twice -- inflating MAGI (IRMAA/ACA thresholds), the NIIT
+    base, and ordinary brackets at once.
+    """
+
+    def _rec(self):
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        return BrokerageStatementRecord(
+            account_number="111",
+            broker="schwab",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=10_000.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+    def test_statement_total_has_qualified_subtracted(self) -> None:
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(qualified_dividends_ytd=8_000.0)
+        rec = self._rec()
+        apply_brokerage_statement_records(ytd, {"111": rec})
+        assert ytd.ordinary_dividends_ytd == pytest.approx(2_000.0)
+
+    def test_total_dividends_equal_the_statement_total(self) -> None:
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(qualified_dividends_ytd=8_000.0)
+        rec = self._rec()
+        apply_brokerage_statement_records(ytd, {"111": rec})
+        assert ytd.dividends_ytd == pytest.approx(10_000.0), (
+            "qualified + ordinary must reconstruct the statement total exactly"
+        )
+
+    def test_magi_not_inflated_by_the_qualified_portion(self) -> None:
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(qualified_dividends_ytd=8_000.0)
+        rec = self._rec()
+        apply_brokerage_statement_records(ytd, {"111": rec})
+        assert ytd.magi_ytd == pytest.approx(10_000.0), (
+            "MAGI drives IRMAA/ACA thresholds; it must not carry $8,000 of "
+            "phantom dividend income"
+        )
+
+    def test_qualified_larger_than_statement_total_floors_at_zero(self) -> None:
+        """Defensive: a qualified figure exceeding the scanned total (e.g. a
+        stale manual entry) must not drive ordinary dividends negative."""
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot(qualified_dividends_ytd=25_000.0)
+        rec = self._rec()
+        apply_brokerage_statement_records(ytd, {"111": rec})
+        assert ytd.ordinary_dividends_ytd == pytest.approx(0.0)
+
+    def test_no_qualified_entry_is_unchanged(self) -> None:
+        """Non-regression: with no qualified figure the statement total lands
+        on ordinary exactly as before."""
+        from engine.portfolio_sync.ytd import apply_brokerage_statement_records
+        from models.ytd_income import YTDSnapshot
+
+        ytd = YTDSnapshot()
+        rec = self._rec()
+        apply_brokerage_statement_records(ytd, {"111": rec})
+        assert ytd.ordinary_dividends_ytd == pytest.approx(10_000.0)

@@ -79,23 +79,58 @@ def write_brokerage_contribution(
     """Return a NEW ledger with *record* written into *owner*'s brokerage
     slot, keyed by account_number.
 
-    Re-writing the same (owner, account_number) pair replaces that slot only
+    Account identity is (broker, account_number), not account_number alone.
+    Re-writing the same account under the SAME owner replaces that slot only
     when *record*'s statement_period_end is the same or newer than the
     stored slot's (mirrors pick_latest_per_account's comparison, C14
     audit-0721) -- an out-of-order scan (e.g. Dec statement processed after
-    Jan) leaves the newer stored record untouched. A different owner or a
-    different account_number is a separate, additive slot.
+    Jan) leaves the newer stored record untouched.
+
+    The same account arriving under a DIFFERENT owner MOVES the slot instead
+    of duplicating it: resolve_account_owner falls back to instance_owner,
+    which the user can change at Setup > Command Center, so a re-scan can
+    legitimately land the same account under a new owner (audit-0823 C2).
+    The staleness comparison above is therefore evaluated cross-owner (every
+    owner's copy of this account, not just the target owner's), so an older
+    statement arriving under a new owner cannot clobber a newer one already
+    stored under the old owner. A genuinely different account_number (or the
+    same number at a different broker) remains a separate, additive slot.
     """
     updated: PdfLedger = {
         "koinly": dict(ledger.get("koinly", {})),
         "brokerage": {k: dict(v) for k, v in ledger.get("brokerage", {}).items()},
     }
+
+    def _same_account(rec_dict: dict[str, Any]) -> bool:
+        # Account identity is (broker, account_number), matching how
+        # account_overrides is keyed (engine.account_attribution) -- two
+        # brokers reusing a number string are two distinct accounts.
+        return str(rec_dict.get("broker", "")) == record.broker
+
+    # Staleness guard, evaluated across EVERY owner rather than just *owner*:
+    # resolve_account_owner falls back to instance_owner, which the user can
+    # change at Setup > Command Center, so the same account can arrive under a
+    # different owner on a later scan (audit-0823 C2).
+    for accounts in updated["brokerage"].values():
+        existing = accounts.get(record.account_number)
+        if (
+            existing is not None
+            and _same_account(existing)
+            and str(existing.get("statement_period_end", "")) > record.statement_period_end
+        ):
+            return updated
+
+    # Prune the same account from every OTHER owner so an owner change MOVES
+    # the slot rather than leaving a duplicate that derive_brokerage_totals
+    # would sum a second time.
+    for other_owner, accounts in updated["brokerage"].items():
+        if other_owner == owner:
+            continue
+        existing = accounts.get(record.account_number)
+        if existing is not None and _same_account(existing):
+            del accounts[record.account_number]
+
     owner_accounts = dict(updated["brokerage"].get(owner, {}))
-    existing = owner_accounts.get(record.account_number)
-    if existing is not None and str(existing.get("statement_period_end", "")) > (
-        record.statement_period_end
-    ):
-        return updated
     owner_accounts[record.account_number] = record.to_dict()
     updated["brokerage"][owner] = owner_accounts
     return updated
@@ -125,6 +160,13 @@ def derive_brokerage_totals(ledger: PdfLedger) -> dict[str, float]:
     dict[account_number, record]; the ledger is owner-scoped
     dict[owner, dict[account_number, record_dict]], so the flattening step
     (across owners) belongs in this module.
+
+    WARNING: the returned "ordinary_dividends_ytd" key holds the FULL taxable
+    dividend total (Form 1040 line 3b in substance), NOT the non-qualified
+    remainder that YTDSnapshot.ordinary_dividends_ytd expects. Callers must
+    land this dict via engine.portfolio_sync.ytd.apply_brokerage_totals,
+    which subtracts qualified_dividends_ytd -- assigning it directly
+    double-counts qualified dividends (audit-0823 C1).
     """
     totals = {
         "interest_ytd": 0.0,
