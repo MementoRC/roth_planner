@@ -17,6 +17,12 @@ class TestNetInvIncomeClearedOnReset:
 
         fake_state: dict = {"net_inv_income": 50000}
         monkeypatch.setattr(state_mod.st, "session_state", fake_state)
+        # _clear_personal_session_state() unconditionally calls
+        # clear_user_defaults(), which does path.unlink(missing_ok=True) on the
+        # REAL gitignored .user_defaults.json (config/loader.py:168-170). Without
+        # this patch, merely running the suite deleted the user's saved
+        # household -- git cannot restore a gitignored file.
+        monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: None)
         state_mod._clear_personal_session_state()
 
         assert "net_inv_income" not in fake_state
