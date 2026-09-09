@@ -167,6 +167,40 @@ def _apply_portfolio_snapshot(incoming: object, *, as_spouse: bool) -> None:
     st.session_state.pop("_suppress_snapshot_autoload", None)
 
 
+# Dynamic session_state key families that carry personal data in the key NAME
+# itself (an account number, an inherited-IRA row index, or a governance field
+# key), so they can never be named in a static clear list.
+# See :func:`_clear_personal_session_state`.
+_PERSONAL_KEY_PREFIXES = (
+    # Conversion Planner per-year conversion / QCD widgets (views/planner.py:213).
+    "yc_",
+    "sc_",
+    "qcd_",
+    "sp_qcd_",
+    # Inherited-IRA rows (views/setup/_partials/_assumptions.py:170-203). The
+    # sibling iira_add / iira_remove_<idx> keys are buttons and are not swept.
+    "iira_balance_",
+    "iira_year_",
+    "iira_rate_",
+    "iira_owner_",
+    # Per-account type/owner overrides (views/setup/_partials/_portfolio.py:179-186).
+    # These are the per-widget keys behind the "account_type_overrides" aggregate
+    # cleared above, which on its own left them behind.
+    "_override_type_",
+    "_override_owner_",
+    # Per-account attribution controls (views/setup/command_center.py:90,112).
+    "attribution_owner_",
+    "attribution_clear_",
+    # Per-account type confirmation (views/ytd_income/_partials/_sync_scan.py:311).
+    "account_type_confirm_",
+    # Governance trust-source radio and manual dollar override
+    # (views/setup/_partials/_governance.py:195,206). The sibling confirm_<field>
+    # key is a button holding no value and is deliberately NOT swept.
+    "trust_",
+    "manual_",
+)
+
+
 def _clear_personal_session_state() -> None:
     """Reset personal-mode session state to demo defaults."""
     keys_to_clear = [
@@ -223,11 +257,62 @@ def _clear_personal_session_state() -> None:
         # ACA+IRMAA and Sweet-Spot pages) was missing from this list, so a
         # personal value survived "Reset to demo" and kept inflating NIIT.
         "net_inv_income",
-        # TODO(audit ui-7/ui-8): dynamic PDF-cache-prefix and generated-keypair
-        # keys are separate low-severity findings; not cleared here.
+        # audit-0823 models-views/M4: every key below survived "Reset to demo"
+        # and re-infected the demo household. Grouped by the page that writes it.
+        #
+        # YTD income & headroom. income_events is the filed finding: it is read
+        # back at views/ytd_income/_partials/_event_log.py:16 with the session
+        # key taking precedence over the (already-cleared) demo snapshot, then
+        # summed into ira_conversions_ytd / spouse_ira_conversions_ytd /
+        # ira_distributions_ytd at _manual_entry.py:148-168 and written straight
+        # back into ytd_snapshot at :179 -- so clearing ytd_snapshot alone was a
+        # half-measure that the very next render undid.
+        "income_events",
+        "ytd_tax_exempt_interest",
+        "statement_by_account",
+        "koinly_report",
+        "statement_folder_path",
+        # Conversion Planner -- the user's real per-year conversion/QCD plan,
+        # dict[year -> dollars] (views/planner.py:199-222).
+        "conv_plan_your",
+        "conv_plan_spouse",
+        "conv_plan_qcd",
+        "conv_plan_spouse_qcd",
+        # Setup -- scanned 1040 cache (views/_shared.py:119), NQO exercise sync
+        # metadata, and the widget mirrors of survivor / filing status. Those
+        # mirrors are distinct keys from "survivor" / "filing_status" above, so
+        # clearing only the aggregates left the widgets holding personal values.
+        "_pdf_1040_scanned",
+        "exercises_captured_at",
+        "_survivor_who_dies",
+        "_survivor_death_year",
+        "_hh_filing_status_choice",
+        "_stock_ticker",
+        # Data bridge -- key material and export/upload state. app.py:237-239
+        # already pops the generated keypair, but only when navigating AWAY from
+        # Setup; "Reset to demo" is itself a Setup-page button
+        # (views/setup/data_bridge.py:430), so that teardown never fires on this
+        # path. Resolves the generated-keypair half of the old ui-7/ui-8 TODO.
+        "_generated_pub_b64",
+        "_generated_priv_b64",
+        "_export_recipient_pubkey",
+        "export_bundle",
+        "bundle_upload",
+        # TODO(audit ui-7): the dynamic PDF-cache-prefix keys remain a separate
+        # low-severity finding and are still not cleared here.
     ]
     for k in keys_to_clear:
         st.session_state.pop(k, None)
+    # Dynamic key families: the account number, row index or governance field
+    # name is baked into the key NAME, so no hardcoded list can ever reach them.
+    # That is precisely why they survived three prior rounds of patching this
+    # function (audit-0705 ui-5, audit-0721 C35, audit-0722b) -- every round
+    # added more strings and none changed the mechanism. Same prefix-sweep idiom
+    # already used at views/planner.py:212-214. Iterate over a list copy:
+    # deleting from st.session_state while iterating it mutates the mapping.
+    for _k in list(st.session_state):
+        if _k.startswith(_PERSONAL_KEY_PREFIXES):
+            del st.session_state[_k]
     st.session_state.pop("_seeded", None)  # force re-seed from synthetic
     # Suppress on-disk cache auto-load for the remainder of this session so
     # the reset is not silently undone by the app.py startup guard.  An
