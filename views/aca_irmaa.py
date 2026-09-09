@@ -377,7 +377,11 @@ def render(hh: Household):
             f"### ACA Premium Schedule ({'Enhanced' if hh.aca_enhanced_subsidies_active else 'Pre-ARP'})"
         )
         aca_data = []
-        for upper_fpl, cap_rate in _aca_cap_schedule(hh.aca_enhanced_subsidies_active):
+        # audit-0823 const/APPLICABLE-PCT: pass the same _view_year used for the
+        # FPL indexing just below, so the displayed pre-ARP applicable-% table
+        # matches the year this reference panel is actually showing instead of
+        # being frozen at the 2026 published table.
+        for upper_fpl, cap_rate in _aca_cap_schedule(hh.aca_enhanced_subsidies_active, year=_view_year):
             fpl_label = "400%+" if upper_fpl == float("inf") else f"≤{fmt_pct(upper_fpl, 0)}"
             aca_data.append(
                 {
