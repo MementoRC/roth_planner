@@ -245,8 +245,17 @@ def render(hh: Household) -> None:
     # NIIT threshold line
     # Same Class B defect as the IRMAA lines above -- not named in the audit
     # bullet, but the identical closed form on the same chart.
+    #
+    # audit-0823 differential/X2: magi_kind="niit". This bisected on .magi (the
+    # IRMAA-compatible figure) while NIIT is charged on .niit_magi, which adds
+    # the manual net_inv_income below and drops muni interest. The draw guard
+    # on the next line only shows this marker when net_inv_income > 0 -- i.e.
+    # exactly when niit_magi EXCEEDS magi -- so every visible instance of this
+    # line sat too far RIGHT and under-warned. The shaded NIIT band on this same
+    # chart already used .niit_magi via niit_delta, so the band began before the
+    # line marking its own onset.
     niit_conv = magi_boundary_conversion(
-        hh, base, niit_threshold, net_inv_income, _ltcg_eligible
+        hh, base, niit_threshold, net_inv_income, _ltcg_eligible, magi_kind="niit"
     )
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(
