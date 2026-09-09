@@ -6,6 +6,7 @@ Functions return plain dataclasses; no Streamlit, no plotly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from engine.aca import (
     aca_applies,
@@ -593,6 +594,8 @@ def magi_boundary_conversion(
     magi_threshold: float,
     net_inv_income: float = 0.0,
     ltcg_eligible: float = 0.0,
+    *,
+    magi_kind: Literal["irmaa", "niit"] = "irmaa",
 ) -> float:
     """Conversion amount that lifts MAGI to `magi_threshold`.
 
@@ -618,14 +621,36 @@ def magi_boundary_conversion(
     the sweep grid, which is the right answer for a RECOMMENDED amount. This
     returns the exact boundary, which is what a chart marker needs. The two
     agree to within one STEP by construction.
+
+    ``magi_kind`` selects which MAGI the caller's threshold is denominated in.
+    The IRMAA tier lines measure ConversionResult.magi (IRC section
+    1839(i)(4)); the NIIT line must measure .niit_magi, which excludes
+    tax-exempt muni interest (excluded from gross income under IRC section
+    103, so it was never in AGI/MAGI) and adds the manual net_inv_income
+    estimate. audit-0823 differential/X2: this helper measured
+    .magi for both, so the NIIT marker was drawn where IRMAA MAGI -- not the
+    quantity NIIT is charged on -- reached the threshold.
     """
-    if base.base_magi >= magi_threshold:
+    # The zero-conversion base is READ BACK from all_in_at_conversion rather
+    # than restated here: at conv == 0 its niit_magi is by construction the
+    # niit_base_magi that all_in_at_conversion charges niit() against.
+    # Re-deriving that formula in a second place is what let audit-0809 #01's
+    # cards drift away from the multi-year table.
+    if magi_kind == "niit":
+        base_measured = all_in_at_conversion(
+            hh, base, 0.0, net_inv_income, ltcg_eligible=ltcg_eligible
+        ).niit_magi
+    else:
+        base_measured = base.base_magi
+
+    if base_measured >= magi_threshold:
         return 0.0
 
-    # The naive subtraction is a valid UPPER bound: magi(conv) >= base_magi +
-    # conv because taxable SS is non-decreasing in conv, so any conversion
-    # above it is guaranteed to overshoot the threshold.
-    upper = magi_threshold - base.base_magi
+    # The naive subtraction is a valid UPPER bound in EITHER mode: both .magi
+    # and .niit_magi carry `conv` linearly plus taxable SS, which is
+    # non-decreasing in conv, so the measured MAGI rises by at least $1 per $1
+    # converted and any conversion above this bound is guaranteed to overshoot.
+    upper = magi_threshold - base_measured
 
     lo, hi = 0.0, upper
     for _ in range(60):  # bisection to well under a cent of precision
@@ -633,7 +658,8 @@ def magi_boundary_conversion(
         result = all_in_at_conversion(
             hh, base, mid, net_inv_income, ltcg_eligible=ltcg_eligible
         )
-        if result.magi <= magi_threshold:
+        measured = result.niit_magi if magi_kind == "niit" else result.magi
+        if measured <= magi_threshold:
             lo = mid
         else:
             hi = mid
