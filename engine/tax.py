@@ -350,6 +350,40 @@ def _require_modeled_filing_status(filing_status: str, fn_name: str) -> None:
         )
 
 
+def indexed_bracket_ceiling(
+    bracket_index: int,
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+    filing_status: str = "MFJ",
+) -> float:
+    """CPI-indexed taxable-income ceiling of one bracket.
+
+    ``bracket_index`` indexes BRACKETS_MFJ / BRACKETS_SINGLE, so 1 is the top of
+    the 12% bracket, 2 the top of 22%, 3 the top of 24% -- the same three
+    ceilings room_to_12 / room_to_22 / room_to_24 target.
+
+    Extracted for audit-0823 AF-1. The ceiling previously existed ONLY as a
+    local inside those three functions, which is fine for a caller that wants to
+    SUBTRACT from it but useless to one that needs to BISECT against it (see
+    engine.tax.bisect_conversion_for_ceiling, and the §86 torpedo it exists to
+    defeat). The only alternative was to recover the ceiling by algebra from the
+    returned room --
+
+        ceiling == current_gross - total_deductions + room
+
+    -- which holds only while room_to_bracket's ``max(..., 0)`` clamp is
+    INACTIVE, and is silently wrong the moment room clamps to zero. An implicit
+    ceiling recovered by inversion is exactly the kind of thing that rots in a
+    tax engine, so it gets one named definition here instead. Keeping a single
+    definition also stops the indexing convention (``round50=True``) from
+    drifting between the subtract path and the bisect path.
+    """
+    _require_modeled_filing_status(filing_status, "indexed_bracket_ceiling")
+    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
+    return index_value(brackets[bracket_index][0], year, cpi, round50=True)
+
+
 def room_to_12(
     current_gross: float,
     total_deductions: float,
@@ -358,9 +392,11 @@ def room_to_12(
     cpi: float = DEFAULT_CPI,
     filing_status: str = "MFJ",
 ) -> float:
+    # Guard kept at this call site (rather than relying on the one inside
+    # indexed_bracket_ceiling) so the NotImplementedError still names the
+    # function the caller actually invoked.
     _require_modeled_filing_status(filing_status, "room_to_12")
-    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
-    ceiling = index_value(brackets[1][0], year, cpi, round50=True)
+    ceiling = indexed_bracket_ceiling(1, year=year, cpi=cpi, filing_status=filing_status)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
@@ -373,8 +409,7 @@ def room_to_22(
     filing_status: str = "MFJ",
 ) -> float:
     _require_modeled_filing_status(filing_status, "room_to_22")
-    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
-    ceiling = index_value(brackets[2][0], year, cpi, round50=True)
+    ceiling = indexed_bracket_ceiling(2, year=year, cpi=cpi, filing_status=filing_status)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 
@@ -387,8 +422,7 @@ def room_to_24(
     filing_status: str = "MFJ",
 ) -> float:
     _require_modeled_filing_status(filing_status, "room_to_24")
-    brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
-    ceiling = index_value(brackets[3][0], year, cpi, round50=True)
+    ceiling = indexed_bracket_ceiling(3, year=year, cpi=cpi, filing_status=filing_status)
     return room_to_bracket(current_gross, total_deductions, ceiling)
 
 

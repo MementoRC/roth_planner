@@ -41,6 +41,14 @@ class YearResult:
     spouse_ss: float = 0.0
     combined_ss: float = 0.0
     taxable_ss_amt: float = 0.0
+    # The non-SS income that fed the IRC §86(b)(2) provisional-income formula
+    # for this year, i.e. the base taxable_ss_amt was priced from:
+    #     taxable_ss(combined_ss, ss_provisional_base) == taxable_ss_amt
+    # Surfaced for audit-0823 AF-2 so a caller sizing an ADDITIONAL ordinary
+    # draw can re-price taxable SS at the post-draw base instead of assuming
+    # taxable SS is invariant to the draw. See
+    # engine.scenario_compute.compute_social_security.
+    ss_provisional_base: float = 0.0
 
     extra_withdrawal: float = (
         0.0  # voluntary excess withdrawal from your IRA (post-RMD bracket fill)
@@ -63,6 +71,22 @@ class YearResult:
     # Aggregates
     combined_gross: float = 0.0
     total_deductions: float = 0.0
+    # total_deductions MINUS the OBBBA senior-bonus deduction, i.e. the part
+    # that does NOT move with MAGI. The bonus phases out at $0.06 per $1 of
+    # MAGI above the threshold, so a caller sizing an additional draw must
+    # re-price it at the post-draw MAGI; keeping the invariant part separate
+    # avoids re-deriving the survivor age-zeroing and Single/MFJ table choice
+    # made at engine/scenario.py:566-591. audit-0823 AF-2.
+    deductions_before_senior_bonus: float = 0.0
+    # The remaining inputs senior_bonus_deduction() was called with, so it can
+    # be re-evaluated at a different MAGI without re-deriving them. The ages are
+    # survivor-EFFECTIVE (the deceased's age is zeroed so only the survivor
+    # counts toward the bonus); magi_phaseout_basis is the muni-stripped AGI the
+    # phase-out is measured on, since the phase-out is an AGI test while yr.magi
+    # is IRMAA-basis and includes muni interest. audit-0823 AF-2.
+    senior_bonus_ya_eff: int = 0
+    senior_bonus_sa_eff: int = 0
+    magi_phaseout_basis: float = 0.0
     taxable_income: float = 0.0
     magi: float = 0.0  # for IRMAA/ACA (uses full RMD, full SS)
     niit_magi: float = 0.0  # NIIT MAGI per IRC §1411(d)(3): excludes muni interest (vs. yr.magi which is IRMAA-compatible)

@@ -434,7 +434,13 @@ def _project_year(
     # is a no-op (max(opt, nqo_ytd) == opt).
     _nqo_ytd = ytd_year.nqo_exercise_ytd if ytd_year is not None else 0.0
     option_income_bounded = max(yr.option_income, _nqo_ytd)
-    yr.your_ss, yr.spouse_ss, yr.combined_ss, yr.taxable_ss_amt = compute_social_security(
+    (
+        yr.your_ss,
+        yr.spouse_ss,
+        yr.combined_ss,
+        yr.taxable_ss_amt,
+        yr.ss_provisional_base,
+    ) = compute_social_security(
         hh,
         ya,
         sa,
@@ -572,6 +578,11 @@ def _project_year(
         yr.total_deductions = deductions(
             ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
         )
+        # MAGI-invariant part, kept for callers that must re-price the
+        # MAGI-sensitive senior bonus at a different income (audit-0823 AF-2).
+        yr.deductions_before_senior_bonus = yr.total_deductions
+        yr.senior_bonus_ya_eff, yr.senior_bonus_sa_eff = ya_eff, sa_eff
+        yr.magi_phaseout_basis = yr.magi - _phaseout_muni
         yr.total_deductions += senior_bonus_deduction(
             ya_eff, sa_eff, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
         )
@@ -586,6 +597,10 @@ def _project_year(
         else:
             _std_ded, _senior_extra = hh.std_deduction, hh.senior_extra
         yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, filing_status=current_filing_status, year=year, cpi=cpi)
+        # MAGI-invariant part — see the survivor branch above (audit-0823 AF-2).
+        yr.deductions_before_senior_bonus = yr.total_deductions
+        yr.senior_bonus_ya_eff, yr.senior_bonus_sa_eff = ya, sa
+        yr.magi_phaseout_basis = yr.magi - _phaseout_muni
         yr.total_deductions += senior_bonus_deduction(
             ya, sa, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
         )
@@ -598,7 +613,7 @@ def _project_year(
     # F12: this must be computed BEFORE base_magi so the OBBBA senior-deduction
     # baseline also strips the conversion-induced taxable-SS delta, not just the
     # raw conversion dollars.
-    _, _, _, _taxable_ss_no_conv = compute_social_security(
+    _, _, _, _taxable_ss_no_conv, _ = compute_social_security(
         hh,
         ya,
         sa,

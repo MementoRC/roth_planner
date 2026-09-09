@@ -325,14 +325,24 @@ class TestMeSpouseParity:
     def test_bracket_fill_uses_spouse_ira_when_yours_exhausted(self) -> None:
         """add_bracket_fill_withdrawals should draw from spouse IRA when your IRA is empty.
 
-        Use a household where your IRA is small so it's quickly depleted by RMDs,
-        while spouse IRA is large. In RMD years after your IRA is near zero,
-        the bracket fill should populate spouse_extra_withdrawals.
+        Use a household where your IRA is small so it's quickly exhausted by the
+        bracket fill itself, while spouse IRA is large. In RMD years after your
+        IRA is drained, the fill must populate spouse_extra_withdrawals.
+
+        FIXTURE RESIZED (audit-0823 scenario/AF-2): your_ira was 200_000. Once
+        add_bracket_fill_withdrawals stopped sizing the draw from frozen
+        deductions and frozen taxable SS, the corrected 2026 room fell from the
+        naive 228_003 to 143_815 -- below the ~192_157 available in your IRA, so
+        nothing spilled over and this test's own precondition ("yours is
+        exhausted") no longer held. The old pass depended on an inflated room
+        overflowing your IRA, i.e. on the defect. At 60_000 your IRA is
+        genuinely smaller than the corrected room, restoring the spillover the
+        test name asserts (5 spouse-draw years, first-year spill 91_657.67).
         """
         hh = Household(
             your_age=74,
             spouse_age=72,
-            your_ira=200_000,  # small — depletes quickly under RMD
+            your_ira=60_000,  # smaller than the corrected bracket-fill room
             spouse_ira=1_500_000,
             your_ss_fra=3_800.0,
             spouse_ss_fra=3_200.0,

@@ -44,25 +44,44 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
         """LTCG in base-year YTD raises §86 provisional income → more taxable SS
         → autofill finds less bracket room in the base year.
 
-        Scenario: household with small SS ($15K combined) and small wages ($10K).
-        Without LTCG: provisional = 10K + 0.5*15K = 17.5K < tier1 ($32K) → tss = 0.
-        With LTCG $30K: provisional = 40K + 0.5*15K = 47.5K > tier2 ($44K) → tss > 0.
-        The LTCG household must have a lower conversion amount because tss shrinks room.
+        THE FIXTURE MUST KEEP THE SOLUTION POINT INSIDE THE §86 PARTIAL-
+        TAXABILITY BAND, or this property cannot hold at all. LTCG is MAGI-only
+        (it never enters ordinary income directly), so its ONLY channel into
+        bracket room is via taxable SS. Once provisional income is high enough
+        that taxable SS is pinned at its 0.85 × benefit ceiling, that channel is
+        closed and the correct answer is "no change" -- the assertion below would
+        then be asserting something false.
+
+        FIXTURE RETUNED (audit-0823 scenario/AF-1): the old fixture was ages
+        61/55 with a single reduced benefit (~$7.5K/yr). Once auto_fill_12
+        stopped pricing taxable SS at the PRE-conversion base and began bisecting
+        against post-conversion taxable income, the ~$118K sized conversion put
+        provisional income far above the §86 tier-2 threshold, pinning taxable SS
+        at the 85% cap in BOTH arms -- the test then compared 118856 == 118856.
+        It had been passing off the defect: only the closed form's stale
+        pre-conversion SS left a marginal effect to measure.
+
+        Because filling to a fixed bracket ceiling pins total ordinary income,
+        wages cancel out of provisional income, so the only lever is a larger
+        benefit. Both spouses now claim at 67 (combined $86,400/yr), which leaves
+        taxable SS at $62,513.51 against a $73,440.00 cap -- strictly inside the
+        band, so the marginal §86 effect is real and measurable.
         """
         from models.ytd_income import YTDSnapshot
 
-        # Small SS so that provisional crosses the tier1 threshold only with LTCG.
-        # your_ss_start_age=61 so SS is active in the base year (ya=61 >= start=61).
+        # Both claiming at 67: combined SS large enough that taxable SS stays
+        # BELOW the 0.85 cap at the solution point, keeping the §86 channel open.
         hh = Household(
-            your_age=61,
-            spouse_age=55,
+            your_age=67,
+            spouse_age=67,
             base_year=2026,
             cpi_assumption=0.0,
             your_ira=500_000.0,
             spouse_ira=300_000.0,
-            your_ss_fra=625.0,  # reduced early: ~$7.5K/yr (combined ~$7.5K, no spouse SS)
-            your_ss_start_age=61,  # claiming at 61: active in base year
-            spouse_ss_fra=0.0,
+            your_ss_fra=4_000.0,
+            your_ss_start_age=67,
+            spouse_ss_fra=3_200.0,
+            spouse_ss_start_age=67,
             grants=[],
         )
         ytd_no_ltcg = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
@@ -85,22 +104,30 @@ class TestA2AutoFillSS86ProvisionalIncomeMagi:
         """QD in base-year YTD raises §86 provisional income → more taxable SS
         → autofill finds less bracket room in the base year.
 
-        Scenario: household with small SS ($15K combined) and small wages ($10K).
-        Without QD: provisional = 10K + 7.5K = 17.5K < tier1 → tss = 0.
-        With QD $30K: provisional = 40K + 7.5K = 47.5K → tss > 0.
+        THE FIXTURE MUST KEEP THE SOLUTION POINT INSIDE THE §86 PARTIAL-
+        TAXABILITY BAND, for the same reason as the LTCG case above: qualified
+        dividends are MAGI-only, so taxable SS is their only channel into
+        ordinary bracket room. Pinned at the 0.85 × benefit ceiling, that channel
+        is closed and "no change" becomes the correct answer.
+
+        FIXTURE RETUNED (audit-0823 scenario/AF-1) -- same cause and same resize
+        as test_ltcg_in_ytd_raises_taxable_ss_reduces_bracket_room; see that
+        docstring for the full reasoning. Both spouses claim at 67 (combined
+        $86,400/yr), leaving taxable SS at $62,513.51 against a $73,440.00 cap.
         """
         from models.ytd_income import YTDSnapshot
 
         hh = Household(
-            your_age=61,
-            spouse_age=55,
+            your_age=67,
+            spouse_age=67,
             base_year=2026,
             cpi_assumption=0.0,
             your_ira=500_000.0,
             spouse_ira=300_000.0,
-            your_ss_fra=625.0,
-            your_ss_start_age=61,
-            spouse_ss_fra=0.0,
+            your_ss_fra=4_000.0,
+            your_ss_start_age=67,
+            spouse_ss_fra=3_200.0,
+            spouse_ss_start_age=67,
             grants=[],
         )
         ytd_no_qd = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
