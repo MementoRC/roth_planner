@@ -264,8 +264,22 @@ def compute_social_security(
     death_year: int | None = None,
     forced_your_ira_draw: float = 0.0,
     forced_spouse_ira_draw: float = 0.0,
-) -> tuple[float, float, float, float]:
-    """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt).
+) -> tuple[float, float, float, float, float]:
+    """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt, provisional_base).
+
+    ``provisional_base`` is ``other_inc`` -- the non-SS income that enters the
+    IRC §86(b)(2) provisional-income formula, i.e. exactly the second argument
+    handed to :func:`engine.tax.taxable_ss` below, so that
+
+        taxable_ss(combined_ss, provisional_base) == taxable_ss_amt
+
+    holds by construction. It is returned (audit-0823 AF-2) because a caller
+    that wants to RE-PRICE taxable SS at a candidate extra withdrawal needs the
+    base the current figure was priced from, and reconstructing it outside this
+    function would mean duplicating the ~50-line assembly below -- the exact
+    duplication that lets the two copies drift apart. Recovering it by
+    inverting taxable_ss is not possible: that function is flat below the
+    first threshold and above the 85% cap, so the inverse is not unique.
 
     forced_*_ira_draw are the IRA-withdrawal-waterfall legs that fund living
     expenses. They are ordinary distributions under IRC §408(d)(1), so they are
@@ -425,7 +439,7 @@ def compute_social_security(
     # F4: forecast qualified dividends and realized brokerage gains are also AGI items
     other_inc += ord_div_this_year + qual_div_this_year + realized_gains
     taxable_ss_amt = taxable_ss(combined_ss, other_inc, filing_status=current_filing_status)
-    return your_ss, spouse_ss, combined_ss, taxable_ss_amt
+    return your_ss, spouse_ss, combined_ss, taxable_ss_amt, other_inc
 
 
 # ---------------------------------------------------------------------------

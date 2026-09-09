@@ -1318,6 +1318,24 @@ class TestMagiCeilingWaterfallActivation:
         unchanged in what it detects -- a magi_strategy=None plan's cap must
         still be governed by _base_headroom alone, never by the MAGI-ceiling
         block or its reorder; only the absolute total moved.
+
+        UPDATE (branch fix/audit-0823-af1-af2-closed-form-conversion-sizing):
+        the constant moved from 3_886_573 to 3_351_334 (delta -535_239, -13.8%)
+        when auto_fill_22 stopped sizing its room by closed-form subtraction
+        (audit-0823 AF-1). The old total was only reachable BY overshooting:
+        `room_to_22` assumed taxable income rises $1 per $1 converted, but
+        `fixed_gross` carries taxable Social Security priced at the
+        PRE-conversion base, so each converted dollar could raise taxable
+        income by up to $1.85 while provisional income sat in the IRC §86(b)
+        50%/85% band. The plan therefore converted past the top of the 22%
+        bracket every year -- measured at $44,600 of overshoot in 2026 rising
+        to $46,841 by 2028 on the AF-1 gate fixture. Sizing the same room by
+        bisection against POST-conversion taxable income converts less, which
+        is the point: the dollars removed were the ones being taxed at 24%
+        while the plan claimed to stop at 22%. The premise above is STILL
+        TRUE and the guard still checks it -- `plan.magi_strategy is None`
+        (line above) is unchanged and still passes; only the absolute total
+        moved, exactly as this docstring anticipates.
         """
         hh = Household(your_age=61, spouse_age=55, your_ira=1_700_000, spouse_ira=1_700_000)
         plan = auto_fill_22(hh)
@@ -1327,7 +1345,7 @@ class TestMagiCeilingWaterfallActivation:
             sum(yr.your_conversion + yr.spouse_conversion for yr in result.years)
         )
         assert total_achieved > 0, "precondition: the 22%-fill plan must convert something"
-        assert total_achieved == approx(3_886_573, tol=1)
+        assert total_achieved == approx(3_351_334, tol=1)
 
 
 class TestWaterfallMarginalBaselineC8Followup:

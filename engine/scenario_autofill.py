@@ -12,7 +12,7 @@ from engine.aca import aca_ceiling_magi, is_pre_medicare_age
 from engine.ira import calc_rmd, inherited_ira_drain, ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE
 from engine.scenario_compute import compute_brokerage_dividends, survivor_reduction
-from engine.scenario_types import ConversionPlan
+from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
     BRACKETS_MFJ,
     BRACKETS_SINGLE,
@@ -20,9 +20,8 @@ from engine.tax import (
     STD_DEDUCTION_SINGLE,
     bisect_conversion_for_ceiling,
     deductions,
-    room_to_12,
-    room_to_22,
-    room_to_24,
+    indexed_bracket_ceiling,
+    room_to_bracket,
     senior_bonus_deduction,
     taxable_ss,
 )
@@ -339,8 +338,26 @@ def _auto_fill_core(
         # estimate and re-solve room. senior_bonus_deduction's phaseout slope
         # is bounded at 0.06 ($0.06 per $1 of MAGI), so this fixed point is a
         # contraction and converges in a couple of passes.
+        # audit-0823 AF-1: `base_magi + room` was itself an under-estimate of
+        # post-conversion MAGI. base_magi carries taxable SS priced at the
+        # PRE-conversion base, and MAGI includes taxable SS (IRC §86 +
+        # §1395r(i)(4)), so the conversion raises MAGI by the converted dollars
+        # PLUS the extra benefit it drags into taxability -- the same §86
+        # feedback C14 fixed for the IRMAA ceiling and
+        # _bracket_room_with_ss_torpedo now fixes for the bracket ceilings.
+        # Under-estimating MAGI here over-estimates the surviving senior bonus,
+        # inflating `ded` and hence the room. Measured on an MFJ pair aged 70
+        # with $52,080 of benefits: estimated MAGI $207,707 leaves a per-person
+        # bonus of 2 x (6,000 - 57,707 x 0.06) = $5,075.16, while the true MAGI
+        # of $251,975 phases BOTH out entirely (the phase-out is per-person --
+        # $6,000 each, exhausted at $250,000) -- and that $5,075.16 was exactly
+        # the resulting bracket overshoot.
         for _ in range(5):
-            _magi_est = base_magi + room
+            _magi_est = (
+                other_fixed
+                + room
+                + taxable_ss(combined_ss, other_fixed + room, filing_status=current_filing_status)
+            )
             _senior_est = senior_bonus_deduction(
                 ya_eff, sa_eff, _magi_est - _phaseout_muni, year=year, cpi=_cpi, filing_status=current_filing_status
             )
@@ -420,6 +437,61 @@ def _auto_fill_core(
     return plan
 
 
+def _bracket_room_with_ss_torpedo(
+    fixed_gross: float,
+    ded: float,
+    combined_ss: float,
+    other_fixed: float,
+    bracket_index: int,
+    yr: int,
+    cpi: float,
+    filing_status: str,
+) -> float:
+    """Conversion room to an indexed bracket ceiling, measured on the taxable
+    income that results AFTER the conversion lands.
+
+    audit-0823 AF-1. The closed form these room fns used --
+    ``room_to_bracket = max(ded + ceiling - fixed_gross, 0)``
+    (engine/tax.py:284-291) -- assumes taxable ordinary income grows exactly
+    $1 per $1 converted. That is false while provisional income sits in the
+    IRC §86(b) 50%/85% partial-taxability band: ``fixed_gross`` carries taxable
+    SS priced at the PRE-conversion base (see _auto_fill_core, which computes
+    ``tss`` at ``other_fixed`` and folds it into ``fixed_gross``), so each
+    converted dollar can raise taxable income by up to $1.85 as it drags more
+    of the benefit into taxability. Converting the closed-form room therefore
+    lands ABOVE the ceiling it was sizing to.
+
+    This is the same defect, the same band and the same remedy as C14
+    (audit-0805 W5) already applied to the IRMAA ceiling in
+    :func:`_irmaa_tier1_magi_room` directly below -- and _auto_fill_core has
+    been threading ``combined_ss`` and ``other_fixed`` into EVERY room fn all
+    along precisely so the bracket variants could do this too. Its docstring
+    said outright that the 12%/22%/24% variants ignore both; this is what
+    stops them ignoring it.
+
+    ``naive_room`` is a valid upper bound for the search: taxable SS is
+    non-decreasing in provisional income, so taxable income at ``naive_room``
+    is at least ``fixed_gross + naive_room - ded == ceiling``, putting the true
+    root at or below it. That is the same monotonicity
+    bisect_conversion_for_ceiling documents as its precondition.
+    """
+    ceiling = indexed_bracket_ceiling(bracket_index, year=yr, cpi=cpi, filing_status=filing_status)
+    naive_room = room_to_bracket(fixed_gross, ded, ceiling)
+    if naive_room <= 0.0:
+        return 0.0
+
+    # The taxable-SS figure already baked into fixed_gross, so it can be swapped
+    # out for the re-priced one at each candidate conversion instead of being
+    # double-counted.
+    tss_base = taxable_ss(combined_ss, other_fixed, filing_status=filing_status)
+
+    def _taxable_income_at(conv: float) -> float:
+        tss_c = taxable_ss(combined_ss, other_fixed + conv, filing_status=filing_status)
+        return fixed_gross - tss_base + tss_c + conv - ded
+
+    return bisect_conversion_for_ceiling(_taxable_income_at, ceiling, naive_room)
+
+
 def auto_fill_12(
     hh: Household,
     ytd: YTDSnapshot | None = None,
@@ -431,8 +503,8 @@ def auto_fill_12(
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_12(
-            fg, ded, year=yr, cpi=cpi, filing_status=fs
+        room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
+            fg, ded, css, of, 1, yr, cpi, fs
         ),
     )
 
@@ -448,8 +520,8 @@ def auto_fill_22(
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_22(
-            fg, ded, year=yr, cpi=cpi, filing_status=fs
+        room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
+            fg, ded, css, of, 2, yr, cpi, fs
         ),
     )
 
@@ -530,9 +602,27 @@ def auto_fill_irmaa_safe(
         filing_status: str,
     ) -> float:
         # Room to the IRMAA tier-1 MAGI ceiling, then capped at 22% bracket room.
+        #
+        # audit-0823 AF-1: the 22% cap leg was the one un-bisected term left in
+        # this strategy -- the IRMAA leg above has bisected since C14, so a
+        # closed-form cap here could still overshoot the 22% bracket whenever
+        # the cap is what binds.
+        #
+        # LATENT, NOT LIVE. The cap binds only when
+        #     ded + bracket_22_ceiling(yr) < irmaa_tier1_threshold(yr + 2)
+        # and at statutory 2026 values that is 32,200 + 211,400 = 243,600
+        # against 218,000 -- false, so the (already-bisected) IRMAA leg binds
+        # first and this cap is inert. It flips only because the IRMAA tier is
+        # indexed at yr+2 (the 2-year lookback) while the bracket is indexed at
+        # yr, so a high enough user-set CPI outruns the bracket. Measured: at
+        # cpi=0.0 this strategy runs ~$32.7K UNDER the 22% ceiling; at cpi=0.08
+        # it overshoots. Fixed as a trap that would otherwise wait for a CPI
+        # assumption to arm it -- not as observed breakage at default settings.
         return min(
             _irmaa_tier1_magi_room(base_magi, combined_ss, other_fixed, yr, cpi, filing_status),
-            room_to_22(fixed_gross, ded, year=yr, cpi=cpi, filing_status=filing_status),
+            _bracket_room_with_ss_torpedo(
+                fixed_gross, ded, combined_ss, other_fixed, 2, yr, cpi, filing_status
+            ),
         )
 
     plan = _auto_fill_core(hh, ytd, room_fn=_irmaa_room)
@@ -544,12 +634,24 @@ def auto_fill_24(
     hh: Household,
     ytd: YTDSnapshot | None = None,
 ) -> ConversionPlan:
-    """Fill to the 24% bracket ceiling each year."""
+    """Fill to the 24% bracket ceiling each year.
+
+    audit-0823 AF-1: bisected for consistency with the 12%/22% variants, but
+    NOT observable through this function's public result today. run_scenario
+    applies a default room_22 cap to the conversions it actually executes, so a
+    24%-targeted plan is clipped back to the 22% bracket before it can overshoot
+    its own 24% ceiling -- measured at a planned $439,050 applied as $258,900
+    (== 211,400 + 47,500). The sizing here was still written wrong and is
+    corrected so it cannot surface the moment that cap is lifted or raised.
+    That clipping is itself a separate, unfiled defect -- "Fill to 24%" is
+    currently equivalent to a 22% fill -- and is deliberately NOT addressed
+    here.
+    """
     return _auto_fill_core(
         hh,
         ytd,
-        room_fn=lambda fg, ded, _bm, _css, _of, yr, cpi, fs: room_to_24(
-            fg, ded, year=yr, cpi=cpi, filing_status=fs
+        room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
+            fg, ded, css, of, 3, yr, cpi, fs
         ),
     )
 
@@ -689,8 +791,70 @@ def add_bracket_fill_withdrawals(
             continue  # only post-RMD
 
         bracket_ceiling = _iv(_base_ceiling(yr.filing_status), yr.year, _cpi_fill)
-        # Room to fill the target bracket
-        room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
+        # Room to fill the target bracket.
+        #
+        # audit-0823 AF-2. `yr` came from a run_scenario over the BASE plan, so
+        # BOTH inputs to the closed form
+        #     room = max(yr.total_deductions + ceiling - yr.combined_gross, 0)
+        # were measured before the withdrawal this loop is about to size, and
+        # BOTH move once it lands:
+        #
+        #  leg 1 -- yr.total_deductions embeds the OBBBA senior-bonus deduction
+        #    priced at the PRE-withdrawal MAGI (engine/scenario.py:572-596).
+        #    The bonus phases out at $0.06 per $1 of MAGI above the threshold,
+        #    so filling the bracket shrinks the very deduction the room was
+        #    computed with. Measured overshoot: exactly $12,000 on an
+        #    otherwise-clean MFJ fixture -- the entire couple's bonus.
+        #
+        #  leg 2 -- yr.combined_gross embeds yr.taxable_ss_amt, priced from a
+        #    provisional-income base that includes only the BASE plan's
+        #    extra_withdrawal (engine/scenario_compute.py:371-388, :427) --
+        #    which is ZERO in these years, because this function is what adds
+        #    it. The withdrawal raises provisional income, dragging more of the
+        #    benefit into taxability under IRC §86, so combined_gross rises by
+        #    MORE than the withdrawal. Measured overshoot: up to $29,113.68.
+        #
+        # Both are the same closed-form-overshoot family as AF-1 above and as
+        # C14/C18 before it. Solve for the withdrawal whose POST-withdrawal
+        # taxable income lands on the ceiling, re-pricing both terms at each
+        # candidate.
+        naive_room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
+        if naive_room <= 0:
+            continue
+
+        def _taxable_income_at(draw: float, _yr: YearResult = yr) -> float:
+            # leg 2: swap the stale taxable-SS figure for one re-priced at the
+            # post-withdrawal provisional base.
+            tss_at = taxable_ss(
+                _yr.combined_ss,
+                _yr.ss_provisional_base + draw,
+                filing_status=_yr.filing_status,
+            )
+            gross_at = _yr.combined_gross - _yr.taxable_ss_amt + tss_at + draw
+            # leg 1: the senior bonus falls as MAGI rises. MAGI moves with the
+            # withdrawal AND with the extra taxable SS it dragged in.
+            magi_at = _yr.magi_phaseout_basis - _yr.taxable_ss_amt + tss_at + draw
+            ded_at = _yr.deductions_before_senior_bonus + senior_bonus_deduction(
+                _yr.senior_bonus_ya_eff,
+                _yr.senior_bonus_sa_eff,
+                magi_at,
+                year=_yr.year,
+                cpi=_cpi_fill,
+                filing_status=_yr.filing_status,
+            )
+            return gross_at - ded_at
+
+        # naive_room is a valid upper bound: taxable SS is non-decreasing in
+        # provisional income and the senior bonus is non-increasing in MAGI, so
+        # _taxable_income_at is non-decreasing in `draw` and at naive_room is at
+        # least (combined_gross + naive_room - total_deductions) == ceiling.
+        # That monotonicity is exactly bisect_conversion_for_ceiling's stated
+        # precondition, so a bisection converges without needing the fixed-point
+        # iteration _auto_fill_core uses -- and unlike that iteration it is
+        # exact rather than contraction-dependent.
+        room = bisect_conversion_for_ceiling(
+            _taxable_income_at, bracket_ceiling, naive_room
+        )
         if room <= 0:
             continue
 

@@ -998,7 +998,7 @@ class TestSurvivorScenario:
             survivor=surv,
         )
         # ya=62, sa=55 is first survivor-active year (2027)
-        your_ss, spouse_ss, combined_ss, _ = compute_social_security(
+        your_ss, spouse_ss, combined_ss, _, _ = compute_social_security(
             hh=hh,
             ya=62,
             sa=55,
@@ -1074,7 +1074,7 @@ class TestSurvivorScenario:
         )
         # sa=60 in first survivor year (2031), onset_age=55+(2031-2026)=60, claim_age=60
         # deceased benefit: your_ss at ya=66, ss_start_age=62, cola=0 -> ss_benefit_at_age * 1.0
-        your_ss_full, spouse_ss_out, combined_ss, _ = compute_social_security(
+        your_ss_full, spouse_ss_out, combined_ss, _, _ = compute_social_security(
             hh=hh2,
             ya=66,
             sa=60,
@@ -1106,7 +1106,7 @@ class TestSurvivorScenario:
         assert combined_ss == approx(spouse_ss_out)
 
         # Verify: two years later (sa=62) reduction is STILL 71.5% — onset locked, not growing.
-        _, spouse_ss_later, _, _ = compute_social_security(
+        _, spouse_ss_later, _, _, _ = compute_social_security(
             hh=hh2,
             ya=68,
             sa=62,
@@ -1160,7 +1160,7 @@ class TestSurvivorScenario:
             survivor=surv,
         )
         # First survivor year: 2031. ya=75, sa=73, onset=70+(2031-2026)=75 >= fra=67.
-        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+        your_ss_out, spouse_ss_out, combined_ss, _, _ = compute_social_security(
             hh=hh,
             ya=75,
             sa=73,
@@ -1218,7 +1218,7 @@ class TestSurvivorScenario:
             survivor=surv,
         )
         # First survivor year: 2031. ya=60, sa=60. onset=55+(2031-2026)=60, claim_age=60.
-        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+        your_ss_out, spouse_ss_out, combined_ss, _, _ = compute_social_security(
             hh=hh,
             ya=60,
             sa=60,
@@ -1289,7 +1289,7 @@ class TestSurvivorScenario:
             survivor=surv,
         )
         # First survivor year: 2027. ya=67 (onset_age=66+(2027-2026)=67 >= fra 67 -> full factor).
-        your_ss_out, spouse_ss_out, combined_ss, _ = compute_social_security(
+        your_ss_out, spouse_ss_out, combined_ss, _, _ = compute_social_security(
             hh=hh,
             ya=67,
             sa=61,

@@ -295,7 +295,7 @@ class TestAuditF3F4SSProvisionalIncome:
         """Call compute_social_security and return taxable_ss_amt."""
         from engine.scenario_compute import compute_social_security
 
-        _, _, _, taxable_ss_amt = compute_social_security(
+        _, _, _, taxable_ss_amt, _ = compute_social_security(
             hh=hh,
             ya=hh.your_age,
             sa=hh.spouse_age,

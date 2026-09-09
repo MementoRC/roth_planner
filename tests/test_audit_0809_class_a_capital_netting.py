@@ -159,10 +159,10 @@ class TestSite3ScenarioComputeSocialSecurity:
         assert ytd_a.ordinary_capital_gain_ytd == pytest.approx(ytd_b.ordinary_capital_gain_ytd)
         assert ytd_a.preferential_capital_gain_ytd == pytest.approx(ytd_b.preferential_capital_gain_ytd)
 
-        *_, taxable_ss_a = compute_social_security(
+        *_, taxable_ss_a, _ = compute_social_security(
             hh, 67, 67, False, None, "MFJ", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ytd_a
         )
-        *_, taxable_ss_b = compute_social_security(
+        *_, taxable_ss_b, _ = compute_social_security(
             hh, 67, 67, False, None, "MFJ", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ytd_b
         )
 
