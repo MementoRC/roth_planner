@@ -107,6 +107,10 @@ class YearResult:
     # Bracket room
     room_12: float = 0.0
     room_22: float = 0.0
+    # Room to the top of the 24% bracket. Exists so the conversion cap can
+    # resolve the ceiling for a plan that declares bracket_target == 3
+    # (see ConversionPlan.bracket_target); unused by any 12%/22% plan.
+    room_24: float = 0.0
     irmaa_room: float = 0.0
 
     # Brokerage (excess RMD tracking)
@@ -212,6 +216,15 @@ class ConversionPlan:
     # every 12%/22%/24%/custom plan) is a no-op: only the bracket cap
     # applies, unchanged.
     magi_strategy: str | None = None
+    # Declares which bracket ceiling this plan was sized to, indexed the same
+    # way engine.tax.indexed_bracket_ceiling indexes BRACKETS_MFJ/
+    # BRACKETS_SINGLE: 1 = top of 12%, 2 = top of 22%, 3 = top of 24%. None
+    # (default) means "use the default 22% ceiling" -- the no-op every
+    # 12%/22%/custom plan takes. Exists because run_scenario otherwise has no
+    # way to know which ceiling a plan was sized to, and clipped every
+    # bracket-fill plan to room_22 regardless of its actual target (issue
+    # #465).
+    bracket_target: int | None = None
 
 
 @dataclass

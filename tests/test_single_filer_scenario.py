@@ -84,8 +84,8 @@ class TestComputeFederalTaxFilingStatus:
 class TestComputeBracketRoomFilingStatus:
     def test_single_uses_single_ceilings(self) -> None:
         gross, ded = 50_000.0, 30_000.0
-        r12_s, r22_s = compute_bracket_room(gross, ded, "Single", 2026, 1.0)
-        r12_m, r22_m = compute_bracket_room(gross, ded, "MFJ", 2026, 1.0)
+        r12_s, r22_s, _r24_s = compute_bracket_room(gross, ded, "Single", 2026, 1.0)
+        r12_m, r22_m, _r24_m = compute_bracket_room(gross, ded, "MFJ", 2026, 1.0)
         assert r12_s == pytest.approx(
             room_to_bracket(gross, ded, index_value(BRACKETS_SINGLE[1][0], 2026, 1.0))
         )

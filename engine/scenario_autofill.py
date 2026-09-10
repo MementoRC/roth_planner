@@ -636,24 +636,23 @@ def auto_fill_24(
 ) -> ConversionPlan:
     """Fill to the 24% bracket ceiling each year.
 
-    audit-0823 AF-1: bisected for consistency with the 12%/22% variants, but
-    NOT observable through this function's public result today. run_scenario
-    applies a default room_22 cap to the conversions it actually executes, so a
-    24%-targeted plan is clipped back to the 22% bracket before it can overshoot
-    its own 24% ceiling -- measured at a planned $439,050 applied as $258,900
-    (== 211,400 + 47,500). The sizing here was still written wrong and is
-    corrected so it cannot surface the moment that cap is lifted or raised.
-    That clipping is itself a separate, unfiled defect -- "Fill to 24%" is
-    currently equivalent to a 22% fill -- and is deliberately NOT addressed
-    here.
+    audit-0823 AF-1: bisected for consistency with the 12%/22% variants.
+    Issue #465: this plan now declares `bracket_target=3` so run_scenario's
+    conversion cap (`_base_headroom` in engine/scenario.py) resolves against
+    `room_24` instead of unconditionally clipping every bracket-fill plan to
+    `room_22` -- previously a 24%-targeted plan was clipped back to the 22%
+    bracket before it could overshoot its own ceiling (measured at a planned
+    $439,050 applied as $258,900, == 211,400 + 47,500).
     """
-    return _auto_fill_core(
+    plan = _auto_fill_core(
         hh,
         ytd,
         room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
             fg, ded, css, of, 3, yr, cpi, fs
         ),
     )
+    plan.bracket_target = 3
+    return plan
 
 
 def auto_fill_aca(
@@ -784,6 +783,7 @@ def add_bracket_fill_withdrawals(
         qcds=dict(base_plan.qcds),
         spouse_qcds=dict(base_plan.spouse_qcds),
         magi_strategy=base_plan.magi_strategy,
+        bracket_target=base_plan.bracket_target,
     )
 
     for yr in result.years:
