@@ -30,18 +30,67 @@ ACA_ENHANCED_SCHEDULE = [
 ]
 
 # Pre-ARP schedule (reverted Jan 1, 2026 — subsidies only up to 400% FPL)
-# Source: Rev. Proc. 2025-25 (IRB 2025-32, Aug 4 2025)
 # Each tuple is (upper_fpl_multiple, applicable_pct_at_bracket_start).
 # The IRS table defines linear ramps within each bracket; these entries capture
 # the rate at the START of each bracket (i.e. the lower-bound applicable %).
-ACA_PRE_ARP_SCHEDULE = [
-    (1.33, 0.0210),  # 100% to <133% FPL: 2.10% flat
-    (1.50, 0.0314),  # 133-150%: ramp 3.14% → 4.19%
-    (2.00, 0.0419),  # 150-200%: ramp 4.19% → 6.60%
-    (2.50, 0.0660),  # 200-250%: ramp 6.60% → 8.44%
-    (3.00, 0.0844),  # 250-300%: ramp 8.44% → 9.96%
-    (4.00, 0.0996),  # 300-400%: 9.96% flat
-]
+# Each band's FINAL percentage equals the NEXT band's INITIAL percentage, which
+# is what lets aca_premium_cap_rate interpolate using schedule[i + 1][1].
+#
+# audit-0823 const/APPLICABLE-PCT: this was ONE frozen 2026 list, so every
+# projected year priced ACA on superseded percentages while the FPL denominator
+# beside it aged normally via _fpl() -> index_value(). Half the ratio moved with
+# the projection and half did not.
+#
+# These CANNOT be run through index_value the way the FPL denominator is. IRC
+# §36B(b)(3)(A)(ii) indexes them by the excess of premium growth over income
+# growth -- not CPI -- so the published table has to be carried per year.
+ACA_PRE_ARP_SCHEDULE_BY_YEAR: dict[int, list[tuple[float, float]]] = {
+    # Rev. Proc. 2025-25 (IRB 2025-32, Aug 4 2025)
+    # https://www.irs.gov/pub/irs-drop/rp-25-25.pdf
+    2026: [
+        (1.33, 0.0210),  # 100% to <133% FPL: 2.10% flat
+        (1.50, 0.0314),  # 133-150%: ramp 3.14% → 4.19%
+        (2.00, 0.0419),  # 150-200%: ramp 4.19% → 6.60%
+        (2.50, 0.0660),  # 200-250%: ramp 6.60% → 8.44%
+        (3.00, 0.0844),  # 250-300%: ramp 8.44% → 9.96%
+        (4.00, 0.0996),  # 300-400%: 9.96% flat
+    ],
+    # Rev. Proc. 2026-26 (IRB 2026-31, Jul 27 2026)
+    # https://www.irs.gov/pub/irs-drop/rp-26-26.pdf
+    # Every band rose against 2026. Because a higher applicable percentage means
+    # a higher expected contribution and so a SMALLER subsidy, the old frozen
+    # table overstated the subsidy for every year from 2027 on.
+    2027: [
+        (1.33, 0.0215),  # 100% to <133% FPL: 2.15% flat
+        (1.50, 0.0323),  # 133-150%: ramp 3.23% → 4.30%
+        (2.00, 0.0430),  # 150-200%: ramp 4.30% → 6.78%
+        (2.50, 0.0678),  # 200-250%: ramp 6.78% → 8.66%
+        (3.00, 0.0866),  # 250-300%: ramp 8.66% → 10.22%
+        (4.00, 0.1022),  # 300-400%: 10.22% flat
+    ],
+}
+
+
+def _pre_arp_schedule_for_year(year: int) -> list[tuple[float, float]]:
+    """Published §36B applicable-percentage table in force for `year`.
+
+    Years past the latest published table HOLD at that table rather than
+    extrapolating. Extrapolation would need the §36B(b)(3)(A)(ii)
+    premium-growth-over-income-growth ratio, which this model has no input for
+    -- cpi_assumption is emphatically not that ratio -- so holding flat is a
+    declared assumption rather than an invented number. Add a new entry to
+    ACA_PRE_ARP_SCHEDULE_BY_YEAR each August as the IRS publishes one.
+
+    Years before the earliest published table use the earliest.
+    """
+    published = sorted(ACA_PRE_ARP_SCHEDULE_BY_YEAR)
+    applicable = [y for y in published if y <= year]
+    return ACA_PRE_ARP_SCHEDULE_BY_YEAR[applicable[-1] if applicable else published[0]]
+
+
+# Back-compatible alias: the BASE_YEAR table. tests/test_constants_provenance.py
+# and tests/test_single_filer.py import this name directly.
+ACA_PRE_ARP_SCHEDULE = _pre_arp_schedule_for_year(BASE_YEAR)
 
 # Approximate annual benchmark silver plan premium for couple age ~60-64
 # (varies by state/county — $1,600-$2,000/mo range; using $1,800/mo)
@@ -199,9 +248,17 @@ def effective_benchmark_premium(
     return couple_benchmark * (enrolled_factor / total_factor)
 
 
-def _aca_cap_schedule(enhanced: bool) -> list[tuple[float, float]]:
-    """Return the premium cap schedule for the given subsidy law state."""
-    return ACA_ENHANCED_SCHEDULE if enhanced else ACA_PRE_ARP_SCHEDULE
+def _aca_cap_schedule(enhanced: bool, *, year: int = BASE_YEAR) -> list[tuple[float, float]]:
+    """Return the premium cap schedule for the given subsidy law state and year.
+
+    The ARPA/IRA enhanced caps are statutory percentages with no annual
+    indexing provision, so they do not vary by year. The pre-ARP §36B
+    applicable percentages are re-published annually -- see
+    _pre_arp_schedule_for_year.
+    """
+    if enhanced:
+        return ACA_ENHANCED_SCHEDULE
+    return _pre_arp_schedule_for_year(year)
 
 
 def _fpl(filing_status: str, *, year: int = BASE_YEAR, cpi: float = DEFAULT_CPI) -> float:
@@ -245,7 +302,7 @@ def aca_premium_cap_rate(
     # guard above. Enhanced schedule has no statutory lower bound, so only pre-ARP.
     if not enhanced_subsidies_active and fpl_ratio < 1.0:
         return 0.0
-    schedule = _aca_cap_schedule(enhanced_subsidies_active)
+    schedule = _aca_cap_schedule(enhanced_subsidies_active, year=year)
     # Enhanced schedule: original step-function lookup preserved (ARPA caps, not ramps).
     # Use strict < so exactly 150% FPL falls into the 2% band, not the 0% band
     # (audit aca-1: <= caused the boundary to be greedily assigned to 0%).
