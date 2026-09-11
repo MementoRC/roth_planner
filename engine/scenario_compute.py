@@ -19,6 +19,7 @@ from engine.tax import (
     BRACKETS_SINGLE,
     federal_tax,
     federal_tax_single,
+    indexed_bracket_ceiling,
     marginal_rate,
     marginal_rate_single,
     room_to_12,
@@ -734,11 +735,19 @@ def compute_bracket_room(
     current_filing_status: str,
     year: int,
     cpi: float,
-) -> tuple[float, float]:
-    """Return (room_12, room_22) — headroom to the 12% and 22% bracket ceilings.
+) -> tuple[float, float, float]:
+    """Return (room_12, room_22, room_24) — headroom to the 12%, 22%, and 24%
+    bracket ceilings.
 
     Dispatches on the effective filing status so a non-survivor Single household
     uses the single-filer bracket ceilings (MFJ/survivor math unchanged).
+
+    room_24 is the newer leg (issue #465): it exists so run_scenario's
+    conversion cap can resolve the ceiling for a plan that declares
+    ConversionPlan.bracket_target == 3, instead of always clipping to
+    room_22. It is computed via indexed_bracket_ceiling, which already
+    dispatches Single vs MFJ internally, so no if/else branch is needed here
+    -- unlike the room_12/room_22 legs above, which are left untouched.
     """
     if current_filing_status == "Single":
         room_12 = room_to_bracket(
@@ -754,4 +763,9 @@ def compute_bracket_room(
     else:
         room_12 = room_to_12(combined_gross, total_deductions, year=year, cpi=cpi)
         room_22 = room_to_22(combined_gross, total_deductions, year=year, cpi=cpi)
-    return room_12, room_22
+    room_24 = room_to_bracket(
+        combined_gross,
+        total_deductions,
+        indexed_bracket_ceiling(3, year=year, cpi=cpi, filing_status=current_filing_status),
+    )
+    return room_12, room_22, room_24

@@ -916,7 +916,7 @@ def _project_year(
     yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost
 
     # === Bracket room ===
-    yr.room_12, yr.room_22 = compute_bracket_room(
+    yr.room_12, yr.room_22, yr.room_24 = compute_bracket_room(
         yr.combined_gross, yr.total_deductions, current_filing_status, year, cpi
     )
 
@@ -1424,14 +1424,21 @@ def _solve_waterfall_year(
         re-deriving bracket edges here -- a second copy of the bracket math is
         the dual-writer trap this feature was designed to avoid.
 
-        CEILING USED: the top of the 22% bracket (`room_22`), always.
+        CEILING USED: the top of the 22% bracket (`room_22`) by DEFAULT,
+        raised to the top of the 24% bracket (`room_24`) only when the plan
+        DECLARES that target via `plan.bracket_target == 3`. Any other value,
+        INCLUDING None, keeps the 22% default unchanged.
 
         Selecting `room_12` while the marginal rate is still 12% was tried and
         is WRONG: it makes a deliberate 22%-bracket-fill plan self-limiting,
         because capping every conversion at the 12% ceiling keeps the marginal
         rate at 12% forever. It inverts the tool's own invariant -- filling 22%
         then leaves MORE IRA at 75 than filling 12%
-        (test_scenario_core.py::test_22pct_fill_reduces_ira_more).
+        (test_scenario_core.py::test_22pct_fill_reduces_ira_more). That
+        rejected experiment chose the ceiling from the ACHIEVED MARGINAL RATE
+        of the zero-conversion outcome; this reads the plan's DECLARED target
+        instead, which is why it does not revive that failure -- 12% has no
+        declared-target channel and deliberately does not opt in.
 
         THE DRAW IS DELIBERATELY EXCLUDED. Measuring the room as
         `ceiling - (base + draw)` was tried and is ALSO wrong: it makes the
@@ -1466,6 +1473,8 @@ def _solve_waterfall_year(
         identical `_project_year` call; the caller also reuses that same
         outcome as the seed for the marginal-baseline waterfall solve below.
         """
+        if plan.bracket_target == 3:
+            return zero_conv_nd.yr.room_24
         return zero_conv_nd.yr.room_22
 
     def _probe_magi(conversion_cap: float, strategy: str) -> float:
