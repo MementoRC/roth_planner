@@ -250,15 +250,37 @@ class TestSaveUserDefaults:
         assert path.stat().st_mode & 0o777 == 0o600
 
     def test_failed_write_does_not_raise(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A save into a nonexistent directory must not raise (best-effort)."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(
-            "config.loader.Path",
-            lambda *_a, **_kw: tmp_path / "missing_dir" / ".user_defaults.json",
+        """A save into a nonexistent directory must not raise (best-effort).
+
+        audit-0823 tests/T2: this previously patched ``config.loader.Path``,
+        which save_user_defaults never calls -- it dereferences the
+        module-level ``_USER_DEFAULTS_PATH`` instead (config/loader.py:133).
+        The patch was therefore inert, the write SUCCEEDED against the tmp
+        path that conftest's autouse ``_redirect_cache_paths_to_tmp`` fixture
+        installs, and "did not raise" was satisfied trivially -- the test
+        passed identically with the patch line deleted, never once exercising
+        the failed-write branch it named.
+
+        Redirecting ``_USER_DEFAULTS_PATH`` itself (the seam the neighbouring
+        permissions test already uses) actually induces the OSError. The two
+        positive assertions are what keep this honest: without them a future
+        regression that silently wrote somewhere else would still "not raise"
+        and the test would go vacuous again.
+        """
+        import logging
+
+        target = tmp_path / "missing_dir" / ".user_defaults.json"
+        monkeypatch.setattr(_loader_mod, "_USER_DEFAULTS_PATH", target)
+
+        with caplog.at_level(logging.WARNING):
+            save_user_defaults({"your_age": 63})  # must not raise
+
+        assert not target.exists(), "the write must genuinely have failed"
+        assert "Failed to save user defaults" in caplog.text, (
+            "the except OSError branch must actually have been taken"
         )
-        save_user_defaults({"your_age": 63})  # must not raise
 
 
 class TestClearUserDefaults:
