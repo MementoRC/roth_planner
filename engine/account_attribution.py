@@ -81,6 +81,20 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     deliberately NOT mirrored on the write path -- see
     CorruptAccountAttributionError's docstring for why a write must raise
     instead of silently compounding a corrupt read into permanent loss.
+
+    audit-0823: the value vocabulary is closed on the way IN as well as the
+    way out. ``save_account_override`` validates its ``owner`` argument, but
+    the store is plaintext JSON on disk, so a hand edit, a truncated legacy
+    entry, or a future role rename can still put an unknown value there.
+    Entries whose owner is not in ``OWNER_ROLES`` are dropped exactly as
+    undecodable keys already are, because consumers treat the loaded
+    vocabulary as closed: ``views/setup/command_center.py`` indexes the
+    resolved owner into a fixed three-item selectbox list (an unknown role
+    raised ``ValueError`` and took the whole Setup page down, including the
+    UI needed to repair it), and ``views/ytd_income/_partials/_sync_scan.py``
+    writes it as a ledger bucket key that ``engine/pdf_ledger.py`` then
+    persists verbatim. Dropping the entry degrades that account to the
+    instance owner -- the same outcome as if no override had been recorded.
     """
     if not _ACCOUNT_ATTRIBUTION_PATH.exists():
         return {}
@@ -96,7 +110,7 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     result: dict[tuple[str, str], str] = {}
     for key, owner in overrides_raw.items():
         decoded = _decode_key(str(key))
-        if decoded is not None:
+        if decoded is not None and str(owner) in OWNER_ROLES:
             result[decoded] = str(owner)
     return result
 
