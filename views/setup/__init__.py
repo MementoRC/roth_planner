@@ -7,6 +7,7 @@ import streamlit as st
 from models.household import Household
 
 from ._partials import filing_status_from_label
+from ._state import autosave_user_defaults
 from .command_center import render_command_center
 from .data_bridge import render_data_bridge_tab
 from .parameters import (
@@ -32,6 +33,15 @@ def render(hh: Household) -> None:
         render_portfolio_tab(hh)
     with tab_bridge:
         render_data_bridge_tab(hh)
+
+    # audit-0823 models-views/M5: must run LAST, after all four tabs have
+    # rendered. This used to sit at the end of render_parameters_tab (tab 2),
+    # which runs BEFORE the Portfolio tab (tab 3) instantiates its unkeyed
+    # stock-price widget (`st.session_state.txn_price = st.number_input(...)`
+    # in views/setup/_partials/_options.py) -- so an edit there was read by
+    # the NEXT rerun's autosave, not this one, and was persisted one rerun
+    # late. Same position, and same reason, as the Domains/Hub/Wizard shells.
+    autosave_user_defaults()
 
 
 __all__ = [
