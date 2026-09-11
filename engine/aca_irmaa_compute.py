@@ -34,6 +34,16 @@ from engine.tax import (
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
+# Convergence tolerance for the _nontaxable_ss fixed-point solve. The iteration
+# map is a contraction with Lipschitz constant <= 0.85, so the standard bound
+# |x_n - x*| <= |x_{n+1} - x_n| / (1 - 0.85) turns a 1e-9 step into a true
+# error under 7e-9 -- far inside a cent.
+_SS_SOLVE_TOL = 1e-9
+# Safety cap only; the tolerance above is what actually terminates the loop.
+# A fixed 50 was the audit-0823 claims/P2-02 defect: 0.85^50 of a ~$34,000
+# initial error still leaves ~$10.
+_SS_SOLVE_MAX_ITER = 200
+
 
 def _nontaxable_ss(
     hh: Household,
@@ -70,8 +80,13 @@ def _nontaxable_ss(
     understated the add-back by $2,000 (5.6% of the correct $36,000) under
     the old one-shot computation. Fixed-point iterate instead to solve
     ``x = other_income - taxable_ss(combined_ss, x)`` for the true
-    non-SS income ``x`` (contraction mapping, Lipschitz <= 0.85 — converges
-    to sub-cent precision well within the fixed iteration budget below).
+    non-SS income ``x`` (contraction mapping, Lipschitz <= 0.85 — the §86
+    inclusion slope — so error falls only 15% per step). The initial error
+    equals the taxable-SS amount itself, up to ``0.85 * combined_ss``: a
+    FIXED 50 iterations left ~$10 of error on a $40,000 combined-SS case
+    (audit-0823 claims/P2-02), and ~97 iterations are needed for sub-cent
+    precision from that starting point. The loop now iterates to an explicit
+    tolerance instead, with the iteration count acting only as a safety cap.
     This keeps the add-back exact across the whole SS taxability curve, not
     just the phase-in band, without touching the (already-correct) IRMAA
     MAGI path, which never adds this value back.
@@ -107,10 +122,14 @@ def _nontaxable_ss(
     # taxable_ss(combined_ss, other_income, ...) that double-counted the
     # taxable-SS portion already embedded in other_income.
     non_ss_income = other_income
-    for _ in range(50):
-        non_ss_income = other_income - taxable_ss(
+    for _ in range(_SS_SOLVE_MAX_ITER):
+        updated = other_income - taxable_ss(
             combined_ss, non_ss_income, filing_status=filing_status
         )
+        converged = abs(updated - non_ss_income) <= _SS_SOLVE_TOL
+        non_ss_income = updated
+        if converged:
+            break
     taxable = taxable_ss(combined_ss, non_ss_income, filing_status=filing_status)
     return max(combined_ss - taxable, 0.0)
 
