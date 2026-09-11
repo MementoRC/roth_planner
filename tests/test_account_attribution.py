@@ -70,6 +70,60 @@ class TestOverridesRoundTrip:
         with pytest.raises(ValueError, match="Invalid owner role"):
             mod.save_account_override("schwab", "****-*123", "bogus")
 
+    def test_load_drops_entries_with_unknown_owner_role(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An owner value outside OWNER_ROLES must not survive the read.
+
+        save_account_override validates its owner argument, but the store is
+        plaintext JSON on disk -- a hand edit, a truncated legacy entry, or a
+        future role rename can all put an unknown value there. Consumers treat
+        the loaded vocabulary as closed (views/setup/command_center.py indexes
+        the resolved owner into a fixed three-item list), so an unknown role
+        must be dropped here rather than handed onward.
+        """
+        import json
+
+        import engine.account_attribution as mod
+
+        store = tmp_path / ".account_attribution.json"
+        store.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "overrides": {
+                        "schwab|****-*123": "joint",
+                        "vanguard|****-*456": "you",
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", store)
+        assert mod.load_account_overrides() == {("vanguard", "****-*456"): "you"}
+
+    def test_dropped_override_falls_back_to_instance_owner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Dropping a bad override degrades to the instance owner, not a crash.
+
+        This is the behaviour the tolerant read path already promises for a
+        corrupt file, extended to a corrupt VALUE: the account is attributed to
+        the instance owner exactly as if no override had been recorded.
+        """
+        import json
+
+        import engine.account_attribution as mod
+
+        store = tmp_path / ".account_attribution.json"
+        store.write_text(
+            json.dumps({"version": 1, "overrides": {"schwab|****-*123": "joint"}})
+        )
+        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", store)
+        overrides = mod.load_account_overrides()
+        resolved = mod.resolve_account_owner("schwab", "****-*123", overrides, "you")
+        assert resolved == "you"
+        assert resolved in mod.OWNER_ROLES
+
 
 class TestRefusesToClobberCorruptStore:
     def test_save_refuses_to_clobber_corrupt_file(
