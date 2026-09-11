@@ -7,13 +7,14 @@ import stat
 
 import pytest
 
+from engine.data_sources.committed import save_committed
 from engine.portfolio_sync.portfolio import save_snapshot
 from engine.portfolio_sync.shapes import PortfolioSnapshot
 from engine.tax_return_pdf import save_pdf_tax_records
 
 
 class TestCacheFilePermissions:
-    """All three PII cache files must be written with mode 0o600."""
+    """All three PII cache files must be written with mode 0o600: portfolio, PDF tax records, and the committed baseline."""
 
     def test_portfolio_cache_mode_600(self, monkeypatch, tmp_path):
         cache_file = tmp_path / ".portfolio_cache.json"
@@ -25,6 +26,25 @@ class TestCacheFilePermissions:
         cache_file = tmp_path / ".tax_pdf_cache.json"
         monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
         save_pdf_tax_records({})
+        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
+
+    def test_committed_cache_mode_600(self, tmp_path):
+        """A fresh committed baseline must not be world-readable."""
+        cache_file = tmp_path / ".committed.json"
+        save_committed(cache_file, {"fields": {}})
+        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
+
+    def test_committed_cache_mode_600_tightens_existing_loose_file(self, tmp_path):
+        """An already-0o644 baseline must be tightened by the next save.
+
+        save_committed writes a temp file then os.replace()s it onto the
+        target, so the replacement inode's mode is what survives -- this
+        proves a pre-existing world-readable file does not stay that way.
+        """
+        cache_file = tmp_path / ".committed.json"
+        cache_file.write_text("{}")
+        cache_file.chmod(0o644)
+        save_committed(cache_file, {"fields": {}})
         assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
 
 
