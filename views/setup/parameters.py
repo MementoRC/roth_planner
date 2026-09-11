@@ -29,7 +29,6 @@ from views.setup._partials import (
     render_assumptions_partial,
     render_household_partial,
 )
-from views.setup._state import autosave_user_defaults
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -179,5 +178,3 @@ def render_parameters_tab(hh: Household) -> None:
         # render_assumptions_partial's docstring).
         render_assumptions_partial(hh, joint_sub)
         _render_pdf_1040_import()
-
-    autosave_user_defaults()
