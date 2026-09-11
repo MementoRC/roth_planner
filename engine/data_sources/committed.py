@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS
+from engine.secure_io import write_pii_json
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
@@ -171,6 +172,15 @@ def save_committed(path: str | Path, committed_json: dict) -> None:
     atomic temp+replace above) would still destroy it. A missing target (no
     prior baseline to protect) or an existing-and-parseable one both write
     normally.
+
+    audit-0823 COMMITTED-0644: the write goes through
+    ``engine.secure_io.write_pii_json`` so the file is created 0o600 via
+    ``os.open``'s mode argument rather than inheriting the process umask
+    (``write_text`` produced a world-readable 0o644 baseline). The temp
+    file is what gets the tight mode, and ``os.replace`` carries that
+    inode onto the target, so an existing loose-permissioned baseline is
+    tightened by the next save rather than keeping its old mode. Mirrors
+    ``engine/account_attribution.py``'s ``_write``.
     """
     target = Path(path)
     if target.exists():
@@ -179,5 +189,5 @@ def save_committed(path: str | Path, committed_json: dict) -> None:
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             raise CorruptCommittedCacheError(path, exc) from exc
     tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
-    tmp_path.write_text(json.dumps(committed_json))
+    write_pii_json(tmp_path, committed_json)
     os.replace(tmp_path, target)
