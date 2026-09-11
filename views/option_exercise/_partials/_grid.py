@@ -5,6 +5,7 @@ import streamlit as st
 
 from engine.exercise_grid import GridNormalization, normalize_grid_edits
 from models.exercise_schedule import ExerciseSchedule
+from models.grants import aggregate_by_key
 from models.household import Household
 from views.option_exercise._partials._helpers import _GRID_EDITOR_KEY, _SHARES_STATE_KEY
 
@@ -28,8 +29,12 @@ def render_grid_partial(
             return int(prior_shares.get(gkey, {}).get(str(year), 0))
         return schedule.shares(gkey, year)
 
+    # One row per LOT, not per grant: grants colliding on key() are a single
+    # award and must be shown and edited once (audit-0823 GRID-KEY-COLLISION).
+    lots = aggregate_by_key(hh.grants)
+
     rows = []
-    for g in hh.grants:
+    for g in lots:
         row: dict[str, object] = {"Grant": f"{g.year} · ${g.strike:g} · {g.shares:,} sh"}
         for year in years:
             row[str(year)] = None if year > g.expiry_year else _seed_shares(g.key(), year)
@@ -49,13 +54,13 @@ def render_grid_partial(
     )
 
     raw_by_key: dict[str, dict[int, int]] = {}
-    for i, g in enumerate(hh.grants):
+    for i, g in enumerate(lots):
         cells: dict[int, int] = {}
         for year in years:
             val = edited_df.iloc[i][str(year)]
             cells[year] = int(val) if pd.notna(val) else 0
         raw_by_key[g.key()] = cells
-    norm = normalize_grid_edits(hh.grants, years, raw_by_key)
+    norm = normalize_grid_edits(lots, years, raw_by_key)
 
     st.session_state[_SHARES_STATE_KEY] = {
         key: {str(y): n for y, n in cells.items()}
