@@ -222,8 +222,7 @@ class SourcedList(list):
     def to_json(self) -> dict:
         if len(self) != len(self.prov):
             raise ValueError(
-                f"SourcedList data/prov length mismatch: {len(self)} data vs "
-                f"{len(self.prov)} prov"
+                f"SourcedList data/prov length mismatch: {len(self)} data vs {len(self.prov)} prov"
             )
         return {
             "data": list(self),

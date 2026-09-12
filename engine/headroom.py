@@ -168,7 +168,9 @@ def compute_headroom(
         _senior_extra = hh.senior_extra
     # FIX #5: senior_bonus_deduction phaseout must use muni-EXCLUDED MAGI (niit_magi),
     # consistent with engine/tax.py which passes ytd.niit_magi_ytd.
-    ded = deductions(ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi)
+    ded = deductions(
+        ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi
+    )
     ded += senior_bonus_deduction(
         ya, sa, locked_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
@@ -194,15 +196,24 @@ def compute_headroom(
     _brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
     _ceiling_12 = index_value(_brackets[1][0], _year, _cpi, round50=True)
     _ceiling_22 = index_value(_brackets[2][0], _year, _cpi, round50=True)
-    _naive_room_12 = room_to_12(locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status)
-    _naive_room_22 = room_to_22(locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status)
-    result.room_to_12pct = bisect_conversion_for_ceiling(_locked_taxable_at, _ceiling_12, _naive_room_12)
-    result.room_to_22pct = bisect_conversion_for_ceiling(_locked_taxable_at, _ceiling_22, _naive_room_22)
+    _naive_room_12 = room_to_12(
+        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
+    )
+    _naive_room_22 = room_to_22(
+        locked_gross, ded, year=_year, cpi=_cpi, filing_status=filing_status
+    )
+    result.room_to_12pct = bisect_conversion_for_ceiling(
+        _locked_taxable_at, _ceiling_12, _naive_room_12
+    )
+    result.room_to_22pct = bisect_conversion_for_ceiling(
+        _locked_taxable_at, _ceiling_22, _naive_room_22
+    )
     base_irmaa_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     # FIX #6: IRMAA 2-year lookback — the threshold that applies is for the PAYMENT year
     # (income year + 2), not the income year itself.
     irmaa_t1 = index_value(base_irmaa_tiers[0][0], _year + 2, _cpi)
     niit_threshold = NIIT_THRESHOLD_SINGLE if filing_status == "Single" else NIIT_THRESHOLD_MFJ
+
     # audit-0809 Class B: these two must bisect for the SAME reason the bracket
     # rooms above do. `max(threshold - magi, 0)` assumes MAGI rises exactly $1
     # per $1 converted; while provisional income sits in the IRC §86(b) 50%/85%
@@ -248,7 +259,9 @@ def compute_headroom(
     # Recalculate deductions with full planned MAGI.
     # FIX #5 (planned path): same muni-excluded MAGI for senior_bonus_deduction phaseout.
     # M2 (planned path): same Single std deduction as locked path.
-    ded_planned = deductions(ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi)
+    ded_planned = deductions(
+        ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi
+    )
     ded_planned += senior_bonus_deduction(
         ya, sa, planned_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
     )
@@ -273,6 +286,7 @@ def compute_headroom(
     result.room_to_22pct_with_planned = bisect_conversion_for_ceiling(
         _planned_taxable_at, _ceiling_22, _naive_room_22_planned
     )
+
     # audit-0809 Class B (planned path): same closed-form overshoot as the
     # locked path above, and it must move with it -- leaving one of the two
     # naive would put two answers to one question on the same page, which is

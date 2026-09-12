@@ -123,9 +123,7 @@ def _nontaxable_ss(
     # taxable-SS portion already embedded in other_income.
     non_ss_income = other_income
     for _ in range(_SS_SOLVE_MAX_ITER):
-        updated = other_income - taxable_ss(
-            combined_ss, non_ss_income, filing_status=filing_status
-        )
+        updated = other_income - taxable_ss(combined_ss, non_ss_income, filing_status=filing_status)
         converged = abs(updated - non_ss_income) <= _SS_SOLVE_TOL
         non_ss_income = updated
         if converged:
@@ -505,9 +503,7 @@ def compute_year_by_year_timeline(
                 _irmaa_medicare_count = 1 if hh.spouse_age_in(_irmaa_year) >= 65 else 0
         elif is_mfj:
             _irmaa_medicare_count = sum(
-                1
-                for a in (hh.your_age_in(_irmaa_year), hh.spouse_age_in(_irmaa_year))
-                if a >= 65
+                1 for a in (hh.your_age_in(_irmaa_year), hh.spouse_age_in(_irmaa_year)) if a >= 65
             )
         else:
             _irmaa_medicare_count = 1 if hh.your_age_in(_irmaa_year) >= 65 else 0

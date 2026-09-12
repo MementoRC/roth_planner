@@ -127,9 +127,15 @@ class YTDSnapshot:
     )
 
     # Crypto (Koinly-sourced)
-    crypto_stcg_ytd: float = 0.0  # crypto short-term capital gains (Koinly): ordinary brackets + MAGI + NIIT
-    crypto_ltcg_ytd: float = 0.0  # crypto long-term capital gains (Koinly): MAGI + NIIT, not brackets
-    crypto_income_ytd: float = 0.0  # crypto staking/DeFi/airdrop income (Sch 1 8z): ordinary brackets + MAGI, not NIIT
+    crypto_stcg_ytd: float = (
+        0.0  # crypto short-term capital gains (Koinly): ordinary brackets + MAGI + NIIT
+    )
+    crypto_ltcg_ytd: float = (
+        0.0  # crypto long-term capital gains (Koinly): MAGI + NIIT, not brackets
+    )
+    crypto_income_ytd: float = (
+        0.0  # crypto staking/DeFi/airdrop income (Sch 1 8z): ordinary brackets + MAGI, not NIIT
+    )
 
     # Drill-down events
     gain_events: list[RealizedGainEvent] = field(default_factory=list)

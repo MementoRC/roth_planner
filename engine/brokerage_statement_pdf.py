@@ -119,7 +119,9 @@ class BrokerageStatementRecord:
 
     def __post_init__(self) -> None:
         if self.account_type not in ACCOUNT_TYPES:
-            raise ValueError(f"Invalid account_type {self.account_type!r}, must be one of {ACCOUNT_TYPES}")
+            raise ValueError(
+                f"Invalid account_type {self.account_type!r}, must be one of {ACCOUNT_TYPES}"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -235,9 +237,7 @@ def _detect_broker(text: str) -> str:
 # back to manual owner selection in the UI, same safety rule as account_type
 # "unknown".
 
-_SCHWAB_HOLDER_NAME_RE = re.compile(
-    r"AccountNumber StatementPeriod\s*\n([A-Z]+)\n", re.MULTILINE
-)
+_SCHWAB_HOLDER_NAME_RE = re.compile(r"AccountNumber StatementPeriod\s*\n([A-Z]+)\n", re.MULTILINE)
 _VANGUARD_HOLDER_NAME_RE = re.compile(
     r"account—XXXX\d+ Vanguard Personal Investor\s*\n(.+?)\s+\d{3}-\d{3}-\d{4}"
 )
@@ -312,7 +312,9 @@ def _extract_schwab_account_number(text: str) -> str:
     m = _SCHWAB_ACCOUNT_UNMASKED_RE.search(text)
     if m:
         return m.group(0)
-    raise StatementParseError("No account number found. Ensure this is a complete Schwab monthly statement export.")
+    raise StatementParseError(
+        "No account number found. Ensure this is a complete Schwab monthly statement export."
+    )
 
 
 def _row_ytd_pair(label: str, text: str) -> tuple[float, float]:
@@ -374,7 +376,10 @@ def _parse_schwab(full_text: str) -> BrokerageStatementRecord:
 _VANGUARD_ACCOUNT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"Roth IRA brokerage account—(XXXX\d+)"), "roth_ira"),
     (re.compile(r"Traditional IRA brokerage account—(XXXX\d+)"), "traditional_ira"),
-    (re.compile(r"\bIRA brokerage account—(XXXX\d+)"), "traditional_ira"),  # UNVERIFIED -- see plan Non-goals
+    (
+        re.compile(r"\bIRA brokerage account—(XXXX\d+)"),
+        "traditional_ira",
+    ),  # UNVERIFIED -- see plan Non-goals
     (re.compile(r"Individual brokerage account—(XXXX\d+)"), "taxable"),
 ]
 _VANGUARD_ACCOUNT_FALLBACK_RE = re.compile(r"account—(XXXX\d+)")
@@ -392,7 +397,9 @@ def _detect_vanguard_account(text: str) -> tuple[str, str]:
     m = _VANGUARD_ACCOUNT_FALLBACK_RE.search(text)
     if m:
         return m.group(1), "unknown"
-    raise StatementParseError("No account number found. Ensure this is a complete Vanguard statement export.")
+    raise StatementParseError(
+        "No account number found. Ensure this is a complete Vanguard statement export."
+    )
 
 
 def _extract_vanguard_income_row(text: str) -> tuple[float, float, float, float, float, float]:
@@ -421,7 +428,9 @@ def _extract_vanguard_period_end(text: str) -> str:
 
 def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
     account_number, account_type = _detect_vanguard_account(full_text)
-    dividends, interest, tax_exempt_interest, stcg, ltcg, other = _extract_vanguard_income_row(full_text)
+    dividends, interest, tax_exempt_interest, stcg, ltcg, other = _extract_vanguard_income_row(
+        full_text
+    )
 
     return BrokerageStatementRecord(
         account_number=account_number,
@@ -499,7 +508,9 @@ def _split_ibkr_sections(full_text: str) -> list[str]:
     """
     starts = [m.start() for m in _IBKR_SECTION_START_RE.finditer(full_text)]
     if not starts:
-        raise StatementParseError("No IBKR account sections found (no 'Account Information' tables detected).")
+        raise StatementParseError(
+            "No IBKR account sections found (no 'Account Information' tables detected)."
+        )
     sections = []
     for i, start in enumerate(starts):
         end = starts[i + 1] if i + 1 < len(starts) else len(full_text)
@@ -777,7 +788,9 @@ _UBS_LONG_TERM_RE = re.compile(rf"Long term\s+({_MONEY})\s+({_MONEY})\s+({_MONEY
 def _extract_ubs_account_number(text: str) -> str:
     m = _UBS_ACCOUNT_RE.search(text)
     if not m:
-        raise StatementParseError("No account number found. Ensure this is a complete UBS monthly statement export.")
+        raise StatementParseError(
+            "No account number found. Ensure this is a complete UBS monthly statement export."
+        )
     return m.group(1)
 
 
@@ -912,7 +925,9 @@ def partition_by_account_type(
     return taxable, excluded, unknown
 
 
-def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementRecord]) -> dict[str, float]:
+def aggregate_to_ytd_fields(
+    taxable_by_account: dict[str, BrokerageStatementRecord],
+) -> dict[str, float]:
     """Sum CONFIRMED-TAXABLE records into models.ytd_income.YTDSnapshot field names.
 
     Callers must pass only the "taxable" partition from partition_by_account_type
@@ -933,7 +948,9 @@ def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementReco
     records = taxable_by_account.values()
     return {
         "interest_ytd": sum(r.interest_taxable_ytd for r in records),
-        "tax_exempt_interest_ytd": sum(r.interest_tax_exempt_ytd + r.dividends_tax_exempt_ytd for r in records),
+        "tax_exempt_interest_ytd": sum(
+            r.interest_tax_exempt_ytd + r.dividends_tax_exempt_ytd for r in records
+        ),
         "ordinary_dividends_ytd": sum(r.dividends_taxable_ytd for r in records),
         "stcg_ytd": sum(r.stcg_net_ytd for r in records),
         "ltcg_ytd": sum(r.ltcg_net_ytd for r in records),
@@ -946,7 +963,9 @@ def aggregate_to_ytd_fields(taxable_by_account: dict[str, BrokerageStatementReco
 
 _STATEMENT_CACHE_PATH = Path(__file__).resolve().parent.parent / ".brokerage_statement_cache.json"
 _FOLDER_CONFIG_PATH = Path(__file__).resolve().parent.parent / ".statement_folder_config.json"
-_ACCOUNT_TYPE_OVERRIDES_PATH = Path(__file__).resolve().parent.parent / ".statement_account_overrides.json"
+_ACCOUNT_TYPE_OVERRIDES_PATH = (
+    Path(__file__).resolve().parent.parent / ".statement_account_overrides.json"
+)
 
 
 def save_statement_records(records: dict[str, BrokerageStatementRecord]) -> None:

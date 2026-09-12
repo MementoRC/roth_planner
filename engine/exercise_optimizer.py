@@ -165,11 +165,14 @@ def _build_candidate_schedule(
                 committed[year] += per_share * rem
                 remaining[grant.key()] = 0
                 ceiling_room = max(
-                    ceiling_income_by_year.get(year, 0.0)
-                    - base_ex_option_by_year.get(year, 0.0),
+                    ceiling_income_by_year.get(year, 0.0) - base_ex_option_by_year.get(year, 0.0),
                     0.0,
                 )
-                if per_share > 0 and committed[year] > ceiling_room and year not in over_ceiling_years:
+                if (
+                    per_share > 0
+                    and committed[year] > ceiling_room
+                    and year not in over_ceiling_years
+                ):
                     over_ceiling_years.append(year)
                 continue
 

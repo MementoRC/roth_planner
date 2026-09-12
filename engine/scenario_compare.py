@@ -68,7 +68,15 @@ def survivor_year_tax(
     tss = taxable_ss(survivor_ss, rmd + brok_ord_income + brok_ltcg_income, filing_status="Single")
     # (b) Ordinary gross adds ONLY ordinary brokerage income (NOT LTCG/qualified divs)
     gross = rmd + tss + brok_ord_income
-    ded = deductions(survivor_age, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi)
+    ded = deductions(
+        survivor_age,
+        0,
+        STD_DEDUCTION_SINGLE,
+        SENIOR_EXTRA_SINGLE,
+        filing_status="Single",
+        year=year,
+        cpi=cpi,
+    )
     # (c) senior_bonus_deduction uses full MAGI: ordinary gross + LTCG-rate income
     _survivor_magi = (
         gross + brok_ltcg_income
@@ -255,7 +263,9 @@ def compute_survivor_snapshot(
                     cpi=hh.cpi_assumption,
                 )
                 _taxable_ord_this_year = max(_rmd_this_year - _ded_this_year, 0.0)
-                _ltcg_thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption, round50=True)
+                _ltcg_thr = index_tuple(
+                    LTCG_THRESHOLDS_SINGLE, year_at_offset, hh.cpi_assumption, round50=True
+                )
                 _ltcg_start = _taxable_ord_this_year
                 _ltcg_end = _taxable_ord_this_year + brok_realized
                 _ltcg_at_15 = max(
@@ -357,8 +367,12 @@ class ScenarioSummary:
     lifetime_brok_tax: float  # sum of brokerage_gain_tax
     lifetime_aca_loss: float  # sum of aca_loss (ACA subsidy lost)
     lifetime_niit: float  # sum of niit_cost
-    all_in_cost: float  # tax + irmaa + brok + aca_loss + niit (matches Sweet Spot / ACA+IRMAA "all-in")
-    savings_vs_baseline: float  # baseline.all_in_cost - this.all_in_cost (positive = SAVES money vs baseline)
+    all_in_cost: (
+        float  # tax + irmaa + brok + aca_loss + niit (matches Sweet Spot / ACA+IRMAA "all-in")
+    )
+    savings_vs_baseline: (
+        float  # baseline.all_in_cost - this.all_in_cost (positive = SAVES money vs baseline)
+    )
     ira_at_75: float  # IRA + Roth combined at your_age == 75 (grid-01 fix: includes roth begins)
     ira_at_85: float
     ira_at_95: float

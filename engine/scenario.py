@@ -372,9 +372,7 @@ def _project_year(
         else:
             spouse_inherited_distribution += drain
         # Apply drain + growth to balance for next year
-        inherited_balances[idx] = max(inherited_balances[idx] - drain, 0.0) * (
-            1 + iira.growth_rate
-        )
+        inherited_balances[idx] = max(inherited_balances[idx] - drain, 0.0) * (1 + iira.growth_rate)
     yr.your_inherited_distribution = your_inherited_distribution
     yr.spouse_inherited_distribution = spouse_inherited_distribution
 
@@ -395,9 +393,7 @@ def _project_year(
     # double-counting the same gains — mirroring the forecast-dividend suppression in
     # compute_brokerage_dividends. ytd_year is non-None only in the base year.
     realized_gains = (
-        0.0
-        if ytd_year is not None
-        else brokerage * brok_appreciation_rate * hh.brok_turnover
+        0.0 if ytd_year is not None else brokerage * brok_appreciation_rate * hh.brok_turnover
     )
 
     # === Waterfall hook: forced brokerage draw ===
@@ -576,7 +572,13 @@ def _project_year(
         ya_eff = 0 if surv.who_dies == "you" else ya
         sa_eff = 0 if surv.who_dies == "spouse" else sa
         yr.total_deductions = deductions(
-            ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
+            ya_eff,
+            sa_eff,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
+            year=year,
+            cpi=cpi,
         )
         # MAGI-invariant part, kept for callers that must re-price the
         # MAGI-sensitive senior bonus at a different income (audit-0823 AF-2).
@@ -596,13 +598,20 @@ def _project_year(
             _std_ded, _senior_extra = STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE
         else:
             _std_ded, _senior_extra = hh.std_deduction, hh.senior_extra
-        yr.total_deductions = deductions(ya, sa, _std_ded, _senior_extra, filing_status=current_filing_status, year=year, cpi=cpi)
+        yr.total_deductions = deductions(
+            ya, sa, _std_ded, _senior_extra, filing_status=current_filing_status, year=year, cpi=cpi
+        )
         # MAGI-invariant part — see the survivor branch above (audit-0823 AF-2).
         yr.deductions_before_senior_bonus = yr.total_deductions
         yr.senior_bonus_ya_eff, yr.senior_bonus_sa_eff = ya, sa
         yr.magi_phaseout_basis = yr.magi - _phaseout_muni
         yr.total_deductions += senior_bonus_deduction(
-            ya, sa, yr.magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
+            ya,
+            sa,
+            yr.magi - _phaseout_muni,
+            year=year,
+            cpi=cpi,
+            filing_status=current_filing_status,
         )
 
     # === Federal tax + conversion tax (incremental) ===
@@ -662,7 +671,13 @@ def _project_year(
     )
     if survivor_active:
         base_total_deductions = deductions(
-            ya_eff, sa_eff, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi
+            ya_eff,
+            sa_eff,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
+            year=year,
+            cpi=cpi,
         ) + senior_bonus_deduction(
             ya_eff, sa_eff, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status="Single"
         )
@@ -674,9 +689,20 @@ def _project_year(
         else:
             _b_std_ded, _b_senior_extra = hh.std_deduction, hh.senior_extra
         base_total_deductions = deductions(
-            ya, sa, _b_std_ded, _b_senior_extra, filing_status=current_filing_status, year=year, cpi=cpi
+            ya,
+            sa,
+            _b_std_ded,
+            _b_senior_extra,
+            filing_status=current_filing_status,
+            year=year,
+            cpi=cpi,
         ) + senior_bonus_deduction(
-            ya, sa, base_magi - _phaseout_muni, year=year, cpi=cpi, filing_status=current_filing_status
+            ya,
+            sa,
+            base_magi - _phaseout_muni,
+            year=year,
+            cpi=cpi,
+            filing_status=current_filing_status,
         )
 
     # === Taxable income ===
@@ -830,13 +856,9 @@ def _project_year(
             min(_ytd_ltcg_end, _ytd_ltcg_thresholds[1])
             - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[0]),
         )
-        _ytd_ltcg_at_20 = max(
-            0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1])
-        )
+        _ytd_ltcg_at_20 = max(0.0, _ytd_ltcg_end - max(_ytd_ltcg_start, _ytd_ltcg_thresholds[1]))
         _ltcg_rates = LTCG_RATES_SINGLE if current_filing_status == "Single" else LTCG_RATES_MFJ
-        yr.ytd_ltcg_tax = (
-            _ytd_ltcg_at_15 * _ltcg_rates[1] + _ytd_ltcg_at_20 * _ltcg_rates[2]
-        )
+        yr.ytd_ltcg_tax = _ytd_ltcg_at_15 * _ltcg_rates[1] + _ytd_ltcg_at_20 * _ltcg_rates[2]
         # P3-2: without-conversion counterfactual for the SAME _ytd_ltcg_total,
         # stacked from base_taxable (the no-conversion ordinary taxable income)
         # instead of yr.taxable_income (which includes this year's conversion).
@@ -858,9 +880,7 @@ def _project_year(
         _ytd_base_gross = (
             yr.combined_gross - yr.your_conversion - yr.spouse_conversion - conversion_ss_delta
         )
-        _ytd_ltcg_end_base = max(
-            0.0, _ytd_base_gross + _ytd_ltcg_total - base_total_deductions
-        )
+        _ytd_ltcg_end_base = max(0.0, _ytd_base_gross + _ytd_ltcg_total - base_total_deductions)
         _ytd_ltcg_at_15_base = max(
             0.0,
             min(_ytd_ltcg_end_base, _ytd_ltcg_thresholds[1])
@@ -908,9 +928,7 @@ def _project_year(
     yr.niit_magi = (
         yr.magi + net_inv_income - (ytd_year.tax_exempt_interest_ytd if ytd_year else 0.0)
     )
-    yr.niit_cost = niit(
-        yr.niit_magi, net_investment_income, filing_status=current_filing_status
-    )
+    yr.niit_cost = niit(yr.niit_magi, net_investment_income, filing_status=current_filing_status)
 
     # === All-in cost of conversions ===
     yr.all_in_cost = yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost
@@ -968,9 +986,7 @@ def _project_year(
     if ytd_year is not None:
         _ytd_dist_excess = max(
             0.0,
-            ytd_year.ira_distributions_ytd
-            - _rmd_ytd_reduction
-            - _spouse_rmd_ytd_reduction,
+            ytd_year.ira_distributions_ytd - _rmd_ytd_reduction - _spouse_rmd_ytd_reduction,
         )
         available_income += (
             ytd_year.wages_ytd
@@ -1041,9 +1057,7 @@ def _project_year(
         min(_ltcg_end_base, ltcg_thresholds[1]) - max(_ltcg_start_base, ltcg_thresholds[0]),
     )
     _ltcg_at_20_base = max(0.0, _ltcg_end_base - max(_ltcg_start_base, ltcg_thresholds[1]))
-    _brokerage_gain_tax_base = (
-        _ltcg_at_15_base * _ltcg_rates[1] + _ltcg_at_20_base * _ltcg_rates[2]
-    )
+    _brokerage_gain_tax_base = _ltcg_at_15_base * _ltcg_rates[1] + _ltcg_at_20_base * _ltcg_rates[2]
     # P3-2: ltcg_eligible (and thus the two lines above) is 0.0 in the base year
     # (see B1/B2 suppression), so add the YTD-actual marginal cost computed
     # earlier alongside the forecast-sourced one — the two are mutually
@@ -1138,7 +1152,8 @@ def _project_year(
     # forced_your_roth_draw/forced_spouse_roth_draw: IRA-withdrawal-waterfall
     # hooks (tax-free, no income effect); default 0.0 is a no-op.
     yr.your_roth_end = max(
-        0.0, (your_roth + yr.your_conversion) * (1 + hh.your_roth_rate(year)) - forced_your_roth_draw
+        0.0,
+        (your_roth + yr.your_conversion) * (1 + hh.your_roth_rate(year)) - forced_your_roth_draw,
     )
     yr.spouse_roth_end = max(
         0.0,
@@ -1151,9 +1166,7 @@ def _project_year(
         inherited_balances[i] for i, iira in enumerate(hh.inherited_iras) if iira.owner == "you"
     )
     yr.spouse_inherited_balance_end = sum(
-        inherited_balances[i]
-        for i, iira in enumerate(hh.inherited_iras)
-        if iira.owner == "spouse"
+        inherited_balances[i] for i, iira in enumerate(hh.inherited_iras) if iira.owner == "spouse"
     )
 
     # Carry forward
@@ -1343,9 +1356,7 @@ def _solve_waterfall_year(
         # subtracted: per the approved design the draw is sized first and the
         # conversion is capped against the leftover headroom afterwards.
         _your_mandatory = max(nd.yr.your_rmd, nd.yr.qcd) + nd.yr.extra_withdrawal
-        _spouse_mandatory = (
-            max(nd.yr.spouse_rmd, nd.yr.spouse_qcd) + nd.yr.spouse_extra_withdrawal
-        )
+        _spouse_mandatory = max(nd.yr.spouse_rmd, nd.yr.spouse_qcd) + nd.yr.spouse_extra_withdrawal
         _your_ira_available = max(nd.yr.your_ira_begin - _your_mandatory, 0.0)
         _spouse_ira_available = max(nd.yr.spouse_ira_begin - _spouse_mandatory, 0.0)
 
@@ -1789,9 +1800,7 @@ def run_scenario(
     # Derived cost basis of the brokerage balance (bookkeeping only -- see
     # Household.brokerage_start_basis docstring). None resolves to full basis.
     brokerage_basis = (
-        hh.brokerage_start_basis
-        if hh.brokerage_start_basis is not None
-        else hh.brokerage_start
+        hh.brokerage_start_basis if hh.brokerage_start_basis is not None else hh.brokerage_start
     )
     cum_conv_tax = 0.0
     cum_irmaa = 0.0

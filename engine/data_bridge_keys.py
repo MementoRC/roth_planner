@@ -198,8 +198,12 @@ def write_keypair(pubkey: bytes, privkey: bytes, *, force: bool = False) -> None
     exclusive = not force
     # crypto-security-10: write privkey first — crash between writes preserves
     # the sensitive key rather than only the (non-secret) public key.
-    _write_keyfile(PRIVKEY_PATH, base64.b64encode(privkey).decode("ascii") + "\n", 0o600, exclusive=exclusive)
-    _write_keyfile(PUBKEY_PATH, base64.b64encode(pubkey).decode("ascii") + "\n", 0o644, exclusive=exclusive)
+    _write_keyfile(
+        PRIVKEY_PATH, base64.b64encode(privkey).decode("ascii") + "\n", 0o600, exclusive=exclusive
+    )
+    _write_keyfile(
+        PUBKEY_PATH, base64.b64encode(pubkey).decode("ascii") + "\n", 0o644, exclusive=exclusive
+    )
 
 
 def decode_keymaterial(s: str) -> bytes:

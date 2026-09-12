@@ -48,7 +48,9 @@ def fetch_ssa_snapshot() -> SSASnapshot:
     return snap
 
 
-def match_fra_estimate(estimates: list[SSABenefitEstimate], fra_age: int) -> SSABenefitEstimate | None:
+def match_fra_estimate(
+    estimates: list[SSABenefitEstimate], fra_age: int
+) -> SSABenefitEstimate | None:
     """Find the estimate at fra_age; fall back to the nearest retirement_age.
 
     Returns None if estimates is empty.

@@ -61,8 +61,6 @@ def aggregate_by_key(grants: list[StockGrant]) -> list[StockGrant]:
             reps[k] = g
         totals[k] = totals.get(k, 0) + g.shares
     return [
-        StockGrant(
-            reps[k].year, reps[k].strike, totals[k], reps[k].expiry_year, reps[k].grant_id
-        )
+        StockGrant(reps[k].year, reps[k].strike, totals[k], reps[k].expiry_year, reps[k].grant_id)
         for k in order
     ]

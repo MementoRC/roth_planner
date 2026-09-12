@@ -129,7 +129,9 @@ class CandidateStore:
     def from_json(cls, d: dict) -> CandidateStore:
         store = cls()
         for field_key, bucket in d.items():
-            store._data[field_key] = {source: Candidate.from_json(c) for source, c in bucket.items()}
+            store._data[field_key] = {
+                source: Candidate.from_json(c) for source, c in bucket.items()
+            }
         return store
 
     def save(self, path: str | Path) -> None:

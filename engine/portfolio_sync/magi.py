@@ -29,7 +29,9 @@ def fetch_magi(year: int, *, timeout: float = 3.0) -> dict[str, Any] | None:
          ss_taxable_amount, foreign_earned_income_exclusion, source}
     """
     try:
-        resp = _get("/query/tax_return", params={"data_type": "magi", "year": str(year)}, timeout=timeout)
+        resp = _get(
+            "/query/tax_return", params={"data_type": "magi", "year": str(year)}, timeout=timeout
+        )
         if resp.status_code == 404:
             return None
         resp.raise_for_status()

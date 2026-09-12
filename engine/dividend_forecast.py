@@ -54,9 +54,9 @@ TICKER_CLASS: dict[str, str] = {
     "IVV": "etf_equity",
     "QQQ": "etf_equity",
     "VTSAX": "etf_equity",
-    "VXUS": "etf_intl",          # total-international: ~70% qualified
+    "VXUS": "etf_intl",  # total-international: ~70% qualified
     "VEA": "etf_intl_developed",  # developed-markets: ~82% qualified
-    "VWO": "etf_intl_emerging",   # emerging-markets: ~68% qualified
+    "VWO": "etf_intl_emerging",  # emerging-markets: ~68% qualified
     "BND": "bond_fund",
     "AGG": "bond_fund",
     "VBTLX": "bond_fund",

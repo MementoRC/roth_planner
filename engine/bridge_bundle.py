@@ -1,4 +1,5 @@
 """Pure build/parse/apply for the consolidated .enc data bridge. No Streamlit imports."""
+
 from dataclasses import asdict, is_dataclass
 
 from engine.pdf_ledger import extract_owner, replace_owner
@@ -60,7 +61,9 @@ def _equity_grant_from_dict(d: dict) -> EquityGrant:
     )
 
 
-def build_bundle(setup_scalars: dict, snapshot, ledger, *, owner: str = "you", ytd=None, grants=None) -> dict:
+def build_bundle(
+    setup_scalars: dict, snapshot, ledger, *, owner: str = "you", ytd=None, grants=None
+) -> dict:
     """Assemble the versioned, JSON-able bundle for one owner (default the exporter, 'you').
 
     ``ytd`` is keyword-only and optional (default ``None``): YTD is a single
@@ -82,7 +85,9 @@ def build_bundle(setup_scalars: dict, snapshot, ledger, *, owner: str = "you", y
     accounts = []
     if snapshot is not None:
         for acct in getattr(snapshot, "accounts", []) or []:
-            acct_owner = getattr(acct, "owner", None) if not isinstance(acct, dict) else acct.get("owner")
+            acct_owner = (
+                getattr(acct, "owner", None) if not isinstance(acct, dict) else acct.get("owner")
+            )
             if acct_owner == owner:
                 accounts.append(_account_to_dict(acct))
     return {
@@ -178,8 +183,11 @@ def apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
     incoming_ledger_slice = sections.get("ledger", {"koinly": {}, "brokerage": {}})
     new_ledger = replace_owner(existing_ledger or {}, target_owner, incoming_ledger_slice)
 
-    kept = [a for a in getattr(existing_snapshot, "accounts", [])
-            if getattr(a, "owner", None) != target_owner]
+    kept = [
+        a
+        for a in getattr(existing_snapshot, "accounts", [])
+        if getattr(a, "owner", None) != target_owner
+    ]
     for acct in sections.get("portfolio", {}).get("accounts", []):
         try:
             acct.owner = target_owner
