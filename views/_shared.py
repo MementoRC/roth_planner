@@ -102,9 +102,7 @@ def render_canonical_field(
         command_center_button(key=f"nav_{key}")
 
 
-def run_folder_scan(
-    folder_path: Path, *, recorded_at: datetime | None = None
-) -> ScanIngestResult:
+def run_folder_scan(folder_path: Path, *, recorded_at: datetime | None = None) -> ScanIngestResult:
     """Scan *folder_path* and write the single canonical ``_pdf_1040_scanned``.
 
     Delegates the scan + 1040-candidate-record + cache-persist work entirely
@@ -123,7 +121,14 @@ def run_folder_scan(
 # Portfolio-sourced scalar/list fields that ``record_snapshot_candidates`` may
 # record (SS fields are a separate source in "Sync everything" — see
 # ``_sync_ss_source`` — so they're excluded here).
-_PORTFOLIO_CANDIDATE_FIELDS = ["your_ira", "spouse_ira", "your_roth", "spouse_roth", "txn_price_now", GRANTS_KEY]
+_PORTFOLIO_CANDIDATE_FIELDS = [
+    "your_ira",
+    "spouse_ira",
+    "your_roth",
+    "spouse_roth",
+    "txn_price_now",
+    GRANTS_KEY,
+]
 
 
 def _count_candidates_from(store: CandidateStore, field_keys: list[str], source: Source) -> int:
@@ -165,11 +170,15 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
         )
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get("grant_strikes", {})
+    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
+        "grant_strikes", {}
+    )
     record_snapshot_candidates(store, outcome.snap, strikes, datetime.now())
     store.save(CANDIDATE_STORE_PATH)
 
-    scalar_recorded = _count_candidates_from(store, _PORTFOLIO_CANDIDATE_FIELDS, Source.FINEXTRACT_LIVE)
+    scalar_recorded = _count_candidates_from(
+        store, _PORTFOLIO_CANDIDATE_FIELDS, Source.FINEXTRACT_LIVE
+    )
     return PortfolioSyncSummary(
         candidates_recorded=scalar_recorded + outcome.magi_candidates_recorded,
         server_available=True,
@@ -296,6 +305,5 @@ def render_completeness_badge(hh: Household) -> None:
         st.caption(f"Data completeness: {pct}% -- all key inputs present")
     else:
         st.caption(
-            f"Data completeness: {pct}% -- "
-            f"{len(completeness.issues)} item(s) need attention"
+            f"Data completeness: {pct}% -- {len(completeness.issues)} item(s) need attention"
         )

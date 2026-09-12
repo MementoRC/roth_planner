@@ -167,7 +167,9 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             if _ssa_synced_spouse
             else None,
         )
-        if container.button("Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single):
+        if container.button(
+            "Sync SS from FinExtract", key="_sync_ssa_spouse_btn", disabled=_is_single
+        ):
             _warning = _sync_ssa_for("spouse", spouse_fra_age)
             if _warning:
                 container.warning(_warning)

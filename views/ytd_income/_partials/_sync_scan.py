@@ -112,7 +112,9 @@ def render_sync_scan_partial(hh: Household) -> None:
                 st.session_state.ytd_snapshot = ytd_snap
                 save_ytd_snapshot(ytd_snap)
                 with col_status:
-                    st.success(f"Synced NQO exercise data ({len(ytd_snap.gain_events)} gain events)")
+                    st.success(
+                        f"Synced NQO exercise data ({len(ytd_snap.gain_events)} gain events)"
+                    )
                 # Auto-deselect manual entry so the page switches to synced-data display
                 st.session_state["ytd_manual_entry"] = False
                 st.rerun()
@@ -139,6 +141,7 @@ def render_sync_scan_partial(hh: Household) -> None:
             save_statement_records,
             validate_local_folder,
         )
+
         default_folder = load_statement_folder_path() or ""
         folder_input = st.text_input(
             "PDF folder",
@@ -197,7 +200,9 @@ def render_sync_scan_partial(hh: Household) -> None:
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner
                         )
-                        _warn_on_holder_name_mismatch(rec.owner_key, resolved, owner_map, account_number)
+                        _warn_on_holder_name_mismatch(
+                            rec.owner_key, resolved, owner_map, account_number
+                        )
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
 
                     save_ledger(ledger)
@@ -214,7 +219,10 @@ def render_sync_scan_partial(hh: Household) -> None:
 
                     for report in result.koinly_reports:
                         resolved = resolve_account_owner(
-                            "koinly", report.owner_key or "unknown", account_overrides, instance_owner
+                            "koinly",
+                            report.owner_key or "unknown",
+                            account_overrides,
+                            instance_owner,
                         )
                         _warn_on_holder_name_mismatch(
                             report.owner_key, resolved, owner_map, f"Koinly {report.tax_year}"
@@ -291,12 +299,17 @@ def render_sync_scan_partial(hh: Household) -> None:
 
         statement_by_account = st.session_state.get("statement_by_account", {})
         if statement_by_account:
-            stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(statement_by_account)
+            stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(
+                statement_by_account
+            )
 
             if stmt_excluded:
                 st.info(
                     "Excluded (retirement account, never counted toward taxable YTD income): "
-                    + ", ".join(f"{acc} ({rec.broker}, {rec.account_type})" for acc, rec in stmt_excluded.items())
+                    + ", ".join(
+                        f"{acc} ({rec.broker}, {rec.account_type})"
+                        for acc, rec in stmt_excluded.items()
+                    )
                 )
 
             if stmt_unknown:
@@ -343,7 +356,9 @@ def render_sync_scan_partial(hh: Household) -> None:
                         resolved = resolve_account_owner(
                             rec.broker, account_number, account_overrides, instance_owner
                         )
-                        if _warn_on_holder_name_mismatch(rec.owner_key, resolved, owner_map, account_number):
+                        if _warn_on_holder_name_mismatch(
+                            rec.owner_key, resolved, owner_map, account_number
+                        ):
                             _apply_had_mismatch = True
                         ledger = write_brokerage_contribution(ledger, resolved, rec)
                     save_ledger(ledger)
@@ -400,7 +415,9 @@ def render_sync_scan_partial(hh: Household) -> None:
             if ledger.get("brokerage"):
                 with st.expander("Per-owner brokerage breakdown"):
                     for owner, accounts in sorted(ledger["brokerage"].items()):
-                        totals = derive_brokerage_totals({"koinly": {}, "brokerage": {owner: accounts}})
+                        totals = derive_brokerage_totals(
+                            {"koinly": {}, "brokerage": {owner: accounts}}
+                        )
                         st.caption(
                             f"{owner.title()} ({len(accounts)} account(s)): "
                             f"Interest {fmt_dollars(totals['interest_ytd'])}, "

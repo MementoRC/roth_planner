@@ -44,9 +44,7 @@ def render_price_basis_partial(
                 st.caption("source: Yahoo Finance · pending review in Command Center")
                 _clear_assumed_price_widgets(explicit_price_years)
             else:
-                st.warning(
-                    f"Couldn't fetch a live quote ({result.error}); using last known price."
-                )
+                st.warning(f"Couldn't fetch a live quote ({result.error}); using last known price.")
     with qc2:
         growth_pct = st.number_input(
             "Assumed TXN growth (%/yr)",

@@ -328,11 +328,15 @@ def render(hh: Household):
         }
         if hh.filing_status == "MFJ":
             entry["Spouse"] = row.spouse_age
-        entry.update({
-            "System": row.system,
-            "IRMAA Tier": "—" if row.irmaa_tier is None else ("Base" if row.irmaa_tier == 0 else str(row.irmaa_tier)),
-            "IRMAA Room": fmt_dollars(row.irmaa_room) if row.irmaa_room is not None else "—",
-        })
+        entry.update(
+            {
+                "System": row.system,
+                "IRMAA Tier": "—"
+                if row.irmaa_tier is None
+                else ("Base" if row.irmaa_tier == 0 else str(row.irmaa_tier)),
+                "IRMAA Room": fmt_dollars(row.irmaa_room) if row.irmaa_room is not None else "—",
+            }
+        )
         if row.aca_subsidy is not None:
             entry["ACA Subsidy"] = fmt_dollars(row.aca_subsidy)
             entry["ACA You Pay"] = fmt_dollars(row.aca_you_pay)
@@ -362,7 +366,9 @@ def render(hh: Household):
                     "MAGI >": fmt_dollars(threshold),
                     "Part B/mo": fmt_dollars(part_b / 12, decimals=2),
                     "Part D/mo": fmt_dollars(part_d / 12, decimals=2),
-                    f"Surcharge/yr (×{_medicare_count})": fmt_dollars(surcharge_pp * _medicare_count),
+                    f"Surcharge/yr (×{_medicare_count})": fmt_dollars(
+                        surcharge_pp * _medicare_count
+                    ),
                 }
             )
         st.dataframe(pd.DataFrame(irmaa_data), width="stretch", hide_index=True)
@@ -381,7 +387,9 @@ def render(hh: Household):
         # FPL indexing just below, so the displayed pre-ARP applicable-% table
         # matches the year this reference panel is actually showing instead of
         # being frozen at the 2026 published table.
-        for upper_fpl, cap_rate in _aca_cap_schedule(hh.aca_enhanced_subsidies_active, year=_view_year):
+        for upper_fpl, cap_rate in _aca_cap_schedule(
+            hh.aca_enhanced_subsidies_active, year=_view_year
+        ):
             fpl_label = "400%+" if upper_fpl == float("inf") else f"≤{fmt_pct(upper_fpl, 0)}"
             aca_data.append(
                 {
