@@ -89,7 +89,9 @@ class YearResult:
     magi_phaseout_basis: float = 0.0
     taxable_income: float = 0.0
     magi: float = 0.0  # for IRMAA/ACA (uses full RMD, full SS)
-    niit_magi: float = 0.0  # NIIT MAGI per IRC §1411(d)(3): excludes muni interest (vs. yr.magi which is IRMAA-compatible)
+    # NIIT MAGI per IRC §1411(d): excludes muni interest, which IRC §103 keeps out of
+    # gross income (vs. yr.magi which is IRMAA-compatible)
+    niit_magi: float = 0.0
     aca_magi: float = 0.0  # ACA MAGI per IRC §36B(d)(2)(B): yr.magi + non-taxable SS portion
 
     # Tax & costs

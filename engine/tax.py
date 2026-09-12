@@ -600,7 +600,9 @@ def estimate_ytd_federal_tax(
     ltcg_tax = ltcg_at_15 * _ltcg_rates[1] + ltcg_at_20 * _ltcg_rates[2]
 
     # Step 8: NIIT — 3.8% on lesser of NII or MAGI excess over threshold.
-    # §1411(d)(3): NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI).
+    # NIIT MAGI excludes tax-exempt interest (unlike IRMAA MAGI) — not by a
+    # §1411(d) carve-out but because IRC §103 keeps muni interest out of gross
+    # income, hence out of AGI and out of §1411(d)'s MAGI entirely.
     # Use the YTDSnapshot property (not a hand-summed subset) so crypto STCG/LTCG
     # are included in the NII base per §1411(c)(1) — audit 2026-07-13 R1/R2.
     net_investment_income = ytd.total_investment_income
@@ -609,7 +611,8 @@ def estimate_ytd_federal_tax(
 
     total = ordinary_tax + ltcg_tax + niit_amount
     # Denominator must include taxable SS (folded into ordinary income above).
-    # Use niit_magi_with_ss which EXCLUDES tax-exempt muni interest per IRC §1411(d)(3):
+    # Use niit_magi_with_ss, which EXCLUDES tax-exempt muni interest (IRC §103 keeps
+    # it out of gross income, so it never reaches §1411(d)'s MAGI):
     # including muni interest inflates the denominator and understates the effective rate.
     # niit_magi_with_ss = ytd.niit_magi_ytd + tss = (ytd.magi_ytd - tax_exempt_interest) + tss.
     _rate_base = niit_magi_with_ss
