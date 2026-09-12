@@ -100,12 +100,7 @@ class BaseIncome:
         income + the living-expense waterfall draw (a traditional-IRA distribution
         is ordinary income exactly as an RMD is). Mirrors engine.scenario's
         combined_gross assembly."""
-        return (
-            self.ytd_ordinary
-            + self.forecast_ord_div
-            + self.rmd_income
-            + self.waterfall_draw
-        )
+        return self.ytd_ordinary + self.forecast_ord_div + self.rmd_income + self.waterfall_draw
 
     @property
     def net_investment_income_addl(self) -> float:
@@ -427,7 +422,15 @@ def base_income_for_year(
     combined_ss = your_ss + spouse_ss
 
     if hh.filing_status == "Single":
-        ded = deductions(ya, sa, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=year, cpi=cpi)
+        ded = deductions(
+            ya,
+            sa,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
+            year=year,
+            cpi=cpi,
+        )
     else:
         ded = deductions(ya, sa, hh.std_deduction, hh.senior_extra, year=year, cpi=cpi)
 
@@ -452,17 +455,19 @@ def base_income_for_year(
     # netting subtraction, albeit an unfloored one -- see C12). For realized <= scheduled
     # this is a no-op (max(opt, nqo_ytd) == opt).
     opt = max(opt, _nqo_ytd)
-    ytd_magi = (ytd.magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # base-year realized YTD (niit-5)
-    ytd_niit_magi = (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0  # muni-exclusive NIIT MAGI (see YTDSnapshot.niit_magi_ytd)
+    ytd_magi = (
+        (ytd.magi_ytd - _nqo_ytd) if ytd is not None else 0.0
+    )  # base-year realized YTD (niit-5)
+    ytd_niit_magi = (
+        (ytd.niit_magi_ytd - _nqo_ytd) if ytd is not None else 0.0
+    )  # muni-exclusive NIIT MAGI (see YTDSnapshot.niit_magi_ytd)
     # MU8-F1: ordinary-income portion of YTD for the bracket/LTCG-stack base.
     # Mirrors scenario.py combined_gross YTD injection (lines 394-407): wages, NEC, STCG,
     # ordinary dividends, interest, ira_conversions_ytd, spouse_ira_conversions_ytd,
     # ira_distributions_ytd. Excludes LTCG and qualified dividends (preferential-rate, not
     # in ordinary brackets) and muni interest (MAGI-only). nqo_exercise_ytd is already
     # captured in opt for the base year, so we subtract it (matching scenario_compute.py:307-309).
-    ytd_ordinary = (
-        (ytd.total_ordinary_income - ytd.nqo_exercise_ytd) if ytd is not None else 0.0
-    )
+    ytd_ordinary = (ytd.total_ordinary_income - ytd.nqo_exercise_ytd) if ytd is not None else 0.0
     ytd_investment_income = ytd.total_investment_income if ytd is not None else 0.0
 
     # R1/R3-R5 (audit 2026-07-13): forecast brokerage dividends/gains (suppressed in
@@ -471,9 +476,7 @@ def base_income_for_year(
     forecast_qual_div, forecast_ord_div, forecast_realized_gains = estimate_brokerage_income(
         hh, year, ytd
     )
-    rmd_income = estimate_rmd_income(
-        hh, year, ytd, your_qcd=your_qcd, spouse_qcd=spouse_qcd
-    )
+    rmd_income = estimate_rmd_income(hh, year, ytd, your_qcd=your_qcd, spouse_qcd=spouse_qcd)
     # audit-0809 #08: `ira_draw` is ordinary income, so it enters the MAGI base,
     # the ordinary bracket base and the muni-exclusive NIIT base identically to
     # a taxable RMD. These three locals mirror BaseIncome.magi_addl /
@@ -550,9 +553,7 @@ def base_income_for_year(
     )
 
 
-def bracket_boundary_conversion(
-    hh: Household, base: BaseIncome, bracket_ceiling: float
-) -> float:
+def bracket_boundary_conversion(hh: Household, base: BaseIncome, bracket_ceiling: float) -> float:
     """Conversion amount that lifts taxable income to the given bracket ceiling.
 
     Audit finding 1 (HIGH, 2026-07): the closed-form
@@ -655,9 +656,7 @@ def magi_boundary_conversion(
     lo, hi = 0.0, upper
     for _ in range(60):  # bisection to well under a cent of precision
         mid = (lo + hi) / 2
-        result = all_in_at_conversion(
-            hh, base, mid, net_inv_income, ltcg_eligible=ltcg_eligible
-        )
+        result = all_in_at_conversion(hh, base, mid, net_inv_income, ltcg_eligible=ltcg_eligible)
         measured = result.niit_magi if magi_kind == "niit" else result.magi
         if measured <= magi_threshold:
             lo = mid
@@ -866,10 +865,14 @@ def all_in_at_conversion(
         magi=magi,
         niit_magi=niit_magi,
         taxable_inc=taxable_inc,
-        room_12=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi, round50=True))
+        room_12=room_to_bracket(
+            gross, total_ded, _index_value(BRACKETS_SINGLE[1][0], year, cpi, round50=True)
+        )
         if single
         else room_to_12(gross, total_ded, year=year, cpi=cpi),
-        room_22=room_to_bracket(gross, total_ded, _index_value(BRACKETS_SINGLE[2][0], year, cpi, round50=True))
+        room_22=room_to_bracket(
+            gross, total_ded, _index_value(BRACKETS_SINGLE[2][0], year, cpi, round50=True)
+        )
         if single
         else room_to_22(gross, total_ded, year=year, cpi=cpi),
     )
@@ -1033,10 +1036,7 @@ def zero_conversion_ira_draws(
         ytd=ytd,
         net_inv_income=net_inv_income,
     )
-    return {
-        yr.year: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw
-        for yr in result.years
-    }
+    return {yr.year: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for yr in result.years}
 
 
 def compute_multi_year_summary(
@@ -1060,9 +1060,7 @@ def compute_multi_year_summary(
     conv_window = max(hh.your_conv_window, hh.spouse_conv_window)
     conv_years = list(range(hh.base_year, hh.base_year + conv_window))
     if ira_draws is None:
-        ira_draws = zero_conversion_ira_draws(
-            hh, ytd=ytd, net_inv_income=net_inv_income
-        )
+        ira_draws = zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
 
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
 

@@ -200,9 +200,7 @@ def resolve_couple_benchmark_annual(
     """
     if override is not None:
         return override
-    return derive_couple_benchmark_annual(
-        your_age, spouse_age, filing_status, year=year, cpi=cpi
-    )
+    return derive_couple_benchmark_annual(your_age, spouse_age, filing_status, year=year, cpi=cpi)
 
 
 def effective_benchmark_premium(

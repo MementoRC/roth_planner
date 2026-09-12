@@ -159,7 +159,9 @@ def record_snapshot_candidates(
     """
     your_pretax, spouse_pretax = derive_ira_balances(snap)
     if your_pretax > 0:
-        record_candidate(store, "your_ira", your_pretax, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at)
+        record_candidate(
+            store, "your_ira", your_pretax, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
+        )
     if spouse_pretax > 0:
         record_candidate(
             store, "spouse_ira", spouse_pretax, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
@@ -177,7 +179,9 @@ def record_snapshot_candidates(
 
     if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
         price = snap.txn_shares_value / snap.txn_shares_held
-        record_candidate(store, "txn_price_now", price, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at)
+        record_candidate(
+            store, "txn_price_now", price, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
+        )
 
     dropped_missing_strike: list[tuple[int, int]] = []
     if snap.equity_grants:

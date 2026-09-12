@@ -293,10 +293,7 @@ def is_form_1040(pages: list[str]) -> bool:
     Content-based detection independent of filename. Note a full TurboTax export
     can also list 1099 broker payer names, so the document-level classifier
     (engine/pdf_import.py) runs broker detection only AFTER this check."""
-    return any(
-        re.search(r"Form 1040\s*\((\d{4})\)", page or "", re.IGNORECASE)
-        for page in pages
-    )
+    return any(re.search(r"Form 1040\s*\((\d{4})\)", page or "", re.IGNORECASE) for page in pages)
 
 
 def parse_form_1040_text(

@@ -164,7 +164,7 @@ class DataCompleteness:
 
     @property
     def is_complete(self) -> bool:
-        return not any(i.severity in ('missing', 'conflict') for i in self.issues)
+        return not any(i.severity in ("missing", "conflict") for i in self.issues)
 
     @property
     def fraction(self) -> float:

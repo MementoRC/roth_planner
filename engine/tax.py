@@ -533,14 +533,14 @@ def estimate_ytd_federal_tax(
     # walk and the LTCG stack-walk so both are evaluated on taxable income.
     if hh.filing_status == "MFJ":
         senior_count = (1 if hh.your_age >= 65 else 0) + (1 if hh.spouse_age >= 65 else 0)
-        std_ded = index_value(STD_DEDUCTION_MFJ, _year, _cpi, round50=True) + senior_count * index_value(
-            SENIOR_EXTRA_MFJ, _year, _cpi, round50=True
-        )
+        std_ded = index_value(
+            STD_DEDUCTION_MFJ, _year, _cpi, round50=True
+        ) + senior_count * index_value(SENIOR_EXTRA_MFJ, _year, _cpi, round50=True)
     else:
         senior_count = 1 if hh.your_age >= 65 else 0
-        std_ded = index_value(STD_DEDUCTION_SINGLE, _year, _cpi, round50=True) + senior_count * index_value(
-            SENIOR_EXTRA_SINGLE, _year, _cpi, round50=True
-        )
+        std_ded = index_value(
+            STD_DEDUCTION_SINGLE, _year, _cpi, round50=True
+        ) + senior_count * index_value(SENIOR_EXTRA_SINGLE, _year, _cpi, round50=True)
     # OBBBA senior bonus deduction also lowers the taxable income base.
     std_ded += senior_bonus_deduction(
         hh.your_age,
@@ -740,9 +740,7 @@ def safe_harbor_payment(
         prior_multiplier = 1.10
     else:
         agi_threshold = (
-            SAFE_HARBOR_AGI_THRESHOLD_MFS
-            if filing_status == "MFS"
-            else SAFE_HARBOR_AGI_THRESHOLD
+            SAFE_HARBOR_AGI_THRESHOLD_MFS if filing_status == "MFS" else SAFE_HARBOR_AGI_THRESHOLD
         )
         prior_multiplier = 1.10 if prior_year_agi > agi_threshold else 1.00
 

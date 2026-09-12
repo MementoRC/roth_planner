@@ -308,7 +308,13 @@ def _auto_fill_core(
         else:
             ya_eff, sa_eff = ya, sa
         _ded_no_senior = deductions(
-            ya_eff, sa_eff, _af_std, _af_senior, filing_status=current_filing_status, year=year, cpi=_cpi
+            ya_eff,
+            sa_eff,
+            _af_std,
+            _af_senior,
+            filing_status=current_filing_status,
+            year=year,
+            cpi=_cpi,
         )
         # OBBBA senior-bonus phase-out is measured on AGI (muni-excluded), matching
         # scenario.py:366/377 and estimate_ytd_federal_tax. base_magi carries muni
@@ -325,7 +331,9 @@ def _auto_fill_core(
 
         # Room — delegated to caller's room_fn (per-year filing status flips to Single
         # in survivor years so the ceiling/tier is resolved correctly each year).
-        room = room_fn(fixed_gross, ded, base_magi, combined_ss, other_fixed, year, _cpi, current_filing_status)
+        room = room_fn(
+            fixed_gross, ded, base_magi, combined_ss, other_fixed, year, _cpi, current_filing_status
+        )
         # C18 (audit-0805 W5): the OBBBA senior-bonus deduction phases out with
         # MAGI, and MAGI includes the very conversion being sized here -- `ded`
         # above was priced at the PRE-conversion base_magi, so it stayed fixed
@@ -359,11 +367,23 @@ def _auto_fill_core(
                 + taxable_ss(combined_ss, other_fixed + room, filing_status=current_filing_status)
             )
             _senior_est = senior_bonus_deduction(
-                ya_eff, sa_eff, _magi_est - _phaseout_muni, year=year, cpi=_cpi, filing_status=current_filing_status
+                ya_eff,
+                sa_eff,
+                _magi_est - _phaseout_muni,
+                year=year,
+                cpi=_cpi,
+                filing_status=current_filing_status,
             )
             _ded_est = _ded_no_senior + _senior_est
             _new_room = room_fn(
-                fixed_gross, _ded_est, base_magi, combined_ss, other_fixed, year, _cpi, current_filing_status
+                fixed_gross,
+                _ded_est,
+                base_magi,
+                combined_ss,
+                other_fixed,
+                year,
+                _cpi,
+                current_filing_status,
             )
             if abs(_new_room - room) < 1.0:
                 room = _new_room
@@ -591,6 +611,7 @@ def auto_fill_irmaa_safe(
     Generate a ConversionPlan that maximizes conversion without triggering IRMAA.
     Caps MAGI at the first IRMAA tier threshold ($218K for 2026).
     """
+
     def _irmaa_room(
         fixed_gross: float,
         ded: float,
@@ -668,6 +689,7 @@ def auto_fill_aca(
     for why that deliberately differs from engine/scenario.py's
     _strategy_magi_ceiling, which lifts the ceiling ENTIRELY in those same
     years."""
+
     def _aca_room(
         fixed_gross: float,
         ded: float,
@@ -852,9 +874,7 @@ def add_bracket_fill_withdrawals(
         # precondition, so a bisection converges without needing the fixed-point
         # iteration _auto_fill_core uses -- and unlike that iteration it is
         # exact rather than contraction-dependent.
-        room = bisect_conversion_for_ceiling(
-            _taxable_income_at, bracket_ceiling, naive_room
-        )
+        room = bisect_conversion_for_ceiling(_taxable_income_at, bracket_ceiling, naive_room)
         if room <= 0:
             continue
 

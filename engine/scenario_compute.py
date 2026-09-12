@@ -326,9 +326,8 @@ def compute_social_security(
             survivor_current_age = sa if who_dies == "you" else ya
             # Onset age: survivor's age in the FIRST survivor-active year (death_year + 1).
             # Locked — does not change in subsequent years so reduction stays constant.
-            onset_age = (
-                (hh.spouse_age if who_dies == "you" else hh.your_age)
-                + (death_year + 1 - hh.base_year)
+            onset_age = (hh.spouse_age if who_dies == "you" else hh.your_age) + (
+                death_year + 1 - hh.base_year
             )
             claim_age = max(60, onset_age)
             survivor_fra = hh.spouse_fra_age if who_dies == "you" else hh.your_fra_age
