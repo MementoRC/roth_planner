@@ -79,7 +79,9 @@ def render(hh: Household) -> None:
     # IRMAA: this year's MAGI is measured against payment-year (selected_year + 2) thresholds.
     # Ordinary brackets: no lookback -- index to the income year itself.
     _cpi = hh.cpi_assumption
-    irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, selected_year + 2, _cpi)  # +2: payment-year indexing
+    irmaa_tiers = _index_irmaa_tiers(
+        _base_irmaa_tiers, selected_year + 2, _cpi
+    )  # +2: payment-year indexing
     _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     # round50=True per IRC 1(f)(6): ordinary bracket ceilings are statutorily
     # rounded to the nearest $50, and every bracket-indexing call in engine/tax.py
@@ -230,9 +232,7 @@ def render(hh: Household) -> None:
         # Max card below binary-searches via irmaa_safe_max; only these lines
         # still used the closed form, so one chart answered one question three
         # different ways.
-        irmaa_conv = magi_boundary_conversion(
-            hh, base, threshold, net_inv_income, _ltcg_eligible
-        )
+        irmaa_conv = magi_boundary_conversion(hh, base, threshold, net_inv_income, _ltcg_eligible)
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
                 x=irmaa_conv,
@@ -316,9 +316,7 @@ def render(hh: Household) -> None:
         # threshold. The naive subtraction (threshold - base_magi) overstates the safe
         # amount when SS provisional income is in the partial-taxability zone ($32K-$44K
         # MFJ / $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
-        irmaa_safe = irmaa_safe_max(
-            hh, base, irmaa_tiers[0][0], net_inv_income, _ltcg_eligible
-        )
+        irmaa_safe = irmaa_safe_max(hh, base, irmaa_tiers[0][0], net_inv_income, _ltcg_eligible)
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
             irmaa_result = all_in_at_conversion(

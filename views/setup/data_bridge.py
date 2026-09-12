@@ -374,7 +374,9 @@ def _handle_personal_uploads() -> None:
                     if incoming_ytd is not None:
                         st.session_state["ytd_snapshot"] = incoming_ytd
                     ledger_slice = data["sections"].get("ledger") or {}
-                    ledger_has_data = bool(ledger_slice.get("koinly") or ledger_slice.get("brokerage"))
+                    ledger_has_data = bool(
+                        ledger_slice.get("koinly") or ledger_slice.get("brokerage")
+                    )
                     if "ytd_snapshot" not in st.session_state and ledger_has_data:
                         # v2 bundle (or a v3 bundle exported with ytd=None): no "ytd"
                         # section but real ledger data to re-derive from. In Pyodide

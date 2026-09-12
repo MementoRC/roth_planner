@@ -146,7 +146,9 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
         income_events = render_event_log_partial(hh, ytd)
 
         conversions_done = sum_income_events(income_events, kind="conversion", owner="you")
-        spouse_conversions_done = sum_income_events(income_events, kind="conversion", owner="spouse")
+        spouse_conversions_done = sum_income_events(
+            income_events, kind="conversion", owner="spouse"
+        )
         distributions_done = sum_income_events(income_events, kind="distribution")
 
         # Overlay only the fields this widget set actually computed onto the

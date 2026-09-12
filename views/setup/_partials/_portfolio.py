@@ -143,7 +143,9 @@ def _render_account_type_overrides(snap: PortfolioSnapshot | None, container) ->
     expander.caption("Changes take effect on next sync.")
     _type_options = ["trad_ira", "roth_ira", "brokerage", "hsa", "403b"]
     _owner_options = ["you", "spouse"]
-    overrides: dict[str, str | dict[str, str]] = st.session_state.get("account_type_overrides") or {}
+    overrides: dict[str, str | dict[str, str]] = (
+        st.session_state.get("account_type_overrides") or {}
+    )
 
     seen: set[str] = set()
     for acct in snap.accounts:

@@ -111,9 +111,7 @@ def _render_apply_buttons(hh: Household, best: OptimizedPlan) -> None:
             st.session_state["conv_plan_your"] = dict(best.conversions.your_conversions)
             st.session_state["conv_plan_spouse"] = dict(best.conversions.spouse_conversions)
             st.success("Conversions applied to the Conversion Planner.")
-            st.caption(
-                "Session-only, like the Conversion Planner itself — not persisted to disk."
-            )
+            st.caption("Session-only, like the Conversion Planner itself — not persisted to disk.")
 
 
 def render(hh: Household) -> None:

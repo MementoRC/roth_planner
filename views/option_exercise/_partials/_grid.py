@@ -63,8 +63,7 @@ def render_grid_partial(
     norm = normalize_grid_edits(lots, years, raw_by_key)
 
     st.session_state[_SHARES_STATE_KEY] = {
-        key: {str(y): n for y, n in cells.items()}
-        for key, cells in norm.shares_by_key.items()
+        key: {str(y): n for y, n in cells.items()} for key, cells in norm.shares_by_key.items()
     }
 
     for grant, year, n in norm.out_of_range:

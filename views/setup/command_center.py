@@ -173,9 +173,7 @@ def render_command_center(hh: Household) -> None:
             index=None,
             key="instance_owner_gate_choice",
         )
-        if st.button(
-            "Save", key="instance_owner_gate_save", disabled=choice is None
-        ):
+        if st.button("Save", key="instance_owner_gate_save", disabled=choice is None):
             resolved_owner = "you" if choice == "Me" else "spouse"
             save_instance_owner(resolved_owner)
             st.session_state["instance_owner"] = resolved_owner

@@ -328,15 +328,9 @@ def render(hh: Household) -> None:
             "year": st.column_config.NumberColumn("year", disabled=True),
             "You": st.column_config.NumberColumn("You", disabled=True, format="%d"),
             "Sp": st.column_config.NumberColumn("Sp", disabled=True, format="%d"),
-            "Your IRA": st.column_config.NumberColumn(
-                "Your IRA", disabled=True, format="$%,.0f"
-            ),
-            "Sp IRA": st.column_config.NumberColumn(
-                "Sp IRA", disabled=True, format="$%,.0f"
-            ),
-            "Options": st.column_config.NumberColumn(
-                "Options", disabled=True, format="$%,.0f"
-            ),
+            "Your IRA": st.column_config.NumberColumn("Your IRA", disabled=True, format="$%,.0f"),
+            "Sp IRA": st.column_config.NumberColumn("Sp IRA", disabled=True, format="$%,.0f"),
+            "Options": st.column_config.NumberColumn("Options", disabled=True, format="$%,.0f"),
             "your_conv": st.column_config.NumberColumn(
                 "Your Conv",
                 min_value=0,
@@ -365,26 +359,28 @@ def render(hh: Household) -> None:
                 format="$%,.0f",
                 help="Spouse Qualified Charitable Distribution (requires age ≥ 71)",
             ),
-            "Gross": st.column_config.NumberColumn(
-                "Gross", disabled=True, format="$%,.0f"
-            ),
-            "Bracket": st.column_config.NumberColumn(
-                "Bracket", disabled=True, format="%.0f%%"
-            ),
-            "Conv Tax": st.column_config.NumberColumn(
-                "Conv Tax", disabled=True, format="$%,.0f"
-            ),
-            "Room 12%": st.column_config.NumberColumn(
-                "Room 12%", disabled=True, format="$%,.0f"
-            ),
-            "Room 22%": st.column_config.NumberColumn(
-                "Room 22%", disabled=True, format="$%,.0f"
-            ),
+            "Gross": st.column_config.NumberColumn("Gross", disabled=True, format="$%,.0f"),
+            "Bracket": st.column_config.NumberColumn("Bracket", disabled=True, format="%.0f%%"),
+            "Conv Tax": st.column_config.NumberColumn("Conv Tax", disabled=True, format="$%,.0f"),
+            "Room 12%": st.column_config.NumberColumn("Room 12%", disabled=True, format="$%,.0f"),
+            "Room 22%": st.column_config.NumberColumn("Room 22%", disabled=True, format="$%,.0f"),
         },
         column_order=[
-            "Year", "You", "Sp", "Your IRA", "Sp IRA", "Options",
-            "your_conv", "sp_conv", "qcd", "sp_qcd",
-            "Gross", "Bracket", "Conv Tax", "Room 12%", "Room 22%",
+            "Year",
+            "You",
+            "Sp",
+            "Your IRA",
+            "Sp IRA",
+            "Options",
+            "your_conv",
+            "sp_conv",
+            "qcd",
+            "sp_qcd",
+            "Gross",
+            "Bracket",
+            "Conv Tax",
+            "Room 12%",
+            "Room 22%",
         ],
     )
 
@@ -503,12 +499,12 @@ def render(hh: Household) -> None:
     # exactly 6 entries (one per segment) regardless of which years have values.
     _years = [yr.year for yr in conv_window]
     _segments = [
-        ("Options",     [yr.option_income     for yr in conv_window], "#a78bfa"),
-        ("Taxable RMD", [yr.taxable_rmd       for yr in conv_window], "#f87171"),
-        ("Taxable SS",  [yr.taxable_ss_amt    for yr in conv_window], "#60a5fa"),
-        ("Your Conv",   [yr.your_conversion   for yr in conv_window], "#34d399"),
-        ("Sp Conv",     [yr.spouse_conversion for yr in conv_window], "#f472b6"),
-        ("Room (12%)",  [yr.room_12           for yr in conv_window], "#1e293b"),
+        ("Options", [yr.option_income for yr in conv_window], "#a78bfa"),
+        ("Taxable RMD", [yr.taxable_rmd for yr in conv_window], "#f87171"),
+        ("Taxable SS", [yr.taxable_ss_amt for yr in conv_window], "#60a5fa"),
+        ("Your Conv", [yr.your_conversion for yr in conv_window], "#34d399"),
+        ("Sp Conv", [yr.spouse_conversion for yr in conv_window], "#f472b6"),
+        ("Room (12%)", [yr.room_12 for yr in conv_window], "#1e293b"),
     ]
     for name, vals, color in _segments:
         fig_br.add_trace(

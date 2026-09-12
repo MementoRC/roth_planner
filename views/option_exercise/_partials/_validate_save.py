@@ -46,9 +46,7 @@ def render_validate_save_partial(
             persisted_prices = {
                 year: price
                 for year, price in price_by_year.items()
-                if abs(
-                    price - project_price(effective_base, hh.base_year, effective_growth, year)
-                )
+                if abs(price - project_price(effective_base, hh.base_year, effective_growth, year))
                 > 0.005
             }
             schedule_to_save = replace(current_schedule, price_by_year=persisted_prices)

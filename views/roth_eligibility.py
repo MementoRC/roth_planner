@@ -116,7 +116,9 @@ def trad_deduction_phaseout_for_year(
         low, high = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[tax_year].get(key, (0, 0))
         return (float(low), float(high))
     if tax_year > 2026:
-        low, high = index_tuple(TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026].get(key, (0, 0)), tax_year, cpi)
+        low, high = index_tuple(
+            TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026].get(key, (0, 0)), tax_year, cpi
+        )
         return (float(low), float(high))
     year_data = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[min(TRAD_DEDUCTION_PHASEOUT_BY_YEAR)]
     low, high = year_data.get(key, (0, 0))
@@ -263,7 +265,9 @@ def render(hh: Household):
     # Prior-year MAGI anchor (from the 1040 PDF import) seeds the MAGI default
     # and the IRMAA 2-year lookback.
     prior_magi_anchor = st.session_state.get("prior_year_magi") or {}
-    most_recent_year = sorted(prior_magi_anchor.keys(), reverse=True)[0] if prior_magi_anchor else None
+    most_recent_year = (
+        sorted(prior_magi_anchor.keys(), reverse=True)[0] if prior_magi_anchor else None
+    )
 
     # --- Inputs ---
     st.markdown("### Tax Year Info")
@@ -313,9 +317,7 @@ def render(hh: Household):
         render_canonical_field("Your Age (end of tax year)", hh.your_age, key="your_age")
         your_age = hh.your_age
         if filing != "Single":
-            render_canonical_field(
-                "Spouse Age (end of tax year)", hh.spouse_age, key="spouse_age"
-            )
+            render_canonical_field("Spouse Age (end of tax year)", hh.spouse_age, key="spouse_age")
             spouse_age = hh.spouse_age
         else:
             spouse_age = 0
