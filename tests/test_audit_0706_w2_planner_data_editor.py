@@ -145,7 +145,9 @@ class TestAgeGating:
         _conv_your, _conv_sp, qcd, sp_qcd, warnings = apply_conversion_grid_edits(df, yr_rows)
 
         assert sp_qcd.get(2026, 0) == pytest.approx(0.0)
-        assert any("2026" in w and ("spouse" in w.lower() or "sp_qcd" in w.lower()) for w in warnings)
+        assert any(
+            "2026" in w and ("spouse" in w.lower() or "sp_qcd" in w.lower()) for w in warnings
+        )
 
     def test_your_conv_zeroed_in_rmd_era(self) -> None:
         """Conversions are blocked once your_age >= your_rmd_start_age."""

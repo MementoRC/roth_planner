@@ -339,9 +339,7 @@ class TestPlannerSpouseConversionCap:
     def test_spouse_cap_is_not_greater_than_your_cap_pattern(self):
         """Both conversions follow the same owner_ira_begin clamp pattern."""
         source = self._planner_source()
-        assert "your_ira_begin" in source, (
-            "your_ira_begin not referenced in planner.py clamp logic"
-        )
+        assert "your_ira_begin" in source, "your_ira_begin not referenced in planner.py clamp logic"
         assert "spouse_ira_begin" in source, (
             "spouse_ira_begin not referenced in planner.py clamp logic"
         )
@@ -435,7 +433,7 @@ class TestSuppressSnapshotAutoloadSentinel:
     def test_autoload_guard_uses_not_get(self):
         """The sentinel check must use `not st.session_state.get(...)` pattern."""
         text = self._app_source()
-        assert "not st.session_state.get(\"_suppress_snapshot_autoload\")" in text, (
+        assert 'not st.session_state.get("_suppress_snapshot_autoload")' in text, (
             "app.py sentinel check does not use the expected pattern"
         )
 
@@ -537,7 +535,7 @@ class TestRothEligibilitySpouseGating:
         # The persons list construction must gate Spouse append on filing != Single
         persons_pos = source.find("persons = [")
         assert persons_pos != -1, "persons list not found in roth_eligibility.render"
-        append_pos = source.find('persons.append', persons_pos)
+        append_pos = source.find("persons.append", persons_pos)
         assert append_pos != -1, "persons.append not found after persons list"
         guard_pos = source.find('filing != "Single"', persons_pos)
         assert guard_pos != -1, "no `filing != 'Single'` guard found before Spouse append"
@@ -821,9 +819,7 @@ class TestPersistenceRoundTripAudit0802:
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
 
-        monkeypatch.setattr(
-            state_mod.st, "session_state", {"prior_year_magi": {2024: 210_000.0}}
-        )
+        monkeypatch.setattr(state_mod.st, "session_state", {"prior_year_magi": {2024: 210_000.0}})
         save_user_defaults(state_mod._user_defaults_from_session())
         assert load_defaults()["prior_year_magi"] == {"2024": 210_000.0}
 
@@ -852,15 +848,11 @@ class TestPersistenceRoundTripAudit0802:
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
 
         overrides = {"Z123": {"type": "trad_ira", "owner": "you"}}
-        monkeypatch.setattr(
-            state_mod.st, "session_state", {"account_type_overrides": overrides}
-        )
+        monkeypatch.setattr(state_mod.st, "session_state", {"account_type_overrides": overrides})
         save_user_defaults(state_mod._user_defaults_from_session())
         assert load_defaults()["account_type_overrides"] == overrides
 
-        monkeypatch.setattr(
-            state_mod.st, "session_state", {"account_type_overrides": {}}
-        )
+        monkeypatch.setattr(state_mod.st, "session_state", {"account_type_overrides": {}})
         save_user_defaults(state_mod._user_defaults_from_session())
 
         assert load_defaults().get("account_type_overrides") == {}, (
@@ -888,9 +880,7 @@ class TestPersistenceRoundTripAudit0802:
         monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
         monkeypatch.delenv("ROTH_PLANNER_DEFAULTS", raising=False)
 
-        monkeypatch.setattr(
-            state_mod.st, "session_state", {"_user_grant_strikes": {"2019": 104.0}}
-        )
+        monkeypatch.setattr(state_mod.st, "session_state", {"_user_grant_strikes": {"2019": 104.0}})
         save_user_defaults(state_mod._user_defaults_from_session())
         assert load_defaults()["grant_strikes"] == {"2019": 104.0}
 

@@ -326,6 +326,5 @@ class TestAcaIrmaaTimelineSingleFiler:
             f"Single filer: expected spouse_age=None, got {rows[0].spouse_age}"
         )
         assert rows[0].irmaa_tier is not None, (
-            "Single filer age 63 (65 at payment year): irmaa_tier should be "
-            "set, got None"
+            "Single filer age 63 (65 at payment year): irmaa_tier should be set, got None"
         )

@@ -54,7 +54,10 @@ class TestBuildBundle:
 
     def test_ledger_is_only_exporter_slice(self):
         b = build_bundle({}, _Snap(), _ledger(), owner="you")
-        assert b["sections"]["ledger"] == {"koinly": {"stcg": 10.0}, "brokerage": {"A1": {"interest": 3.0}}}
+        assert b["sections"]["ledger"] == {
+            "koinly": {"stcg": 10.0},
+            "brokerage": {"A1": {"interest": 3.0}},
+        }
 
     def test_no_grants_in_bundle(self):
         snap = _Snap(accounts=[_Acct("you", "IRA")], equity_grants=[{"grant_id": "g1"}])
@@ -111,8 +114,10 @@ class TestApplyBundle:
     def test_import_as_spouse_replaces_spouse_ledger_and_clears_stale(self):
         existing_snap = _Snap2([_A("you", "MyIRA")], equity_grants=[{"grant_id": "g1"}])
         new_snap, new_led = apply_bundle(
-            "spouse", self._incoming(),
-            existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "spouse",
+            self._incoming(),
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
         assert new_led["koinly"]["spouse"] == {"stcg": 42.0}
         assert new_led["brokerage"]["spouse"] == {"NEW": {"interest": 1.0}}
@@ -122,16 +127,20 @@ class TestApplyBundle:
     def test_import_as_spouse_leaves_my_grants_untouched(self):
         existing_snap = _Snap2([_A("you", "MyIRA")], equity_grants=[{"grant_id": "g1"}])
         new_snap, _ = apply_bundle(
-            "spouse", self._incoming(),
-            existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "spouse",
+            self._incoming(),
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
         assert [g["grant_id"] for g in new_snap.equity_grants] == ["g1"]
 
     def test_incoming_accounts_rewritten_to_target_owner_and_mine_kept(self):
         existing_snap = _Snap2([_A("you", "MyIRA")])
         new_snap, _ = apply_bundle(
-            "spouse", self._incoming(),
-            existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "spouse",
+            self._incoming(),
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
         by_name = {a.account_name: a.owner for a in new_snap.accounts}
         assert by_name == {"MyIRA": "you", "SpouseIRA": "spouse"}
@@ -140,8 +149,10 @@ class TestApplyBundle:
         incoming = self._incoming()
         incoming["sections"]["ledger"] = {"koinly": {}, "brokerage": {}}
         _, new_led = apply_bundle(
-            "spouse", incoming,
-            existing_snapshot=_Snap2([_A("you", "MyIRA")]), existing_ledger=_existing_ledger(),
+            "spouse",
+            incoming,
+            existing_snapshot=_Snap2([_A("you", "MyIRA")]),
+            existing_ledger=_existing_ledger(),
         )
         assert "spouse" not in new_led["koinly"]
         assert "spouse" not in new_led["brokerage"]
@@ -155,9 +166,7 @@ class TestExportImportRoundTrip:
     def test_sealed_bundle_round_trips_into_target_owner_slot(self):
         pub, priv = generate_keypair()
         exporter_snap = _Snap(accounts=[_Acct("you", "ExportedIRA")])
-        bundle = build_bundle(
-            {"your_age": 61}, exporter_snap, _existing_ledger(), owner="you"
-        )
+        bundle = build_bundle({"your_age": 61}, exporter_snap, _existing_ledger(), owner="you")
 
         ciphertext = seal(json.dumps(bundle).encode("utf-8"), pub)
 
@@ -167,15 +176,16 @@ class TestExportImportRoundTrip:
         assert read_format_version(received) == BUNDLE_FORMAT_VERSION
 
         incoming_accounts = [
-            _A(a["owner"], a["account_name"])
-            for a in received["sections"]["portfolio"]["accounts"]
+            _A(a["owner"], a["account_name"]) for a in received["sections"]["portfolio"]["accounts"]
         ]
         received["sections"]["portfolio"]["accounts"] = incoming_accounts
 
         existing_snap = _Snap2([_A("you", "MyIRA")])
         new_snap, new_led = apply_bundle(
-            "spouse", received,
-            existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "spouse",
+            received,
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
 
         by_name = {a.account_name: a.owner for a in new_snap.accounts}
@@ -299,8 +309,10 @@ class TestExportImportRoundTrip:
         # Apply to target owner (spouse)
         existing_snap = PortfolioSnapshot(accounts=[], equity_grants=[])
         final_snap, _ = apply_bundle(
-            "spouse", data,
-            existing_snapshot=existing_snap, existing_ledger={"koinly": {}, "brokerage": {}},
+            "spouse",
+            data,
+            existing_snapshot=existing_snap,
+            existing_ledger={"koinly": {}, "brokerage": {}},
         )
 
         # Reconstruct as dataclasses (apply_bundle may leave accounts as dicts)
@@ -308,16 +320,28 @@ class TestExportImportRoundTrip:
             {
                 "accounts": [
                     {
-                        "account_type": a["account_type"] if isinstance(a, dict) else a.account_type,
+                        "account_type": a["account_type"]
+                        if isinstance(a, dict)
+                        else a.account_type,
                         "owner": a["owner"] if isinstance(a, dict) else a.owner,
-                        "account_name": a["account_name"] if isinstance(a, dict) else a.account_name,
+                        "account_name": a["account_name"]
+                        if isinstance(a, dict)
+                        else a.account_name,
                         "total_value": a["total_value"] if isinstance(a, dict) else a.total_value,
-                        "equity_value": a["equity_value"] if isinstance(a, dict) else a.equity_value,
+                        "equity_value": a["equity_value"]
+                        if isinstance(a, dict)
+                        else a.equity_value,
                         "bond_value": a["bond_value"] if isinstance(a, dict) else a.bond_value,
                         "cash_value": a["cash_value"] if isinstance(a, dict) else a.cash_value,
-                        "crypto_value": a["crypto_value"] if isinstance(a, dict) else a.crypto_value,
-                        "target_date_value": a["target_date_value"] if isinstance(a, dict) else a.target_date_value,
-                        "holdings": a["holdings"] if isinstance(a, dict) else [
+                        "crypto_value": a["crypto_value"]
+                        if isinstance(a, dict)
+                        else a.crypto_value,
+                        "target_date_value": a["target_date_value"]
+                        if isinstance(a, dict)
+                        else a.target_date_value,
+                        "holdings": a["holdings"]
+                        if isinstance(a, dict)
+                        else [
                             {
                                 "symbol": h.symbol,
                                 "description": h.description,
@@ -493,8 +517,14 @@ class TestBundleGrantsSection:
             "format_version": 4,
             "sections": {
                 "grants": [
-                    {"grant_id": "good", "grant_type": "NQO", "grant_date": "2020-01-01",
-                     "shares_granted": 500, "outstanding": 100, "current_value": 9000.0},
+                    {
+                        "grant_id": "good",
+                        "grant_type": "NQO",
+                        "grant_date": "2020-01-01",
+                        "shares_granted": 500,
+                        "outstanding": 100,
+                        "current_value": 9000.0,
+                    },
                     "not a dict",
                     {"grant_id": "bad", "shares_granted": "not-an-int"},
                 ]
@@ -519,13 +549,22 @@ class TestBundleGrantsSection:
                 "portfolio": {"accounts": []},
                 "ledger": {"koinly": {}, "brokerage": {}},
                 "grants": [
-                    {"grant_id": "real1", "grant_type": "NQO", "grant_date": "2019-06-01",
-                     "shares_granted": 2000, "outstanding": 800, "current_value": 104_000.0},
+                    {
+                        "grant_id": "real1",
+                        "grant_type": "NQO",
+                        "grant_date": "2019-06-01",
+                        "shares_granted": 2000,
+                        "outstanding": 800,
+                        "current_value": 104_000.0,
+                    },
                 ],
             },
         }
         new_snap, _ = apply_bundle(
-            "you", incoming, existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "you",
+            incoming,
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
         assert [g.grant_id for g in new_snap.equity_grants] == ["real1"]
 
@@ -542,6 +581,9 @@ class TestBundleGrantsSection:
             },
         }
         new_snap, _ = apply_bundle(
-            "you", v3_incoming, existing_snapshot=existing_snap, existing_ledger=_existing_ledger(),
+            "you",
+            v3_incoming,
+            existing_snapshot=existing_snap,
+            existing_ledger=_existing_ledger(),
         )
         assert new_snap.equity_grants == [{"grant_id": "my-real-grant"}]

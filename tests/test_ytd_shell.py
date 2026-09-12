@@ -429,7 +429,9 @@ def test_holder_name_match_is_silent(monkeypatch, tmp_path) -> None:
     assert _mismatch_warnings(at) == []
 
 
-def test_apply_button_warns_on_holder_name_mismatch_but_does_not_block(monkeypatch, tmp_path) -> None:
+def test_apply_button_warns_on_holder_name_mismatch_but_does_not_block(
+    monkeypatch, tmp_path
+) -> None:
     """The third call site (~:337 in ``_sync_scan.py``): the "Apply to YTD
     snapshot" button re-resolves owners independently of any scan and must
     carry its own cross-check.

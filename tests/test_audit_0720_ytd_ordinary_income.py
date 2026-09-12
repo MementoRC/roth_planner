@@ -96,9 +96,7 @@ class TestF2CryptoYtdInSocialSecurityProvisionalIncome:
         # Then: the only non-SS AGI item is the $100K crypto STCG, so the
         # correct provisional income is exactly crypto_stcg_ytd + 1/2 combined_ss,
         # and taxable_ss_amt must match the formula applied to that base.
-        expected_taxable_ss = taxable_ss(
-            yr.combined_ss, 100_000.0, filing_status=hh.filing_status
-        )
+        expected_taxable_ss = taxable_ss(yr.combined_ss, 100_000.0, filing_status=hh.filing_status)
         assert expected_taxable_ss > 0, "test setup must land in a taxable SS tier"
         assert yr.taxable_ss_amt == pytest.approx(expected_taxable_ss)
 

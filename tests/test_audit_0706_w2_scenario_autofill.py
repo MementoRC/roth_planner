@@ -47,9 +47,9 @@ def _base_household() -> Household:
         spouse_ira=1_000_000.0,
         your_rmd_start_age=75,
         spouse_rmd_start_age=75,
-        your_ss_fra=30_000.0,   # non-zero so SS matters for tss / other_fixed path
+        your_ss_fra=30_000.0,  # non-zero so SS matters for tss / other_fixed path
         spouse_ss_fra=30_000.0,
-        your_ss_start_age=62,   # claiming early so SS is active from base year
+        your_ss_start_age=62,  # claiming early so SS is active from base year
         spouse_ss_start_age=62,
         grants=[],  # no option income
     )
@@ -116,19 +116,17 @@ class TestNQONoDoubleCountMAGI:
         ytd = YTDSnapshot(tax_year=base_year, nqo_exercise_ytd=nqo_amount)
         plan_with_ytd = auto_fill_irmaa_safe(hh, ytd=ytd)
 
-        conv_no_ytd = (
-            plan_no_ytd.your_conversions.get(base_year, 0.0)
-            + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
-        )
-        conv_with_ytd = (
-            plan_with_ytd.your_conversions.get(base_year, 0.0)
-            + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
-        )
+        conv_no_ytd = plan_no_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
+        conv_with_ytd = plan_with_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
 
         assert abs(conv_no_ytd - conv_with_ytd) < 500.0, (
             f"BUG: NQO double-counted in base_magi for IRMAA-safe fill.\n"
             f"  conv_no_ytd={conv_no_ytd:.0f}, conv_with_ytd={conv_with_ytd:.0f}\n"
-            f"  Difference={abs(conv_no_ytd-conv_with_ytd):.0f} should be <500.\n"
+            f"  Difference={abs(conv_no_ytd - conv_with_ytd):.0f} should be <500.\n"
             f"  Double-count inflates base_magi by nqo_amount={nqo_amount:.0f}, "
             f"shrinking IRMAA room by the same."
         )
@@ -152,19 +150,17 @@ class TestNQONoDoubleCountMAGI:
         ytd = YTDSnapshot(tax_year=base_year, nqo_exercise_ytd=nqo_amount)
         plan_with_ytd = auto_fill_12(hh, ytd=ytd)
 
-        conv_no_ytd = (
-            plan_no_ytd.your_conversions.get(base_year, 0.0)
-            + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
-        )
-        conv_with_ytd = (
-            plan_with_ytd.your_conversions.get(base_year, 0.0)
-            + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
-        )
+        conv_no_ytd = plan_no_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
+        conv_with_ytd = plan_with_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
 
         assert abs(conv_no_ytd - conv_with_ytd) < 500.0, (
             f"BUG: double-counted NQO in other_fixed inflates tss and shrinks fill_12 room.\n"
             f"  conv_no_ytd={conv_no_ytd:.0f}, conv_with_ytd={conv_with_ytd:.0f}\n"
-            f"  Difference={abs(conv_no_ytd-conv_with_ytd):.0f} should be <500."
+            f"  Difference={abs(conv_no_ytd - conv_with_ytd):.0f} should be <500."
         )
 
     def test_fill22_ytd_nqo_matches_no_ytd(self) -> None:
@@ -177,19 +173,17 @@ class TestNQONoDoubleCountMAGI:
         ytd = YTDSnapshot(tax_year=base_year, nqo_exercise_ytd=nqo_amount)
         plan_with_ytd = auto_fill_22(hh, ytd=ytd)
 
-        conv_no_ytd = (
-            plan_no_ytd.your_conversions.get(base_year, 0.0)
-            + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
-        )
-        conv_with_ytd = (
-            plan_with_ytd.your_conversions.get(base_year, 0.0)
-            + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
-        )
+        conv_no_ytd = plan_no_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_no_ytd.spouse_conversions.get(base_year, 0.0)
+        conv_with_ytd = plan_with_ytd.your_conversions.get(
+            base_year, 0.0
+        ) + plan_with_ytd.spouse_conversions.get(base_year, 0.0)
 
         assert abs(conv_no_ytd - conv_with_ytd) < 500.0, (
             f"BUG: double-counted NQO in other_fixed inflates tss and shrinks fill_22 room.\n"
             f"  conv_no_ytd={conv_no_ytd:.0f}, conv_with_ytd={conv_with_ytd:.0f}\n"
-            f"  Difference={abs(conv_no_ytd-conv_with_ytd):.0f} should be <500."
+            f"  Difference={abs(conv_no_ytd - conv_with_ytd):.0f} should be <500."
         )
 
     def test_forecast_year_unaffected_by_ytd_nqo(self) -> None:
@@ -205,14 +199,12 @@ class TestNQONoDoubleCountMAGI:
         plan_without_ytd = auto_fill_12(hh)
 
         future_year = hh.base_year + 3
-        conv_ytd = (
-            plan_with_ytd.your_conversions.get(future_year, 0.0)
-            + plan_with_ytd.spouse_conversions.get(future_year, 0.0)
-        )
-        conv_no_ytd = (
-            plan_without_ytd.your_conversions.get(future_year, 0.0)
-            + plan_without_ytd.spouse_conversions.get(future_year, 0.0)
-        )
+        conv_ytd = plan_with_ytd.your_conversions.get(
+            future_year, 0.0
+        ) + plan_with_ytd.spouse_conversions.get(future_year, 0.0)
+        conv_no_ytd = plan_without_ytd.your_conversions.get(
+            future_year, 0.0
+        ) + plan_without_ytd.spouse_conversions.get(future_year, 0.0)
 
         assert abs(conv_ytd - conv_no_ytd) < 1.0, (
             f"YTD NQO must not affect forecast year conversions.\n"

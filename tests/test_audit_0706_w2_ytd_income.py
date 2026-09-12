@@ -56,9 +56,15 @@ class TestFederalWithholdingYtdField:
 class TestSSColaInYtdEstimate:
     """YTD SS benefit used in tax estimate must include COLA growth, not bare at-70 amount."""
 
-    def _make_household(self, *, your_age: int, your_ss_start_age: int,
-                         spouse_age: int, spouse_ss_start_age: int,
-                         ss_cola: float = 0.025) -> object:
+    def _make_household(
+        self,
+        *,
+        your_age: int,
+        your_ss_start_age: int,
+        spouse_age: int,
+        spouse_ss_start_age: int,
+        ss_cola: float = 0.025,
+    ) -> object:
         from models.household import Household
 
         hh = Household()
@@ -81,7 +87,7 @@ class TestSSColaInYtdEstimate:
         # After 5 years of collecting at 2.5% COLA
         with_cola = ss_with_cola(bare, years_collecting=5, cola=0.025)
         assert with_cola > bare, "ss_with_cola must exceed bare benefit after COLA growth"
-        assert abs(with_cola - bare * (1.025 ** 5)) < 0.01
+        assert abs(with_cola - bare * (1.025**5)) < 0.01
 
     def test_your_ss_cola_applied_when_collecting(self):
         """When your_age >= your_ss_start_age, COLA must be applied to SS benefit."""
@@ -139,9 +145,8 @@ class TestSSColaInYtdEstimate:
         spouse_cola = ss_with_cola(spouse_bare, spouse_age - spouse_ss_start_age, ss_cola)
 
         combined = your_cola + spouse_cola
-        combined_bare = (
-            (your_bare if your_age >= your_ss_start_age else 0.0)
-            + (spouse_bare if spouse_age >= spouse_ss_start_age else 0.0)
+        combined_bare = (your_bare if your_age >= your_ss_start_age else 0.0) + (
+            spouse_bare if spouse_age >= spouse_ss_start_age else 0.0
         )
         # With COLA, combined must exceed the bare combined
         assert combined > combined_bare, "COLA-adjusted combined SS must exceed bare combined"
@@ -161,7 +166,9 @@ class TestModuleLevelImport:
         import ast
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parent.parent / "views" / "ytd_income" / "__init__.py").read_text()
+        src = (
+            Path(__file__).resolve().parent.parent / "views" / "ytd_income" / "__init__.py"
+        ).read_text()
         tree = ast.parse(src)
 
         # Find all import statements at module level (not nested inside functions)
@@ -171,7 +178,11 @@ class TestModuleLevelImport:
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 for child in ast.walk(node):
-                    if isinstance(child, ast.ImportFrom) and child.module and "portfolio_sync" in child.module:
+                    if (
+                        isinstance(child, ast.ImportFrom)
+                        and child.module
+                        and "portfolio_sync" in child.module
+                    ):
                         for alias in child.names:
                             function_level_imports.append(alias.name)
 

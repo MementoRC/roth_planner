@@ -35,6 +35,7 @@ from engine.data_bridge_keys import (
 # crypto-security-4 — unpadded base64 accepted by _decode_keymaterial
 # ---------------------------------------------------------------------------
 
+
 class TestDecodeKeymaterialPadding:
     """_decode_keymaterial must accept both padded and unpadded standard base64."""
 
@@ -80,6 +81,7 @@ class TestDecodeKeymaterialPadding:
 # ---------------------------------------------------------------------------
 # crypto-security-6 — O_EXCL atomic exclusion in _write_keyfile / write_keypair
 # ---------------------------------------------------------------------------
+
 
 class TestWriteKeypairExclusiveAtomicity:
     """write_keypair(force=False) must raise FileExistsError atomically via O_EXCL."""
@@ -147,6 +149,7 @@ class TestWriteKeypairExclusiveAtomicity:
 # crypto-security-8 — private-key read must NOT follow symlinks
 # ---------------------------------------------------------------------------
 
+
 class TestPrivkeyReadNoFollow:
     """_try_load for private key file must refuse to follow symlinks."""
 
@@ -192,6 +195,7 @@ class TestPrivkeyReadNoFollow:
 # crypto-security-10 — privkey written BEFORE pubkey (crash-safe ordering)
 # ---------------------------------------------------------------------------
 
+
 class TestWriteKeypairCrashSafeOrdering:
     """write_keypair must write privkey before pubkey so a crash between the two writes
     leaves the sensitive key on disk (can be re-paired) rather than only the pubkey."""
@@ -231,6 +235,7 @@ class TestWriteKeypairCrashSafeOrdering:
 # ---------------------------------------------------------------------------
 # crypto-security-7 — corrupted V2 payload raises instead of V1 fallthrough
 # ---------------------------------------------------------------------------
+
 
 class TestOpenUploadedPayloadCorruption:
     """Corrupted/truncated V2 (magic-prefixed) payload must raise DataBridgeCryptoError."""

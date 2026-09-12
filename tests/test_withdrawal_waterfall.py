@@ -64,9 +64,7 @@ class TestNoShortfall:
 
 class TestBrokerageOnly:
     def test_brokerage_covers_need_no_ira_touched(self):
-        accounts = make_accounts(
-            brokerage=100_000, brokerage_basis_fraction=0.4, your_ira=50_000
-        )
+        accounts = make_accounts(brokerage=100_000, brokerage_basis_fraction=0.4, your_ira=50_000)
         result = solve_waterfall(20_000, accounts, no_tax, your_age=61, spouse_age=55)
         assert result.brokerage_draw == pytest.approx(20_000)
         assert result.realized_gain == pytest.approx(20_000 * 0.6)
@@ -90,9 +88,7 @@ class TestBrokerageOnly:
 class TestGrossUp:
     def test_flat_25pct_tax_grosses_up_ira_draw(self):
         accounts = make_accounts(your_ira=200_000)
-        result = solve_waterfall(
-            60_000, accounts, flat_tax(0.25), your_age=61, spouse_age=61
-        )
+        result = solve_waterfall(60_000, accounts, flat_tax(0.25), your_age=61, spouse_age=61)
         # Hand check: 80000 - 0.25*80000 == 60000
         assert result.your_ira_draw == pytest.approx(80_000, abs=1.0)
         assert result.converged is True
@@ -103,9 +99,7 @@ class TestGrossUp:
 class TestPenalty:
     def test_penalty_when_only_exposed_ira_available(self):
         accounts = make_accounts(your_ira=0, spouse_ira=200_000)
-        result = solve_waterfall(
-            60_000, accounts, flat_tax(0.25), your_age=61, spouse_age=55
-        )
+        result = solve_waterfall(60_000, accounts, flat_tax(0.25), your_age=61, spouse_age=55)
         assert result.your_ira_draw == 0
         assert result.spouse_ira_draw == pytest.approx(92_307.69, abs=1.0)
         assert result.early_withdrawal_penalty == pytest.approx(
@@ -113,17 +107,13 @@ class TestPenalty:
         )
         # the draw must gross up for both tax AND its own penalty
         assert result.spouse_ira_draw == pytest.approx(
-            60_000
-            + flat_tax(0.25)(result.spouse_ira_draw)
-            + result.early_withdrawal_penalty,
+            60_000 + flat_tax(0.25)(result.spouse_ira_draw) + result.early_withdrawal_penalty,
             abs=1.0,
         )
 
     def test_no_penalty_when_only_penalty_free_ira_drawn(self):
         accounts = make_accounts(your_ira=200_000, spouse_ira=200_000)
-        result = solve_waterfall(
-            10_000, accounts, flat_tax(0.25), your_age=61, spouse_age=55
-        )
+        result = solve_waterfall(10_000, accounts, flat_tax(0.25), your_age=61, spouse_age=55)
         assert result.spouse_ira_draw == 0
         assert result.early_withdrawal_penalty == 0
 
@@ -148,9 +138,7 @@ class TestOrdering:
         assert result.your_ira_draw == pytest.approx(7_500, abs=1.0)
         assert result.spouse_ira_draw == pytest.approx(7_500, abs=1.0)
         # total drawn from the IRAs is unchanged by the split
-        assert result.your_ira_draw + result.spouse_ira_draw == pytest.approx(
-            15_000, abs=1.0
-        )
+        assert result.your_ira_draw + result.spouse_ira_draw == pytest.approx(15_000, abs=1.0)
         # Roth is still untouched while IRA money remains
         assert result.roth_draw == pytest.approx(0, abs=1.0)
 
@@ -179,10 +167,7 @@ class TestExhaustion:
         assert result.spouse_ira_draw == pytest.approx(5_000)
         assert result.roth_draw == pytest.approx(10_000)
         total_funded = (
-            result.brokerage_draw
-            + result.your_ira_draw
-            + result.spouse_ira_draw
-            + result.roth_draw
+            result.brokerage_draw + result.your_ira_draw + result.spouse_ira_draw + result.roth_draw
         )
         assert result.unfunded == pytest.approx(50_000 - total_funded, abs=1.0)
         assert result.unfunded > 0
@@ -217,9 +202,7 @@ class TestClamping:
             your_roth=500,
             spouse_roth=500,
         )
-        result = solve_waterfall(
-            100_000, accounts, flat_tax(0.9), your_age=55, spouse_age=55
-        )
+        result = solve_waterfall(100_000, accounts, flat_tax(0.9), your_age=55, spouse_age=55)
         for field in (
             result.brokerage_draw,
             result.realized_gain,

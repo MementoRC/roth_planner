@@ -190,7 +190,9 @@ class TestSurvivorBrokerageLTCGStackBaseline:
         # brok_realized = 500000 * 0.05 * 0.10 = 2500
 
         ira_balance_at_proj = 1_800_000.0  # approximate inherited IRA after growth
-        rmd_this_year = calc_rmd(ira_balance_at_proj, survivor_age_at_offset, hh.spouse_rmd_start_age)
+        rmd_this_year = calc_rmd(
+            ira_balance_at_proj, survivor_age_at_offset, hh.spouse_rmd_start_age
+        )
         # rmd_this_year ≈ 1800000 / 25.5 ≈ 70,588
 
         thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, cpi)

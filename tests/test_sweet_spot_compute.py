@@ -351,7 +351,9 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
         )
 
         base_magi = row2026.base_magi
-        buggy_irmaa_safe = max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
+        buggy_irmaa_safe = (
+            max(income_year_t1 - base_magi, 0.0) if (income_year_t1 - base_magi) > 0 else None
+        )
 
         # irmaa_safe must use the payment-year threshold → strictly larger than
         # the income-year (buggy) value.  Binary search returns STEP-aligned result
@@ -561,7 +563,7 @@ class TestSweetSpotProvisionalIncomeYtd:
             base_year=2026,
             your_ss_start_age=67,
             spouse_ss_start_age=65,
-            your_ss_fra=600.0,   # $/month — small SS so provisional stays below tier 2
+            your_ss_fra=600.0,  # $/month — small SS so provisional stays below tier 2
             spouse_ss_fra=400.0,
             your_fra_age=67,
             spouse_fra_age=67,
@@ -570,7 +572,7 @@ class TestSweetSpotProvisionalIncomeYtd:
             spouse_aca_enrolled=False,
             cpi_assumption=0.0,
             ss_cola=0.0,
-            grants=[],   # no option income — prevents SS from hitting 85% cap without wages
+            grants=[],  # no option income — prevents SS from hitting 85% cap without wages
         )
 
     def test_ytd_wages_raise_taxable_ss_in_sweet_spot(self) -> None:

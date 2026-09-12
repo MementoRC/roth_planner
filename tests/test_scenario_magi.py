@@ -548,11 +548,11 @@ class TestAuditC2ConversionLtcgCost:
             base_year=2026,
             your_ira=1_700_000,
             spouse_ira=0,
-            your_ss_start_age=999,   # deferred out of projection window
+            your_ss_start_age=999,  # deferred out of projection window
             spouse_ss_start_age=999,
-            grants=[],               # strip NQO option income
+            grants=[],  # strip NQO option income
             brokerage_start=brokerage_start,
-            brok_turnover=1.0,       # 100% turnover → realized_gains = balance * rate
+            brok_turnover=1.0,  # 100% turnover → realized_gains = balance * rate
         )
         if brokerage_start > 0.0:
             # Pure appreciation, no yield → realized_gains = brokerage * rate * turnover
@@ -593,7 +593,11 @@ class TestAuditC2ConversionLtcgCost:
         )
         # all_in_cost must include conversion_ltcg_cost (C2)
         assert yr.all_in_cost == approx(
-            yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost,
+            yr.conversion_tax
+            + yr.irmaa_cost
+            + yr.aca_loss
+            + yr.niit_cost
+            + yr.conversion_ltcg_cost,
             tol=1.0,
         ), "all_in_cost must equal conversion_tax+irmaa+aca+niit+conversion_ltcg_cost (C2)"
 
@@ -710,6 +714,10 @@ class TestAuditC2ConversionLtcgCost:
             "(bug: base-year ltcg_eligible is force-zeroed, dropping this entirely)"
         )
         assert yr.all_in_cost == approx(
-            yr.conversion_tax + yr.irmaa_cost + yr.aca_loss + yr.niit_cost + yr.conversion_ltcg_cost,
+            yr.conversion_tax
+            + yr.irmaa_cost
+            + yr.aca_loss
+            + yr.niit_cost
+            + yr.conversion_ltcg_cost,
             tol=1.0,
         ), "all_in_cost must equal conversion_tax+irmaa+aca+niit+conversion_ltcg_cost (C2)"

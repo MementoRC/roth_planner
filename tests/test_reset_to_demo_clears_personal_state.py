@@ -94,7 +94,11 @@ DYNAMIC_PERSONAL_KEYS = [
     ("_override_owner_ACCT123", "_override_owner_", "views/setup/_partials/_portfolio.py:186"),
     ("attribution_owner_Z9876", "attribution_owner_", "views/setup/command_center.py:90"),
     ("attribution_clear_Z9876", "attribution_clear_", "views/setup/command_center.py:112"),
-    ("account_type_confirm_X1", "account_type_confirm_", "views/ytd_income/_partials/_sync_scan.py:311"),
+    (
+        "account_type_confirm_X1",
+        "account_type_confirm_",
+        "views/ytd_income/_partials/_sync_scan.py:311",
+    ),
     ("trust_wages_2026", "trust_", "views/setup/_partials/_governance.py:195"),
     ("manual_wages_2026", "manual_", "views/setup/_partials/_governance.py:206"),
 ]
@@ -186,9 +190,7 @@ class TestStaticPersonalKeysCleared:
     )
     def test_static_key_cleared(self, run_clear, key, write_site):
         surviving = run_clear({key: "PERSONAL-SENTINEL"})
-        assert key not in surviving, (
-            f"{key!r} (written at {write_site}) survived Reset to demo"
-        )
+        assert key not in surviving, f"{key!r} (written at {write_site}) survived Reset to demo"
 
 
 class TestDynamicPersonalKeyFamiliesCleared:

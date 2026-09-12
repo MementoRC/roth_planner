@@ -44,17 +44,13 @@ class TestAca1EnhancedFPLBoundary:
     def test_enhanced_below_150pct_fpl_is_zero_band(self) -> None:
         """Below 150% FPL (exclusive) -> 0% band is correct (should pass before and after fix)."""
         magi_below = 1.499 * FPL_2
-        rate = aca_premium_cap_rate(
-            magi_below, enhanced_subsidies_active=True, filing_status="MFJ"
-        )
+        rate = aca_premium_cap_rate(magi_below, enhanced_subsidies_active=True, filing_status="MFJ")
         assert rate == pytest.approx(0.00)
 
     def test_enhanced_above_150pct_fpl_is_two_pct_band(self) -> None:
         """Just above 150% FPL -> 2% band (should pass both before and after fix)."""
         magi_above = 1.501 * FPL_2
-        rate = aca_premium_cap_rate(
-            magi_above, enhanced_subsidies_active=True, filing_status="MFJ"
-        )
+        rate = aca_premium_cap_rate(magi_above, enhanced_subsidies_active=True, filing_status="MFJ")
         assert rate == pytest.approx(0.02)
 
     def test_enhanced_single_exactly_150pct_fpl(self) -> None:
@@ -151,7 +147,7 @@ class TestAca2SingleSurvivorBenchmark:
     def test_mfj_one_enrolled_age_ratio_unchanged(self) -> None:
         """MFJ one enrolled -> age-ratio share (unchanged by fix)."""
         f_you = aca_age_factor(61)  # 2.810
-        f_sp = aca_age_factor(55)   # 2.230
+        f_sp = aca_age_factor(55)  # 2.230
         expected = self.COUPLE * f_you / (f_you + f_sp)
         result = effective_benchmark_premium(
             self.COUPLE,
@@ -183,9 +179,7 @@ class TestAca3CapRateLowerBound:
         rate = aca_premium_cap_rate(
             magi_below, enhanced_subsidies_active=False, filing_status="MFJ"
         )
-        assert rate == 0.0, (
-            f"Pre-ARP: MAGI below 100% FPL must yield cap_rate=0.0, got {rate}"
-        )
+        assert rate == 0.0, f"Pre-ARP: MAGI below 100% FPL must yield cap_rate=0.0, got {rate}"
 
     def test_pre_arp_zero_magi_cap_rate_is_zero(self) -> None:
         """Pre-ARP: MAGI=0 must return 0.0 (well below 100% FPL)."""
@@ -205,17 +199,13 @@ class TestAca3CapRateLowerBound:
         rate = aca_premium_cap_rate(
             magi_below, enhanced_subsidies_active=False, filing_status="Single"
         )
-        assert rate == 0.0, (
-            f"Single: MAGI below 100% FPL must yield cap_rate=0.0, got {rate}"
-        )
+        assert rate == 0.0, f"Single: MAGI below 100% FPL must yield cap_rate=0.0, got {rate}"
 
     def test_enhanced_below_100pct_fpl_not_affected(self) -> None:
         """Enhanced schedule: below 150% FPL returns 0% cap -- fix is only for pre-ARP."""
         # Enhanced at 50% FPL: below 150% threshold -> 0% cap (first enhanced band)
         magi_below = 0.5 * FPL_2
-        rate = aca_premium_cap_rate(
-            magi_below, enhanced_subsidies_active=True, filing_status="MFJ"
-        )
+        rate = aca_premium_cap_rate(magi_below, enhanced_subsidies_active=True, filing_status="MFJ")
         # Enhanced has no 100% floor, just the 150% threshold -> returns 0.00
         assert rate == pytest.approx(0.00)
 

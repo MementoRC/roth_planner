@@ -383,8 +383,12 @@ class TestScenarioIrmaaRoomPaymentYear:
         yr = next(y for y in result.years if y.year == income_year)
 
         magi = yr.magi
-        room_income_year = irmaa_next_threshold(magi, filing_status="MFJ", year=income_year, cpi=cpi)
-        room_payment_year = irmaa_next_threshold(magi, filing_status="MFJ", year=income_year + 2, cpi=cpi)
+        room_income_year = irmaa_next_threshold(
+            magi, filing_status="MFJ", year=income_year, cpi=cpi
+        )
+        room_payment_year = irmaa_next_threshold(
+            magi, filing_status="MFJ", year=income_year + 2, cpi=cpi
+        )
 
         # Discriminator: with cpi=0.03 the two years produce different thresholds.
         assert room_income_year != pytest.approx(room_payment_year, rel=1e-6), (

@@ -112,7 +112,9 @@ def _drive_generator_fixture(fixture_def) -> None:
 
 
 class TestSite1ScanIngestFixtureCallTimeResolution:
-    def test_clean_candidate_store_targets_redirected_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_clean_candidate_store_targets_redirected_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         recorded = _install_unlink_recorder(monkeypatch)
 
         _drive_generator_fixture(scan_ingest_mod.clean_candidate_store)
@@ -136,7 +138,9 @@ class TestSite2ConftestCommandCenterFixtureCallTimeResolution:
                 "instead of a value redirected under tmp_path"
             )
 
-    def test_clean_command_center_caches_targets_redirected_paths(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_clean_command_center_caches_targets_redirected_paths(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         recorded = _install_unlink_recorder(monkeypatch)
 
         _drive_generator_fixture(conftest_mod.clean_command_center_caches)

@@ -64,7 +64,9 @@ def test_corrupt_committed_cache_is_not_silently_destroyed() -> None:
     except CorruptCommittedCacheError:
         committed_json = None
         corrupt = True
-    app_res = resolve_for_app(session_hh, None, {}, store, choices, committed_json, recorded_at=FIXED_DT)
+    app_res = resolve_for_app(
+        session_hh, None, {}, store, choices, committed_json, recorded_at=FIXED_DT
+    )
     if app_res.committed_changed and not corrupt:
         save_committed(COMMITTED_PATH, app_res.committed_json)
 
@@ -117,7 +119,9 @@ def test_save_committed_refuses_to_overwrite_existing_corrupt_file(tmp_path) -> 
     except CorruptCommittedCacheError:
         raised = True
 
-    assert raised, "save_committed() must raise CorruptCommittedCacheError on an existing corrupt target"
+    assert raised, (
+        "save_committed() must raise CorruptCommittedCacheError on an existing corrupt target"
+    )
     on_disk = path.read_text()
     assert on_disk == _CORRUPT_COMMITTED_TEXT, (
         "save_committed() must leave an existing corrupt file's bytes completely "

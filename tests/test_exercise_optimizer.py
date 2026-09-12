@@ -494,7 +494,9 @@ def test_build_candidate_schedule_all_expired_grant_schedules_nothing() -> None:
     likewise skips grants already expired at base_year."""
     old = StockGrant(year=2015, strike=100.0, shares=1000, expiry_year=2020, grant_id="old")
 
-    schedule, over_ceiling_years = _build_candidate_schedule([old], 2026, {}, {}, lambda _year: 200.0)
+    schedule, over_ceiling_years = _build_candidate_schedule(
+        [old], 2026, {}, {}, lambda _year: 200.0
+    )
 
     assert schedule.total_exercised(old.key()) == 0
     assert over_ceiling_years == []
@@ -503,7 +505,9 @@ def test_build_candidate_schedule_all_expired_grant_schedules_nothing() -> None:
 def test_optimize_exercises_handles_household_with_no_grants() -> None:
     """No grants: optimize_exercises must not crash and must still return a
     valid OptimizerResult (baseline candidate is always appended)."""
-    hh = Household(your_age=61, spouse_age=55, base_year=2026, your_ira=500_000, spouse_ira=500_000, grants=[])
+    hh = Household(
+        your_age=61, spouse_age=55, base_year=2026, your_ira=500_000, spouse_ira=500_000, grants=[]
+    )
 
     result = optimize_exercises(hh)
 

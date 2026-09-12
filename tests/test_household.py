@@ -193,9 +193,7 @@ class TestProjectedTxnPrice:
         hh = Household(
             base_year=2026,
             txn_price_now=100.0,
-            txn_price_growth=GrowthProfile(
-                default_rate=0.07, yearly_overrides={2027: 0.20}
-            ),
+            txn_price_growth=GrowthProfile(default_rate=0.07, yearly_overrides={2027: 0.20}),
         )
         # 2026 -> 2027 uses the 2027 override (20%), not the default 7%.
         assert hh.projected_txn_price(2028) == pytest.approx(100.0 * 1.20 * 1.07)
@@ -539,15 +537,12 @@ class TestInheritedIraFromDict:
     def test_zero_or_missing_balance_returns_none(self) -> None:
         assert InheritedIRA.from_dict({"inherited_year": 2024, "owner": "you"}) is None
         assert (
-            InheritedIRA.from_dict({"balance": 0, "inherited_year": 2024, "owner": "you"})
-            is None
+            InheritedIRA.from_dict({"balance": 0, "inherited_year": 2024, "owner": "you"}) is None
         )
 
     def test_bad_owner_returns_none(self) -> None:
         assert (
-            InheritedIRA.from_dict(
-                {"balance": 100_000, "inherited_year": 2024, "owner": "nobody"}
-            )
+            InheritedIRA.from_dict({"balance": 100_000, "inherited_year": 2024, "owner": "nobody"})
             is None
         )
 
@@ -967,7 +962,6 @@ class TestSurvivorScenario:
         if yr.combined_ss > yr.taxable_ss_amt:
             assert yr.aca_magi > yr.magi
 
-
     # --- F4: full-actuarial survivor SS reduction tests ---
 
     def test_survivor_under_60_receives_no_benefit(self):
@@ -1206,7 +1200,7 @@ class TestSurvivorScenario:
             base_year=2026,
             your_ira=500_000,
             spouse_ira=400_000,
-            your_ss_fra=5_000,   # survivor (you) has large own benefit
+            your_ss_fra=5_000,  # survivor (you) has large own benefit
             spouse_ss_fra=1_000,  # deceased had small benefit
             your_ss_start_age=60,  # survivor collecting since 60
             spouse_ss_start_age=62,

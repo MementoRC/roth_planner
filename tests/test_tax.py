@@ -719,8 +719,8 @@ class TestEstimateYTDEffectiveRateDenominator:
         estimate = estimate_ytd_federal_tax(ytd, hh, combined_ss=0.0)
 
         # Derive the two candidate denominators directly from the snapshot
-        full_magi = ytd.magi_ytd          # 150_000 + 30_000 = 180_000
-        niit_magi = ytd.niit_magi_ytd     # 150_000 (muni stripped)
+        full_magi = ytd.magi_ytd  # 150_000 + 30_000 = 180_000
+        niit_magi = ytd.niit_magi_ytd  # 150_000 (muni stripped)
 
         assert full_magi > niit_magi, "Precondition: muni must cause MAGI variants to differ"
         assert niit_magi > 0
@@ -784,9 +784,15 @@ class TestEstimateYtdSsOmissionCluster:
 
         ytd = YTDSnapshot(tax_year=2026, wages_ytd=100_000.0)
         hh = Household(
-            your_age=60, spouse_age=60, base_year=2026, cpi_assumption=0.0,
-            your_ira=500_000.0, spouse_ira=500_000.0,
-            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[],
+            your_age=60,
+            spouse_age=60,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=500_000.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
         )
         combined_ss = 40_000.0
         est = estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
@@ -807,9 +813,15 @@ class TestEstimateYtdSsOmissionCluster:
         # niit_magi_ytd = 235k wages + 15k LTCG = 250k, exactly at the MFJ threshold.
         ytd = YTDSnapshot(tax_year=2026, wages_ytd=235_000.0, ltcg_ytd=15_000.0)
         hh = Household(
-            your_age=60, spouse_age=60, base_year=2026, cpi_assumption=0.0,
-            your_ira=500_000.0, spouse_ira=500_000.0,
-            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[],
+            your_age=60,
+            spouse_age=60,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=500_000.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
         )
         combined_ss = 40_000.0
         est = estimate_ytd_federal_tax(ytd, hh, combined_ss=combined_ss)
@@ -833,9 +845,16 @@ class TestEstimateYtdSsOmissionCluster:
 
         ytd = YTDSnapshot(tax_year=2026, wages_ytd=120_000.0)
         hh = Household(
-            your_age=66, spouse_age=0, base_year=2026, cpi_assumption=0.0,
-            your_ira=500_000.0, spouse_ira=0.0,
-            your_ss_fra=0.0, spouse_ss_fra=0.0, grants=[], filing_status="Single",
+            your_age=66,
+            spouse_age=0,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=500_000.0,
+            spouse_ira=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            filing_status="Single",
         )
         combined_ss = 40_000.0
         tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="Single")

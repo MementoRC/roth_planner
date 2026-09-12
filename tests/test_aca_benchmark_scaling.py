@@ -406,8 +406,7 @@ def test_timeline_survivor_who_dies_you_aca_follows_spouse() -> None:
         # `you_on_aca or sp_on_aca` gate and then handed a 0.0 benchmark, so a $0
         # subsidy passed as "active". Require a real subsidy.
         assert r.aca_subsidy > 0.0, (
-            f"Surviving spouse must receive a NON-ZERO ACA subsidy in {r.year}, "
-            f"got {r.aca_subsidy}"
+            f"Surviving spouse must receive a NON-ZERO ACA subsidy in {r.year}, got {r.aca_subsidy}"
         )
 
 
@@ -631,4 +630,3 @@ def test_timeline_single_filer_gets_full_benchmark_not_age_ratio() -> None:
         assert r.aca_subsidy != pytest.approx(half_bench_sub), (
             "Single filer must NOT use benchmark/2 (old flat-split bug)"
         )
-

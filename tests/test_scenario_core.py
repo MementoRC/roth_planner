@@ -707,7 +707,7 @@ class TestConversionTaxIncludesSsTorpedo:
             spouse_roth=0.0,
             growth_rate=0.05,
             grants=[],
-            your_ss_fra=2_500.0,   # $/month at FRA
+            your_ss_fra=2_500.0,  # $/month at FRA
             spouse_ss_fra=1_800.0,
             your_ss_start_age=68,
             spouse_ss_start_age=66,
@@ -859,7 +859,9 @@ class TestMagiCeilingWaterfallActivation:
             ),
             id="low_ira",
         ),
-        pytest.param(Household(filing_status="Single", your_age=61, spouse_age=61), id="single_filer"),
+        pytest.param(
+            Household(filing_status="Single", your_age=61, spouse_age=61), id="single_filer"
+        ),
         pytest.param(Household(your_age=76, spouse_age=74), id="ss_and_rmd_active"),
         pytest.param(Household(your_age=45, spouse_age=43), id="pre_ss_young"),
     ]
@@ -1534,9 +1536,7 @@ class TestLtcgStackingBaselineC8Consistency:
         from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ
         from engine.tax_indexing import index_tuple
 
-        thresholds = index_tuple(
-            LTCG_THRESHOLDS_MFJ, yr0.year, hh.cpi_assumption, round50=True
-        )
+        thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, yr0.year, hh.cpi_assumption, round50=True)
         # ltcg_eligible is deterministic given this fixture (see _household
         # docstring comment): the $20,000 forced brokerage draw, entirely
         # gain (zero basis), independent of the conversion.

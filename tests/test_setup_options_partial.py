@@ -109,9 +109,7 @@ def test_options_partial_does_not_render_txn_price_now_card_even_when_pending(
     """
     _seed_pending_txn_price_now()
 
-    at = AppTest.from_function(
-        _render_options_with_pending, kwargs={"pending": {"txn_price_now"}}
-    )
+    at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": {"txn_price_now"}})
     at.run()
 
     assert not at.exception

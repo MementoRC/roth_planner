@@ -122,8 +122,7 @@ class TestIrmaaMagiBisectionIsWrongForNiit:
         # The user-visible consequence: at the very conversion the chart marks
         # as the ONSET of NIIT, NIIT is already being charged.
         assert at_marker.niit_delta > 0.0, (
-            "precondition drifted: NIIT should already be charged at the "
-            "naive marker"
+            "precondition drifted: NIIT should already be charged at the naive marker"
         )
 
 
@@ -135,9 +134,7 @@ class TestNiitMarkerMeasuresNiitMagi:
         base = base_income_for_year(hh, 2026)
         threshold = float(NIIT_THRESHOLD_MFJ)
 
-        marker = magi_boundary_conversion(
-            hh, base, threshold, NII, 0.0, magi_kind="niit"
-        )
+        marker = magi_boundary_conversion(hh, base, threshold, NII, 0.0, magi_kind="niit")
         assert marker > 0, "precondition: the NIIT line must be on-chart"
 
         at_marker = all_in_at_conversion(hh, base, marker, NII)
@@ -160,9 +157,7 @@ class TestNiitMarkerMeasuresNiitMagi:
         base = base_income_for_year(hh, 2026)
         threshold = float(NIIT_THRESHOLD_MFJ)
 
-        marker = magi_boundary_conversion(
-            hh, base, threshold, NII, 0.0, magi_kind="niit"
-        )
+        marker = magi_boundary_conversion(hh, base, threshold, NII, 0.0, magi_kind="niit")
         assert all_in_at_conversion(hh, base, marker, NII).niit_delta == pytest.approx(
             0.0, abs=1e-6
         ), "NIIT is already charged at the marker the chart calls its onset"
@@ -179,9 +174,7 @@ class TestNiitMarkerMeasuresNiitMagi:
         threshold = float(NIIT_THRESHOLD_MFJ)
 
         naive = magi_boundary_conversion(hh, base, threshold, NII, 0.0)
-        fixed = magi_boundary_conversion(
-            hh, base, threshold, NII, 0.0, magi_kind="niit"
-        )
+        fixed = magi_boundary_conversion(hh, base, threshold, NII, 0.0, magi_kind="niit")
         assert fixed < naive, (
             f"corrected marker ${fixed:,.0f} must sit below the IRMAA-MAGI "
             f"marker ${naive:,.0f} when manual NII is present"
@@ -197,9 +190,7 @@ class TestIrmaaLinesAreUnaffected:
         base = base_income_for_year(hh, 2026)
         threshold = float(NIIT_THRESHOLD_MFJ)
 
-        explicit = magi_boundary_conversion(
-            hh, base, threshold, NII, 0.0, magi_kind="irmaa"
-        )
+        explicit = magi_boundary_conversion(hh, base, threshold, NII, 0.0, magi_kind="irmaa")
         default = magi_boundary_conversion(hh, base, threshold, NII, 0.0)
         assert explicit == default
 
@@ -222,7 +213,5 @@ class TestIrmaaLinesAreUnaffected:
         )
 
         irmaa_kind = magi_boundary_conversion(hh, base, threshold, 0.0, 0.0)
-        niit_kind = magi_boundary_conversion(
-            hh, base, threshold, 0.0, 0.0, magi_kind="niit"
-        )
+        niit_kind = magi_boundary_conversion(hh, base, threshold, 0.0, 0.0, magi_kind="niit")
         assert irmaa_kind == pytest.approx(niit_kind, abs=0.01)

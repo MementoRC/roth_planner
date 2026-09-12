@@ -179,9 +179,15 @@ def _patch_ss_fetch(*, estimates=None):
     ``fetch_ssa_snapshot``/``save_ssa_snapshot``/``st`` resolve against its
     OWN defining module's globals, not the package namespace.
     """
-    estimates = estimates if estimates is not None else [
-        SSABenefitEstimate(retirement_age=67, claim_date="", benefit_type="", monthly_amount=2500.0)
-    ]
+    estimates = (
+        estimates
+        if estimates is not None
+        else [
+            SSABenefitEstimate(
+                retirement_age=67, claim_date="", benefit_type="", monthly_amount=2500.0
+            )
+        ]
+    )
     return [
         patch.object(
             partials_mod,
@@ -201,7 +207,9 @@ def _patch_scan(tmp_path, monkeypatch):
             "engine.pdf_import.scan_pdf_folder",
             return_value=PdfImportResult(form_1040_records={_SCAN_YEAR: _FORM_1040}),
         ),
-        patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=str(tmp_path)),
+        patch(
+            "engine.brokerage_statement_pdf.load_statement_folder_path", return_value=str(tmp_path)
+        ),
     ]
 
 
@@ -361,7 +369,8 @@ class TestYtdSyncPreservation:
         patches = [
             p
             for p in patches
-            if getattr(p, "attribute", None) not in ("fetch_ytd_snapshot", "fetch_option_exercises_with_cache")
+            if getattr(p, "attribute", None)
+            not in ("fetch_ytd_snapshot", "fetch_option_exercises_with_cache")
         ]
         patches += [
             patch.object(
@@ -392,7 +401,9 @@ class TestYtdSyncPreservation:
             f"Expected freshly-computed nqo_exercise_ytd=45000; got {result.nqo_exercise_ytd}"
         )
 
-    def test_unreachable_status_does_not_mark_synced_or_zero_prior_data(self, clean_command_center_caches):
+    def test_unreachable_status_does_not_mark_synced_or_zero_prior_data(
+        self, clean_command_center_caches
+    ):
         hh = _stub_hh()
         prior_ytd = YTDSnapshot(
             tax_year=hh.base_year,

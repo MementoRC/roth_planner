@@ -37,20 +37,32 @@ class TestSingleFilerFullBenchmark:
         """spouse_age is irrelevant noise for a genuine Single filer (no 2nd adult)."""
         benchmark = 12_000.0
         result_a = effective_benchmark_premium(
-            benchmark, your_age=61, your_on_aca=True,
-            spouse_age=0, spouse_on_aca=False, filing_status="Single",
+            benchmark,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=0,
+            spouse_on_aca=False,
+            filing_status="Single",
         )
         result_b = effective_benchmark_premium(
-            benchmark, your_age=61, your_on_aca=True,
-            spouse_age=55, spouse_on_aca=False, filing_status="Single",
+            benchmark,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=55,
+            spouse_on_aca=False,
+            filing_status="Single",
         )
         assert result_a == pytest.approx(benchmark)
         assert result_b == pytest.approx(benchmark)
 
     def test_single_not_enrolled_is_zero(self) -> None:
         result = effective_benchmark_premium(
-            12_000.0, your_age=61, your_on_aca=False,
-            spouse_age=55, spouse_on_aca=False, filing_status="Single",
+            12_000.0,
+            your_age=61,
+            your_on_aca=False,
+            spouse_age=55,
+            spouse_on_aca=False,
+            filing_status="Single",
         )
         assert result == 0.0
 
@@ -62,8 +74,12 @@ class TestMfjBranchUnchanged:
 
     def test_mfj_both_enrolled_is_full_couple_rate(self) -> None:
         result = effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=True,
-            spouse_age=55, spouse_on_aca=True, filing_status="MFJ",
+            self.COUPLE,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=55,
+            spouse_on_aca=True,
+            filing_status="MFJ",
         )
         assert result == pytest.approx(self.COUPLE)
 
@@ -72,14 +88,22 @@ class TestMfjBranchUnchanged:
         f_sp = aca_age_factor(55)
         expected = self.COUPLE * f_you / (f_you + f_sp)
         result = effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=True,
-            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
+            self.COUPLE,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=55,
+            spouse_on_aca=False,
+            filing_status="MFJ",
         )
         assert result == pytest.approx(expected, rel=1e-6)
 
     def test_mfj_none_enrolled_is_zero(self) -> None:
         result = effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=False,
-            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
+            self.COUPLE,
+            your_age=61,
+            your_on_aca=False,
+            spouse_age=55,
+            spouse_on_aca=False,
+            filing_status="MFJ",
         )
         assert result == 0.0

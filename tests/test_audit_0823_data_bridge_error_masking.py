@@ -93,8 +93,7 @@ class TestApplyPhaseBugsAreNotDisguised:
 
         error_texts = [e.value for e in at.error]
         assert not any("Invalid" in t for t in error_texts), (
-            "an apply-phase defect was reported to the user as a malformed "
-            f"upload: {error_texts}"
+            f"an apply-phase defect was reported to the user as a malformed upload: {error_texts}"
         )
         assert at.exception, "the defect must surface rather than be swallowed"
 
@@ -102,9 +101,7 @@ class TestApplyPhaseBugsAreNotDisguised:
 class TestMalformedBundlesStillReportAsInvalid:
     """The honest 'Invalid <file>' message must survive for genuine bad input."""
 
-    def test_bundle_missing_sections_reports_invalid(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bundle_missing_sections_reports_invalid(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st_mod
         from streamlit.testing.v1 import AppTest
 

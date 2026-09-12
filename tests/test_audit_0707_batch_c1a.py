@@ -7,6 +7,7 @@ Fixes covered:
   PU1-M03    ytd.py        — NEC label match tightened to '1099-nec'
   UU2-UI-06  parameters.py — min_value=0 on SS FRA inputs (comment-only; no test)
 """
+
 from __future__ import annotations
 
 import pytest

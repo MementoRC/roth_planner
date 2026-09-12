@@ -207,8 +207,7 @@ class TestBasisNeverExceedsBalanceAcrossFullRun:
         assert len(result.years) > 1  # sanity: this is actually a multi-year run
         for yr in result.years:
             assert yr.brokerage_basis >= 0.0, (
-                f"year {yr.year}: brokerage_basis went negative: "
-                f"{yr.brokerage_basis:.2f}"
+                f"year {yr.year}: brokerage_basis went negative: {yr.brokerage_basis:.2f}"
             )
             assert yr.brokerage_basis <= yr.brokerage_balance_end + 1e-6, (
                 f"year {yr.year}: brokerage_basis ({yr.brokerage_basis:.2f}) "

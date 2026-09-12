@@ -184,9 +184,7 @@ class TestPerHoldingAllocation:
         """A symbol whose every holding has zero shares must allocate nothing, not crash."""
         from engine.portfolio_sync import apply_dividends_rollup
 
-        snap = _snapshot(
-            [_account("Fidelity", "you", [_holding("AAPL", 0.0, 0.0, "Fidelity")])]
-        )
+        snap = _snapshot([_account("Fidelity", "you", [_holding("AAPL", 0.0, 0.0, "Fidelity")])])
         apply_dividends_rollup(snap, _aapl_rollup())
 
         holding = snap.accounts[0].holdings[0]

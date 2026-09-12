@@ -86,9 +86,7 @@ class TestScenarioNiitMagiOmitsManualNII:
         # IRA-withdrawal waterfall's fixed point (draw -> tax -> larger draw)
         # inflates magi beyond the conversion amount, confounding this test's
         # isolated assertion.
-        hh = _bare_mfj_household(
-            living_expenses=0.0, brokerage_start=500_000.0, brok_turnover=0.0
-        )
+        hh = _bare_mfj_household(living_expenses=0.0, brokerage_start=500_000.0, brok_turnover=0.0)
         plan = ConversionPlan(your_conversions={2026: 240_000.0})
         result = run_scenario(hh, plan, "c10-scenario", end_age=61, net_inv_income=20_000.0)
         yr = result.years[0]

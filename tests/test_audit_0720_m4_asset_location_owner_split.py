@@ -28,9 +28,7 @@ class TestM4PerOwnerSplitPreservesPoolInvariant:
             spouse_rmd_start_age=73,
             base_year=2026,
         )
-        result = project_asset_location(
-            hh, {2026: 95_000.0}, strategy="proportional", end_age=90
-        )
+        result = project_asset_location(hh, {2026: 95_000.0}, strategy="proportional", end_age=90)
         yr = result.years[0]
         gap = abs((yr.your_ira_end + yr.spouse_ira_end) - yr.ira_total_end)
         assert gap < 0.01, (

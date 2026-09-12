@@ -39,9 +39,7 @@ class TestDualEligibleMfjPerPersonFloor:
     def test_dual_65_magi_200k_partial(self) -> None:
         # per_person = max(0, 6_000 - 0.06*50_000) = 3_000; total = 2*3_000 = 6_000
         # Pre-fix (aggregate): 12_000 - 0.06*50_000 = 9_000.
-        assert senior_bonus_deduction(66, 65, magi=200_000.0, year=2026) == pytest.approx(
-            6_000.0
-        )
+        assert senior_bonus_deduction(66, 65, magi=200_000.0, year=2026) == pytest.approx(6_000.0)
 
     def test_dual_65_magi_250k_zeros(self) -> None:
         # per_person = max(0, 6_000 - 0.06*100_000) = max(0, 0) = 0; total = 0.0

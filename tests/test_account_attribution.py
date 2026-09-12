@@ -13,7 +13,9 @@ class TestSaveOverrideRejectsAmbiguousBroker:
     ) -> None:
         import engine.account_attribution as mod
 
-        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        monkeypatch.setattr(
+            mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json"
+        )
         with pytest.raises(ValueError, match=r"\|"):
             mod.save_account_override("schwab|evil", "****-*123", "spouse")
 
@@ -22,25 +24,33 @@ class TestOverridesRoundTrip:
     def test_save_load_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import engine.account_attribution as mod
 
-        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        monkeypatch.setattr(
+            mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json"
+        )
         mod.save_account_override("schwab", "****-*123", "spouse")
         assert mod.load_account_overrides() == {("schwab", "****-*123"): "spouse"}
 
     def test_delete_removes_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import engine.account_attribution as mod
 
-        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        monkeypatch.setattr(
+            mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json"
+        )
         mod.save_account_override("schwab", "****-*123", "spouse")
         mod.delete_account_override("schwab", "****-*123")
         assert mod.load_account_overrides() == {}
 
-    def test_load_missing_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.account_attribution as mod
 
         monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / "nope.json")
         assert mod.load_account_overrides() == {}
 
-    def test_load_corrupt_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_corrupt_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.account_attribution as mod
 
         bad = tmp_path / ".account_attribution.json"
@@ -53,7 +63,9 @@ class TestOverridesRoundTrip:
     ) -> None:
         import engine.account_attribution as mod
 
-        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        monkeypatch.setattr(
+            mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json"
+        )
         mod.save_account_override("schwab", "****-*123", "spouse")
         mod.save_account_override("vanguard", "****-*456", "you")
         assert mod.load_account_overrides() == {
@@ -66,7 +78,9 @@ class TestOverridesRoundTrip:
     ) -> None:
         import engine.account_attribution as mod
 
-        monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json")
+        monkeypatch.setattr(
+            mod, "_ACCOUNT_ATTRIBUTION_PATH", tmp_path / ".account_attribution.json"
+        )
         with pytest.raises(ValueError, match="Invalid owner role"):
             mod.save_account_override("schwab", "****-*123", "bogus")
 
@@ -115,9 +129,7 @@ class TestOverridesRoundTrip:
         import engine.account_attribution as mod
 
         store = tmp_path / ".account_attribution.json"
-        store.write_text(
-            json.dumps({"version": 1, "overrides": {"schwab|****-*123": "joint"}})
-        )
+        store.write_text(json.dumps({"version": 1, "overrides": {"schwab|****-*123": "joint"}}))
         monkeypatch.setattr(mod, "_ACCOUNT_ATTRIBUTION_PATH", store)
         overrides = mod.load_account_overrides()
         resolved = mod.resolve_account_owner("schwab", "****-*123", overrides, "you")

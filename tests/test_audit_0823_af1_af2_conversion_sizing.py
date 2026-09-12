@@ -327,9 +327,7 @@ class TestNonRegressionClosedFormStillCorrectWhereItAlreadyWas:
         hh = _torpedo_household(
             your_ss_fra=500.0,
             spouse_ss_fra=400.0,
-            inherited_iras=[
-                InheritedIRA(balance=500_000.0, inherited_year=2026, owner="you")
-            ],
+            inherited_iras=[InheritedIRA(balance=500_000.0, inherited_year=2026, owner="you")],
         )
         _assert_fills_exactly(hh, auto_fill_12(hh), _IDX_12, "auto_fill_12 (SS at 85% cap)")
 

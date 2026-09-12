@@ -131,7 +131,9 @@ class TestSeedSessionStateRestoresPersistedScalars:
         state = _run_seed_session_state(persisted)
         for k in SCALAR_KEYS:
             sess_key = "txn_price" if k == "stock_price_now" else k
-            assert state.get(sess_key) == f"__persisted_{k}__", f"{k} was not seeded from persisted defaults"
+            assert state.get(sess_key) == f"__persisted_{k}__", (
+                f"{k} was not seeded from persisted defaults"
+            )
 
 
 class TestSeedSessionStateFirstRunDefaults:

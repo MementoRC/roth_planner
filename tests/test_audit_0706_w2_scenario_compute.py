@@ -79,9 +79,7 @@ class TestComputePhaseSingleFilerRmd:
             year=hh.base_year,
             hh=hh,
         )
-        assert phase == "rmd", (
-            f"Expected 'rmd' for single-filer (sa=0) in RMD year, got {phase!r}"
-        )
+        assert phase == "rmd", f"Expected 'rmd' for single-filer (sa=0) in RMD year, got {phase!r}"
 
     def test_mfj_filer_pre_spouse_rmd_is_squeeze(self) -> None:
         """MFJ: ya >= rmd_yours but sa < rmd_spouse must still produce 'squeeze'."""
@@ -97,9 +95,7 @@ class TestComputePhaseSingleFilerRmd:
             year=hh.base_year,
             hh=hh,
         )
-        assert phase == "squeeze", (
-            f"Expected 'squeeze' for MFJ spouse pre-RMD year, got {phase!r}"
-        )
+        assert phase == "squeeze", f"Expected 'squeeze' for MFJ spouse pre-RMD year, got {phase!r}"
 
     def test_mfj_filer_both_rmd_is_rmd(self) -> None:
         """MFJ: ya >= rmd_yours and sa >= rmd_spouse must produce 'rmd'."""
@@ -115,9 +111,7 @@ class TestComputePhaseSingleFilerRmd:
             year=hh.base_year,
             hh=hh,
         )
-        assert phase == "rmd", (
-            f"Expected 'rmd' for MFJ both-in-RMD year, got {phase!r}"
-        )
+        assert phase == "rmd", f"Expected 'rmd' for MFJ both-in-RMD year, got {phase!r}"
 
     def test_single_filer_exactly_at_rmd_start_is_rmd(self) -> None:
         """ya == rmd_start and sa == 0: first RMD year must be 'rmd'."""
@@ -134,9 +128,7 @@ class TestComputePhaseSingleFilerRmd:
             year=hh.base_year,
             hh=hh,
         )
-        assert phase == "rmd", (
-            f"Expected 'rmd' for single-filer at exact RMD start, got {phase!r}"
-        )
+        assert phase == "rmd", f"Expected 'rmd' for single-filer at exact RMD start, got {phase!r}"
 
 
 # ===========================================================================

@@ -86,9 +86,7 @@ class TestRedirectHardening:
         """_get() returns the response object untouched on a 200."""
         fake_resp = SimpleNamespace(status_code=200, text="ok")
 
-        monkeypatch.setattr(
-            client_module.requests, "get", lambda url, **kw: fake_resp
-        )
+        monkeypatch.setattr(client_module.requests, "get", lambda url, **kw: fake_resp)
         result = _get("/status", timeout=3)
         assert result is fake_resp
 
@@ -129,9 +127,7 @@ class TestLoadTokenHardening:
 
         assert _load_token() == "my-bearer-token"
 
-    def test_warns_on_group_readable_token(
-        self, tmp_path, monkeypatch, caplog
-    ):
+    def test_warns_on_group_readable_token(self, tmp_path, monkeypatch, caplog):
         """_load_token logs a warning when the token file is group/world-accessible."""
         finextract_dir = tmp_path / ".finextract"
         finextract_dir.mkdir()

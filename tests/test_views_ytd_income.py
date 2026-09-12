@@ -722,7 +722,9 @@ class TestTaxBracketAndSafeHarborSections:
             patch.object(event_log_mod, "st", mock_st),
             patch.object(analysis_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch("views.ytd_income._partials._analysis.load_prior_year_federal_tax", return_value=0.0),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax", return_value=0.0
+            ),
         ):
             ytd_income_mod.render(hh)
 
@@ -760,7 +762,10 @@ class TestTaxBracketAndSafeHarborSections:
             patch.object(event_log_mod, "st", mock_st),
             patch.object(analysis_mod, "st", mock_st),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch("views.ytd_income._partials._analysis.load_prior_year_federal_tax", return_value=50_000.0),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
             patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
         ):
             ytd_income_mod.render(hh)
@@ -1057,9 +1062,13 @@ class TestBrokerageStatementSync:
             ytd_income_mod.render(hh)
 
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
         ]
-        assert setitem_calls, "Expected statement_by_account to be stored in session_state after a scan"
+        assert setitem_calls, (
+            "Expected statement_by_account to be stored in session_state after a scan"
+        )
         stored = setitem_calls[-1][0][1]
         assert stored["XXXX9320"].account_type == "taxable"
 
@@ -1116,7 +1125,9 @@ class TestBrokerageStatementSync:
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
 
-        assert mock_save_snapshot.called, "Expected save_ytd_snapshot to be called during scan (auto-apply)"
+        assert mock_save_snapshot.called, (
+            "Expected save_ytd_snapshot to be called during scan (auto-apply)"
+        )
         saved_snapshot = mock_save_snapshot.call_args[0][0]
         assert saved_snapshot.interest_ytd == 500.0
         assert saved_snapshot.ordinary_dividends_ytd == 1028.55
@@ -1173,7 +1184,9 @@ class TestBrokerageStatementSync:
             ytd_income_mod.render(hh)
 
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
         ]
         assert setitem_calls
         stored = setitem_calls[-1][0][1]
@@ -1239,7 +1252,9 @@ class TestBrokerageStatementSync:
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             ytd_income_mod.render(hh)
 
-        assert mock_st.error.called, "Expected st.error for a control character in statement-folder input"
+        assert mock_st.error.called, (
+            "Expected st.error for a control character in statement-folder input"
+        )
         error_msg = mock_st.error.call_args[0][0]
         assert "invalid characters" in error_msg
         mock_scan.assert_not_called()
@@ -1461,7 +1476,10 @@ class TestBrokerageStatementSync:
             patch.object(event_log_mod, "st", mock_st),
             patch.object(analysis_mod, "st", mock_st),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
-            patch("engine.brokerage_statement_pdf.load_statement_records", return_value=cached_by_account),
+            patch(
+                "engine.brokerage_statement_pdf.load_statement_records",
+                return_value=cached_by_account,
+            ),
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
             patch("engine.brokerage_statement_pdf.apply_account_type_overrides") as mock_apply,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
@@ -1473,7 +1491,9 @@ class TestBrokerageStatementSync:
 
         mock_apply.assert_called_once_with(cached_by_account, {})
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
         ]
         assert setitem_calls, "Expected statement_by_account to be hydrated into session_state"
         assert setitem_calls[-1][0][1] == cached_by_account
@@ -1528,7 +1548,9 @@ class TestBrokerageStatementSync:
             patch.object(event_log_mod, "st", mock_st),
             patch.object(analysis_mod, "st", mock_st),
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
-            patch("engine.brokerage_statement_pdf.save_account_type_override") as mock_save_override,
+            patch(
+                "engine.brokerage_statement_pdf.save_account_type_override"
+            ) as mock_save_override,
             patch(
                 "engine.brokerage_statement_pdf.load_account_type_overrides",
                 return_value={"XXXX5555": "taxable"},
@@ -1541,7 +1563,9 @@ class TestBrokerageStatementSync:
 
         mock_save_override.assert_called_once_with("XXXX5555", "taxable")
         setitem_calls = [
-            call for call in mock_st.session_state.__setitem__.call_args_list if call[0][0] == "statement_by_account"
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
         ]
         assert setitem_calls, (
             "Expected statement_by_account to be refreshed in session_state after "
@@ -1577,7 +1601,9 @@ class TestOwnerAttributionScanFlow:
     Task 6 retired -- resolve_account_owner (engine/account_attribution.py)
     is now the sole non-interactive attribution authority."""
 
-    def _run_scan(self, hh, mock_st, canned_result, ledger_path, owner_map_path, tmp_path, monkeypatch):
+    def _run_scan(
+        self, hh, mock_st, canned_result, ledger_path, owner_map_path, tmp_path, monkeypatch
+    ):
         import engine.pdf_ledger as ledger_mod
         import engine.pdf_owner as owner_mod
 
@@ -1620,10 +1646,17 @@ class TestOwnerAttributionScanFlow:
         mock_st1 = _make_mock_st(ytd1)
         mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st1.text_input.return_value = str(tmp_path)
-        result1 = PdfImportResult(koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)])
+        result1 = PdfImportResult(
+            koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)]
+        )
         self._run_scan(
-            hh, mock_st1, result1,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result1,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
         )
 
         # Second render: this instance is now "spouse" (a second household
@@ -1637,8 +1670,13 @@ class TestOwnerAttributionScanFlow:
         mock_st2.text_input.return_value = str(tmp_path)
         result2 = PdfImportResult(koinly_reports=[_koinly_report("jane r cirba", 10.0, 20.0, 5.0)])
         self._run_scan(
-            hh, mock_st2, result2,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            hh,
+            mock_st2,
+            result2,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
         )
 
         # Read back via direct attribute access to match test file's established pattern
@@ -1654,10 +1692,17 @@ class TestOwnerAttributionScanFlow:
         mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
         mock_st1.text_input.return_value = str(tmp_path)
         mock_st1.selectbox.return_value = "you"
-        result = PdfImportResult(koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)])
+        result = PdfImportResult(
+            koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)]
+        )
         self._run_scan(
-            hh, mock_st1, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
         )
         ytd2 = YTDSnapshot()
         mock_st2 = _make_mock_st(ytd2)
@@ -1665,8 +1710,13 @@ class TestOwnerAttributionScanFlow:
         mock_st2.text_input.return_value = str(tmp_path)
         mock_st2.selectbox.return_value = "you"
         self._run_scan(
-            hh, mock_st2, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            hh,
+            mock_st2,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
         )
         # Read back via direct attribute access to match test file's established pattern
         final_snap = mock_st2.session_state.ytd_snapshot
@@ -1693,8 +1743,13 @@ class TestOwnerAttributionScanFlow:
         result = PdfImportResult(koinly_reports=[_koinly_report(None, 100.0, 200.0, 50.0)])
         ledger_path = tmp_path / ".pdf_import_ledger.json"
         self._run_scan(
-            hh, mock_st1, result,
-            ledger_path, tmp_path / ".pdf_owner_map.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result,
+            ledger_path,
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
         )
 
         # Resolved owner fell back to instance_owner ("spouse") -- confirmed
@@ -1738,7 +1793,15 @@ class TestBrokerageOwnerAttributionScanFlow:
     overwrite them -- the same fix already proven for Koinly in Task 6."""
 
     def _run_scan(
-        self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+        self,
+        hh,
+        mock_st,
+        canned_result,
+        ledger_path,
+        owner_map_path,
+        overrides_path,
+        tmp_path,
+        monkeypatch,
     ):
         import engine.brokerage_statement_pdf as stmt_mod
         import engine.pdf_ledger as ledger_mod
@@ -1757,7 +1820,9 @@ class TestBrokerageOwnerAttributionScanFlow:
             patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
             patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
             patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
-            patch.object(stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"),
+            patch.object(
+                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
+            ),
         ):
             ytd_income_mod.render(hh)
 
@@ -1773,12 +1838,19 @@ class TestBrokerageOwnerAttributionScanFlow:
         mock_st1.text_input.return_value = str(tmp_path)
         mock_st1.selectbox.return_value = "you"
         result1 = PdfImportResult(
-            brokerage_records=[_brokerage_record("A1", "claude r cirba", interest=10.0, dividends=5.0)]
+            brokerage_records=[
+                _brokerage_record("A1", "claude r cirba", interest=10.0, dividends=5.0)
+            ]
         )
         self._run_scan(
-            hh, mock_st1, result1,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result1,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
         )
 
         ytd2 = YTDSnapshot()
@@ -1787,12 +1859,19 @@ class TestBrokerageOwnerAttributionScanFlow:
         mock_st2.text_input.return_value = str(tmp_path)
         mock_st2.selectbox.return_value = "spouse"
         result2 = PdfImportResult(
-            brokerage_records=[_brokerage_record("B1", "jane r cirba", interest=20.0, dividends=8.0)]
+            brokerage_records=[
+                _brokerage_record("B1", "jane r cirba", interest=20.0, dividends=8.0)
+            ]
         )
         self._run_scan(
-            hh, mock_st2, result2,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+            hh,
+            mock_st2,
+            result2,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
         )
 
         final_snap = mock_st2.session_state.ytd_snapshot
@@ -1810,9 +1889,14 @@ class TestBrokerageOwnerAttributionScanFlow:
         mock_st1.text_input.return_value = str(tmp_path)
         mock_st1.selectbox.return_value = "you"
         self._run_scan(
-            hh, mock_st1, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
         )
         ytd2 = YTDSnapshot()
         mock_st2 = _make_mock_st(ytd2)
@@ -1820,9 +1904,14 @@ class TestBrokerageOwnerAttributionScanFlow:
         mock_st2.text_input.return_value = str(tmp_path)
         mock_st2.selectbox.return_value = "you"
         self._run_scan(
-            hh, mock_st2, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+            hh,
+            mock_st2,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
         )
         final_snap = mock_st2.session_state.ytd_snapshot
         assert final_snap.interest_ytd == pytest.approx(10.0)
@@ -1842,9 +1931,14 @@ class TestBrokerageOwnerAttributionScanFlow:
         mock_st1.text_input.return_value = str(tmp_path)
         mock_st1.selectbox.return_value = "you"
         self._run_scan(
-            hh, mock_st1, result,
-            tmp_path / ".pdf_import_ledger.json", tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json", tmp_path, monkeypatch,
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
         )
         # An unstated (unknown tax-status) account contributes nothing, so
         # applied_bits stays empty and st.session_state.ytd_snapshot is never
@@ -1866,7 +1960,15 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
     manual owner-confirm selectbox this class previously drove."""
 
     def _run_scan(
-        self, hh, mock_st, canned_result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+        self,
+        hh,
+        mock_st,
+        canned_result,
+        ledger_path,
+        owner_map_path,
+        overrides_path,
+        tmp_path,
+        monkeypatch,
     ):
         import engine.brokerage_statement_pdf as stmt_mod
         import engine.pdf_ledger as ledger_mod
@@ -1885,7 +1987,9 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
             patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
             patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
             patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
-            patch.object(stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"),
+            patch.object(
+                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
+            ),
         ):
             ytd_income_mod.render(hh)
 
@@ -1913,13 +2017,17 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
         mock_st.text_input.return_value = str(tmp_path)
 
         result = PdfImportResult(
-            brokerage_records=[_brokerage_record("A1", "jane r cirba", interest=20.0, dividends=8.0)],
+            brokerage_records=[
+                _brokerage_record("A1", "jane r cirba", interest=20.0, dividends=8.0)
+            ],
             koinly_reports=[_koinly_report("claude r cirba", 100.0, 200.0, 50.0)],
         )
         ledger_path = tmp_path / ".pdf_import_ledger.json"
         owner_map_path = tmp_path / ".pdf_owner_map.json"
         overrides_path = tmp_path / ".statement_account_overrides.json"
-        self._run_scan(hh, mock_st, result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch)
+        self._run_scan(
+            hh, mock_st, result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+        )
 
         # Both loops applied their fields to the SAME snapshot in one render.
         final_snap = mock_st.session_state.ytd_snapshot

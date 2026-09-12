@@ -49,13 +49,17 @@ class TestOwnerMapRoundTrip:
         save_owner_map({"claude r cirba": "you"})
         assert load_owner_map() == {"claude r cirba": "you"}
 
-    def test_load_missing_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.pdf_owner as mod
 
         monkeypatch.setattr(mod, "_OWNER_MAP_PATH", tmp_path / "nope.json")
         assert load_owner_map() == {}
 
-    def test_load_corrupt_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_corrupt_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.pdf_owner as mod
 
         bad = tmp_path / ".pdf_owner_map.json"

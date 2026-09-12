@@ -136,7 +136,14 @@ class TestConversionTaxSSTorpedo:
 
     def test_conversion_tax_includes_ss_torpedo(self) -> None:
         _, _, conversion_tax, base_taxable = compute_federal_tax(
-            29600.0, 59600.0, 20000.0, 0.0, 30000.0, "MFJ", BASE_YEAR, DEFAULT_CPI,
+            29600.0,
+            59600.0,
+            20000.0,
+            0.0,
+            30000.0,
+            "MFJ",
+            BASE_YEAR,
+            DEFAULT_CPI,
             conversion_ss_delta=15600.0,
         )
         assert conversion_tax == pytest.approx(3056.0, abs=1.0)
@@ -145,6 +152,13 @@ class TestConversionTaxSSTorpedo:
     def test_conversion_tax_default_delta_is_legacy(self) -> None:
         # Default conversion_ss_delta=0.0 reproduces the pre-fix (undercounting) value.
         _, _, conversion_tax, _ = compute_federal_tax(
-            29600.0, 59600.0, 20000.0, 0.0, 30000.0, "MFJ", BASE_YEAR, DEFAULT_CPI,
+            29600.0,
+            59600.0,
+            20000.0,
+            0.0,
+            30000.0,
+            "MFJ",
+            BASE_YEAR,
+            DEFAULT_CPI,
         )
         assert conversion_tax == pytest.approx(2096.0, abs=1.0)

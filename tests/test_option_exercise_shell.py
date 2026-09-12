@@ -41,7 +41,9 @@ def _render_oe(schedule=None) -> None:
     render(hh, theme=None)
 
 
-def _run_oe(monkeypatch, schedule: ExerciseSchedule | None = None, ui_theme: str = "Classic") -> AppTest:
+def _run_oe(
+    monkeypatch, schedule: ExerciseSchedule | None = None, ui_theme: str = "Classic"
+) -> AppTest:
     import views.option_exercise as oe_module
 
     monkeypatch.setattr(oe_module, "save_exercise_schedule", lambda s: None)

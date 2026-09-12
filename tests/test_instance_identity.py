@@ -15,7 +15,9 @@ class TestInstanceOwnerRoundTrip:
         mod.save_instance_owner("you")
         assert mod.load_instance_owner() == "you"
 
-    def test_load_missing_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.instance_identity as mod
 
         monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / "nope.json")

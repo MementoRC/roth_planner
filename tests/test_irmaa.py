@@ -390,8 +390,7 @@ class TestIRMAATier5Frozen:
         assert surcharge_2026 > 0, "Sanity: $760K MFJ must be in Tier 5 in 2026"
         assert surcharge_2028 > 0, "Tier 4 surcharge still applies below the indexed top"
         assert surcharge_2028 < genuine_tier5_2028, (
-            "$760K must have dropped out of Tier 5 once the top threshold "
-            "resumed indexing in 2028"
+            "$760K must have dropped out of Tier 5 once the top threshold resumed indexing in 2028"
         )
 
     def test_irmaa_next_threshold_above_top_tier_returns_inf_in_2028(self):
@@ -555,10 +554,6 @@ class TestIrmaaBeneficiaryGate:
         from engine.irmaa import irmaa_for_year
 
         magi = 250_000.0
-        both, _ = irmaa_for_year(
-            magi, 64, 64, filing_status="MFJ", year=2026, cpi=0.0
-        )
-        one, _ = irmaa_for_year(
-            magi, 64, 40, filing_status="MFJ", year=2026, cpi=0.0
-        )
+        both, _ = irmaa_for_year(magi, 64, 64, filing_status="MFJ", year=2026, cpi=0.0)
+        one, _ = irmaa_for_year(magi, 64, 40, filing_status="MFJ", year=2026, cpi=0.0)
         assert both == pytest.approx(2 * one)  # two beneficiaries = twice one

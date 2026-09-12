@@ -6,6 +6,7 @@ Fixes covered:
   SU1-SEC-02  engine/data_bridge_keys.py   — open fd first, fstat for perms (TOCTOU fix)
   SU1-SEC-04  engine/data_bridge_keys.py   — drain fd in read loop (no under-read)
 """
+
 from __future__ import annotations
 
 import os
@@ -156,9 +157,7 @@ class TestSU1SEC02TOCTOU:
             result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=True)
         assert result is None, "secret=True + 0o644 must return None (SU1-SEC-01)"
 
-    def test_secret_0o600_loads(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_secret_0o600_loads(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Secret key with correct perms must load successfully."""
         import base64
 
@@ -172,9 +171,7 @@ class TestSU1SEC02TOCTOU:
         result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=True)
         assert result == key
 
-    def test_non_secret_0o644_loads_without_warning(
-        self, tmp_path: Path
-    ) -> None:
+    def test_non_secret_0o644_loads_without_warning(self, tmp_path: Path) -> None:
         """Non-secret key with 0o644 (readable, not writable) loads with no warning."""
         import base64
         import warnings
@@ -191,9 +188,7 @@ class TestSU1SEC02TOCTOU:
             result = _try_load("NONEXISTENT_ENV_VAR", key_file, secret=False)
         assert result == key
 
-    def test_non_secret_world_writable_loads_with_warning(
-        self, tmp_path: Path
-    ) -> None:
+    def test_non_secret_world_writable_loads_with_warning(self, tmp_path: Path) -> None:
         """Non-secret key with a world-writable mode must warn but still load."""
         import base64
 
@@ -212,9 +207,7 @@ class TestSU1SEC02TOCTOU:
 class TestSU1SEC04ReadLoop:
     """SU1-SEC-04: files larger than 4096 bytes are read in full."""
 
-    def test_large_key_file_read_in_full(
-        self, tmp_path: Path
-    ) -> None:
+    def test_large_key_file_read_in_full(self, tmp_path: Path) -> None:
         """A key file whose raw bytes exceed 4096 bytes is read completely.
 
         _decode_keymaterial calls strip() on the entire content, so we pad with

@@ -152,7 +152,9 @@ class TestKoinlyCache:
         assert loaded.crypto_ltcg == pytest.approx(-2.02)
         assert loaded.tax_year == 2026
 
-    def test_load_missing_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.koinly_report_pdf as mod
 
         monkeypatch.setattr(mod, "_KOINLY_CACHE_PATH", tmp_path / "nope.json")

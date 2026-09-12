@@ -190,9 +190,7 @@ class TestOverlapYearNoDoubleCount:
         → total_rmd_tax + total_conv_tax == actual_rmd_phase_tax  (exactly once)
         """
         # Spouse converts during years 1-5 (your_age 75-79 → overlap)
-        plan = ConversionPlan(
-            spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000)
-        )
+        plan = ConversionPlan(spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000))
         result = run_scenario(overlap_hh, plan, "Overlap Conversion", end_age=85)
 
         # Sum federal_tax_amt for all RMD-phase years (ground truth)
@@ -233,9 +231,7 @@ class TestOverlapYearNoDoubleCount:
         This test confirms the two pathways agree: the savings from the all-in
         cost comparison must be consistent with manually summed per-year deltas.
         """
-        plan = ConversionPlan(
-            spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000)
-        )
+        plan = ConversionPlan(spouse_conversions=dict.fromkeys(range(2026, 2031), 50_000))
         no_conv = run_no_conversion(overlap_hh, end_age=85)
         with_conv = run_scenario(overlap_hh, plan, "Overlap Conversion", end_age=85)
 
@@ -244,10 +240,20 @@ class TestOverlapYearNoDoubleCount:
 
         # Manual all-in delta (ground truth, no pre-aggregation involved)
         manual_delta = sum(
-            (yr_b.federal_tax_amt + yr_b.irmaa_cost + yr_b.brokerage_gain_tax
-             + yr_b.aca_loss + yr_b.niit_cost)
-            - (yr_s.federal_tax_amt + yr_s.irmaa_cost + yr_s.brokerage_gain_tax
-               + yr_s.aca_loss + yr_s.niit_cost)
+            (
+                yr_b.federal_tax_amt
+                + yr_b.irmaa_cost
+                + yr_b.brokerage_gain_tax
+                + yr_b.aca_loss
+                + yr_b.niit_cost
+            )
+            - (
+                yr_s.federal_tax_amt
+                + yr_s.irmaa_cost
+                + yr_s.brokerage_gain_tax
+                + yr_s.aca_loss
+                + yr_s.niit_cost
+            )
             for yr_b, yr_s in zip(no_conv.years, with_conv.years, strict=False)
         )
         assert net == pytest.approx(manual_delta, abs=1.0), (

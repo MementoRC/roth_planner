@@ -159,13 +159,17 @@ class TestLedgerCache:
         loaded = load_ledger()
         assert derive_koinly_totals(loaded) == {"stcg": 100.0, "ltcg": 0.0, "income": 0.0}
 
-    def test_load_missing_returns_empty_ledger(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_missing_returns_empty_ledger(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.pdf_ledger as mod
 
         monkeypatch.setattr(mod, "_LEDGER_PATH", tmp_path / "nope.json")
         assert load_ledger() == {"koinly": {}, "brokerage": {}}
 
-    def test_load_corrupt_returns_empty_ledger(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_corrupt_returns_empty_ledger(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import engine.pdf_ledger as mod
 
         bad = tmp_path / ".pdf_import_ledger.json"
@@ -191,8 +195,20 @@ class TestOwnerSlice:
     def _ledger(self):
         return {
             "koinly": {
-                "you": {"stcg": 10.0, "ltcg": 5.0, "income": 1.0, "captured_at": "t", "source": "k"},
-                "spouse": {"stcg": 99.0, "ltcg": 0.0, "income": 0.0, "captured_at": "t", "source": "k"},
+                "you": {
+                    "stcg": 10.0,
+                    "ltcg": 5.0,
+                    "income": 1.0,
+                    "captured_at": "t",
+                    "source": "k",
+                },
+                "spouse": {
+                    "stcg": 99.0,
+                    "ltcg": 0.0,
+                    "income": 0.0,
+                    "captured_at": "t",
+                    "source": "k",
+                },
             },
             "brokerage": {
                 "you": {"A1": {"interest": 3.0}},
@@ -208,7 +224,10 @@ class TestOwnerSlice:
         }
 
     def test_extract_owner_missing_owner_yields_empty_sections(self):
-        assert extract_owner({"koinly": {}, "brokerage": {}}, "you") == {"koinly": {}, "brokerage": {}}
+        assert extract_owner({"koinly": {}, "brokerage": {}}, "you") == {
+            "koinly": {},
+            "brokerage": {},
+        }
 
     def test_extract_owner_does_not_mutate_input(self):
         led = self._ledger()
@@ -218,8 +237,10 @@ class TestOwnerSlice:
 
     def test_replace_owner_drops_old_and_inserts_new_under_target(self):
         led = self._ledger()
-        new_slice = {"koinly": {"stcg": 1.0, "ltcg": 2.0, "income": 0.0, "captured_at": "t2", "source": "k"},
-                     "brokerage": {"Z9": {"interest": 4.0}}}
+        new_slice = {
+            "koinly": {"stcg": 1.0, "ltcg": 2.0, "income": 0.0, "captured_at": "t2", "source": "k"},
+            "brokerage": {"Z9": {"interest": 4.0}},
+        }
         out = replace_owner(led, "spouse", new_slice)
         assert out["koinly"]["spouse"] == new_slice["koinly"]
         assert out["brokerage"]["spouse"] == {"Z9": {"interest": 4.0}}

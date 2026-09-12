@@ -563,9 +563,7 @@ class TestKeyPrecedence:
 
         pub, priv = generate_keypair()
         priv_b64 = base64.b64encode(priv).decode("ascii")
-        monkeypatch.setattr(
-            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
-        )
+        monkeypatch.setattr(bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64})
         monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: None)
         assert bridge_mod._resolved_pubkey() == pub
 
@@ -577,9 +575,7 @@ class TestKeyPrecedence:
         session_pub, session_priv = generate_keypair()
         disk_pub, _ = generate_keypair()
         priv_b64 = base64.b64encode(session_priv).decode("ascii")
-        monkeypatch.setattr(
-            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
-        )
+        monkeypatch.setattr(bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64})
         monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
         resolved = bridge_mod._resolved_pubkey()
         assert resolved == session_pub
@@ -610,9 +606,7 @@ class TestKeyPrecedence:
         session_pub, session_priv = generate_keypair()
         disk_pub, disk_priv = generate_keypair()
         priv_b64 = base64.b64encode(session_priv).decode("ascii")
-        monkeypatch.setattr(
-            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
-        )
+        monkeypatch.setattr(bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64})
         monkeypatch.setattr(bridge_mod, "load_pubkey", lambda: disk_pub)
         monkeypatch.setattr(bridge_mod, "load_privkey", lambda: disk_priv)
 
@@ -638,9 +632,7 @@ class TestPubkeySourceLabel:
 
         _, priv = generate_keypair()
         priv_b64 = base64.b64encode(priv).decode("ascii")
-        monkeypatch.setattr(
-            bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64}
-        )
+        monkeypatch.setattr(bridge_mod.st, "session_state", {"data_bridge_privkey_b64": priv_b64})
         assert bridge_mod._pubkey_source_label() == "session key"
 
     def test_falls_back_to_local_key_file(self, monkeypatch):

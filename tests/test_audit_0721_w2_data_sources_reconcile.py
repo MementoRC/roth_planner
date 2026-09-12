@@ -60,9 +60,7 @@ class TestResolveForAppFirstLoadSnapshotBaseline:
     def test_first_load_with_snapshot_migrates_without_manual_corruption(self) -> None:
         session_hh = Household()  # your_ira defaults to 0.0, pristine
         snap = PortfolioSnapshot(
-            accounts=[
-                AccountSummary(account_type="trad_ira", owner="you", total_value=500_000.0)
-            ],
+            accounts=[AccountSummary(account_type="trad_ira", owner="you", total_value=500_000.0)],
             server_available=True,
         )
         store = CandidateStore()

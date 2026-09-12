@@ -94,7 +94,13 @@ class TestSiteAScenarioLTCGEndCappedAtTotalTaxableIncome:
 
         combined_gross = 5_000.0  # only nonzero component in this fixture
         total_deductions = deductions(
-            hh.your_age, hh.spouse_age, STD_DEDUCTION_MFJ, None, filing_status="MFJ", year=2026, cpi=0.0
+            hh.your_age,
+            hh.spouse_age,
+            STD_DEDUCTION_MFJ,
+            None,
+            filing_status="MFJ",
+            year=2026,
+            cpi=0.0,
         )
         assert total_deductions == pytest.approx(32_200.0)  # sanity: ages < 65, no senior extra
         ltcg_total = ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
@@ -106,7 +112,9 @@ class TestSiteAScenarioLTCGEndCappedAtTotalTaxableIncome:
 
         thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, 2026, 0.0, round50=True)
         expected_tax = _stack_tax(start, end, thresholds, LTCG_RATES_MFJ)
-        assert expected_tax == pytest.approx(11_085.0)  # 172,800 taxed at 0/15%: (172,800-98,900)*0.15
+        assert expected_tax == pytest.approx(
+            11_085.0
+        )  # 172,800 taxed at 0/15%: (172,800-98,900)*0.15
 
         assert yr.ytd_ltcg_tax == pytest.approx(expected_tax, abs=1.0), (
             f"ytd_ltcg_tax={yr.ytd_ltcg_tax:.2f} should be {expected_tax:.2f} (end capped at "
@@ -176,7 +184,13 @@ class TestSiteADifferentialConversionLTCGMarginalCostNeverNegative:
         assert yr.your_conversion == pytest.approx(1_000.0)  # not clamped by IRA balance
 
         total_deductions = deductions(
-            hh.your_age, hh.spouse_age, STD_DEDUCTION_MFJ, None, filing_status="MFJ", year=2026, cpi=0.0
+            hh.your_age,
+            hh.spouse_age,
+            STD_DEDUCTION_MFJ,
+            None,
+            filing_status="MFJ",
+            year=2026,
+            cpi=0.0,
         )
         assert total_deductions == pytest.approx(32_200.0)
         thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, 2026, 0.0, round50=True)
@@ -237,12 +251,22 @@ class TestSiteBScenarioCompareLTCGEndCappedAtTotalTaxableIncome:
     def test_ltcg_end_capped_when_deductions_exceed_ordinary_income(self) -> None:
         gross = 5_000.0  # rmd + tss(0, since combined_ss=0) + brok_ord_income(0)
         ded = deductions(
-            70, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=2026, cpi=0.0
+            70,
+            0,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
+            year=2026,
+            cpi=0.0,
         )
         assert ded == pytest.approx(18_150.0)  # age 70 >= 65: std ded + one senior extra
         survivor_magi = gross + 200_000.0  # gross + brok_ltcg_income
-        bonus = senior_bonus_deduction(70, 0, survivor_magi, year=2026, cpi=0.0, filing_status="Single")
-        assert bonus == pytest.approx(0.0)  # MAGI 205,000 fully phases out the $6,000 bonus (ends 175,000)
+        bonus = senior_bonus_deduction(
+            70, 0, survivor_magi, year=2026, cpi=0.0, filing_status="Single"
+        )
+        assert bonus == pytest.approx(
+            0.0
+        )  # MAGI 205,000 fully phases out the $6,000 bonus (ends 175,000)
         ded_total = ded + bonus
 
         start = max(0.0, gross - ded_total)  # taxable_ordinary, floors to 0
@@ -270,9 +294,17 @@ class TestSiteBScenarioCompareLTCGEndCappedAtTotalTaxableIncome:
         produce the IDENTICAL end -- no regression for the common case."""
         gross = 50_000.0
         survivor_magi = gross + 50_000.0
-        bonus = senior_bonus_deduction(70, 0, survivor_magi, year=2026, cpi=0.0, filing_status="Single")
+        bonus = senior_bonus_deduction(
+            70, 0, survivor_magi, year=2026, cpi=0.0, filing_status="Single"
+        )
         ded = deductions(
-            70, 0, STD_DEDUCTION_SINGLE, SENIOR_EXTRA_SINGLE, filing_status="Single", year=2026, cpi=0.0
+            70,
+            0,
+            STD_DEDUCTION_SINGLE,
+            SENIOR_EXTRA_SINGLE,
+            filing_status="Single",
+            year=2026,
+            cpi=0.0,
         )
         ded_total = ded + bonus
         start = max(0.0, gross - ded_total)

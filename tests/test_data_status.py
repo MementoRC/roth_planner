@@ -59,7 +59,9 @@ def test_stale_when_confirmed_value_older_than_threshold() -> None:
     """A confirmed value older than STALE_THRESHOLD_DAYS (no pending candidate) is stale."""
     old_recorded_at = NOW - timedelta(days=STALE_THRESHOLD_DAYS + 1)
     hh = Household()
-    hh.your_ira = SourcedValue(500_000.0, Provenance(source=Source.MANUAL, recorded_at=old_recorded_at))
+    hh.your_ira = SourcedValue(
+        500_000.0, Provenance(source=Source.MANUAL, recorded_at=old_recorded_at)
+    )
 
     items = compute_data_status(hh, ["your_ira"], pending_candidates=set(), now=NOW)
 
@@ -76,9 +78,7 @@ def test_fully_populated_recently_confirmed_household_returns_empty() -> None:
     hh.your_ira = SourcedValue(500_000.0, Provenance(source=Source.MANUAL, recorded_at=recent))
     hh.spouse_ira = SourcedValue(400_000.0, Provenance(source=Source.PDF, recorded_at=recent))
 
-    items = compute_data_status(
-        hh, ["your_ira", "spouse_ira"], pending_candidates=set(), now=NOW
-    )
+    items = compute_data_status(hh, ["your_ira", "spouse_ira"], pending_candidates=set(), now=NOW)
 
     assert items == []
 
@@ -117,9 +117,7 @@ def test_completeness_all_ok_fields_is_complete() -> None:
 def test_completeness_missing_item_blocks_completeness() -> None:
     hh = Household()
 
-    result = compute_data_completeness(
-        hh, ["your_ira"], pending_candidates=set(), now=NOW
-    )
+    result = compute_data_completeness(hh, ["your_ira"], pending_candidates=set(), now=NOW)
 
     assert result.is_complete is False
 
@@ -131,9 +129,7 @@ def test_completeness_stale_only_is_non_blocking() -> None:
         500_000.0, Provenance(source=Source.MANUAL, recorded_at=old_recorded_at)
     )
 
-    result = compute_data_completeness(
-        hh, ["your_ira"], pending_candidates=set(), now=NOW
-    )
+    result = compute_data_completeness(hh, ["your_ira"], pending_candidates=set(), now=NOW)
 
     assert result.is_complete is True
     assert len(result.issues) == 1
@@ -171,9 +167,7 @@ def test_setup_step_groups_partition_governed_scalars() -> None:
     ]
 
     for field_name in HOUSEHOLD_SCALAR_FIELDS:
-        occurrences = sum(
-            1 for _key, _label, fields in SETUP_STEP_GROUPS if field_name in fields
-        )
+        occurrences = sum(1 for _key, _label, fields in SETUP_STEP_GROUPS if field_name in fields)
         assert occurrences == 1
 
 

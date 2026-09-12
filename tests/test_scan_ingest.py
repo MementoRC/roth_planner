@@ -188,7 +188,9 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
 class TestA0CurrentScanHandlerGolden:
     """Pins the CURRENT (pre-refactor) ytd_income.py scan handler's outcome."""
 
-    def test_records_magi_candidate_for_scanned_1040(self, tmp_path, monkeypatch, clean_candidate_store):
+    def test_records_magi_candidate_for_scanned_1040(
+        self, tmp_path, monkeypatch, clean_candidate_store
+    ):
         _run_ytd_scan(tmp_path, monkeypatch)
 
         # audit-0805 W1: re-import at test-run time (not the module-level
@@ -211,7 +213,9 @@ class TestA0CurrentScanHandlerGolden:
         assert persisted[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
         assert persisted[_GOLDEN_YEAR].tax_year == _GOLDEN_YEAR
 
-    def test_writes_pdf_1040_scanned_session_key(self, tmp_path, monkeypatch, clean_candidate_store):
+    def test_writes_pdf_1040_scanned_session_key(
+        self, tmp_path, monkeypatch, clean_candidate_store
+    ):
         mock_st, _persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
         setitem_calls = [
@@ -219,7 +223,9 @@ class TestA0CurrentScanHandlerGolden:
             for call in mock_st.session_state.__setitem__.call_args_list
             if call[0][0] == "_pdf_1040_scanned"
         ]
-        assert setitem_calls, "Expected _pdf_1040_scanned to be written after a scan with a Form 1040"
+        assert setitem_calls, (
+            "Expected _pdf_1040_scanned to be written after a scan with a Form 1040"
+        )
         written = setitem_calls[-1][0][1]
         assert set(written) == {_GOLDEN_YEAR}
         assert written[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
@@ -391,7 +397,9 @@ class TestA2RewiredYtdIncomeView:
         import engine.tax_return_pdf as tax_return_pdf_mod
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setattr(tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json")
+        monkeypatch.setattr(
+            tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json"
+        )
 
         hh = _stub_hh()
         mock_st = _make_mock_st(YTDSnapshot())
@@ -406,9 +414,9 @@ class TestA2RewiredYtdIncomeView:
             patch.object(ytd_income_mod, "st", mock_st),
             patch.object(shared_mod, "st", mock_st),
             patch.object(sync_scan_mod, "st", mock_st),
-        patch.object(manual_entry_mod, "st", mock_st),
-        patch.object(event_log_mod, "st", mock_st),
-        patch.object(analysis_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
             patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()) as mock_scan,
             patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
             patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
@@ -467,7 +475,9 @@ class TestA3ParametersDuplicateScanRemoved:
         mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
         mock_st.spinner.return_value.__enter__ = MagicMock(return_value=MagicMock())
         mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
-        mock_st.columns.side_effect = lambda n: [MagicMock() for _ in range(n if isinstance(n, int) else len(n))]
+        mock_st.columns.side_effect = lambda n: [
+            MagicMock() for _ in range(n if isinstance(n, int) else len(n))
+        ]
         mock_st.selectbox.return_value = "married_filing_jointly"
         mock_st.button.side_effect = lambda label, **kw: label == "Save 1040 record"
 
