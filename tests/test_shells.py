@@ -157,7 +157,9 @@ def test_render_setup_unknown_theme_raises_value_error() -> None:
 
 
 @pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual", "wizard"])
-def test_shell_renders_without_exception(shell_name, clean_command_center_caches, monkeypatch) -> None:
+def test_shell_renders_without_exception(
+    shell_name, clean_command_center_caches, monkeypatch
+) -> None:
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
 
@@ -403,7 +405,9 @@ def _render_contextual_all_good(seed_identity: bool = True) -> None:
     hh.txn_price_now = SourcedValue(float(DEFAULTS["stock_price_now"]), prov)
     hh.your_ss_fra = SourcedValue(float(DEFAULTS["your_ss_fra"]), prov)
     hh.spouse_ss_fra = SourcedValue(float(DEFAULTS["spouse_ss_fra"]), prov)
-    hh.grants = SourcedList([StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029)], [prov])
+    hh.grants = SourcedList(
+        [StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029)], [prov]
+    )
 
     render_setup(hh, "Contextual")
 
@@ -429,7 +433,9 @@ def _run_contextual(target, monkeypatch, kwargs: dict | None = None) -> AppTest:
     return at
 
 
-def test_contextual_missing_field_shows_missing_chip(clean_command_center_caches, monkeypatch) -> None:
+def test_contextual_missing_field_shows_missing_chip(
+    clean_command_center_caches, monkeypatch
+) -> None:
     at = _run_contextual(_render_contextual_missing_fields, monkeypatch)
     assert not at.exception
 
@@ -441,7 +447,9 @@ def test_contextual_missing_field_shows_missing_chip(clean_command_center_caches
     assert any("Your IRA balance" in w and "missing" in w for w in warnings)
 
 
-def test_contextual_chip_jump_button_sets_nav_page(clean_command_center_caches, monkeypatch) -> None:
+def test_contextual_chip_jump_button_sets_nav_page(
+    clean_command_center_caches, monkeypatch
+) -> None:
     """Clicking a status chip's "Edit in Command Center ->" jump button (the
     ``command_center_button`` reused from ``views/_shared.py``) must set
     ``session_state[NAV_KEY]`` to the Setup page label — the actual mechanism
@@ -465,7 +473,9 @@ def test_contextual_chip_jump_button_sets_nav_page(clean_command_center_caches, 
     assert at.session_state[NAV_KEY] == SETUP_PAGE
 
 
-def test_contextual_conflict_field_shows_conflict_chip(clean_command_center_caches, monkeypatch) -> None:
+def test_contextual_conflict_field_shows_conflict_chip(
+    clean_command_center_caches, monkeypatch
+) -> None:
     at = _run_contextual(_render_contextual_conflict_field, monkeypatch)
     assert not at.exception
 
@@ -506,9 +516,7 @@ def test_contextual_all_good_household_shows_identity_gate_warning_when_owner_un
     is the only coverage of the gate's warning actually surfacing through a
     real shell render rather than a bespoke Command-Center-only AppTest.
     """
-    at = _run_contextual(
-        _render_contextual_all_good, monkeypatch, kwargs={"seed_identity": False}
-    )
+    at = _run_contextual(_render_contextual_all_good, monkeypatch, kwargs={"seed_identity": False})
     assert not at.exception
 
     warnings = [w.value for w in at.warning]
@@ -589,6 +597,7 @@ def test_wizard_shows_step_completeness() -> None:
     def _script() -> None:
         from models.household import Household
         from views import shells as s
+
         s.render_setup(Household(), "Wizard")  # step 0 = household (has governed fields)
 
     at = AppTest.from_function(_script).run()
@@ -606,7 +615,7 @@ def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
 
     import views.setup.data_bridge as data_bridge_mod
 
-    monkeypatch.setattr(data_bridge_mod, 'load_pubkey', lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
 
     def _script() -> None:
         import streamlit as st
@@ -616,25 +625,25 @@ def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
         from models.household import Household
         from views import shells as s
 
-        st.session_state['_suppress_snapshot_autoload'] = True
-        st.session_state.setdefault('growth_rate', 7.0)
-        st.session_state.setdefault('living_expenses', DEFAULTS['living_expenses'])
-        st.session_state.setdefault('aca_benchmark_premium_annual', 21_600.0)
-        st.session_state.setdefault('advance_aptc_annual', 0)
-        st.session_state.setdefault('medicare_part_b_base_monthly', BASE_PART_B / 12)
-        st.session_state.setdefault('cpi_assumption', 0.025)
-        st.session_state.setdefault('_pending_review', set())
+        st.session_state["_suppress_snapshot_autoload"] = True
+        st.session_state.setdefault("growth_rate", 7.0)
+        st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
+        st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
+        st.session_state.setdefault("advance_aptc_annual", 0)
+        st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
+        st.session_state.setdefault("cpi_assumption", 0.025)
+        st.session_state.setdefault("_pending_review", set())
 
-        st.session_state['wizard_step'] = 4
-        s.render_setup(Household(), 'Wizard')
+        st.session_state["wizard_step"] = 4
+        s.render_setup(Household(), "Wizard")
 
     at = AppTest.from_function(_script).run()
     assert not at.exception
 
     expander_labels = [e.label for e in at.expander]
     subheader_texts = [sh.value for sh in at.subheader]
-    assert any('1040' in lbl for lbl in expander_labels), expander_labels
-    assert any('bridge' in txt.lower() for txt in subheader_texts), subheader_texts
+    assert any("1040" in lbl for lbl in expander_labels), expander_labels
+    assert any("bridge" in txt.lower() for txt in subheader_texts), subheader_texts
 
 
 # --- Task 8: bundle export/import symmetry ---------------------------------
@@ -662,7 +671,9 @@ def test_export_stamps_owner_from_instance(monkeypatch) -> None:
     monkeypatch.setattr(data_bridge_mod, "_resolved_pubkey", lambda: b"\x00" * 32)
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
     monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
-    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {"koinly": {}, "brokerage": {}})
+    monkeypatch.setattr(
+        data_bridge_mod, "_load_pdf_ledger", lambda: {"koinly": {}, "brokerage": {}}
+    )
     monkeypatch.setattr(data_bridge_mod, "load_ytd_snapshot", lambda: None)
 
     def _render() -> None:
@@ -1160,8 +1171,7 @@ def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
     at = _run_shell(shell_name, monkeypatch)
     assert not at.exception
     assert not spy.called, (
-        f"{shell_name} shell called save_user_defaults despite "
-        "_suppress_snapshot_autoload=True"
+        f"{shell_name} shell called save_user_defaults despite _suppress_snapshot_autoload=True"
     )
 
 

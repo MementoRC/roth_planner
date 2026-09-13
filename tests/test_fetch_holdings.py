@@ -154,9 +154,7 @@ class TestFetchHoldingsDistinguishesFailureFromEmpty:
         assert snap.error is not None
         assert "500" in snap.error
 
-    def test_genuine_empty_is_reported_as_available(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_genuine_empty_is_reported_as_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A 200 with no rows is a real answer: available, with an empty row list."""
         from engine.portfolio_sync import client as client_module
         from engine.portfolio_sync.holdings import fetch_holdings_snapshot

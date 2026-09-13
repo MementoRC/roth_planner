@@ -129,9 +129,7 @@ def _render_accounts_your_ira(your_ira: float) -> None:
 
 
 def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
-    at = AppTest.from_function(
-        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 85}
-    )
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 85})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label == "Your SS claim age")
@@ -139,9 +137,7 @@ def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None
 
 
 def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
-    at = AppTest.from_function(
-        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 10}
-    )
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 10})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label == "Your SS claim age")
@@ -149,9 +145,7 @@ def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None
 
 
 def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches) -> None:
-    at = AppTest.from_function(
-        _render_accounts_your_ss_start_age, kwargs={"ss_start_age": 65}
-    )
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 65})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label == "Your SS claim age")
@@ -159,9 +153,7 @@ def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches)
 
 
 def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
-    at = AppTest.from_function(
-        _render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 85}
-    )
+    at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 85})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")
@@ -169,9 +161,7 @@ def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> No
 
 
 def test_spouse_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
-    at = AppTest.from_function(
-        _render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 10}
-    )
+    at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 10})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")

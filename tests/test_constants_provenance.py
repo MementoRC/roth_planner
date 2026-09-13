@@ -36,7 +36,14 @@ class TestOrdinaryBrackets:
         from engine.tax import BRACKETS_MFJ
 
         thresholds = [b[0] for b in BRACKETS_MFJ[:-1]]  # exclude inf sentinel
-        assert thresholds == [24_800, 100_800, 211_400, 403_550, 512_450, 768_700]  # IRS Rev. Proc. 2025-32
+        assert thresholds == [
+            24_800,
+            100_800,
+            211_400,
+            403_550,
+            512_450,
+            768_700,
+        ]  # IRS Rev. Proc. 2025-32
 
     def test_brackets_mfj_rates(self):
         from engine.tax import BRACKETS_MFJ
@@ -53,7 +60,14 @@ class TestOrdinaryBrackets:
         from engine.tax import BRACKETS_SINGLE
 
         thresholds = [b[0] for b in BRACKETS_SINGLE[:-1]]  # exclude inf sentinel
-        assert thresholds == [12_400, 50_400, 105_700, 201_775, 256_225, 640_600]  # IRS Rev. Proc. 2025-32
+        assert thresholds == [
+            12_400,
+            50_400,
+            105_700,
+            201_775,
+            256_225,
+            640_600,
+        ]  # IRS Rev. Proc. 2025-32
 
     def test_brackets_single_rates(self):
         from engine.tax import BRACKETS_SINGLE
@@ -107,12 +121,18 @@ class TestLTCGThresholds:
     def test_ltcg_thresholds_mfj(self):
         from engine.tax import LTCG_THRESHOLDS_MFJ
 
-        assert LTCG_THRESHOLDS_MFJ == (98_900, 613_700)  # IRS Rev. Proc. 2025-32 §3.03; 0%/15%/20% tiers
+        assert LTCG_THRESHOLDS_MFJ == (
+            98_900,
+            613_700,
+        )  # IRS Rev. Proc. 2025-32 §3.03; 0%/15%/20% tiers
 
     def test_ltcg_thresholds_single(self):
         from engine.tax import LTCG_THRESHOLDS_SINGLE
 
-        assert LTCG_THRESHOLDS_SINGLE == (49_450, 545_500)  # IRS Rev. Proc. 2025-32 §3.03; 0%/15%/20% tiers
+        assert LTCG_THRESHOLDS_SINGLE == (
+            49_450,
+            545_500,
+        )  # IRS Rev. Proc. 2025-32 §3.03; 0%/15%/20% tiers
 
 
 # ---------------------------------------------------------------------------
@@ -133,17 +153,23 @@ class TestOBBBAConstants:
     def test_obbba_phaseout_start_mfj(self):
         from engine.tax import OBBBA_PHASEOUT_START_MFJ
 
-        assert OBBBA_PHASEOUT_START_MFJ == 150_000  # Pub. L. 119-21 §70103; IRC §151(d)(5)(C) MFJ phaseout start
+        assert (
+            OBBBA_PHASEOUT_START_MFJ == 150_000
+        )  # Pub. L. 119-21 §70103; IRC §151(d)(5)(C) MFJ phaseout start
 
     def test_obbba_phaseout_start_single(self):
         from engine.tax import OBBBA_PHASEOUT_START_SINGLE
 
-        assert OBBBA_PHASEOUT_START_SINGLE == 75_000  # Pub. L. 119-21 §70103; Single/HoH phaseout start
+        assert (
+            OBBBA_PHASEOUT_START_SINGLE == 75_000
+        )  # Pub. L. 119-21 §70103; Single/HoH phaseout start
 
     def test_obbba_phaseout_rate(self):
         from engine.tax import OBBBA_PHASEOUT_RATE
 
-        assert pytest.approx(0.06) == OBBBA_PHASEOUT_RATE  # Pub. L. 119-21 §70103; $0.06 per $1 excess MAGI
+        assert (
+            pytest.approx(0.06) == OBBBA_PHASEOUT_RATE
+        )  # Pub. L. 119-21 §70103; $0.06 per $1 excess MAGI
 
 
 # ---------------------------------------------------------------------------
@@ -164,61 +190,87 @@ class TestIRMAAConstants:
         from engine.irmaa import IRMAA_TIERS_MFJ
 
         thresholds = [t[0] for t in IRMAA_TIERS_MFJ]
-        assert thresholds == [218_000, 274_000, 342_000, 410_000, 750_000]  # CMS 2026; Tier 5 frozen since 2020
+        assert thresholds == [
+            218_000,
+            274_000,
+            342_000,
+            410_000,
+            750_000,
+        ]  # CMS 2026; Tier 5 frozen since 2020
 
     # --- MFJ Part B annual totals (monthly * 12) ---
 
     def test_irmaa_tiers_mfj_part_b_tier1(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[0][1] == pytest.approx(284.10 * 12)  # CMS 2026; $284.10/mo Part B Tier 1
+        assert IRMAA_TIERS_MFJ[0][1] == pytest.approx(
+            284.10 * 12
+        )  # CMS 2026; $284.10/mo Part B Tier 1
 
     def test_irmaa_tiers_mfj_part_b_tier2(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[1][1] == pytest.approx(405.80 * 12)  # CMS 2026; $405.80/mo Part B Tier 2
+        assert IRMAA_TIERS_MFJ[1][1] == pytest.approx(
+            405.80 * 12
+        )  # CMS 2026; $405.80/mo Part B Tier 2
 
     def test_irmaa_tiers_mfj_part_b_tier3(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[2][1] == pytest.approx(527.50 * 12)  # CMS 2026; $527.50/mo Part B Tier 3
+        assert IRMAA_TIERS_MFJ[2][1] == pytest.approx(
+            527.50 * 12
+        )  # CMS 2026; $527.50/mo Part B Tier 3
 
     def test_irmaa_tiers_mfj_part_b_tier4(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[3][1] == pytest.approx(649.20 * 12)  # CMS 2026; $649.20/mo Part B Tier 4
+        assert IRMAA_TIERS_MFJ[3][1] == pytest.approx(
+            649.20 * 12
+        )  # CMS 2026; $649.20/mo Part B Tier 4
 
     def test_irmaa_tiers_mfj_part_b_tier5(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[4][1] == pytest.approx(689.90 * 12)  # CMS 2026; $689.90/mo Part B Tier 5
+        assert IRMAA_TIERS_MFJ[4][1] == pytest.approx(
+            689.90 * 12
+        )  # CMS 2026; $689.90/mo Part B Tier 5
 
     # --- MFJ Part D annual surcharges (monthly * 12) ---
 
     def test_irmaa_tiers_mfj_part_d_tier1(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[0][2] == pytest.approx(14.50 * 12)  # CMS 2026; $14.50/mo Part D Tier 1
+        assert IRMAA_TIERS_MFJ[0][2] == pytest.approx(
+            14.50 * 12
+        )  # CMS 2026; $14.50/mo Part D Tier 1
 
     def test_irmaa_tiers_mfj_part_d_tier2(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[1][2] == pytest.approx(37.50 * 12)  # CMS 2026; $37.50/mo Part D Tier 2
+        assert IRMAA_TIERS_MFJ[1][2] == pytest.approx(
+            37.50 * 12
+        )  # CMS 2026; $37.50/mo Part D Tier 2
 
     def test_irmaa_tiers_mfj_part_d_tier3(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[2][2] == pytest.approx(60.40 * 12)  # CMS 2026; $60.40/mo Part D Tier 3
+        assert IRMAA_TIERS_MFJ[2][2] == pytest.approx(
+            60.40 * 12
+        )  # CMS 2026; $60.40/mo Part D Tier 3
 
     def test_irmaa_tiers_mfj_part_d_tier4(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[3][2] == pytest.approx(83.30 * 12)  # CMS 2026; $83.30/mo Part D Tier 4
+        assert IRMAA_TIERS_MFJ[3][2] == pytest.approx(
+            83.30 * 12
+        )  # CMS 2026; $83.30/mo Part D Tier 4
 
     def test_irmaa_tiers_mfj_part_d_tier5(self):
         from engine.irmaa import IRMAA_TIERS_MFJ
 
-        assert IRMAA_TIERS_MFJ[4][2] == pytest.approx(91.00 * 12)  # CMS 2026; $91.00/mo Part D Tier 5
+        assert IRMAA_TIERS_MFJ[4][2] == pytest.approx(
+            91.00 * 12
+        )  # CMS 2026; $91.00/mo Part D Tier 5
 
     # --- Single tier MAGI thresholds ---
 
@@ -226,14 +278,22 @@ class TestIRMAAConstants:
         from engine.irmaa import IRMAA_TIERS_SINGLE
 
         thresholds = [t[0] for t in IRMAA_TIERS_SINGLE]
-        assert thresholds == [109_000, 137_000, 171_000, 205_000, 500_000]  # CMS 2026; Tier 5 frozen since 2020
+        assert thresholds == [
+            109_000,
+            137_000,
+            171_000,
+            205_000,
+            500_000,
+        ]  # CMS 2026; Tier 5 frozen since 2020
 
     # --- Base Part B premium (no surcharge) ---
 
     def test_base_part_b_annual(self):
         from engine.irmaa import BASE_PART_B
 
-        assert pytest.approx(202.90 * 12) == BASE_PART_B  # CMS 2026; $202.90/mo standard Part B premium
+        assert (
+            pytest.approx(202.90 * 12) == BASE_PART_B
+        )  # CMS 2026; $202.90/mo standard Part B premium
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +337,9 @@ class TestFPLConstants:
     def test_fpl_family_of_2(self):
         from engine.aca import FPL_2
 
-        assert FPL_2 == 21_150  # HHS 2025 FPL; continental US household of 2 ($5,500 per-person increment)
+        assert (
+            FPL_2 == 21_150
+        )  # HHS 2025 FPL; continental US household of 2 ($5,500 per-person increment)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +356,9 @@ class TestHHSAgeCurve:
     def test_hhs_age_curve_anchor_age40(self):
         from engine.aca import _HHS_AGE_CURVE
 
-        assert _HHS_AGE_CURVE[40] == pytest.approx(1.278)  # 45 CFR 147.102; age-40 factor (lower clamp)
+        assert _HHS_AGE_CURVE[40] == pytest.approx(
+            1.278
+        )  # 45 CFR 147.102; age-40 factor (lower clamp)
 
     def test_hhs_age_curve_anchor_age64(self):
         from engine.aca import _HHS_AGE_CURVE
@@ -309,7 +373,9 @@ class TestHHSAgeCurve:
     def test_aca_age_factor_clamp_below_40(self):
         from engine.aca import aca_age_factor
 
-        assert aca_age_factor(35) == pytest.approx(1.278)  # 45 CFR 147.102; ≤40 clamps to age-40 factor
+        assert aca_age_factor(35) == pytest.approx(
+            1.278
+        )  # 45 CFR 147.102; ≤40 clamps to age-40 factor
 
 
 # ---------------------------------------------------------------------------
@@ -331,16 +397,22 @@ class TestHouseholdDefaults:
         from models.household import Household
 
         hh = Household(grants=[])
-        assert hh.senior_extra == 1_650  # IRS Rev. Proc. 2025-32; per spouse 65+ additional deduction 2026
+        assert (
+            hh.senior_extra == 1_650
+        )  # IRS Rev. Proc. 2025-32; per spouse 65+ additional deduction 2026
 
     def test_household_part_b_base_monthly_default(self):
         from models.household import Household
 
         hh = Household(grants=[])
-        assert hh.medicare_part_b_base_monthly == pytest.approx(202.90)  # CMS 2026; standard Part B monthly
+        assert hh.medicare_part_b_base_monthly == pytest.approx(
+            202.90
+        )  # CMS 2026; standard Part B monthly
 
     def test_household_qcd_limit_default(self):
         from models.household import Household
 
         hh = Household(grants=[])
-        assert hh.qcd_limit == 111_000  # IRS Rev. Proc. 2025-32; 2026 per-person QCD limit (SECURE 2.0 §307)
+        assert (
+            hh.qcd_limit == 111_000
+        )  # IRS Rev. Proc. 2025-32; 2026 per-person QCD limit (SECURE 2.0 §307)

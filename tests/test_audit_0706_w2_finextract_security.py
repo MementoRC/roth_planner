@@ -20,6 +20,7 @@ from unittest.mock import patch
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _reload_client() -> object:
     """Force a fresh import so module-level BASE_URL picks up env patches."""
     mod_name = "engine.portfolio_sync.client"
@@ -31,6 +32,7 @@ def _reload_client() -> object:
 # ---------------------------------------------------------------------------
 # crypto-security-0: 0.0.0.0 and :: must be treated as local
 # ---------------------------------------------------------------------------
+
 
 class TestLoopbackAliasesRecognised:
     """0.0.0.0 and :: should be accepted as safe loopback transports."""
@@ -53,6 +55,7 @@ class TestLoopbackAliasesRecognised:
 # ---------------------------------------------------------------------------
 # crypto-security-5: non-canonical loopback (127.0.0.2) must be safe
 # ---------------------------------------------------------------------------
+
 
 class TestNonCanonicalLoopbackRecognised:
     """127.x.x.x addresses that are_loopback must not drop the token."""
@@ -94,6 +97,7 @@ class TestNonCanonicalLoopbackRecognised:
 # crypto-security-3: embedded CR / LF in env-var token must be rejected
 # ---------------------------------------------------------------------------
 
+
 class TestEnvTokenSanitisation:
     """Env-var tokens containing \\r or \\n must be rejected (log + treat as absent)."""
 
@@ -107,9 +111,7 @@ class TestEnvTokenSanitisation:
         ):
             client = _reload_client()
             tok = client._load_token()
-            assert tok == "", (
-                "Token with embedded newline must be rejected (returned empty string)"
-            )
+            assert tok == "", "Token with embedded newline must be rejected (returned empty string)"
 
     def test_token_with_carriage_return_is_rejected(self, tmp_path: Path) -> None:
         """A token with an embedded \\r must not be used."""
@@ -121,9 +123,7 @@ class TestEnvTokenSanitisation:
         ):
             client = _reload_client()
             tok = client._load_token()
-            assert tok == "", (
-                "Token with embedded CR must be rejected (returned empty string)"
-            )
+            assert tok == "", "Token with embedded CR must be rejected (returned empty string)"
 
     def test_clean_token_is_returned(self) -> None:
         """A well-formed token must still be returned normally."""
@@ -145,22 +145,20 @@ class TestEnvTokenSanitisation:
         with patch.dict(os.environ, env_clean, clear=True):
             client = _reload_client()
             tok = client._load_token()
-            assert tok == "", (
-                "FINEXT_TOKEN with embedded newline must be rejected"
-            )
+            assert tok == "", "FINEXT_TOKEN with embedded newline must be rejected"
 
 
 # ---------------------------------------------------------------------------
 # crypto-security-2 + crypto-security-9: fstat-after-open (TOCTOU / symlink)
 # ---------------------------------------------------------------------------
 
+
 class TestTokenFileTOCTOU:
     """_load_token must open the file first, then fstat the descriptor."""
 
     def test_readable_token_file_works(self, tmp_path: Path) -> None:
         """A correctly-protected token file must be loaded."""
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
+        env = {k: v for k, v in os.environ.items() if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
         auth_dir = tmp_path / ".finextract"
         auth_dir.mkdir()
         auth_file = auth_dir / "auth-token"
@@ -172,9 +170,7 @@ class TestTokenFileTOCTOU:
                 tok = client._load_token()
         assert tok == "file-token"
 
-    def test_world_readable_token_file_fails_closed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_world_readable_token_file_fails_closed(self, tmp_path: Path) -> None:
         """Group/world-readable token file must be REFUSED (SEC-02: fail closed).
 
         Prior behaviour warned but still loaded the token (fail-open).  After
@@ -187,15 +183,12 @@ class TestTokenFileTOCTOU:
         auth_file.write_text("warn-token\n")
         auth_file.chmod(0o644)  # group-readable → must be refused
 
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
+        env = {k: v for k, v in os.environ.items() if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
         with patch.dict(os.environ, env, clear=True):
             client = _reload_client()
             with patch("pathlib.Path.home", return_value=tmp_path):
                 tok = client._load_token()
-        assert tok == "", (
-            "SEC-02: lax-perms token file must be refused (fail closed), not loaded"
-        )
+        assert tok == "", "SEC-02: lax-perms token file must be refused (fail closed), not loaded"
 
     def test_symlink_to_token_file_is_rejected(self, tmp_path: Path) -> None:
         """A symlink to the token file must be rejected (O_NOFOLLOW)."""
@@ -208,8 +201,7 @@ class TestTokenFileTOCTOU:
         auth_file = auth_dir / "auth-token"
         auth_file.symlink_to(real_file)
 
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
+        env = {k: v for k, v in os.environ.items() if k not in ("FINEXTRACT_TOKEN", "FINEXT_TOKEN")}
         with patch.dict(os.environ, env, clear=True):
             client = _reload_client()
             with patch("pathlib.Path.home", return_value=tmp_path):

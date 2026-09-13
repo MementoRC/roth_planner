@@ -23,6 +23,7 @@ from models.household import Household, SurvivorScenario
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_hh(
     *,
     who_dies: str = "spouse",
@@ -54,6 +55,7 @@ def _make_hh(
 # ---------------------------------------------------------------------------
 # Core regression: spouse dies — no phantom RMDs on deceased's IRA after death
 # ---------------------------------------------------------------------------
+
 
 class TestSurvivorSpouseDies:
     """Spouse dies in 2031; projection runs to age 95 (your_age 61 -> 95)."""
@@ -97,12 +99,8 @@ class TestSurvivorSpouseDies:
 
     def test_survivor_ira_reflects_rollover(self, result):
         """From death_year+1 your_ira_end must be > pre-death level (rolled-in balance)."""
-        rollover_yr = next(
-            (y for y in result.years if y.year == self.DEATH_YEAR + 1), None
-        )
-        pre_death_yr = next(
-            (y for y in result.years if y.year == self.DEATH_YEAR), None
-        )
+        rollover_yr = next((y for y in result.years if y.year == self.DEATH_YEAR + 1), None)
+        pre_death_yr = next((y for y in result.years if y.year == self.DEATH_YEAR), None)
         assert rollover_yr is not None
         assert pre_death_yr is not None
         # After rollover your IRA should be materially larger than it was just before
@@ -115,6 +113,7 @@ class TestSurvivorSpouseDies:
 # ---------------------------------------------------------------------------
 # You die — same invariants for the reversed who_dies
 # ---------------------------------------------------------------------------
+
 
 class TestSurvivorYouDie:
     """You die in 2030; spouse is the survivor."""
@@ -132,18 +131,13 @@ class TestSurvivorYouDie:
         assert post_death, "No years projected after death_year"
         bad = [y for y in post_death if y.your_ira_end > 0]
         assert bad == [], (
-            f"Phantom 'your' IRA balance after death: "
-            f"{[(y.year, y.your_ira_end) for y in bad]}"
+            f"Phantom 'your' IRA balance after death: {[(y.year, y.your_ira_end) for y in bad]}"
         )
 
     def test_spouse_ira_reflects_rollover(self, result):
         """Spouse IRA must jump at rollover year when your balance transfers."""
-        rollover_yr = next(
-            (y for y in result.years if y.year == self.DEATH_YEAR + 1), None
-        )
-        pre_death_yr = next(
-            (y for y in result.years if y.year == self.DEATH_YEAR), None
-        )
+        rollover_yr = next((y for y in result.years if y.year == self.DEATH_YEAR + 1), None)
+        pre_death_yr = next((y for y in result.years if y.year == self.DEATH_YEAR), None)
         assert rollover_yr is not None
         assert pre_death_yr is not None
         assert rollover_yr.spouse_ira_end > pre_death_yr.spouse_ira_end * 1.5, (
@@ -155,6 +149,7 @@ class TestSurvivorYouDie:
 # ---------------------------------------------------------------------------
 # No survivor -> behaviour unchanged (non-regression)
 # ---------------------------------------------------------------------------
+
 
 class TestNoSurvivor:
     """Without a SurvivorScenario both IRA balances grow throughout."""

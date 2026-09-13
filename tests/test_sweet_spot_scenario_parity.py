@@ -288,9 +288,7 @@ class TestRmdYtdNettingParity:
             f"niit_magi ({oracle.niit_magi:.2f}); pre-fix it is inflated by the "
             "double-counted YTD RMD, pushing it over the NIIT threshold"
         )
-        sweet_spot_niit = niit(
-            result.niit_magi, net_inv_income, filing_status=hh.filing_status
-        )
+        sweet_spot_niit = niit(result.niit_magi, net_inv_income, filing_status=hh.filing_status)
         assert sweet_spot_niit == pytest.approx(0.0), (
             f"sweet_spot must NOT manufacture a phantom NIIT charge; got "
             f"{sweet_spot_niit:.2f} (oracle correctly shows $0.00)"
@@ -445,12 +443,8 @@ class TestMU8F1LtcgStackRegression:
 
         assert b_with_ytd.ytd_ordinary == pytest.approx(wages)
 
-        res_no_ytd = all_in_at_conversion(
-            hh, b_no_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible
-        )
-        res_with_ytd = all_in_at_conversion(
-            hh, b_with_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible
-        )
+        res_no_ytd = all_in_at_conversion(hh, b_no_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible)
+        res_with_ytd = all_in_at_conversion(hh, b_with_ytd, conv, 0.0, ltcg_eligible=ltcg_eligible)
 
         assert res_no_ytd.ltcg_delta == pytest.approx(0.0, abs=0.01), (
             "without ytd_ordinary, taxable_inc stays below the LTCG 0%->15% threshold"

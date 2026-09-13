@@ -141,7 +141,10 @@ class TestOptionCashBrokerageCarryForward:
         # The important thing is that brokerage_balance > 0 when option year
         # produces a net surplus — which requires option_income in available_income.
         option_net_of_tax = yr_option.option_income - max(
-            yr_option.federal_tax_amt - yr_option.taxable_rmd - yr_option.spouse_taxable_rmd - yr_option.combined_ss,
+            yr_option.federal_tax_amt
+            - yr_option.taxable_rmd
+            - yr_option.spouse_taxable_rmd
+            - yr_option.combined_ss,
             0.0,
         )
         if option_net_of_tax > hh.living_expenses:

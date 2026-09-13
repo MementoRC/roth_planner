@@ -232,6 +232,5 @@ class TestQcdCapInflationIndexed:
         result = run_scenario(hh, plan, "indexed_qcd_cap", end_age=80)
         yr40 = next(yr for yr in result.years if yr.your_age == 79)
         assert yr40.qcd == pytest.approx(130_000.0, abs=1.0), (
-            f"QCD cap should be inflation-indexed: expected 130K not clipped, "
-            f"got {yr40.qcd:,.0f}"
+            f"QCD cap should be inflation-indexed: expected 130K not clipped, got {yr40.qcd:,.0f}"
         )

@@ -108,7 +108,14 @@ class TestPlannerBracketLegend:
         src = self._get_planner_source()
         assert "_segments" in src, "_segments list not found in planner source"
         # Verify all 6 segment names appear
-        for seg_name in ("Options", "Taxable RMD", "Taxable SS", "Your Conv", "Sp Conv", "Room (12%)"):
+        for seg_name in (
+            "Options",
+            "Taxable RMD",
+            "Taxable SS",
+            "Your Conv",
+            "Sp Conv",
+            "Room (12%)",
+        ):
             assert seg_name in src, f"Segment '{seg_name}' missing from planner bracket chart"
 
     def test_showlegend_true_unconditional(self):

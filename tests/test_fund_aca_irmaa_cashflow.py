@@ -303,9 +303,7 @@ class TestCliffGrossUp:
         hh = _aca_household(living_expenses=95_000.0)
         res = run_scenario(hh, ConversionPlan(), "cliff", end_age=64)
 
-        engaged = [
-            yr for yr in res.years if yr.aca_loss > 0.0 or yr.aca_premium_cost > 0.0
-        ]
+        engaged = [yr for yr in res.years if yr.aca_loss > 0.0 or yr.aca_premium_cost > 0.0]
         assert engaged, "fixture never engaged ACA at all"
 
         for yr in res.years:
@@ -332,9 +330,7 @@ class TestHouseholdShapes:
         ],
         ids=["default", "large-brokerage", "single", "with-ss", "small-ira"],
     )
-    def test_enrollment_never_increases_terminal_wealth(
-        self, shape: dict[str, object]
-    ) -> None:
+    def test_enrollment_never_increases_terminal_wealth(self, shape: dict[str, object]) -> None:
         """Paying premiums can never make a household RICHER. Weak inequality
         so shapes where ACA is inert (Single past 65, tiny IRA fully drained)
         still pass, but the direction can never invert."""

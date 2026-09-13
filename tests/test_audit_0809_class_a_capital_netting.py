@@ -109,8 +109,13 @@ class TestSite2ScenarioLTCGStackWalk:
         # both under 65, so neither the senior extra nor the OBBBA bonus applies.
         combined_gross = ytd.ordinary_capital_gain_ytd
         total_deductions = deductions(
-            hh.your_age, hh.spouse_age, STD_DEDUCTION_MFJ, None, filing_status="MFJ",
-            year=hh.base_year, cpi=hh.cpi_assumption,
+            hh.your_age,
+            hh.spouse_age,
+            STD_DEDUCTION_MFJ,
+            None,
+            filing_status="MFJ",
+            year=hh.base_year,
+            cpi=hh.cpi_assumption,
         )
         assert total_deductions == pytest.approx(32_200.0)  # sanity: no senior extra at these ages
         start = max(0.0, combined_gross - total_deductions)
@@ -157,7 +162,9 @@ class TestSite3ScenarioComputeSocialSecurity:
 
         # Sanity: both fixtures net to the same -$3,000 ordinary/preferential split.
         assert ytd_a.ordinary_capital_gain_ytd == pytest.approx(ytd_b.ordinary_capital_gain_ytd)
-        assert ytd_a.preferential_capital_gain_ytd == pytest.approx(ytd_b.preferential_capital_gain_ytd)
+        assert ytd_a.preferential_capital_gain_ytd == pytest.approx(
+            ytd_b.preferential_capital_gain_ytd
+        )
 
         *_, taxable_ss_a, _ = compute_social_security(
             hh, 67, 67, False, None, "MFJ", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ytd_a

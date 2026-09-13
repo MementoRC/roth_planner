@@ -66,9 +66,7 @@ class TestHandleTxnQuoteFetchOk:
         monkeypatch.setattr(st, "session_state", {})
         store_path = tmp_path / "candidate_store.json"
 
-        result = handle_txn_quote_fetch(
-            store_path=store_path, fetcher=lambda: _ok_result(210.5)
-        )
+        result = handle_txn_quote_fetch(store_path=store_path, fetcher=lambda: _ok_result(210.5))
 
         assert result.ok
         store = CandidateStore.load(store_path)
@@ -235,12 +233,10 @@ class TestAssumedPriceProjectsFromFetchedBasis:
         fetched_price = 284.02
 
         effective_base = fetched_price  # what st.session_state["_txn_quote_price"] holds
-        assert project_price(effective_base, base_year, growth, base_year) == pytest.approx(
-            284.02
+        assert project_price(effective_base, base_year, growth, base_year) == pytest.approx(284.02)
+        assert project_price(effective_base, base_year, growth, base_year + 2) == pytest.approx(
+            284.02 * 1.07**2
         )
-        assert project_price(
-            effective_base, base_year, growth, base_year + 2
-        ) == pytest.approx(284.02 * 1.07**2)
 
 
 def _render_household_with_one_grant() -> None:
@@ -385,7 +381,7 @@ def _render_household_loading_schedule(cache_path) -> None:
 
 
 class TestSaveOnlyPersistsDivergentPrices:
-    """"Save schedule" must only freeze a year's price as an explicit override
+    """ "Save schedule" must only freeze a year's price as an explicit override
     when the widget value diverges from the projected assumption -- untouched
     "assumed" cells must not be persisted (the root cause of the "stuck at old
     price" bug: a stale flat price shadowing a later live-quote fetch)."""

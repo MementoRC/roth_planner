@@ -740,17 +740,28 @@ class TestHeadroomBracketRoomSsTorpedo:
         locked_tss = taxable_ss(combined_ss, ytd.magi_ytd, filing_status="MFJ")
         locked_niit_magi = ytd.niit_magi_ytd + locked_tss
         ded = deductions(
-            hh.your_age, hh.spouse_age, hh.std_deduction, hh.senior_extra,
-            filing_status="MFJ", year=2026, cpi=hh.cpi_assumption,
+            hh.your_age,
+            hh.spouse_age,
+            hh.std_deduction,
+            hh.senior_extra,
+            filing_status="MFJ",
+            year=2026,
+            cpi=hh.cpi_assumption,
         )
         ded += senior_bonus_deduction(
-            hh.your_age, hh.spouse_age, locked_niit_magi,
-            year=2026, cpi=hh.cpi_assumption, filing_status="MFJ",
+            hh.your_age,
+            hh.spouse_age,
+            locked_niit_magi,
+            year=2026,
+            cpi=hh.cpi_assumption,
+            filing_status="MFJ",
         )
         locked_gross = ytd.total_ordinary_income + locked_tss
         # Pre-fix (naive) closed-form value: exactly what room_to_12pct equaled
         # before the fix.
-        naive_room_12 = room_to_12(locked_gross, ded, year=2026, cpi=hh.cpi_assumption, filing_status="MFJ")
+        naive_room_12 = room_to_12(
+            locked_gross, ded, year=2026, cpi=hh.cpi_assumption, filing_status="MFJ"
+        )
 
         # Oracle: converting room_to_12pct must land taxable income AT the 12%
         # ceiling ($100,800 unindexed 2026 MFJ), not past it. Deductions stay

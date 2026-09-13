@@ -168,9 +168,9 @@ class TestFindSweetSpotsFalseJump:
         """
         results = [
             _cr(conv=0, all_in=0.0),
-            _cr(conv=1_000, all_in=10.0),   # marginal=1.0%
-            _cr(conv=0, all_in=500.0),       # mid-sweep zero; marginal=(500-10)/1000*100=49%
-            _cr(conv=3_000, all_in=560.0),   # marginal=(560-500)/1000*100=6.0%
+            _cr(conv=1_000, all_in=10.0),  # marginal=1.0%
+            _cr(conv=0, all_in=500.0),  # mid-sweep zero; marginal=(500-10)/1000*100=49%
+            _cr(conv=3_000, all_in=560.0),  # marginal=(560-500)/1000*100=6.0%
         ]
 
         spots = find_sweet_spots(results)
@@ -186,9 +186,9 @@ class TestFindSweetSpotsFalseJump:
         """Simpler variant: mid-sweep zero, next step small — both before and after should be 0."""
         results = [
             _cr(conv=0, all_in=0.0),
-            _cr(conv=1_000, all_in=15.0),   # marginal=1.5%
-            _cr(conv=0, all_in=300.0),       # mid-sweep zero; marginal=28.5%
-            _cr(conv=3_000, all_in=345.0),   # marginal=(345-300)/1000*100=4.5%
+            _cr(conv=1_000, all_in=15.0),  # marginal=1.5%
+            _cr(conv=0, all_in=300.0),  # mid-sweep zero; marginal=28.5%
+            _cr(conv=3_000, all_in=345.0),  # marginal=(345-300)/1000*100=4.5%
         ]
 
         spots = find_sweet_spots(results)
@@ -196,7 +196,8 @@ class TestFindSweetSpotsFalseJump:
         # With fix: prev_marginal after conv==0 step = 28.5%. Delta = 4.5-28.5 < 0 → no spot.
         # With bug: prev_marginal stale=1.5%. Delta = 4.5-1.5 = 3.0 > 2.0 → FALSE spot.
         stale_baseline_spots = [
-            s for s in spots
+            s
+            for s in spots
             if abs(s.marginal_before - 1.5) < 0.01 and abs(s.marginal_after - 4.5) < 0.01
         ]
         assert len(stale_baseline_spots) == 0, (

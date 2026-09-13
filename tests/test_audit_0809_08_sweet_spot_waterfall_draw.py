@@ -163,9 +163,7 @@ class TestBaseMagiParityWithScenario:
         blind = base_income_for_year(hh, year)
         aware = base_income_for_year(hh, year, ira_draw=draw)
 
-        assert aware.net_investment_income_addl == pytest.approx(
-            blind.net_investment_income_addl
-        )
+        assert aware.net_investment_income_addl == pytest.approx(blind.net_investment_income_addl)
 
 
 class TestIrmaaSafeMaxIsActuallySafe:
@@ -269,9 +267,7 @@ class TestResidualIsBoundedAndSameSignAsEngine:
             "with-conv",
             end_age=end_age,
         ).years[0]
-        with_conv_draw = (
-            with_conv.forced_your_ira_draw + with_conv.forced_spouse_ira_draw
-        )
+        with_conv_draw = with_conv.forced_your_ira_draw + with_conv.forced_spouse_ira_draw
 
         assert with_conv_draw > baseline_draw
         # Same sign as the engine's own first-pass cap, and an order of

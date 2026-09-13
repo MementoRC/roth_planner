@@ -119,6 +119,4 @@ def test_ss_fixed_point_result_is_bounded() -> None:
         filing_status=_FILING_STATUS,
     )
 
-    assert 0.0 <= nts <= combined_ss, (
-        f"nts={nts!r} out of bounds for combined_ss={combined_ss!r}"
-    )
+    assert 0.0 <= nts <= combined_ss, f"nts={nts!r} out of bounds for combined_ss={combined_ss!r}"

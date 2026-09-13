@@ -64,9 +64,7 @@ class TestAge80BreakSqueezeTail:
         # yr_idx=20 → ya=81, sa=70.  yr_idx=24 → ya=85, sa=74.
         # Any of these years should have a non-zero spouse conversion.
         tail_years = [hh.base_year + i for i in range(20, 25)]
-        tail_conversions = {
-            yr: plan.spouse_conversions.get(yr, 0.0) for yr in tail_years
-        }
+        tail_conversions = {yr: plan.spouse_conversions.get(yr, 0.0) for yr in tail_years}
 
         # With the bug ALL tail conversions are 0.0 (loop broke before them).
         assert any(v > 0.0 for v in tail_conversions.values()), (
@@ -87,9 +85,7 @@ class TestAge80BreakSqueezeTail:
 
         # The last year in the range is base_year + 24.  Confirm it exists in
         # the plan (or has a non-zero value somewhere in that band).
-        years_with_spouse_conv = sorted(
-            yr for yr, v in plan.spouse_conversions.items() if v > 0.0
-        )
+        years_with_spouse_conv = sorted(yr for yr, v in plan.spouse_conversions.items() if v > 0.0)
 
         # Must have spouse conversions beyond yr_idx=19 (base_year+19)
         assert any(yr > hh.base_year + 19 for yr in years_with_spouse_conv), (

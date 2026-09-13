@@ -597,8 +597,8 @@ class TestSurvivorRMDOnStartOfYearBalance:
             rmd_w = calc_rmd(balance, age_at_offset, survivor_rmd_start)
             balance = max(balance - rmd_w, 0.0) * (1 + hh.growth_rate)
             if proj_offset == 4:
-                rmd_last_iter = rmd_w       # correctly taken at age 80 on pre-growth balance
-                ira_grown = balance          # post-growth end-of-year-5
+                rmd_last_iter = rmd_w  # correctly taken at age 80 on pre-growth balance
+                ira_grown = balance  # post-growth end-of-year-5
 
         survivor_age = survivor_base_age + 5  # 80
         rmd_buggy_recompute = calc_rmd(ira_grown, survivor_age, survivor_rmd_start)
@@ -615,6 +615,7 @@ class TestSurvivorRMDOnStartOfYearBalance:
         # sets survivor_ss = max(yr.your_ss, yr.spouse_ss) = 20k.
         # ss_with_cola over 5 years at hh.ss_cola:
         from engine.ira import ss_with_cola
+
         ss_grown = ss_with_cola(20_000.0, 5, hh.ss_cola)
 
         tax_correct, _, _ = survivor_year_tax(
@@ -667,7 +668,7 @@ class TestSurvivorLTCGTaxApplied:
         """
         # Scenario: survivor is in 15% LTCG bracket (taxable_ordinary well above $49,450)
         age = 75
-        rmd = 80_000.0   # ordinary income well above 0%-LTCG threshold after deductions
+        rmd = 80_000.0  # ordinary income well above 0%-LTCG threshold after deductions
         ss = 30_000.0
         brok_ltcg = 20_000.0
         year = 2031
@@ -705,10 +706,10 @@ class TestSurvivorLTCGTaxApplied:
         channel that otherwise shifts ordinary tax via ded reduction.
         """
         age = 75
-        rmd = 120_000.0   # ensures taxable_ordinary >> 0%-LTCG threshold
-        ss = 0.0           # no SS — eliminates SS-provisional interaction
+        rmd = 120_000.0  # ensures taxable_ordinary >> 0%-LTCG threshold
+        ss = 0.0  # no SS — eliminates SS-provisional interaction
         brok_ltcg = 10_000.0
-        year = 2029        # OBBBA senior_bonus = 0 (sunset after 2028)
+        year = 2029  # OBBBA senior_bonus = 0 (sunset after 2028)
         cpi = 0.025
 
         tax_no_ltcg, _, taxable_ord = survivor_year_tax(age, rmd, ss, year=year, cpi=cpi)
@@ -860,8 +861,7 @@ class TestBrokerageBalanceRetainsBasis:
             bal_correct = bal_correct + bal_correct * appreciation - gain_tax + divs
 
         assert bal_correct > bal_buggy, (
-            f"Reference: correct balance ({bal_correct:,.0f}) must exceed "
-            f"buggy ({bal_buggy:,.0f})"
+            f"Reference: correct balance ({bal_correct:,.0f}) must exceed buggy ({bal_buggy:,.0f})"
         )
         # Gap should be material (>$50k for $2M starting balance)
         assert bal_correct - bal_buggy > 50_000, (
@@ -871,9 +871,7 @@ class TestBrokerageBalanceRetainsBasis:
         # Run actual function.
         # Use two scenarios: large brokerage vs zero brokerage (same IRA).
         # With the correct fix, large brokerage → higher LTCG income → higher tax.
-        scenario = self._make_scenario_with_brok(
-            hh, death_age, 1_500_000.0, initial_brok_large
-        )
+        scenario = self._make_scenario_with_brok(hh, death_age, 1_500_000.0, initial_brok_large)
 
         hh_zero = Household(
             your_age=70,

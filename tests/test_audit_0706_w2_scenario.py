@@ -19,6 +19,7 @@ from models.household import Household, InheritedIRA
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _base_hh(**kwargs) -> Household:
     """Minimal Household — all keyword overrides accepted."""
     defaults: dict = {
@@ -42,6 +43,7 @@ def _base_hh(**kwargs) -> Household:
 # Finding ira-rmd-1: deferred-first-RMD silent $0 when base_year at rmd_start_age+1
 # ===========================================================================
 
+
 class TestDeferredFirstRmdBaseYear:
     """When your_age == rmd_start_age+1 at base_year, the deferred RMD must fire.
 
@@ -54,10 +56,16 @@ class TestDeferredFirstRmdBaseYear:
 
     def test_calc_rmd_deferred_double_with_prior_balance(self) -> None:
         """calc_rmd itself works correctly when prior_year_balance is supplied."""
-        normal = calc_rmd(1_000_000.0, age=74, rmd_start_age=73,
-                          first_year_deferred=False, prior_year_balance=0.0)
-        deferred = calc_rmd(1_000_000.0, age=74, rmd_start_age=73,
-                            first_year_deferred=True, prior_year_balance=1_000_000.0)
+        normal = calc_rmd(
+            1_000_000.0, age=74, rmd_start_age=73, first_year_deferred=False, prior_year_balance=0.0
+        )
+        deferred = calc_rmd(
+            1_000_000.0,
+            age=74,
+            rmd_start_age=73,
+            first_year_deferred=True,
+            prior_year_balance=1_000_000.0,
+        )
         # Deferred year must be strictly greater: current + prior year RMD combined
         assert deferred > normal, (
             f"Deferred-year RMD ({deferred:,.0f}) must exceed single-year RMD ({normal:,.0f})"
@@ -74,7 +82,7 @@ class TestDeferredFirstRmdBaseYear:
         After fix: prev_your_ira_begin=hh.your_ira → correct doubled RMD.
         """
         hh = _base_hh(
-            your_age=74,          # base_year == rmd_start_age + 1
+            your_age=74,  # base_year == rmd_start_age + 1
             your_rmd_start_age=73,
             your_defer_first_rmd=True,
             your_ira=1_000_000.0,
@@ -150,6 +158,7 @@ class TestDeferredFirstRmdBaseYear:
 # Finding scenario-core-1: inherited distributions absent from available_income
 # ===========================================================================
 
+
 class TestInheritedDistributionCashFlow:
     """Inherited IRA annual distributions must appear in available_income.
 
@@ -163,7 +172,7 @@ class TestInheritedDistributionCashFlow:
     def _make_inherited_hh(self, owner: str = "you") -> Household:
         iira = InheritedIRA(
             balance=300_000.0,
-            inherited_year=2022,   # 4 years in; years_remaining = 6 in 2026
+            inherited_year=2022,  # 4 years in; years_remaining = 6 in 2026
             growth_rate=0.05,
             owner=owner,
         )
@@ -318,6 +327,7 @@ class TestInheritedDistributionCashFlow:
 # Finding scenario-core-4: cum_rmd_tax bundles extra_withdrawal_tax (cosmetic)
 # ===========================================================================
 
+
 class TestCumRmdTaxDocumented:
     """scenario-core-4: extra_withdrawal_tax is included in cum_rmd_tax.
 
@@ -451,6 +461,7 @@ class TestPreRmdExtraWithdrawalCapturedInLifetimeTax:
 # Finding scenario-core-5: conversion clamped to available IRA balance
 # ===========================================================================
 
+
 class TestConversionClampedToIraBalance:
     """A conversion must not silently exceed the remaining IRA balance.
 
@@ -465,9 +476,9 @@ class TestConversionClampedToIraBalance:
     def _make_small_ira_hh(self) -> Household:
         """Household where planned conversion exceeds IRA balance (pre-RMD age)."""
         return _base_hh(
-            your_age=65,           # pre-RMD so conversions are allowed
+            your_age=65,  # pre-RMD so conversions are allowed
             your_rmd_start_age=73,
-            your_ira=100_000.0,   # small IRA
+            your_ira=100_000.0,  # small IRA
         )
 
     def test_conversion_does_not_exceed_ira_balance(self) -> None:
@@ -496,9 +507,7 @@ class TestConversionClampedToIraBalance:
         plan = ConversionPlan(your_conversions={2026: 500_000.0})
         result = run_scenario(hh, plan, end_age=66)
         yr = result.years[0]
-        assert yr.your_ira_end >= 0, (
-            f"your_ira_end ({yr.your_ira_end:,.0f}) is negative"
-        )
+        assert yr.your_ira_end >= 0, f"your_ira_end ({yr.your_ira_end:,.0f}) is negative"
 
     def test_roth_credit_bounded_by_available_ira(self) -> None:
         """Roth credit must not exceed what the IRA could actually provide.

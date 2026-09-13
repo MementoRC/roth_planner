@@ -389,6 +389,4 @@ class TestUnclaimedSSHouseholdsAreUnaffected:
             max(_irmaa_t1(hh) - hr.locked_magi, 0.0), abs=CENT
         )
         niit_magi = ytd.niit_magi_ytd + taxable_ss(0.0, ytd.magi_ytd, filing_status="MFJ")
-        assert hr.room_to_niit == pytest.approx(
-            max(NIIT_THRESHOLD_MFJ - niit_magi, 0.0), abs=CENT
-        )
+        assert hr.room_to_niit == pytest.approx(max(NIIT_THRESHOLD_MFJ - niit_magi, 0.0), abs=CENT)

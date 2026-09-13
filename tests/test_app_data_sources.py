@@ -162,9 +162,7 @@ def test_workplace_plan_session_state_flows_to_household(clean_command_center_ca
     at.run()
     assert not at.exception
 
-    joined = "\n".join(
-        el.value for group in ("markdown", "caption") for el in getattr(at, group)
-    )
+    joined = "\n".join(el.value for group in ("markdown", "caption") for el in getattr(at, group))
     assert "You have a workplace plan (401k/403b)" in joined
     assert "### No" in joined
 
@@ -300,7 +298,11 @@ def test_command_center_txn_price_confirm_sticks_and_next_render_does_not_revert
     committed_path = COMMITTED_PATH
     committed_path.write_text(
         json.dumps(
-            {"txn_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, recorded_at)).to_json()}
+            {
+                "txn_price_now": SourcedValue(
+                    100.0, Provenance(Source.UNKNOWN, recorded_at)
+                ).to_json()
+            }
         )
     )
     store = CandidateStore()

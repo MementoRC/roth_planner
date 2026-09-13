@@ -592,7 +592,9 @@ class TestScenarioWithYTD:
         from engine.portfolio_sync import load_ytd_snapshot
 
         monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
-        (tmp_path / "ytd.json").write_text(json.dumps({"tax_year": 2026, "snapshot_date": "2026-06-01"}))
+        (tmp_path / "ytd.json").write_text(
+            json.dumps({"tax_year": 2026, "snapshot_date": "2026-06-01"})
+        )
 
         loaded = load_ytd_snapshot()
         assert loaded is not None
@@ -854,9 +856,7 @@ class TestTaxExemptInterestSSProvisional:
             living_expenses=0.0,
         )
         ytd_no_muni = YTDSnapshot(tax_year=2026, wages_ytd=10_000)
-        ytd_with_muni = YTDSnapshot(
-            tax_year=2026, wages_ytd=10_000, tax_exempt_interest_ytd=25_000
-        )
+        ytd_with_muni = YTDSnapshot(tax_year=2026, wages_ytd=10_000, tax_exempt_interest_ytd=25_000)
         plan = ConversionPlan()
 
         yr_no_muni = run_scenario(hh, plan, "no_muni", end_age=62, ytd=ytd_no_muni).years[0]
@@ -918,11 +918,11 @@ class TestOBBBAPhaseoutMAGIConsistency:
         )
 
         yr_no_muni = run_scenario(hh, plan, "no_muni", end_age=67, ytd=ytd_no_muni).years[0]
-        yr_with_muni = run_scenario(
-            hh, plan, "with_muni", end_age=67, ytd=ytd_with_muni
-        ).years[0]
+        yr_with_muni = run_scenario(hh, plan, "with_muni", end_age=67, ytd=ytd_with_muni).years[0]
 
-        assert yr_no_muni.total_deductions == pytest.approx(yr_with_muni.total_deductions, abs=1.0), (
+        assert yr_no_muni.total_deductions == pytest.approx(
+            yr_with_muni.total_deductions, abs=1.0
+        ), (
             f"OBBBA deduction must not depend on muni interest: "
             f"no_muni={yr_no_muni.total_deductions:.0f}, "
             f"with_muni={yr_with_muni.total_deductions:.0f}"

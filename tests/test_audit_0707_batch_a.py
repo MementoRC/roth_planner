@@ -180,8 +180,7 @@ class TestSweetSpotYtdOrdinaryBase:
 
         # With ytd_ordinary, need less conversion to reach ceiling
         assert conv_with < conv_no, (
-            f"conv needed WITH ytd ({conv_with:.0f}) must be less than "
-            f"without ytd ({conv_no:.0f})"
+            f"conv needed WITH ytd ({conv_with:.0f}) must be less than without ytd ({conv_no:.0f})"
         )
         assert conv_no - conv_with == pytest.approx(wages, abs=1.0), (
             "reduction in bracket boundary must equal ytd_ordinary"

@@ -100,7 +100,8 @@ def _patch_default(monkeypatch: pytest.MonkeyPatch, func, param_name: str, value
         defaulted = [
             p.name
             for p in sig.parameters.values()
-            if p.default is not inspect.Parameter.empty and p.kind is not inspect.Parameter.KEYWORD_ONLY
+            if p.default is not inspect.Parameter.empty
+            and p.kind is not inspect.Parameter.KEYWORD_ONLY
         ]
         defaults = list(func.__defaults__ or ())
         defaults[defaulted.index(param_name)] = value
@@ -140,19 +141,29 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_portfolio_mod, "_CACHE_PATH", _tmp(".portfolio_cache.json"))
     monkeypatch.setattr(_social_security_mod, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
     monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
-    monkeypatch.setattr(_brokerage_mod, "_STATEMENT_CACHE_PATH", _tmp(".brokerage_statement_cache.json"))
-    monkeypatch.setattr(_brokerage_mod, "_FOLDER_CONFIG_PATH", _tmp(".statement_folder_config.json"))
-    monkeypatch.setattr(_brokerage_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", _tmp(".statement_account_overrides.json"))
+    monkeypatch.setattr(
+        _brokerage_mod, "_STATEMENT_CACHE_PATH", _tmp(".brokerage_statement_cache.json")
+    )
+    monkeypatch.setattr(
+        _brokerage_mod, "_FOLDER_CONFIG_PATH", _tmp(".statement_folder_config.json")
+    )
+    monkeypatch.setattr(
+        _brokerage_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", _tmp(".statement_account_overrides.json")
+    )
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_pdf_ledger_mod, "_LEDGER_PATH", _tmp(".pdf_import_ledger.json"))
     monkeypatch.setattr(_paths_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_paths_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(
-        _exercise_schedule_store_mod, "_EXERCISE_SCHEDULE_CACHE_PATH", _tmp(".exercise_schedule_cache.json")
+        _exercise_schedule_store_mod,
+        "_EXERCISE_SCHEDULE_CACHE_PATH",
+        _tmp(".exercise_schedule_cache.json"),
     )
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
-    monkeypatch.setattr(_account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json"))
+    monkeypatch.setattr(
+        _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
+    )
     monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
 
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
@@ -167,7 +178,9 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_scan_ingest_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_views_shared_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_option_exercise_helpers_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
+    monkeypatch.setattr(
+        _option_exercise_helpers_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json")
+    )
     monkeypatch.setattr(_setup_governance_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(_setup_governance_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_command_center_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
@@ -176,12 +189,29 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # 3. Functions whose default parameter value was baked from
     # CANDIDATE_STORE_PATH at their module's import time.
-    _patch_default(monkeypatch, _record_mod.record_magi_candidates, "store_path", _tmp(".candidate_store.json"))
-    _patch_default(monkeypatch, _record_mod.record_ss_fra_candidate, "store_path", _tmp(".candidate_store.json"))
-    _patch_default(monkeypatch, _record_mod.record_txn_quote_candidate, "store_path", _tmp(".candidate_store.json"))
-    _patch_default(monkeypatch, _scan_ingest_mod.scan_and_record, "store_path", _tmp(".candidate_store.json"))
     _patch_default(
-        monkeypatch, _option_exercise_helpers_mod.handle_txn_quote_fetch, "store_path", _tmp(".candidate_store.json")
+        monkeypatch, _record_mod.record_magi_candidates, "store_path", _tmp(".candidate_store.json")
+    )
+    _patch_default(
+        monkeypatch,
+        _record_mod.record_ss_fra_candidate,
+        "store_path",
+        _tmp(".candidate_store.json"),
+    )
+    _patch_default(
+        monkeypatch,
+        _record_mod.record_txn_quote_candidate,
+        "store_path",
+        _tmp(".candidate_store.json"),
+    )
+    _patch_default(
+        monkeypatch, _scan_ingest_mod.scan_and_record, "store_path", _tmp(".candidate_store.json")
+    )
+    _patch_default(
+        monkeypatch,
+        _option_exercise_helpers_mod.handle_txn_quote_fetch,
+        "store_path",
+        _tmp(".candidate_store.json"),
     )
 
 

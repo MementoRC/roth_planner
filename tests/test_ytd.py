@@ -1043,8 +1043,7 @@ class TestQualifiedDividendsNotDoubleCounted:
         rec = self._rec()
         apply_brokerage_statement_records(ytd, {"111": rec})
         assert ytd.magi_ytd == pytest.approx(10_000.0), (
-            "MAGI drives IRMAA/ACA thresholds; it must not carry $8,000 of "
-            "phantom dividend income"
+            "MAGI drives IRMAA/ACA thresholds; it must not carry $8,000 of phantom dividend income"
         )
 
     def test_qualified_larger_than_statement_total_floors_at_zero(self) -> None:

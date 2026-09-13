@@ -292,9 +292,7 @@ class TestClearUserDefaults:
     be removed.
     """
 
-    def test_deletes_existing_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deletes_existing_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from config.loader import clear_user_defaults
 
         monkeypatch.chdir(tmp_path)
@@ -310,9 +308,7 @@ class TestClearUserDefaults:
         # load_defaults now falls through to demo DEFAULTS
         assert load_defaults()["your_ira"] == DEFAULTS["your_ira"]
 
-    def test_missing_file_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_file_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Deleting when no file exists must be a silent no-op, not an error."""
         from config.loader import clear_user_defaults
 

@@ -71,7 +71,8 @@ def test_compute_cost_curves_adds_auto_detected_nii_to_niit() -> None:
     manual_only_niit = niit(magi, manual_nii, filing_status="Single")
     delta = cc.base_niit - manual_only_niit
     assert delta == pytest.approx(
-        niit(magi, expected_total_nii, filing_status="Single") - niit(magi, manual_nii, filing_status="Single")
+        niit(magi, expected_total_nii, filing_status="Single")
+        - niit(magi, manual_nii, filing_status="Single")
     )
     assert delta > 0
 

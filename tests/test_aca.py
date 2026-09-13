@@ -520,23 +520,38 @@ class TestEffectiveBenchmarkPremium:
     COUPLE = 21_600.0
 
     def test_none_enrolled_is_zero(self):
-        assert effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=False,
-            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
-        ) == 0.0
+        assert (
+            effective_benchmark_premium(
+                self.COUPLE,
+                your_age=61,
+                your_on_aca=False,
+                spouse_age=55,
+                spouse_on_aca=False,
+                filing_status="MFJ",
+            )
+            == 0.0
+        )
 
     def test_both_enrolled_is_full_couple_rate(self):
         assert effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=True,
-            spouse_age=55, spouse_on_aca=True, filing_status="MFJ",
+            self.COUPLE,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=55,
+            spouse_on_aca=True,
+            filing_status="MFJ",
         ) == approx(self.COUPLE)
 
     def test_one_enrolled_mfj_uses_age_rated_share(self):
         # 61yo enrolled, 55yo not: share = 2.810 / (2.810 + 2.230)
         expected = self.COUPLE * (2.810 / (2.810 + 2.230))
         got = effective_benchmark_premium(
-            self.COUPLE, your_age=61, your_on_aca=True,
-            spouse_age=55, spouse_on_aca=False, filing_status="MFJ",
+            self.COUPLE,
+            your_age=61,
+            your_on_aca=True,
+            spouse_age=55,
+            spouse_on_aca=False,
+            filing_status="MFJ",
         )
         assert got == approx(expected)
         assert got > self.COUPLE * 0.5  # strictly more than the old 50/50 split
@@ -549,6 +564,10 @@ class TestEffectiveBenchmarkPremium:
         # the function's docstring.
         your_age, spouse_age = 61, 0
         assert effective_benchmark_premium(
-            self.COUPLE, your_age=your_age, your_on_aca=True,
-            spouse_age=spouse_age, spouse_on_aca=False, filing_status="Single",
+            self.COUPLE,
+            your_age=your_age,
+            your_on_aca=True,
+            spouse_age=spouse_age,
+            spouse_on_aca=False,
+            filing_status="Single",
         ) == approx(self.COUPLE)

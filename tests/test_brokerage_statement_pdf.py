@@ -17,7 +17,9 @@ from engine.brokerage_statement_pdf import (
 
 SCHWAB_SAMPLE = pathlib.Path("/home/memento/Downloads/Brokerage Statement_2026-06-30_847.PDF")
 VANGUARD_TAXABLE_SAMPLE = pathlib.Path("/home/memento/Downloads/2026-06 VG Statement x9320.pdf")
-VANGUARD_ROTH_SAMPLE = pathlib.Path("/home/memento/Downloads/2026-06 VG Statement Roth IRA x7368.pdf")
+VANGUARD_ROTH_SAMPLE = pathlib.Path(
+    "/home/memento/Downloads/2026-06 VG Statement Roth IRA x7368.pdf"
+)
 
 # --- Real Schwab dump excerpt (page 1 of 12: account identity, Income
 # Summary, Gain or (Loss) Summary). Schwab's extract_text() strips spaces
@@ -194,7 +196,9 @@ class TestParseSchwab:
 
 class TestParseVanguardTaxable:
     def test_account_type_taxable(self):
-        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         assert rec.account_type == "taxable"
@@ -202,14 +206,18 @@ class TestParseVanguardTaxable:
         assert rec.broker == "vanguard"
 
     def test_dividends_ytd(self):
-        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         assert rec.dividends_taxable_ytd == 1028.55
         assert rec.dividends_tax_exempt_ytd == 0.0
 
     def test_no_gains_or_interest(self):
-        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         assert rec.interest_taxable_ytd == 0.0
@@ -217,7 +225,9 @@ class TestParseVanguardTaxable:
         assert rec.ltcg_net_ytd == 0.0
 
     def test_statement_period_end(self):
-        recs = parse_statement_text([VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         assert rec.statement_period_end == "2026-06-30"
@@ -225,14 +235,18 @@ class TestParseVanguardTaxable:
 
 class TestParseVanguardRoth:
     def test_account_type_roth(self):
-        recs = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         assert rec.account_type == "roth_ira"
         assert rec.account_number == "XXXX7368"
 
     def test_dividends_ytd(self):
-        recs = parse_statement_text([VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT])
+        recs = parse_statement_text(
+            [VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT]
+        )
         assert len(recs) == 1
         rec = recs[0]
         # Note: "dividends_taxable_ytd" is just the dataclass field name inherited
@@ -242,7 +256,9 @@ class TestParseVanguardRoth:
         assert rec.dividends_taxable_ytd == 283.86
 
 
-@pytest.mark.skipif(not SCHWAB_SAMPLE.exists(), reason="Sample statement not present on this machine")
+@pytest.mark.skipif(
+    not SCHWAB_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
 def test_parse_real_schwab_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
@@ -253,7 +269,9 @@ def test_parse_real_schwab_sample():
     assert rec.dividends_taxable_ytd > 0
 
 
-@pytest.mark.skipif(not VANGUARD_TAXABLE_SAMPLE.exists(), reason="Sample statement not present on this machine")
+@pytest.mark.skipif(
+    not VANGUARD_TAXABLE_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
 def test_parse_real_vanguard_taxable_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
@@ -264,7 +282,9 @@ def test_parse_real_vanguard_taxable_sample():
     assert rec.dividends_taxable_ytd == pytest.approx(1028.55)
 
 
-@pytest.mark.skipif(not VANGUARD_ROTH_SAMPLE.exists(), reason="Sample statement not present on this machine")
+@pytest.mark.skipif(
+    not VANGUARD_ROTH_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
 def test_parse_real_vanguard_roth_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
@@ -349,7 +369,9 @@ class TestDetectIbkrAccountType:
         from engine.brokerage_statement_pdf import _detect_ibkr_account
 
         _account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_2_TEXT)
-        assert account_type == "traditional_ira"  # not "taxable" despite "Account Type Individual" also present
+        assert (
+            account_type == "traditional_ira"
+        )  # not "taxable" despite "Account Type Individual" also present
 
 
 class TestSplitIbkrSections:
@@ -567,7 +589,9 @@ class TestExtractIbkrPeriodEnd:
 
 class TestParseIbkr:
     def test_returns_one_record_per_account(self):
-        recs = parse_statement_text([IBKR_ACCOUNT_1_FULL_TEXT, IBKR_ACCOUNT_2_FULL_TEXT, IBKR_ACCOUNT_3_FULL_TEXT])
+        recs = parse_statement_text(
+            [IBKR_ACCOUNT_1_FULL_TEXT, IBKR_ACCOUNT_2_FULL_TEXT, IBKR_ACCOUNT_3_FULL_TEXT]
+        )
         assert len(recs) == 3
         assert {r.account_number for r in recs} == {"U24711481", "U24721230", "U24727897"}
         assert all(r.broker == "ibkr" for r in recs)
@@ -683,7 +707,9 @@ class TestDetectFidelityAccountType:
         text = "Account # 999-999999\nAccount Summary\nSOME OTHER ACCOUNT TYPE\n"
         account_number, account_type = _detect_fidelity_account(text)
         assert account_number == "999-999999"
-        assert account_type == "unknown"  # never guess -- same safety rule as Vanguard/IBKR fallbacks
+        assert (
+            account_type == "unknown"
+        )  # never guess -- same safety rule as Vanguard/IBKR fallbacks
 
 
 class TestSplitFidelitySections:
@@ -757,7 +783,9 @@ class TestParseFidelity:
 FIDELITY_SAMPLE = pathlib.Path("/home/memento/Downloads/FidelityStatement06302026.pdf")
 
 
-@pytest.mark.skipif(not FIDELITY_SAMPLE.exists(), reason="Sample statement not present on this machine")
+@pytest.mark.skipif(
+    not FIDELITY_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
 def test_parse_real_fidelity_sample():
     from engine.brokerage_statement_pdf import parse_statement_pdf
 
@@ -825,7 +853,9 @@ class TestScanStatementFolder:
         assert {r.broker for r in records} == {"schwab", "vanguard"}
 
 
-def _rec(account: str, period_end: str, account_type: str = "taxable", **overrides) -> BrokerageStatementRecord:
+def _rec(
+    account: str, period_end: str, account_type: str = "taxable", **overrides
+) -> BrokerageStatementRecord:
     base = {
         "account_number": account,
         "broker": "schwab",
@@ -867,8 +897,12 @@ class TestPartitionByAccountType:
         # Roth/IRA income must never land in taxable YTD sums.
         from engine.brokerage_statement_pdf import partition_by_account_type
 
-        taxable_acct = _rec("XXXX9320", "2026-06-30", account_type="taxable", dividends_taxable_ytd=1028.55)
-        roth_acct = _rec("XXXX7368", "2026-06-30", account_type="roth_ira", dividends_taxable_ytd=283.86)
+        taxable_acct = _rec(
+            "XXXX9320", "2026-06-30", account_type="taxable", dividends_taxable_ytd=1028.55
+        )
+        roth_acct = _rec(
+            "XXXX7368", "2026-06-30", account_type="roth_ira", dividends_taxable_ytd=283.86
+        )
         by_account = {"XXXX9320": taxable_acct, "XXXX7368": roth_acct}
 
         taxable, excluded, unknown = partition_by_account_type(by_account)
@@ -879,7 +913,9 @@ class TestPartitionByAccountType:
     def test_unknown_is_excluded_by_default_not_summed(self):
         from engine.brokerage_statement_pdf import partition_by_account_type
 
-        unknown_acct = _rec("3413-3847", "2026-06-30", account_type="unknown", dividends_taxable_ytd=4846.82)
+        unknown_acct = _rec(
+            "3413-3847", "2026-06-30", account_type="unknown", dividends_taxable_ytd=4846.82
+        )
         taxable, excluded, unknown = partition_by_account_type({"3413-3847": unknown_acct})
         assert taxable == {}
         assert excluded == {}
@@ -904,8 +940,12 @@ class TestAggregateToYtdFields:
         from engine.brokerage_statement_pdf import aggregate_to_ytd_fields
 
         taxable = {
-            "111-1111": _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0, interest_taxable_ytd=10.0),
-            "222-2222": _rec("222-2222", "2026-06-30", dividends_taxable_ytd=50.0, dividends_tax_exempt_ytd=5.0),
+            "111-1111": _rec(
+                "111-1111", "2026-06-30", dividends_taxable_ytd=100.0, interest_taxable_ytd=10.0
+            ),
+            "222-2222": _rec(
+                "222-2222", "2026-06-30", dividends_taxable_ytd=50.0, dividends_tax_exempt_ytd=5.0
+            ),
         }
         totals = aggregate_to_ytd_fields(taxable)
         assert totals["ordinary_dividends_ytd"] == 150.0
@@ -963,7 +1003,9 @@ class TestFolderPathConfig:
         monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "missing.json")
         assert mod.load_statement_folder_path() is None
 
-    def test_save_and_load_empty_folder_path_roundtrips_as_empty_string(self, tmp_path, monkeypatch):
+    def test_save_and_load_empty_folder_path_roundtrips_as_empty_string(
+        self, tmp_path, monkeypatch
+    ):
         import engine.brokerage_statement_pdf as mod
 
         monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "folder.json")

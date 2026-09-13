@@ -186,17 +186,13 @@ def test_household_partial_your_fields_round_trip(setup_app_test: AppTest) -> No
     _number_input_by_label(at, "Your Age").set_value(51).run()
     assert at.session_state["your_age"] == 51
 
-    _checkbox_by_label(at, "You have a workplace retirement plan (401k/403b)").set_value(
-        True
-    ).run()
+    _checkbox_by_label(at, "You have a workplace retirement plan (401k/403b)").set_value(True).run()
     assert at.session_state["your_has_workplace_plan"] is True
 
     _selectbox_by_label(at, "Your RMD start age").select(73).run()
     assert at.session_state["your_rmd_start_age"] == 73
 
-    _checkbox_by_label(at, "Defer first RMD to April 1 (two RMDs in year 2)").set_value(
-        True
-    ).run()
+    _checkbox_by_label(at, "Defer first RMD to April 1 (two RMDs in year 2)").set_value(True).run()
     assert at.session_state["your_defer_first_rmd"] is True
 
     _number_input_by_label(at, "Your FRA (Full Retirement Age)").set_value(66).run()
@@ -220,9 +216,9 @@ def test_household_partial_spouse_fields_round_trip(setup_app_test: AppTest) -> 
     _selectbox_by_label(at, "Spouse RMD start age").select(73).run()
     assert at.session_state["spouse_rmd_start_age"] == 73
 
-    _checkbox_by_label(
-        at, "Defer spouse's first RMD to April 1 (two RMDs in year 2)"
-    ).set_value(True).run()
+    _checkbox_by_label(at, "Defer spouse's first RMD to April 1 (two RMDs in year 2)").set_value(
+        True
+    ).run()
     assert at.session_state["spouse_defer_first_rmd"] is True
 
     _checkbox_by_label(

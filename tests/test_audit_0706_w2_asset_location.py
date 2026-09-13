@@ -22,6 +22,7 @@ from models.household import Household
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_hh(**kwargs) -> Household:
     return replace(Household(), **kwargs)
 
@@ -29,6 +30,7 @@ def _make_hh(**kwargs) -> Household:
 # ---------------------------------------------------------------------------
 # asset-location-0: ownership-fraction RMD attribution
 # ---------------------------------------------------------------------------
+
 
 class TestOwnershipFractionAttribution:
     """Per-owner balance attribution must preserve ownership fractions.
@@ -122,8 +124,7 @@ class TestOwnershipFractionAttribution:
         expected_your_rmd = calc_rmd(500_000.0, 75, 75, first_year_deferred=False)
         # Spouse has no RMD at 69 — their balance is intact
         assert yr0.spouse_ira_end == pytest.approx(500_000.0, abs=1.0), (
-            f"Spouse end balance should be unchanged (no RMD at 69), "
-            f"got {yr0.spouse_ira_end:.2f}"
+            f"Spouse end balance should be unchanged (no RMD at 69), got {yr0.spouse_ira_end:.2f}"
         )
         # Primary's balance reduced by their RMD only
         assert yr0.your_ira_end == pytest.approx(500_000.0 - expected_your_rmd, abs=1.0), (
@@ -179,14 +180,13 @@ class TestOwnershipFractionAttribution:
         for yr in result.years:
             assert yr.your_ira_end >= 0.0, f"your_ira_end negative at age {yr.your_age}"
             assert yr.spouse_ira_end >= 0.0, f"spouse_ira_end negative at age {yr.your_age}"
-            assert yr.your_ira_end + yr.spouse_ira_end == pytest.approx(
-                yr.ira_total_end, abs=1.0
-            )
+            assert yr.your_ira_end + yr.spouse_ira_end == pytest.approx(yr.ira_total_end, abs=1.0)
 
 
 # ---------------------------------------------------------------------------
 # asset-location-4: seed existing Roth balances
 # ---------------------------------------------------------------------------
+
 
 class TestExistingRothSeeded:
     """hh.your_roth + hh.spouse_roth must seed the Roth projection."""
@@ -268,6 +268,7 @@ class TestExistingRothSeeded:
 # ---------------------------------------------------------------------------
 # asset-location-5: past-milestone returns nan not 0
 # ---------------------------------------------------------------------------
+
 
 class TestPastMilestoneNan:
     """When starting age > milestone age, result fields must be nan."""

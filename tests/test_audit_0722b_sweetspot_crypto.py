@@ -89,7 +89,9 @@ class TestSweetSpotLtcgStackingMarginalCostNonzero:
         # A $132,200 conversion lifts taxable income to exactly $100,000
         # (std deduction $32,200), $1,100 above the $98,900 breakpoint --
         # pushing the entire $60K crypto-LTCG stack into the 15% band.
-        result = all_in_at_conversion(hh, base, 132_200.0, net_inv_income=0.0, ltcg_eligible=ltcg_eligible)
+        result = all_in_at_conversion(
+            hh, base, 132_200.0, net_inv_income=0.0, ltcg_eligible=ltcg_eligible
+        )
 
         assert result.taxable_inc == pytest.approx(100_000.0)
         # Without the fix, ltcg_eligible (and therefore ltcg_delta) is 0.0.

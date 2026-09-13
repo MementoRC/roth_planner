@@ -194,13 +194,13 @@ def test_command_center_renders_and_shows_pending_candidate(
 ) -> None:
     _seed_pending_your_ira()
 
-    at = AppTest.from_function(_render_command_center_with_pending, kwargs={"pending": {"your_ira"}})
+    at = AppTest.from_function(
+        _render_command_center_with_pending, kwargs={"pending": {"your_ira"}}
+    )
     at.run()
 
     assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
+    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
     assert "2,000,000" in rendered_text  # the FINEXTRACT_LIVE candidate value
     assert "1,700,000" in rendered_text  # the currently-committed value
 
@@ -210,7 +210,9 @@ def test_confirm_button_commits_chosen_source_and_syncs_session(
 ) -> None:
     _seed_pending_your_ira()
 
-    at = AppTest.from_function(_render_command_center_with_pending, kwargs={"pending": {"your_ira"}})
+    at = AppTest.from_function(
+        _render_command_center_with_pending, kwargs={"pending": {"your_ira"}}
+    )
     at.run()
     assert not at.exception
 
@@ -260,9 +262,7 @@ def test_command_center_shows_pending_txn_price_now_candidate(
     at.run()
 
     assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
+    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
     assert "250" in rendered_text  # the FINEXTRACT_LIVE candidate value
     assert "100" in rendered_text  # the currently-committed value
 
@@ -331,13 +331,13 @@ def _seed_pending_grants() -> None:
 def test_command_center_shows_pending_grants_candidate(clean_command_center_caches) -> None:
     _seed_pending_grants()
 
-    at = AppTest.from_function(_render_command_center_with_pending, kwargs={"pending": {GRANTS_KEY}})
+    at = AppTest.from_function(
+        _render_command_center_with_pending, kwargs={"pending": {GRANTS_KEY}}
+    )
     at.run()
 
     assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
+    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
     assert "2 grants" in rendered_text  # the FINEXTRACT_LIVE candidate value
     assert "1 grants" in rendered_text  # the currently-committed value
 
@@ -347,7 +347,9 @@ def test_command_center_confirm_grants_commits_candidate_list(
 ) -> None:
     _seed_pending_grants()
 
-    at = AppTest.from_function(_render_command_center_with_pending, kwargs={"pending": {GRANTS_KEY}})
+    at = AppTest.from_function(
+        _render_command_center_with_pending, kwargs={"pending": {GRANTS_KEY}}
+    )
     at.run()
     assert not at.exception
 
@@ -400,9 +402,7 @@ def test_command_center_shows_pending_prior_year_magi_candidate(
     at.run()
 
     assert not at.exception
-    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(
-        c.value for c in at.caption
-    )
+    rendered_text = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
     assert "290,000" in rendered_text  # the Source.PDF candidate value
     assert "200,000" in rendered_text  # the currently-committed value
 

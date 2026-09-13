@@ -66,7 +66,9 @@ class TestEffectiveRateDenominator:
 
         # Under the fix, both denominators equal niit_magi_ytd (no muni) and the
         # numerators are identical (muni is not taxed), so rates must be equal.
-        assert est_no_muni.effective_rate == pytest.approx(est_with_muni.effective_rate, rel=1e-9), (
+        assert est_no_muni.effective_rate == pytest.approx(
+            est_with_muni.effective_rate, rel=1e-9
+        ), (
             "effective_rate must be identical when muni interest is added "
             "(muni excluded from niit_magi_with_ss denominator)"
         )
@@ -95,7 +97,7 @@ class TestEffectiveRateDenominator:
         ytd = _make_ytd(wages=150_000.0, tax_exempt_interest=30_000.0)
         est = estimate_ytd_federal_tax(ytd, hh, combined_ss=0.0)
 
-        rate_with_magi_ytd_denom = est.total / ytd.magi_ytd       # pre-fix (wrong, lower)
+        rate_with_magi_ytd_denom = est.total / ytd.magi_ytd  # pre-fix (wrong, lower)
         rate_with_niit_magi_denom = est.total / ytd.niit_magi_ytd  # post-fix (correct, higher)
 
         assert est.effective_rate == pytest.approx(rate_with_niit_magi_denom, rel=1e-9)
@@ -142,8 +144,7 @@ class TestRothPhaseoutRounding:
 
         result = _phase_out(magi, lower, upper, limit)
         assert result == 4_330.0, (
-            f"Expected ceil-rounded 4330, got {result}. "
-            "Must use math.ceil not banker's round."
+            f"Expected ceil-rounded 4330, got {result}. Must use math.ceil not banker's round."
         )
 
     def test_exact_multiple_of_10_unchanged(self) -> None:
@@ -170,9 +171,7 @@ class TestRothPhaseoutRounding:
         magi = upper - (90.0 / limit) * (upper - lower)  # = 7000 - 90 = 6910
 
         result = _phase_out(magi, lower, upper, limit)
-        assert result == 200.0, (
-            f"Expected $200 floor for small positive result, got {result}"
-        )
+        assert result == 200.0, f"Expected $200 floor for small positive result, got {result}"
 
     def test_fully_phased_out_returns_zero_not_200(self) -> None:
         """A taxpayer above the upper bound gets $0 — floor does not apply."""
@@ -218,9 +217,7 @@ class TestSecretKeyPermissions:
             warnings.simplefilter("always")
             result = _try_load("ROTH_PLANNER_DATA_BRIDGE_PRIVKEY", key_file, secret=True)
 
-        assert result is None, (
-            f"Expected None for 0o644 secret key, got {result!r}"
-        )
+        assert result is None, f"Expected None for 0o644 secret key, got {result!r}"
 
     def test_secret_lax_640_returns_none(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -304,6 +301,4 @@ class TestSecretKeyPermissions:
             warnings.simplefilter("always")
             result = load_privkey()
 
-        assert result is None, (
-            "load_privkey() with 0o644 file must return None (secret=True path)"
-        )
+        assert result is None, "load_privkey() with 0o644 file must return None (secret=True path)"

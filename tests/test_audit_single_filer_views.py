@@ -332,9 +332,7 @@ class TestRmdSqueezeIrmaaTierSelection:
             f"IRMAA_TIERS_SINGLE[0][0]={tier1_single} is outside the expected ~$109K range"
         )
         # Must NOT equal the MFJ value (which is ~2x)
-        assert tier1_single != IRMAA_TIERS_MFJ[0][0], (
-            "Single and MFJ Tier-1 thresholds must differ"
-        )
+        assert tier1_single != IRMAA_TIERS_MFJ[0][0], "Single and MFJ Tier-1 thresholds must differ"
 
 
 # ---------------------------------------------------------------------------

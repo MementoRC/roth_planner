@@ -44,8 +44,14 @@ class TestTradDeductionPhaseoutByYear:
         from views.roth_eligibility import TRAD_DEDUCTION_PHASEOUT, TRAD_DEDUCTION_PHASEOUT_BY_YEAR
 
         # 2026 entries must match the backward-compat alias
-        assert TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]["MFJ_active"] == TRAD_DEDUCTION_PHASEOUT["MFJ_active"]
-        assert TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]["MFJ_spouse_only"] == TRAD_DEDUCTION_PHASEOUT["MFJ_spouse_only"]
+        assert (
+            TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]["MFJ_active"]
+            == TRAD_DEDUCTION_PHASEOUT["MFJ_active"]
+        )
+        assert (
+            TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]["MFJ_spouse_only"]
+            == TRAD_DEDUCTION_PHASEOUT["MFJ_spouse_only"]
+        )
         assert TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026]["Single"] == TRAD_DEDUCTION_PHASEOUT["Single"]
 
 
@@ -128,8 +134,7 @@ class TestTradDeductionYearBehavior:
         result = _phase_out(magi, lower, upper, limit)
         # Not yet in phase-out: result must equal limit
         assert result == pytest.approx(limit), (
-            f"Expected full deduction at 2026 thresholds (lower={lower}), "
-            f"got {result}"
+            f"Expected full deduction at 2026 thresholds (lower={lower}), got {result}"
         )
 
     def test_single_income_between_2025_and_2026_lower_bounds(self):

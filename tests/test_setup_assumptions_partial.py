@@ -147,9 +147,9 @@ def test_aca_benchmark_premium_round_trip(clean_command_center_caches) -> None:
     at.run()
     assert not at.exception
 
-    _checkbox_by_label(
-        at, "Override ACA benchmark premium with my county's SLCSP"
-    ).set_value(True).run()
+    _checkbox_by_label(at, "Override ACA benchmark premium with my county's SLCSP").set_value(
+        True
+    ).run()
     _number_input_by_label(at, "ACA Benchmark Premium ($/yr)").set_value(18_400).run()
     assert at.session_state["aca_benchmark_premium_annual"] == 18_400
 
@@ -164,9 +164,7 @@ def test_aca_benchmark_defaults_to_derive(clean_command_center_caches) -> None:
     assert not at.exception
 
     assert at.session_state["aca_benchmark_premium_annual"] is None
-    override_box = _checkbox_by_label(
-        at, "Override ACA benchmark premium with my county's SLCSP"
-    )
+    override_box = _checkbox_by_label(at, "Override ACA benchmark premium with my county's SLCSP")
     assert override_box.value is False
     assert "ACA Benchmark Premium ($/yr)" not in [w.label for w in at.number_input]
     caption_text = "\n".join(c.value for c in at.caption)
@@ -182,15 +180,15 @@ def test_aca_benchmark_uncheck_reverts_to_derive_not_zero(clean_command_center_c
     at.run()
     assert not at.exception
 
-    _checkbox_by_label(
-        at, "Override ACA benchmark premium with my county's SLCSP"
-    ).set_value(True).run()
+    _checkbox_by_label(at, "Override ACA benchmark premium with my county's SLCSP").set_value(
+        True
+    ).run()
     _number_input_by_label(at, "ACA Benchmark Premium ($/yr)").set_value(0).run()
     assert at.session_state["aca_benchmark_premium_annual"] == 0.0
 
-    _checkbox_by_label(
-        at, "Override ACA benchmark premium with my county's SLCSP"
-    ).set_value(False).run()
+    _checkbox_by_label(at, "Override ACA benchmark premium with my county's SLCSP").set_value(
+        False
+    ).run()
     assert at.session_state["aca_benchmark_premium_annual"] is None
     assert at.session_state["aca_benchmark_premium_annual"] != 0.0
 

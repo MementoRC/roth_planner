@@ -55,9 +55,7 @@ PCT_2027_RAMP_MID = 0.0430 + 0.5 * (0.0678 - 0.0430)
 
 
 def _rate(magi: float, year: int) -> float:
-    return aca_premium_cap_rate(
-        magi, enhanced_subsidies_active=False, year=year, cpi=0.0
-    )
+    return aca_premium_cap_rate(magi, enhanced_subsidies_active=False, year=year, cpi=0.0)
 
 
 class TestTy2026IsUnchanged:
@@ -130,9 +128,7 @@ class TestEnhancedScheduleIsNotYearIndexed:
 
     def test_enhanced_is_year_invariant(self) -> None:
         rates = [
-            aca_premium_cap_rate(
-                MAGI_TOP_BAND, enhanced_subsidies_active=True, year=y, cpi=0.0
-            )
+            aca_premium_cap_rate(MAGI_TOP_BAND, enhanced_subsidies_active=True, year=y, cpi=0.0)
             for y in (2026, 2027, 2030)
         ]
         assert rates[0] == rates[1] == rates[2]
@@ -148,18 +144,14 @@ class TestPublishedTableProvenance:
 
         pcts = [p for _fpl, p in ACA_PRE_ARP_SCHEDULE_BY_YEAR[2026]]
         # Rev. Proc. 2025-25: 2.10 / 3.14 / 4.19 / 6.60 / 8.44 / 9.96
-        assert pcts == pytest.approx(
-            [0.0210, 0.0314, 0.0419, 0.0660, 0.0844, 0.0996], abs=1e-5
-        )
+        assert pcts == pytest.approx([0.0210, 0.0314, 0.0419, 0.0660, 0.0844, 0.0996], abs=1e-5)
 
     def test_2027_table_matches_rev_proc_2026_26(self) -> None:
         from engine.aca import ACA_PRE_ARP_SCHEDULE_BY_YEAR
 
         pcts = [p for _fpl, p in ACA_PRE_ARP_SCHEDULE_BY_YEAR[2027]]
         # Rev. Proc. 2026-26: 2.15 / 3.23 / 4.30 / 6.78 / 8.66 / 10.22
-        assert pcts == pytest.approx(
-            [0.0215, 0.0323, 0.0430, 0.0678, 0.0866, 0.1022], abs=1e-5
-        )
+        assert pcts == pytest.approx([0.0215, 0.0323, 0.0430, 0.0678, 0.0866, 0.1022], abs=1e-5)
 
     def test_fpl_breakpoints_identical_across_published_years(self) -> None:
         """The band edges are statutory (100/133/150/200/250/300/400% FPL) and
@@ -167,8 +159,7 @@ class TestPublishedTableProvenance:
         from engine.aca import ACA_PRE_ARP_SCHEDULE_BY_YEAR
 
         edges = {
-            year: [fpl for fpl, _p in table]
-            for year, table in ACA_PRE_ARP_SCHEDULE_BY_YEAR.items()
+            year: [fpl for fpl, _p in table] for year, table in ACA_PRE_ARP_SCHEDULE_BY_YEAR.items()
         }
         for year, e in edges.items():
             assert e == [1.33, 1.50, 2.00, 2.50, 3.00, 4.00], f"year {year}"

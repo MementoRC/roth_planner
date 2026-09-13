@@ -28,12 +28,8 @@ class TestM7AmbiguousSubstringMatchWarns:
     def test_two_equal_length_grant_ids_both_substrings_warns_not_silently_attributed(
         self,
     ) -> None:
-        grant_a = StockGrant(
-            year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="ABG"
-        )
-        grant_b = StockGrant(
-            year=2020, strike=130.0, shares=400, expiry_year=2030, grant_id="CDE"
-        )
+        grant_a = StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="ABG")
+        grant_b = StockGrant(year=2020, strike=130.0, shares=400, expiry_year=2030, grant_id="CDE")
         hh = _hh_with_grants([grant_a, grant_b])
         exercises = OptionExercisesSnapshot(
             server_available=True, by_grant_id={"XABGYCDEZ": 75_000.0}
@@ -54,12 +50,8 @@ class TestM7AmbiguousSubstringMatchWarns:
         """Flipping grant order must not change which grant silently 'wins' —
         under the fix, neither wins; both trigger a warning either way.
         """
-        grant_a = StockGrant(
-            year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="ABG"
-        )
-        grant_b = StockGrant(
-            year=2020, strike=130.0, shares=400, expiry_year=2030, grant_id="CDE"
-        )
+        grant_a = StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="ABG")
+        grant_b = StockGrant(year=2020, strike=130.0, shares=400, expiry_year=2030, grant_id="CDE")
 
         hh_forward = _hh_with_grants([grant_a, grant_b])
         exercises_forward = OptionExercisesSnapshot(

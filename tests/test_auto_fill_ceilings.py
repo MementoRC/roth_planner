@@ -213,9 +213,7 @@ def test_auto_fill_aca_post_medicare_room_is_bounded_by_irmaa_tier1() -> None:
 
     checked = 0
     for year in sorted(set(plan.your_conversions) | set(plan.spouse_conversions)):
-        if is_pre_medicare_age(hh.your_age_in(year)) or is_pre_medicare_age(
-            hh.spouse_age_in(year)
-        ):
+        if is_pre_medicare_age(hh.your_age_in(year)) or is_pre_medicare_age(hh.spouse_age_in(year)):
             continue  # ACA cliff still binds -- covered by the test above
         conv = plan.your_conversions.get(year, 0.0) + plan.spouse_conversions.get(year, 0.0)
         if conv <= 0.0:

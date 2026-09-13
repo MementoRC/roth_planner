@@ -249,13 +249,19 @@ class TestAutoFillDeferredRmdSeeding:
 
         # Correct (seeded) base-year RMD: includes the deferred age-75 term.
         expected_rmd = calc_rmd(
-            hh.your_ira, hh.your_age, hh.your_rmd_start_age,
-            first_year_deferred=True, prior_year_balance=hh.your_ira,
+            hh.your_ira,
+            hh.your_age,
+            hh.your_rmd_start_age,
+            first_year_deferred=True,
+            prior_year_balance=hh.your_ira,
         )
         # Buggy (unseeded) RMD: deferred term suppressed (prior_year_balance=0).
         buggy_rmd = calc_rmd(
-            hh.your_ira, hh.your_age, hh.your_rmd_start_age,
-            first_year_deferred=True, prior_year_balance=0.0,
+            hh.your_ira,
+            hh.your_age,
+            hh.your_rmd_start_age,
+            first_year_deferred=True,
+            prior_year_balance=0.0,
         )
         assert expected_rmd > buggy_rmd, (
             f"precondition: seeded RMD ({expected_rmd:.0f}) must exceed the "
@@ -270,11 +276,21 @@ class TestAutoFillDeferredRmdSeeding:
         # conversion-eligible); spouse (55) is pre-RMD and absorbs 100% of the
         # shared bracket room since spouse_ira is effectively unconstrained.
         ded = deductions(
-            76, 55, hh.std_deduction, hh.senior_extra,
-            filing_status="MFJ", year=base_year, cpi=hh.cpi_assumption,
+            76,
+            55,
+            hh.std_deduction,
+            hh.senior_extra,
+            filing_status="MFJ",
+            year=base_year,
+            cpi=hh.cpi_assumption,
         )
         ded += senior_bonus_deduction(
-            76, 55, expected_rmd, year=base_year, cpi=hh.cpi_assumption, filing_status="MFJ",
+            76,
+            55,
+            expected_rmd,
+            year=base_year,
+            cpi=hh.cpi_assumption,
+            filing_status="MFJ",
         )
         expected_room = room_to_12(
             expected_rmd, ded, year=base_year, cpi=hh.cpi_assumption, filing_status="MFJ"
@@ -531,8 +547,7 @@ class TestAutoFillAcaMagiFullSsAddback:
         expected_room = max(ceiling - combined_ss, 0.0)  # post-fix: other_fixed(0) + combined_ss
 
         assert naive_room - expected_room == pytest.approx(combined_ss, abs=1.0), (
-            "precondition: naive vs correct room must differ by exactly the "
-            "non-taxable SS omission"
+            "precondition: naive vs correct room must differ by exactly the non-taxable SS omission"
         )
 
         plan = auto_fill_aca(hh)
@@ -600,7 +615,9 @@ class TestAutoFillSeniorBonusPostConversionMagi:
         # senior_bonus(magi) = 12_000 - 2*0.06*(magi-150_000) for magi in [150K,250K].
         total_bonus = 12_000.0
         phaseout_rate = 0.06
-        effective_phaseout_rate = 2.0 * phaseout_rate  # dual-eligible: both persons phase out in lockstep
+        effective_phaseout_rate = (
+            2.0 * phaseout_rate
+        )  # dual-eligible: both persons phase out in lockstep
         phaseout_start = 150_000.0
         expected_room = (
             ded_no_senior
@@ -628,7 +645,11 @@ class TestAutoFillSeniorBonusPostConversionMagi:
             67, 65, expected_room, year=base_year, cpi=0.0, filing_status="MFJ"
         )
         oracle_room = room_to_22(
-            fixed_gross, ded_no_senior + senior_at_room, year=base_year, cpi=0.0, filing_status="MFJ"
+            fixed_gross,
+            ded_no_senior + senior_at_room,
+            year=base_year,
+            cpi=0.0,
+            filing_status="MFJ",
         )
         assert oracle_room == pytest.approx(expected_room, abs=1.0), (
             "self-consistency check failed: expected_room is not a fixed point"
@@ -698,14 +719,10 @@ class TestSurvivorAutofill:
         spouse_ira == 0 so min(room, 0) == 0 → no spouse conversion.
         """
         death_year = Household().base_year + 2  # 2028
-        hh = self._base_hh(
-            survivor=SurvivorScenario(who_dies="spouse", death_year=death_year)
-        )
+        hh = self._base_hh(survivor=SurvivorScenario(who_dies="spouse", death_year=death_year))
         plan = auto_fill_22(hh)
 
-        post_death_years = [
-            y for y in plan.spouse_conversions if y >= death_year + 1
-        ]
+        post_death_years = [y for y in plan.spouse_conversions if y >= death_year + 1]
         for year in post_death_years:
             assert plan.spouse_conversions[year] == 0.0, (
                 f"spouse_conversions[{year}]={plan.spouse_conversions[year]:.0f} "
@@ -723,14 +740,10 @@ class TestSurvivorAutofill:
     def test_your_ira_conversions_stop_after_death(self) -> None:
         """Symmetric: who_dies='you' → no positive your_conversions from death_year+1."""
         death_year = Household().base_year + 2  # 2028
-        hh = self._base_hh(
-            survivor=SurvivorScenario(who_dies="you", death_year=death_year)
-        )
+        hh = self._base_hh(survivor=SurvivorScenario(who_dies="you", death_year=death_year))
         plan = auto_fill_22(hh)
 
-        post_death_years = [
-            y for y in plan.your_conversions if y >= death_year + 1
-        ]
+        post_death_years = [y for y in plan.your_conversions if y >= death_year + 1]
         for year in post_death_years:
             assert plan.your_conversions[year] == 0.0, (
                 f"your_conversions[{year}]={plan.your_conversions[year]:.0f} "
@@ -738,9 +751,7 @@ class TestSurvivorAutofill:
             )
 
         # Sanity: pre-death your_conversions exist.
-        pre_death_your_total = sum(
-            v for y, v in plan.your_conversions.items() if y <= death_year
-        )
+        pre_death_your_total = sum(v for y, v in plan.your_conversions.items() if y <= death_year)
         assert pre_death_your_total > 0.0, (
             "Sanity: expect positive your_conversions before death year"
         )
@@ -762,9 +773,7 @@ class TestSurvivorAutofill:
         death_year = base_year + 2  # 2028; survivor_active from 2029
 
         hh_mfj = self._base_hh()  # no survivor → MFJ forever
-        hh_surv = self._base_hh(
-            survivor=SurvivorScenario(who_dies="spouse", death_year=death_year)
-        )
+        hh_surv = self._base_hh(survivor=SurvivorScenario(who_dies="spouse", death_year=death_year))
 
         plan_mfj = auto_fill_22(hh_mfj)
         plan_surv = auto_fill_22(hh_surv)
@@ -772,6 +781,7 @@ class TestSurvivorAutofill:
         # Cumulative conversions in years strictly after death_year.
         def _post_death_total(plan: object) -> float:
             from engine.scenario_types import ConversionPlan
+
             assert isinstance(plan, ConversionPlan)
             return sum(
                 plan.your_conversions.get(y, 0.0) + plan.spouse_conversions.get(y, 0.0)
@@ -858,9 +868,7 @@ class TestSurvivorSSStepUpFullActuarial:
         # Expected (correct) conversion: combined_ss = 0 (age-60 floor) ->
         # fixed_gross = 0 -> room = room_to_22(0, ded, ...), fully absorbed by
         # the spouse's (unconstrained) IRA.
-        ded = _deductions(
-            0, 56, filing_status="Single", year=survivor_year, cpi=hh.cpi_assumption
-        )
+        ded = _deductions(0, 56, filing_status="Single", year=survivor_year, cpi=hh.cpi_assumption)
         expected_conversion = _room_to_22(
             0.0, ded, year=survivor_year, cpi=hh.cpi_assumption, filing_status="Single"
         )
@@ -1189,10 +1197,9 @@ class TestAutoFillSpouseSqueezeWindow:
         year_sa73 = base_year + yr_idx_sa73
         year_sa74 = base_year + yr_idx_sa74
 
-        tail_total = (
-            plan_fixed.spouse_conversions.get(year_sa73, 0.0)
-            + plan_fixed.spouse_conversions.get(year_sa74, 0.0)
-        )
+        tail_total = plan_fixed.spouse_conversions.get(
+            year_sa73, 0.0
+        ) + plan_fixed.spouse_conversions.get(year_sa74, 0.0)
 
         assert tail_total >= 100_000.0, (
             f"Spouse tail-year conversions (sa=73+74) must be >= $100K; "
@@ -1210,19 +1217,12 @@ class TestAutoFillSpouseSqueezeWindow:
         hh = self._same_age_hh()
         plan = auto_fill_12(hh)
 
-        total = (
-            sum(plan.your_conversions.values())
-            + sum(plan.spouse_conversions.values())
-        )
-        assert total > 0.0, (
-            f"Same-age household must produce positive conversions; got {total:.0f}"
-        )
+        total = sum(plan.your_conversions.values()) + sum(plan.spouse_conversions.values())
+        assert total > 0.0, f"Same-age household must produce positive conversions; got {total:.0f}"
 
         # Verify the window formula gives 6 for same-age same-rmd case.
         window = max(
             hh.spouse_rmd_start_age - hh.spouse_age - (hh.your_rmd_start_age - hh.your_age),
             6,
         )
-        assert window == 6, (
-            f"Same-age same-rmd window must be 6 (backward compat); got {window}"
-        )
+        assert window == 6, f"Same-age same-rmd window must be 6 (backward compat); got {window}"

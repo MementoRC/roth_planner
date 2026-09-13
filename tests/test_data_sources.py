@@ -416,7 +416,9 @@ class TestCandidateStore:
         with pytest.raises(CorruptCandidateStoreError):
             store.save(path)
 
-        assert path.read_text() == corrupt_bytes, "refused save must leave the corrupt file byte-identical"
+        assert path.read_text() == corrupt_bytes, (
+            "refused save must leave the corrupt file byte-identical"
+        )
 
     def test_save_writes_normally_when_target_missing(self, tmp_path: Path) -> None:
         path = tmp_path / "missing.json"
@@ -651,9 +653,7 @@ class TestResolver:
         committed = Household()
         original_value = committed.your_ira
         store = CandidateStore()
-        store.record_candidate(
-            "your_ira", 999_999.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT)
-        )
+        store.record_candidate("your_ira", 999_999.0, Provenance(Source.FINEXTRACT_LIVE, FIXED_DT))
         choices = ChoiceMap()
 
         resolve(committed, store, choices)
@@ -1049,9 +1049,7 @@ class TestReconcileManualEdits:
         session_hh = Household()
         session_hh.your_ira = 2_000_000.0
         committed_json = {
-            "your_ira": SourcedValue(
-                1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)
-            ).to_json()
+            "your_ira": SourcedValue(1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)).to_json()
         }
 
         result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
@@ -1070,9 +1068,7 @@ class TestReconcileManualEdits:
     def test_session_matching_committed_leaves_provenance_untouched(self) -> None:
         session_hh = Household()
         session_hh.your_ira = 1_700_000.0
-        original_payload = SourcedValue(
-            1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)
-        ).to_json()
+        original_payload = SourcedValue(1_700_000.0, Provenance(Source.UNKNOWN, FIXED_DT)).to_json()
         committed_json = {"your_ira": dict(original_payload)}
 
         result_json, changed = reconcile_manual_edits(session_hh, committed_json, FIXED_DT_2)
@@ -1215,9 +1211,7 @@ class TestConfirmField:
         choices = ChoiceMap()
         grants = [StockGrant(year=2019, strike=104.0, shares=650, expiry_year=2029, grant_id="G1")]
 
-        confirm_field(
-            committed_json, choices, GRANTS_KEY, grants, Source.FINEXTRACT_LIVE, FIXED_DT
-        )
+        confirm_field(committed_json, choices, GRANTS_KEY, grants, Source.FINEXTRACT_LIVE, FIXED_DT)
 
         hh = Household()
         apply_committed(hh, committed_json)
@@ -1354,7 +1348,9 @@ class TestSsFraCharacterization:
         session_hh.your_ss_fra = 2_500.0
         session_hh.spouse_ss_fra = 1_800.0
 
-        outcome = resolve_for_app(session_hh, None, {}, CandidateStore(), ChoiceMap(), None, FIXED_DT)
+        outcome = resolve_for_app(
+            session_hh, None, {}, CandidateStore(), ChoiceMap(), None, FIXED_DT
+        )
 
         assert outcome.migrated is True
         assert outcome.result.household.your_ss_fra == 2_500.0
@@ -1520,9 +1516,7 @@ class TestRecordTxnQuoteCandidate:
     def test_records_market_quote_candidate(self, tmp_path: Path) -> None:
         store_path = tmp_path / "candidate_store.json"
 
-        recorded = record_txn_quote_candidate(
-            202.357, recorded_at=FIXED_DT, store_path=store_path
-        )
+        recorded = record_txn_quote_candidate(202.357, recorded_at=FIXED_DT, store_path=store_path)
 
         assert recorded is True
         store = CandidateStore.load(store_path)

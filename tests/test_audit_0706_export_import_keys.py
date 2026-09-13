@@ -124,6 +124,7 @@ class TestUserDefaultsFromSessionRoundtrip:
         with patch("views.setup._state.st") as mock_st:
             mock_st.session_state = mock_ss
             from views.setup._state import _user_defaults_from_session
+
             payload = _user_defaults_from_session()
 
         assert "your_aca" in payload, "your_aca missing from export payload"
@@ -139,6 +140,7 @@ class TestUserDefaultsFromSessionRoundtrip:
         with patch("views.setup._state.st") as mock_st:
             mock_st.session_state = mock_ss
             from views.setup._state import _user_defaults_from_session
+
             payload = _user_defaults_from_session()
 
         assert "spouse_aca" in payload, "spouse_aca missing from export payload"
@@ -154,6 +156,7 @@ class TestUserDefaultsFromSessionRoundtrip:
         with patch("views.setup._state.st") as mock_st:
             mock_st.session_state = mock_ss
             from views.setup._state import _user_defaults_from_session
+
             payload = _user_defaults_from_session()
 
         assert "your_defer_first_rmd" in payload, "your_defer_first_rmd missing from export payload"
@@ -169,6 +172,7 @@ class TestUserDefaultsFromSessionRoundtrip:
         with patch("views.setup._state.st") as mock_st:
             mock_st.session_state = mock_ss
             from views.setup._state import _user_defaults_from_session
+
             payload = _user_defaults_from_session()
 
         assert "spouse_defer_first_rmd" in payload, (
@@ -187,6 +191,7 @@ class TestUserDefaultsFromSessionRoundtrip:
         with patch("views.setup._state.st") as mock_st:
             mock_st.session_state = mock_ss
             from views.setup._state import _user_defaults_from_session
+
             exported = _user_defaults_from_session()
 
         # Now import the exported payload
