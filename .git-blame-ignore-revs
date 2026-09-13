@@ -1,0 +1,24 @@
+# Revisions git blame should skip: bulk `ruff format` waves, no behaviour change.
+#
+# Enable locally with:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub applies this file automatically.
+#
+# Every wave below was verified by AST comparison against its parent
+# (ast.dump with annotate_fields=True, include_attributes=False), so each is
+# provably semantics-preserving except where noted.
+
+# style(engine,models): ruff format wave 1 - engine/ + models/ (24 files)  (#477)
+# AST: 24 checked, 24 identical, 0 different.
+81d2c9de98239bd82dc8b8898fa4da3f98b08c08
+
+# style(views): ruff format wave 2 - views/ (17 files)  (#478)
+# AST: 17 checked, 17 identical, 0 different.
+628a8c513a50260373286f8563a6161d081f9a31
+
+# style(tests): ruff format wave 3 - tests/ (99 files)  (#479)
+# AST: 99 checked, 98 identical, 1 different - tests/test_option_exercise_quote.py:384,
+# a class docstring gained a leading space because its text starts with a `"`
+# character (ruff separates `"""` from a following `"`). Verified inert: nothing
+# reads that docstring.
+a1a8167ef96f66ce2e5ecca6a0146766321dfe32

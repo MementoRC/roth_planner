@@ -83,8 +83,7 @@ def _py_override_is_trusted(path: Path) -> bool:
         return False
     if info.st_mode & 0o022:
         _log.warning(
-            "Refusing to exec %s: group/world-writable (mode %#o). Restrict it "
-            "with: chmod 600 %s",
+            "Refusing to exec %s: group/world-writable (mode %#o). Restrict it with: chmod 600 %s",
             path,
             info.st_mode & 0o777,
             path,
