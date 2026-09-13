@@ -432,10 +432,20 @@ class TestSuppressSnapshotAutoloadSentinel:
 
     def test_autoload_guard_uses_not_get(self):
         """The sentinel check must use `not st.session_state.get(...)` pattern."""
+        import re
+
         text = self._app_source()
-        assert 'not st.session_state.get("_suppress_snapshot_autoload")' in text, (
-            "app.py sentinel check does not use the expected pattern"
+        # Wrap-tolerant by design. `ruff format` splits this call across lines
+        # when it exceeds the 100-col limit -- it does, at app.py:110-112 and
+        # again at 126-128 -- which breaks a contiguous-substring match without
+        # changing the idiom under test. What this guards (audit F7) is that the
+        # sentinel is read via `.get(...)` rather than `st.session_state[...]`,
+        # which would raise KeyError when the key is absent. Line breaks inside
+        # the call are irrelevant to that claim, so they are tolerated here.
+        pattern = re.compile(
+            r'not\s+st\.session_state\.get\(\s*"_suppress_snapshot_autoload"\s*,?\s*\)'
         )
+        assert pattern.search(text), "app.py sentinel check does not use the expected pattern"
 
 
 class TestAcaCaptionSingleFiler:

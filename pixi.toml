@@ -34,7 +34,7 @@ lint-fix = "ruff check --fix ."
 format = "ruff format ."
 format-check = "ruff format --check ."
 type-check = "mypy engine/ models/"
-quality = { depends-on = ["lint", "type-check"] }
+quality = { depends-on = ["lint", "format-check", "type-check"] }
 test = "pytest tests/ --cov=engine --cov=models --cov-report=term-missing"
 security = "bandit -c pyproject.toml -r engine/ models/"
 pre-commit-install = "pre-commit install"

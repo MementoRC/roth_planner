@@ -76,7 +76,9 @@ def _seed_session_state() -> None:
     # governed via Source.PDF/BUNDLE candidates, not user-defaults seeding.
     st.session_state.setdefault("survivor", defaults.get("survivor"))
     st.session_state.setdefault("inherited_iras", defaults.get("inherited_iras", []))
-    st.session_state.setdefault("account_type_overrides", defaults.get("account_type_overrides", {}))
+    st.session_state.setdefault(
+        "account_type_overrides", defaults.get("account_type_overrides", {})
+    )
     st.session_state.setdefault("cpi_assumption", 0.025)
     st.session_state.setdefault("filing_status", "MFJ")
     # Cache ticker for sidebar label (avoids re-importing config on every render)
@@ -105,7 +107,9 @@ _seed_session_state()
 _drain_pending_defaults()
 
 # Load cached snapshots on first run (silently — Setup page shows status)
-if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_suppress_snapshot_autoload"):
+if "portfolio_snapshot" not in st.session_state and not st.session_state.get(
+    "_suppress_snapshot_autoload"
+):
     from engine.portfolio_sync import load_snapshot
 
     _cached = load_snapshot()
@@ -119,7 +123,9 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get("_s
         # defect: FinExtract sync/autoload bypassed the candidate gate).
         st.session_state.portfolio_snapshot = _cached
 
-if "ytd_snapshot" not in st.session_state and not st.session_state.get("_suppress_snapshot_autoload"):
+if "ytd_snapshot" not in st.session_state and not st.session_state.get(
+    "_suppress_snapshot_autoload"
+):
     from engine.portfolio_sync import load_ytd_snapshot
 
     _cached_ytd = load_ytd_snapshot()
@@ -332,7 +338,9 @@ def get_household() -> Household:
         your_fra_age=st.session_state.get("your_fra_age", 67),
         spouse_fra_age=st.session_state.get("spouse_fra_age", 67),
         prior_year_magi={
-            int(k): float(v) for k, v in st.session_state.get("prior_year_magi", {}).items() if v is not None and v != ""
+            int(k): float(v)
+            for k, v in st.session_state.get("prior_year_magi", {}).items()
+            if v is not None and v != ""
         },
         cpi_assumption=float(st.session_state.get("cpi_assumption", 0.025)),
         filing_status=st.session_state.get("filing_status", "MFJ"),
@@ -350,7 +358,9 @@ def get_household() -> Household:
     # from the FinExtract snapshot on every render (Wave 3.1b — see
     # engine/data_sources/orchestrator.py; SS added in Wave 2 Part C).
     snap = st.session_state.get("portfolio_snapshot")
-    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get("grant_strikes", {})
+    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
+        "grant_strikes", {}
+    )
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     choices = ChoiceMap.load(TRUST_CHOICES_PATH)
