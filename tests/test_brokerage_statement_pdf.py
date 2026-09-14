@@ -1044,7 +1044,17 @@ Long term 0.00 40.00 406,840.68
 """
 
 # Breaks ONLY the period marker, leaving identity and income intact.
-_VG_PERIOD_BREAK = (", quarter-to-date statement", ", monthly statement")
+#
+# This mangles the DATE SHAPE rather than the descriptor. The descriptor is
+# matched as a bounded class, so ", monthly statement" -- the original break
+# string here -- is a form the parser legitimately ACCEPTS, and breaking the
+# descriptor no longer yields an unparseable period. Mangling the date is the
+# stronger test anyway: it pins the "<Month> <D>, <YYYY>," anchor rather than
+# merely the presence of the word "statement".
+_VG_PERIOD_BREAK = (
+    "June 30, 2026, quarter-to-date statement",
+    "2026-06-30, quarter-to-date statement",
+)
 _UBS_PERIOD_BREAK = ("June 2026 ($)", "2026-06 ($)")
 
 
@@ -1052,6 +1062,22 @@ def _vanguard_pages_without_period() -> list[str]:
     return [
         VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(*_VG_PERIOD_BREAK),
         VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_PERIOD_BREAK),
+    ]
+
+
+# Real MONTHLY header, captured via extract_pages from the user's July
+# statement for this same account. Only the trailing descriptor differs from
+# the quarterly form -- the date shape is identical.
+_VG_MONTHLY = (
+    "June 30, 2026, quarter-to-date statement",
+    "July 31, 2026, monthly transaction statement",
+)
+
+
+def _vanguard_pages_monthly() -> list[str]:
+    return [
+        VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(*_VG_MONTHLY),
+        VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_MONTHLY),
     ]
 
 
@@ -1185,6 +1211,56 @@ class TestIdentityFailureStillRaises:
         text = UBS_MINIMAL_TEXT.replace("Account number: XY 12345 AB", "Account number omitted")
         with pytest.raises(StatementParseError):
             parse_statement_text([text])
+
+
+class TestVanguardPeriodDescriptor:
+    """Vanguard templates the header as "<Month> <D>, <YYYY>, <descriptor>
+    statement". The descriptor varies by statement cadence -- "quarter-to-date"
+    on a quarterly, "monthly transaction" on a monthly -- so it is matched as a
+    bounded character class rather than an enumeration of known values."""
+
+    def test_monthly_transaction_statement_parses(self):
+        recs = parse_statement_text(_vanguard_pages_monthly())
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-07-31"
+        assert rec.missing_fields == ()
+        # The income must come through as a complete record, not a held partial.
+        assert rec.dividends_taxable_ytd == 1028.55
+
+    def test_quarterly_statement_still_parses(self):
+        # Regression guard: generalising the descriptor must not lose the
+        # original form.
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == "2026-06-30"
+        assert recs[0].missing_fields == ()
+
+    def test_descriptor_never_spans_a_newline_to_a_later_statement_word(self):
+        """THE reason the descriptor class excludes whitespace.
+
+        Here the date line's descriptor is gone, but the word "statement"
+        still occurs further down the page. A class built from `\\s` (or a
+        sloppy `.+`) would run across the newline, reach that later
+        "statement", and invent a period date from an unrelated line. The
+        record must instead degrade to a held partial.
+        """
+        broken = VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(
+            "June 30, 2026, quarter-to-date statement",
+            "June 30, 2026, \nview your recent statements and statement archive",
+        )
+        # Guard the guard: the replacement must actually have happened.
+        assert "quarter-to-date statement" not in broken
+        assert "statement archive" in broken
+
+        recs = parse_statement_text(
+            [broken, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_PERIOD_BREAK)]
+        )
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == ""
+        assert recs[0].missing_fields == ("statement_period_end",)
 
 
 class TestExtractOwnerKeyAbsent:
