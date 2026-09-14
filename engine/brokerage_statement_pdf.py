@@ -425,7 +425,21 @@ _VANGUARD_ACCOUNT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"Individual brokerage account—(XXXX\d+)"), "taxable"),
 ]
 _VANGUARD_ACCOUNT_FALLBACK_RE = re.compile(r"account—(XXXX\d+)")
-_VANGUARD_PERIOD_RE = re.compile(r"([A-Za-z]+) (\d{1,2}), (\d{4}), quarter-to-date statement")
+# Vanguard templates this header as "<Month> <D>, <YYYY>, <descriptor> statement",
+# where the descriptor names the cadence -- "quarter-to-date" on a quarterly,
+# "monthly transaction" on a monthly (both observed on real statements for the
+# same account). The descriptor is matched as a bounded class rather than an
+# enumeration of the two known values, because a third cadence (year-end,
+# annual) would otherwise be a third bug. Since partial records landed, a miss
+# here degrades to a held record carrying the parsed income rather than
+# discarding the statement, which is what makes the permissive form the cheaper
+# choice.
+#
+# The class deliberately excludes whitespace. `\s` (or a loose `.+`) would run
+# across the newline into a later occurrence of the word "statement" elsewhere
+# on the page and invent a period date from an unrelated line -- see
+# TestVanguardPeriodDescriptor.test_descriptor_never_spans_a_newline_to_a_later_statement_word.
+_VANGUARD_PERIOD_RE = re.compile(r"([A-Za-z]+) (\d{1,2}), (\d{4}), [a-z][a-z -]* statement")
 
 
 def _detect_vanguard_account(text: str) -> tuple[str, str]:
