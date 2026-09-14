@@ -45,20 +45,23 @@ class DocKind(StrEnum):
 def classify_pdf_text(pages: list[str]) -> DocKind:
     """Classify a PDF from its per-page text. Pure -- no I/O.
 
-    Order matters. The two most distinctive documents are checked first:
+    Order matters -- checks run from strongest to weakest signal:
 
-    * Koinly first -- its vendor branding ("Koinly") never appears in a
-      brokerage statement or an IRS form, so this can never steal another type.
-    * Form 1040 next -- the "Form 1040 (YYYY)" footer is unambiguous.
+    * Form 1040 first -- the structured "Form 1040 (YYYY)" footer is
+      unambiguous and a far stronger signal than a single vendor-name
+      mention. A TurboTax 1040 export can legitimately echo "Koinly" as a
+      1099 import source, so the 1040 check must win that race.
+    * Koinly next -- requires its vendor branding AND a "TAX YEAR YYYY"
+      marker (see is_koinly_report), so it can no longer steal a real 1040.
     * Extension (Form 4868) next.
     * Brokerage LAST -- broker names (Vanguard/Fidelity/...) also appear as 1099
       payer lines inside a TurboTax 1040 export, so the loose broker match must
       run only after the 1040 check has had its chance.
     """
-    if is_koinly_report(pages):
-        return DocKind.KOINLY
     if is_form_1040(pages):
         return DocKind.FORM_1040
+    if is_koinly_report(pages):
+        return DocKind.KOINLY
     full_text = "\n".join(pages)
     if _EXTENSION_RE.search(full_text):
         return DocKind.EXTENSION

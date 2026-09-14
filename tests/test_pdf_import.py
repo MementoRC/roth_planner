@@ -70,9 +70,13 @@ def test_classify_unknown():
     assert classify_pdf_text(["just some unrelated text"]) is DocKind.UNKNOWN
 
 
-def test_koinly_beats_1040_when_both_markers_present():
-    pages = ["Koinly complete tax report", "Form 1040 (2026) reference"]
-    assert classify_pdf_text(pages) is DocKind.KOINLY
+def test_form_1040_beats_koinly_when_both_signals_present():
+    """A TurboTax 1040 export that also carries a fully corroborated Koinly
+    signal (vendor name + TAX YEAR marker, e.g. quoting Koinly as a 1099
+    import source) must still route to FORM_1040 -- the structured 1040
+    footer is the stronger, order-priority signal (see classify_pdf_text)."""
+    pages = ["Koinly TAX YEAR 2026 complete tax report", "Form 1040 (2026) reference"]
+    assert classify_pdf_text(pages) is DocKind.FORM_1040
 
 
 # --- scan_pdf_folder (routing) --------------------------------------------
@@ -80,7 +84,7 @@ def test_koinly_beats_1040_when_both_markers_present():
 
 def test_scan_routes_each_type(tmp_path, stub_parsers):
     _write(tmp_path, "a.pdf", "Schwab One statement")
-    _write(tmp_path, "b.pdf", "Koinly report")
+    _write(tmp_path, "b.pdf", "Koinly report\nTAX YEAR 2023")
     _write(tmp_path, "c.pdf", "Form 1040 (2023)")
     _write(tmp_path, "d.pdf", "Form 4868 extension")
     _write(tmp_path, "e.pdf", "totally unrelated document")
@@ -105,7 +109,7 @@ def test_scan_collects_parse_errors_without_aborting(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdf_import, "parse_statement_text", boom)
     monkeypatch.setattr(pdf_import, "parse_koinly_text", lambda pages: object())
-    _write(tmp_path, "good.pdf", "Koinly report")
+    _write(tmp_path, "good.pdf", "Koinly report\nTAX YEAR 2023")
     _write(tmp_path, "bad.pdf", "Schwab One statement")
 
     result = scan_pdf_folder(tmp_path)
@@ -138,8 +142,8 @@ def test_multiple_koinly_reports_all_survive_scan(tmp_path, monkeypatch):
         pdf_import, "extract_pages", lambda data: (data.decode("utf-8").split("\f"), None)
     )
     monkeypatch.setattr(pdf_import, "parse_koinly_text", lambda pages: _FakeKoinly(pages[0]))
-    _write(tmp_path, "you.pdf", "Koinly YOU")
-    _write(tmp_path, "spouse.pdf", "Koinly SPOUSE")
+    _write(tmp_path, "you.pdf", "Koinly YOU\fTAX YEAR 2023")
+    _write(tmp_path, "spouse.pdf", "Koinly SPOUSE\fTAX YEAR 2023")
 
     result = scan_pdf_folder(tmp_path)
 
