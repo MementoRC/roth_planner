@@ -199,20 +199,28 @@ def extract_owner_key(pages: list[str]) -> str | None:
     return None
 
 
+_TAX_YEAR_RE = re.compile(r"TAX\s+YEAR\s+(\d{4})", re.IGNORECASE)
+
+
 def is_koinly_report(pages: list[str]) -> bool:
     """True if *pages* look like a Koinly crypto tax report.
 
-    Content-based, since filenames are unreliable. The vendor name "Koinly" is
-    stamped throughout every report and does not appear in brokerage statements
-    or IRS tax forms, so it is a safe, filename-independent signal."""
-    return any("koinly" in (page or "").lower() for page in pages)
+    Content-based, since filenames are unreliable. Requires BOTH the vendor
+    name "Koinly" AND the "TAX YEAR YYYY" marker that parse_koinly_text itself
+    demands (see _TAX_YEAR_RE, reused here rather than duplicated) -- a
+    detector must require at least what its parser requires, otherwise it
+    claims files it cannot parse. A bare "koinly" mention (e.g. a TurboTax
+    1099 import-source line naming Koinly as a data source) is not enough."""
+    has_koinly = any("koinly" in (page or "").lower() for page in pages)
+    has_tax_year = any(_TAX_YEAR_RE.search(page or "") for page in pages)
+    return has_koinly and has_tax_year
 
 
 def parse_koinly_text(pages: list[str]) -> KoinlyReport:
     """Parse crypto YTD figures from Koinly report page texts. Pure -- no I/O."""
     year: int | None = None
     for text in pages:
-        ym = re.search(r"TAX\s+YEAR\s+(\d{4})", text, re.IGNORECASE)
+        ym = _TAX_YEAR_RE.search(text)
         if ym:
             year = int(ym.group(1))
             break
