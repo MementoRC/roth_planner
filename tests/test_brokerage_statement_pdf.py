@@ -1026,6 +1026,167 @@ class TestExtractOwnerKeyVanguard:
         assert extract_owner_key(VANGUARD_TAXABLE_OVERVIEW_TEXT) == "Claude R Cirba"
 
 
+# --- Partial records: a missing period date must not destroy parsed income ---
+#
+# Minimal-but-real-shaped UBS text. UBS tests proper live elsewhere; this
+# fixture exists only to exercise _parse_ubs's degradation path, because
+# _parse_ubs uniquely invoked EVERY helper inside its record constructor, so a
+# single field failure used to discard all of them.
+UBS_MINIMAL_TEXT = """UBS Financial Services Inc.
+Account number: XY 12345 AB
+Dividend and interest income
+June 2026 ($) Year to date
+Taxable dividends 100.00 250.00
+Taxable interest 10.00 25.00
+Summary of gains and losses
+Short term 0.00 15.00 0.00
+Long term 0.00 40.00 406,840.68
+"""
+
+# Breaks ONLY the period marker, leaving identity and income intact.
+_VG_PERIOD_BREAK = (", quarter-to-date statement", ", monthly statement")
+_UBS_PERIOD_BREAK = ("June 2026 ($)", "2026-06 ($)")
+
+
+def _vanguard_pages_without_period() -> list[str]:
+    return [
+        VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(*_VG_PERIOD_BREAK),
+        VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_PERIOD_BREAK),
+    ]
+
+
+class TestPeriodEndDegradesToMissingField:
+    """An unparseable statement period yields a PARTIAL record, not a dropped
+    file. Previously the raise unwound through pdf_import's `except Exception`
+    and the whole statement -- dividends, interest, gains -- was discarded."""
+
+    def test_vanguard_keeps_income_when_period_unparseable(self):
+        recs = parse_statement_text(_vanguard_pages_without_period())
+        assert len(recs) == 1
+        rec = recs[0]
+        # The data that DID parse must survive.
+        assert rec.account_number == "XXXX9320"
+        assert rec.account_type == "taxable"
+        assert rec.dividends_taxable_ytd == 1028.55
+        # ...and the gap is recorded explicitly, with "" (never None) so the
+        # record can never outrank a real dated one in a string comparison.
+        assert rec.statement_period_end == ""
+        assert rec.missing_fields == ("statement_period_end",)
+
+    def test_ubs_baseline_parses_with_period(self):
+        # Guards the negative test below: if this fixture stopped parsing for
+        # an unrelated reason, the degradation test would pass vacuously.
+        recs = parse_statement_text([UBS_MINIMAL_TEXT])
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == "2026-06-30"
+        assert recs[0].missing_fields == ()
+
+    def test_ubs_keeps_income_when_period_unparseable(self):
+        recs = parse_statement_text([UBS_MINIMAL_TEXT.replace(*_UBS_PERIOD_BREAK)])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_number == "XY 12345 AB"
+        assert rec.dividends_taxable_ytd == 250.0
+        assert rec.interest_taxable_ytd == 25.0
+        assert rec.stcg_net_ytd == 15.0
+        assert rec.ltcg_net_ytd == 40.0
+        assert rec.statement_period_end == ""
+        assert rec.missing_fields == ("statement_period_end",)
+
+
+class TestPartialRecordNeverShadowsComplete:
+    """Proves the "" sentinel is safe at the comparison site WITHOUT changing
+    it: `"2026-06-30" > ""` is True, so a real record always wins. A None
+    sentinel would instead raise TypeError here, and a JSON round-trip would
+    turn it into the string "None", which sorts ABOVE every ISO date."""
+
+    def test_real_dated_record_wins_regardless_of_order(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        real = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=200.0)
+        partial = _rec(
+            "111-1111",
+            "",
+            dividends_taxable_ytd=99.0,
+            missing_fields=("statement_period_end",),
+        )
+
+        assert pick_latest_per_account([real, partial])["111-1111"].dividends_taxable_ytd == 200.0
+        assert pick_latest_per_account([partial, real])["111-1111"].dividends_taxable_ytd == 200.0
+
+    def test_partial_survives_when_it_is_the_only_record(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        partial = _rec(
+            "222-2222",
+            "",
+            dividends_taxable_ytd=99.0,
+            missing_fields=("statement_period_end",),
+        )
+        result = pick_latest_per_account([partial])
+        assert set(result) == {"222-2222"}
+        assert result["222-2222"].dividends_taxable_ytd == 99.0
+
+
+class TestPartialRecordHeldForConfirmation:
+    """A partial record must never be auto-summed into YTD totals, even when
+    its account_type IS confirmed taxable -- it routes to the existing
+    needs-confirmation bucket instead."""
+
+    def test_taxable_but_partial_routes_to_needs_confirmation(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        partial = _rec(
+            "XXXX9320",
+            "",
+            account_type="taxable",
+            dividends_taxable_ytd=1028.55,
+            missing_fields=("statement_period_end",),
+        )
+        taxable, excluded, unknown = partition_by_account_type({"XXXX9320": partial})
+        assert taxable == {}
+        assert excluded == {}
+        assert set(unknown) == {"XXXX9320"}
+
+    def test_complete_taxable_record_still_auto_applies(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        complete = _rec("XXXX9320", "2026-06-30", account_type="taxable")
+        taxable, excluded, unknown = partition_by_account_type({"XXXX9320": complete})
+        assert set(taxable) == {"XXXX9320"}
+        assert unknown == {}
+
+
+class TestMissingFieldsRoundTrip:
+    def test_round_trip_preserves_missing_fields(self):
+        rec = _rec("111-1111", "", missing_fields=("statement_period_end",))
+        restored = BrokerageStatementRecord.from_dict(rec.to_dict())
+        assert restored.missing_fields == ("statement_period_end",)
+        assert restored.statement_period_end == ""
+
+    def test_legacy_dict_without_the_key_yields_empty_tuple(self):
+        # Cached statement JSON written before this field existed must load.
+        data = _rec("111-1111", "2026-06-30").to_dict()
+        data.pop("missing_fields", None)
+        assert BrokerageStatementRecord.from_dict(data).missing_fields == ()
+
+
+class TestIdentityFailureStillRaises:
+    """Degradation must NOT leak into identity. Without (broker,
+    account_number) a record cannot be keyed or deduped, so aborting is
+    correct -- only payload/metadata degrades."""
+
+    def test_vanguard_without_account_number_still_raises(self):
+        text = VANGUARD_TAXABLE_OVERVIEW_TEXT.replace("account—XXXX9320", "account—REDACTED")
+        with pytest.raises(StatementParseError):
+            parse_statement_text([text])
+
+    def test_ubs_without_account_number_still_raises(self):
+        text = UBS_MINIMAL_TEXT.replace("Account number: XY 12345 AB", "Account number omitted")
+        with pytest.raises(StatementParseError):
+            parse_statement_text([text])
+
+
 class TestExtractOwnerKeyAbsent:
     def test_returns_none_when_no_name_found(self) -> None:
         assert extract_owner_key("Some Broker Statement\nNo holder name here\n") is None

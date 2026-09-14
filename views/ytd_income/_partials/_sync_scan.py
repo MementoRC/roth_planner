@@ -270,8 +270,14 @@ def render_sync_scan_partial(hh: Household) -> None:
                 if applied_bits:
                     st.success("Applied to YTD snapshot: " + "; ".join(applied_bits))
                 if stmt_unknown_now:
+                    _partial_now = sum(1 for r in stmt_unknown_now.values() if r.missing_fields)
+                    _why = "a tax-status confirmation"
+                    if _partial_now == len(stmt_unknown_now):
+                        _why = "confirmation (incomplete statement)"
+                    elif _partial_now:
+                        _why = "confirmation (tax status, or an incomplete statement)"
                     st.info(
-                        f"{len(stmt_unknown_now)} account(s) need a tax-status confirmation "
+                        f"{len(stmt_unknown_now)} account(s) need {_why} "
                         "below before their income can be applied."
                     )
                 if result.form_1040_records:
@@ -302,6 +308,43 @@ def render_sync_scan_partial(hh: Household) -> None:
             stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(
                 statement_by_account
             )
+
+            # partition_by_account_type holds PARTIAL records (an incomplete
+            # statement, e.g. no parseable period date) out of stmt_taxable, in
+            # the same needs-confirmation bucket as accounts of unstated tax
+            # status. Split the two apart: for a partial record whose type IS
+            # known the tax-status selectbox below asks the wrong question, and
+            # answering it would leave the account held anyway. An account that
+            # is BOTH type-unknown and partial stays in stmt_unknown for now and
+            # surfaces here on the next rerun, once its type is confirmed.
+            stmt_partial = {
+                acc: rec
+                for acc, rec in stmt_unknown.items()
+                if rec.missing_fields and rec.account_type != "unknown"
+            }
+            stmt_unknown = {
+                acc: rec for acc, rec in stmt_unknown.items() if acc not in stmt_partial
+            }
+
+            # Opting a partial record in is an explicit, per-account act -- never
+            # a default. Acknowledged ones join the Apply button's payload below.
+            for account_number, rec in stmt_partial.items():
+                gaps = ", ".join(f.replace("_", " ") for f in rec.missing_fields)
+                st.info(
+                    f"**{rec.broker} {account_number}** parsed, but incomplete — "
+                    f"could not read: {gaps}. "
+                    f"Figures that DID parse: dividends ${rec.dividends_taxable_ytd:,.2f}, "
+                    f"interest ${rec.interest_taxable_ytd:,.2f}, "
+                    f"STCG ${rec.stcg_net_ytd:,.2f}, LTCG ${rec.ltcg_net_ytd:,.2f}. "
+                    "Without a statement period this record cannot be ordered against "
+                    "other statements for the same account, so a newer one will not "
+                    "supersede it automatically."
+                )
+                if st.checkbox(
+                    f"Use {account_number} anyway ({gaps} missing)",
+                    key=f"partial_ack_{account_number}",
+                ):
+                    stmt_taxable[account_number] = rec
 
             if stmt_excluded:
                 st.info(

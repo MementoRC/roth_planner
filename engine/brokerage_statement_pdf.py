@@ -61,6 +61,7 @@ from __future__ import annotations
 import calendar
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -116,6 +117,11 @@ class BrokerageStatementRecord:
     parser_version: str = "1.0.0"
     provenance: dict[str, Any] = field(default_factory=dict)
     owner_key: str | None = None
+    # Names of non-identifying fields this parser could NOT extract. Non-empty
+    # means this is a PARTIAL record: the figures present are trustworthy, but
+    # it is held back from auto-applied totals until a human confirms it (see
+    # partition_by_account_type). An empty tuple is a complete record.
+    missing_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.account_type not in ACCOUNT_TYPES:
@@ -140,6 +146,7 @@ class BrokerageStatementRecord:
             "parser_version": self.parser_version,
             "provenance": self.provenance,
             "owner_key": self.owner_key,
+            "missing_fields": list(self.missing_fields),
         }
 
     @classmethod
@@ -160,6 +167,8 @@ class BrokerageStatementRecord:
             parser_version=str(data.get("parser_version", "1.0.0")),
             provenance=dict(data.get("provenance", {})),
             owner_key=data.get("owner_key"),
+            # Absent in statement caches written before partial records existed.
+            missing_fields=tuple(str(f) for f in data.get("missing_fields", ())),
         )
 
 
@@ -286,6 +295,36 @@ def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
     return _parse_ibkr(full_text)
 
 
+def _period_end_or_missing(
+    extractor: Callable[[str], str], text: str
+) -> tuple[str, tuple[str, ...]]:
+    """Run a period-end extractor, degrading to a PARTIAL record on failure.
+
+    Returns ``(iso_date, ())`` on success, or ``("", ("statement_period_end",))``
+    when the period cannot be located. A statement period that cannot be found
+    must never destroy income figures that parsed correctly -- before this,
+    the raise unwound past the whole record and engine/pdf_import.py dropped
+    the entire file, discarding dividends, interest and gains that were read
+    without any trouble.
+
+    "" IS DELIBERATE, AND NOT None. ``statement_period_end`` is compared with a
+    bare ``>`` (see pick_latest_per_account below, and pdf_ledger.py's staleness
+    check) to decide which statement wins. ``""`` loses that comparison to every
+    real ISO date, so a partial record can never shadow a complete one, while
+    still being kept when it is the only record for its account. None would
+    raise TypeError at both sites; worse, None survives a JSON round-trip as the
+    string "None", which sorts ABOVE every ISO date and would let an incomplete
+    record permanently outrank real data.
+
+    Identity extraction (broker, account number) deliberately does NOT use this
+    -- without those a record cannot be keyed or deduped, so aborting is right.
+    """
+    try:
+        return extractor(text), ()
+    except StatementParseError:
+        return "", ("statement_period_end",)
+
+
 # --- Schwab -----------------------------------------------------------------
 #
 # Schwab's pdfplumber extract_text() strips ALL spaces between words in
@@ -352,11 +391,13 @@ def _parse_schwab(full_text: str) -> BrokerageStatementRecord:
         stcg_net = _parse_currency(gain_loss_m.group(1))
         ltcg_net = _parse_currency(gain_loss_m.group(2))
 
+    period_end, missing = _period_end_or_missing(_extract_schwab_period_end, full_text)
+
     return BrokerageStatementRecord(
         account_number=account_number,
         broker="schwab",
         account_type="unknown",  # Schwab statements never state this -- see module docstring
-        statement_period_end=_extract_schwab_period_end(full_text),
+        statement_period_end=period_end,
         interest_taxable_ytd=interest_taxable,
         interest_tax_exempt_ytd=interest_tax_exempt,
         dividends_taxable_ytd=dividends_taxable,
@@ -366,6 +407,7 @@ def _parse_schwab(full_text: str) -> BrokerageStatementRecord:
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"pdf_pages_total": full_text.count("--- page")},
         owner_key=extract_owner_key(full_text),
+        missing_fields=missing,
     )
 
 
@@ -431,12 +473,13 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
     dividends, interest, tax_exempt_interest, stcg, ltcg, other = _extract_vanguard_income_row(
         full_text
     )
+    period_end, missing = _period_end_or_missing(_extract_vanguard_period_end, full_text)
 
     return BrokerageStatementRecord(
         account_number=account_number,
         broker="vanguard",
         account_type=account_type,
-        statement_period_end=_extract_vanguard_period_end(full_text),
+        statement_period_end=period_end,
         interest_taxable_ytd=interest,
         interest_tax_exempt_ytd=tax_exempt_interest,
         dividends_taxable_ytd=dividends,
@@ -451,6 +494,7 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"other_income_ytd": other, "pdf_pages_total": full_text.count("--- page")},
         owner_key=extract_owner_key(full_text),
+        missing_fields=missing,
     )
 
 
@@ -595,7 +639,8 @@ def _extract_ibkr_period_end(full_text: str) -> str:
 
 def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
     sections = _split_ibkr_sections(full_text)
-    period_end = _extract_ibkr_period_end(full_text)
+    # Document-wide date, so a failure marks EVERY account's record partial.
+    period_end, missing = _period_end_or_missing(_extract_ibkr_period_end, full_text)
     records = []
     for section in sections:
         account_number, account_type = _detect_ibkr_account(section)
@@ -619,6 +664,7 @@ def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
                 captured_at=datetime.now(UTC).isoformat(),
                 provenance={"pdf_pages_total": full_text.count("--- page")},
                 owner_key=None,  # IBKR owner extraction out of scope -- see extract_owner_key TODO(verify)
+                missing_fields=missing,
             )
         )
     return records
@@ -728,7 +774,8 @@ def _extract_fidelity_period_end(full_text: str) -> str:
 
 def _parse_fidelity(full_text: str) -> list[BrokerageStatementRecord]:
     sections = _split_fidelity_sections(full_text)
-    period_end = _extract_fidelity_period_end(full_text)
+    # Document-wide range header, so a failure marks EVERY account partial.
+    period_end, missing = _period_end_or_missing(_extract_fidelity_period_end, full_text)
     records = []
     for section in sections:
         account_number, account_type = _detect_fidelity_account(section)
@@ -748,6 +795,7 @@ def _parse_fidelity(full_text: str) -> list[BrokerageStatementRecord]:
                 captured_at=datetime.now(UTC).isoformat(),
                 provenance={"pdf_pages_total": full_text.count("--- page")},
                 owner_key=None,  # Fidelity owner extraction out of scope -- see extract_owner_key TODO(verify)
+                missing_fields=missing,
             )
         )
     return records
@@ -817,25 +865,37 @@ def _ubs_row_ytd(pattern: re.Pattern[str], text: str, group: int = 2) -> float:
 
 
 def _parse_ubs(full_text: str) -> BrokerageStatementRecord:
+    # Every extraction is done on its own line BEFORE the record is built.
+    # Previously all of them were constructor keyword arguments, which coupled
+    # the survival of each figure to every other one: a single raise discarded
+    # income that had already been read correctly.
+    account_number = _extract_ubs_account_number(full_text)
+    period_end, missing = _period_end_or_missing(_extract_ubs_period_end, full_text)
+    interest_taxable = _ubs_row_ytd(_UBS_TAXABLE_INTEREST_RE, full_text)
+    dividends_taxable = _ubs_row_ytd(_UBS_TAXABLE_DIVIDENDS_RE, full_text)
+    stcg_net = _ubs_row_ytd(_UBS_SHORT_TERM_RE, full_text)
+    ltcg_net = _ubs_row_ytd(_UBS_LONG_TERM_RE, full_text)
+
     return BrokerageStatementRecord(
-        account_number=_extract_ubs_account_number(full_text),
+        account_number=account_number,
         broker="ubs",
         # UBS never states "taxable" about the account itself -- see module
         # docstring. "Company Sponsored Stock Plan" is almost certainly
         # taxable, but this parser does not guess -- same rule as Schwab.
         account_type="unknown",
-        statement_period_end=_extract_ubs_period_end(full_text),
-        interest_taxable_ytd=_ubs_row_ytd(_UBS_TAXABLE_INTEREST_RE, full_text),
+        statement_period_end=period_end,
+        interest_taxable_ytd=interest_taxable,
         # UBS gives no tax-exempt split anywhere in the document (verified
         # across all 10 pages of a real statement) -- same limitation as IBKR.
         interest_tax_exempt_ytd=0.0,
-        dividends_taxable_ytd=_ubs_row_ytd(_UBS_TAXABLE_DIVIDENDS_RE, full_text),
+        dividends_taxable_ytd=dividends_taxable,
         dividends_tax_exempt_ytd=0.0,
-        stcg_net_ytd=_ubs_row_ytd(_UBS_SHORT_TERM_RE, full_text),
-        ltcg_net_ytd=_ubs_row_ytd(_UBS_LONG_TERM_RE, full_text),
+        stcg_net_ytd=stcg_net,
+        ltcg_net_ytd=ltcg_net,
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"pdf_pages_total": full_text.count("--- page")},
         owner_key=None,  # UBS owner extraction out of scope -- see extract_owner_key TODO(verify)
+        missing_fields=missing,
     )
 
 
@@ -910,16 +970,20 @@ def partition_by_account_type(
       earned *inside* the account are never currently-taxable events; this
       does NOT model HSA *distribution* taxation (see ACCOUNT_TYPES docstring).
     - needs_confirmation: "unknown" -- excluded from sums by default until a
-      human confirms the type (see views/ytd_income.py).
+      human confirms the type (see views/ytd_income.py). A PARTIAL record
+      (non-empty missing_fields) lands here too even when its type IS
+      confirmed taxable: the figures it holds are trustworthy, but the
+      statement is incomplete, so it waits for the same explicit confirmation
+      rather than silently entering a financial projection.
     """
     taxable: dict[str, BrokerageStatementRecord] = {}
     excluded: dict[str, BrokerageStatementRecord] = {}
     unknown: dict[str, BrokerageStatementRecord] = {}
     for account_number, rec in by_account.items():
-        if rec.account_type == "taxable":
-            taxable[account_number] = rec
-        elif rec.account_type in ("traditional_ira", "roth_ira", "hsa"):
+        if rec.account_type in ("traditional_ira", "roth_ira", "hsa"):
             excluded[account_number] = rec
+        elif rec.account_type == "taxable" and not rec.missing_fields:
+            taxable[account_number] = rec
         else:
             unknown[account_number] = rec
     return taxable, excluded, unknown
