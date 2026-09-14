@@ -32,7 +32,12 @@ class Form1040ParseError(Exception):
 #   optional: if True, missing field → 0.0 (no error)
 #
 # Verified 2026-06-09 against a real TurboTax 2023 export.
-# 2024 uses the same stable IRS line numbers (unchanged since 2020 redesign).
+# 2024 and 2025 use the same stable IRS line numbers (unchanged since 2020
+# redesign). 2025 verified 2026-09-14 against a real 2025 Form 1040: agi,
+# tax_exempt_interest, qualified_dividends and ordinary_dividends all match
+# the 2024 patterns; taxable_ss and feie legitimately no-match in all three
+# years (2023/2024/2025) because those boxes are empty on this return, and
+# both are `optional`, so they correctly default to 0.0.
 
 ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
     2023: {
@@ -89,6 +94,49 @@ ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
     },
     2024: {
         # IRS line numbers unchanged from 2023 — same anchors apply
+        "agi": {
+            "form": "f1040",
+            "line": "11",
+            # See 2023 agi comment — optional (?:11\s+)? skip for realistic layout.
+            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
+            "optional": False,
+        },
+        "tax_exempt_interest": {
+            "form": "f1040",
+            "line": "2a",
+            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
+            "optional": True,
+        },
+        "qualified_dividends": {
+            "form": "f1040",
+            "line": "3a",
+            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
+            "optional": True,
+        },
+        "ordinary_dividends": {
+            "form": "f1040",
+            "line": "3b",
+            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
+            "optional": True,
+        },
+        "taxable_ss": {
+            "form": "f1040",
+            "line": "6b",
+            "regex": r"Social security benefits[\s\S]{0,80}6b\s+(\d[\d,]*)",
+            "optional": True,
+        },
+        "feie": {
+            "form": "sch1",
+            "line": "8d",
+            # TurboTax repeats the line number after the label with dot leaders:
+            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
+            # guards against layouts without the repeated 8d.
+            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
+            "optional": True,
+        },
+    },
+    2025: {
+        # IRS line numbers unchanged from 2023/2024 — same anchors apply
         "agi": {
             "form": "f1040",
             "line": "11",
