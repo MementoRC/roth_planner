@@ -59,6 +59,21 @@ _SCH1_2024 = """\
 Schedule 1  (Form 1040)   Additional Income and Adjustments
 """
 
+# 1040 page for 2025 with comma-formatted numbers.
+_F1040_2025 = """\
+Form 1040 (2025)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  4,000   b  Taxable interest  2b  600
+3a  Qualified dividends . .  3a  1,500   b  Ordinary dividends  3b  2,500
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income  210,000
+"""
+
+# Schedule 1 for 2025 — no FEIE.
+_SCH1_2025 = """\
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+"""
+
 # 1040 page with no Schedule 1 in the bundle.
 _F1040_NO_SCH1 = _F1040_2023  # reuse 2023 page
 
@@ -79,6 +94,11 @@ def _pages_2023_no_sch1() -> list[str]:
 def _pages_2024() -> list[str]:
     """Synthetic bundle: Form 1040 (2024) + Schedule 1."""
     return [_F1040_2024, _SCH1_2024, _FILLER_PAGE]
+
+
+def _pages_2025() -> list[str]:
+    """Synthetic bundle: Form 1040 (2025) + Schedule 1."""
+    return [_F1040_2025, _SCH1_2025, _FILLER_PAGE]
 
 
 def _pages_no_1040() -> list[str]:
@@ -257,6 +277,34 @@ class TestParsedForm2024:
 
     def test_year_2024_anchors_present(self) -> None:
         assert 2024 in ANCHORS
+
+
+# ---------------------------------------------------------------------------
+# TestParsedForm2025
+# ---------------------------------------------------------------------------
+
+
+class TestParsedForm2025:
+    def test_agi_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.tax_year == 2025
+        assert rec.agi == pytest.approx(210_000.0)
+
+    def test_tax_exempt_interest_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.tax_exempt_interest == pytest.approx(4_000.0)
+
+    def test_feie_zero_when_sch1_has_no_entry_2025(self) -> None:
+        # Schedule 1 present but no 8d line → feie = 0.0
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.feie == 0.0
+
+    def test_magi_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.magi == pytest.approx(210_000.0 + 4_000.0 + 0.0)
+
+    def test_year_2025_anchors_present(self) -> None:
+        assert 2025 in ANCHORS
 
 
 # ---------------------------------------------------------------------------
