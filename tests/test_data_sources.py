@@ -969,7 +969,12 @@ class TestSnapshotIngest:
         assert not isinstance(hh.your_ira, SourcedValue)
         assert hh.spouse_ira == 300_000.0
         assert hh.your_roth == 100_000.0
-        assert hh.txn_price_now == 150.0
+        # txn_price_now is NOT snapshot-derived: snap.txn_shares_value /
+        # snap.txn_shares_held is a derived average cost basis, not a market
+        # quote -- Yahoo Finance is the sole source for this field (see
+        # views._shared._sync_market_quote_source). apply_snapshot_overwrite
+        # must leave it at the Household default, untouched.
+        assert hh.txn_price_now == Household().txn_price_now
         assert hh.grants == [
             StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029, grant_id="G1")
         ]
@@ -991,7 +996,12 @@ class TestSnapshotIngest:
 
         assert store.candidates_for("spouse_ira")[0].value == 300_000.0
         assert store.candidates_for("your_roth")[0].value == 100_000.0
-        assert store.candidates_for("txn_price_now")[0].value == 150.0
+        # A FinExtract snapshot must NEVER record a txn_price_now candidate:
+        # snap.txn_shares_value / snap.txn_shares_held is a derived average
+        # cost basis, not a market quote -- Yahoo Finance
+        # (record_txn_quote_candidate, Source.MARKET_QUOTE) is the sole
+        # source for this field.
+        assert store.candidates_for("txn_price_now") == []
 
         grants_candidates = store.candidates_for("grants")
         assert len(grants_candidates) == 1

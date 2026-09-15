@@ -82,9 +82,6 @@ def apply_snapshot_overwrite(hh: Household, snap: PortfolioSnapshot, strikes: di
     if spouse_roth_bal > 0:
         hh.spouse_roth = spouse_roth_bal
 
-    if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
-        hh.txn_price_now = snap.txn_shares_value / snap.txn_shares_held
-
     if snap.equity_grants:
         merged_grants, _dropped = _merge_snapshot_grants(snap, strikes)
         if merged_grants:
@@ -177,11 +174,12 @@ def record_snapshot_candidates(
             store, "spouse_roth", spouse_roth_bal, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
         )
 
-    if snap.txn_shares_held > 0 and snap.txn_shares_value > 0:
-        price = snap.txn_shares_value / snap.txn_shares_held
-        record_candidate(
-            store, "txn_price_now", price, Source.FINEXTRACT_LIVE, _DETAIL, recorded_at
-        )
+    # txn_price_now is intentionally NOT recorded here: snap.txn_shares_value /
+    # snap.txn_shares_held is a derived AVERAGE cost basis from the brokerage
+    # position, not a market quote -- a category error under the
+    # "txn_price_now" key. Yahoo Finance (engine.market_quote.fetch_txn_quote
+    # via engine.data_sources.record.record_txn_quote_candidate) is the sole
+    # source for this field; see views._shared._sync_market_quote_source.
 
     dropped_missing_strike: list[tuple[int, int]] = []
     if snap.equity_grants:

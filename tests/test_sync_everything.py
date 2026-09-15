@@ -1,11 +1,12 @@
 """Tests for the W2 Part B "Sync everything" fan-out (views/_shared.py::sync_everything).
 
-- B1: ``sync_everything`` fans out to all three already-candidate-based
+- B1: ``sync_everything`` fans out to all four already-candidate-based
   ingestion paths (FinExtract portfolio, FinExtract SS, unified PDF folder
-  scan), returns a combined per-source summary, and every produced value
-  lands PENDING (freeze-until-confirm gate unchanged — nothing commits).
-  A raising FinExtract portfolio fetch still lets the SS + scan sources
-  record (independent error isolation).
+  scan, Yahoo TXN market quote), returns a combined per-source summary, and
+  every produced value lands PENDING (freeze-until-confirm gate unchanged —
+  nothing commits). A raising FinExtract portfolio fetch still lets the
+  SS/scan/market-quote sources record (independent error isolation), and a
+  failing Yahoo market-quote fetch is isolated the same way.
 """
 
 from __future__ import annotations
@@ -16,11 +17,13 @@ import requests
 
 import engine.portfolio_sync.ytd as ytd_mod
 import views._shared as shared_mod
+import views.option_exercise._partials._helpers as helpers_mod
 import views.setup._partials._accounts as partials_mod
 import views.setup.portfolio as portfolio_mod
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.committed import load_committed
 from engine.data_sources.resolver import magi_field_key
+from engine.market_quote import QuoteResult
 from engine.pdf_import import PdfImportResult
 from engine.portfolio_sync import (
     AccountSummary,
@@ -198,6 +201,25 @@ def _patch_ss_fetch(*, estimates=None):
     ]
 
 
+def _ok_quote_result(price: float = 250.0) -> QuoteResult:
+    return QuoteResult(
+        ticker="TXN", price=price, currency="USD", fetched_at=None, detail="Yahoo Finance TXN"
+    )
+
+
+def _patch_market_quote(*, result=None, side_effect=None):
+    """Patch ``handle_txn_quote_fetch`` (the call ``_sync_market_quote_source``
+    imports and invokes) so no real network call happens. Defaults to a
+    successful fetch; pass ``result``/``side_effect`` to simulate a failure.
+    """
+    kwargs = (
+        {"side_effect": side_effect}
+        if side_effect is not None
+        else {"return_value": result if result is not None else _ok_quote_result()}
+    )
+    return [patch.object(helpers_mod, "handle_txn_quote_fetch", **kwargs)]
+
+
 def _patch_scan(tmp_path, monkeypatch):
     import engine.tax_return_pdf as tax_return_pdf_mod
 
@@ -223,6 +245,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
         _patch_portfolio_fetches()
         + _patch_ss_fetch()
         + _patch_scan(tmp_path, monkeypatch)
+        + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),
             patch.object(partials_mod, "st", mock_st),
@@ -234,7 +257,8 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
 
     # Per-source counts: portfolio recorded your_ira only (spouse_ira/roth/txn
     # price/grants all zero-valued in the stub snapshot); SS recorded both
-    # you+spouse (MFJ); scan recorded one MAGI year.
+    # you+spouse (MFJ); scan recorded one MAGI year; market quote recorded one
+    # txn_price_now candidate.
     assert result.portfolio.server_available is True
     assert result.portfolio.error is None
     assert result.portfolio.candidates_recorded == 1
@@ -245,6 +269,9 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
     assert result.scan.error is None
     assert result.scan.result is not None
     assert result.scan.result.magi_candidates_recorded == 1
+
+    assert result.market_quote.candidates_recorded == 1
+    assert result.market_quote.error is None
 
     # Freeze invariant: every produced value is PENDING (a candidate exists),
     # and nothing was ever committed.
@@ -261,6 +288,103 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
     assert load_committed(COMMITTED_PATH) is None
 
 
+def test_sync_everything_invokes_market_quote_refresh(
+    clean_command_center_caches, tmp_path, monkeypatch
+):
+    """The fan-out must actually call the Yahoo market-quote refresh (not
+    just the portfolio/SS/scan legs) — the wiring this task adds."""
+    hh = _stub_hh()
+    mock_st = _mock_st()
+    mock_quote = MagicMock(return_value=_ok_quote_result(268.7))
+
+    patches = (
+        _patch_portfolio_fetches()
+        + _patch_ss_fetch()
+        + _patch_scan(tmp_path, monkeypatch)
+        + [
+            patch.object(helpers_mod, "handle_txn_quote_fetch", mock_quote),
+            patch.object(portfolio_mod, "st", mock_st),
+            patch.object(partials_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+        ]
+    )
+    with _ApplyAll(patches):
+        result = shared_mod.sync_everything(hh)
+
+    mock_quote.assert_called_once()
+    assert result.market_quote.candidates_recorded == 1
+    assert result.market_quote.error is None
+
+
+def test_sync_everything_isolates_a_failing_market_quote_fetch(
+    clean_command_center_caches, tmp_path, monkeypatch
+):
+    """A Yahoo market-quote failure must not abort the rest of "Sync
+    everything" — the other three legs still run and record."""
+    hh = _stub_hh()
+    mock_st = _mock_st()
+    failing_result = QuoteResult(
+        ticker="TXN",
+        price=None,
+        currency=None,
+        fetched_at=None,
+        detail="Yahoo Finance TXN",
+        error="HTTP 503",
+    )
+
+    patches = (
+        _patch_portfolio_fetches()
+        + _patch_ss_fetch()
+        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_market_quote(result=failing_result)
+        + [
+            patch.object(portfolio_mod, "st", mock_st),
+            patch.object(partials_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+        ]
+    )
+    with _ApplyAll(patches):
+        result = shared_mod.sync_everything(hh)
+
+    assert result.market_quote.candidates_recorded == 0
+    assert result.market_quote.error == "HTTP 503"
+
+    # Independent sources still ran and recorded — a Yahoo failure isolates.
+    assert result.portfolio.candidates_recorded == 1
+    assert result.ss.candidates_recorded == 2
+    assert result.scan.result is not None
+    assert result.scan.result.magi_candidates_recorded == 1
+
+
+def test_sync_everything_isolates_a_raising_market_quote_fetch(
+    clean_command_center_caches, tmp_path, monkeypatch
+):
+    """An exception raised by the market-quote fetch (not just an error
+    result) must still be isolated — this codebase has repeatedly been
+    bitten by swallowed exceptions, so this proves it surfaces, not hides."""
+    hh = _stub_hh()
+    mock_st = _mock_st()
+
+    patches = (
+        _patch_portfolio_fetches()
+        + _patch_ss_fetch()
+        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_market_quote(side_effect=RuntimeError("Yahoo unreachable"))
+        + [
+            patch.object(portfolio_mod, "st", mock_st),
+            patch.object(partials_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+        ]
+    )
+    with _ApplyAll(patches):
+        result = shared_mod.sync_everything(hh)
+
+    assert result.market_quote.candidates_recorded == 0
+    assert "Yahoo unreachable" in (result.market_quote.error or "")
+    assert result.portfolio.candidates_recorded == 1
+    assert result.ss.candidates_recorded == 2
+
+
 def test_sync_everything_isolates_a_raising_portfolio_fetch(
     clean_command_center_caches, tmp_path, monkeypatch
 ):
@@ -272,6 +396,7 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
         _patch_portfolio_fetches(fetch_portfolio_side_effect=RuntimeError("FinExtract unreachable"))
         + _patch_ss_fetch()
         + _patch_scan(tmp_path, monkeypatch)
+        + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),
             patch.object(partials_mod, "st", mock_st),
@@ -289,6 +414,8 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
     assert result.ss.candidates_recorded == 2
     assert result.scan.result is not None
     assert result.scan.result.magi_candidates_recorded == 1
+    assert result.market_quote.candidates_recorded == 1
+    assert result.market_quote.error is None
 
     from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
 
@@ -319,6 +446,7 @@ def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
         _patch_portfolio_fetches(snapshot=_stub_portfolio_snapshot_with_grants())
         + _patch_ss_fetch()
         + _patch_scan(tmp_path, monkeypatch)
+        + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),
             patch.object(partials_mod, "st", mock_st),
