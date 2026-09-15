@@ -570,3 +570,72 @@ class TestParseCurrency:
         from engine.tax_return_pdf import _parse_currency
 
         assert _parse_currency("1000.") == pytest.approx(1000.0)
+
+
+class TestLine11ReletteredTo11a:
+    """Regression: IRS relettered Form 1040 line 11 to "11a" for tax year 2025.
+
+    Before the fix, the optional ``(?:11\\s+)?`` skip fails to match "11a"
+    (no whitespace right after "11"), backtracks to zero-width, and the
+    capture group then grabs the digits "11" off the front of "11a" itself
+    instead of the real dollar amount that follows.
+    """
+
+    _F1040_2025_RELETTERED = """\
+Form 1040 (2025)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  1,432   b  Taxable interest  2b  600
+3a  Qualified dividends . .  3a  52,052   b  Ordinary dividends  3b  92,800
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income . . . . . . . . . . 11a 236,962.
+"""
+
+    def _pages(self) -> list[str]:
+        return [self._F1040_2025_RELETTERED, _SCH1_2025]
+
+    def test_agi_not_captured_as_line_number_11a(self) -> None:
+        rec = parse_form_1040_text(self._pages())
+        assert rec.agi == pytest.approx(236_962.0)
+
+
+class TestUnrecognisedLineTokenShapeNeverPartiallyCaptured:
+    """Design guard: a line-number token shape the skip doesn't recognise
+    (e.g. two trailing letters, not the tolerated single-letter suffix)
+    must produce NO MATCH — never a truncated digit-prefix of the token.
+
+    This is what the atomic group in ``_AMOUNT`` plus the trailing
+    ``(?![a-zA-Z])`` lookahead guarantee: no backtracking means the capture
+    can't retry a shorter digit run once the full-length attempt is
+    rejected by the lookahead.
+    """
+
+    _F1040_UNRECOGNISED_SHAPE = """\
+Form 1040 (2024)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  3,000   b  Taxable interest  2b  500
+3a  Qualified dividends . .  3a  1,000   b  Ordinary dividends  3b  2,000
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income . . . . . . . . . . 11xy 300.
+"""
+
+    def test_agi_raises_instead_of_partial_capture(self) -> None:
+        # "11xy" is not "<numeral><=1 letter>" — required field must raise,
+        # never silently return 11.0 or any other truncated prefix.
+        pages = [self._F1040_UNRECOGNISED_SHAPE, _SCH1_2024]
+        with pytest.raises(Form1040ParseError, match="agi"):
+            parse_form_1040_text(pages)
+
+    def test_optional_field_unrecognised_shape_defaults_to_zero(self) -> None:
+        # Same principle on an optional field: "2ab" (two-letter suffix) must
+        # not yield a truncated capture — it must no-match -> 0.0.
+        text = "Tax-exempt interest . . 2ab 500.\n"
+        pages = [
+            "Form 1040 (2024)\n"
+            + text
+            + "3a  Qualified dividends . .  3a  1,000   b  Ordinary dividends  3b  2,000\n"
+            "6   Social security benefits  6b  0\n"
+            "11  This is your adjusted gross income . . 11 200,000.\n",
+            _SCH1_2024,
+        ]
+        rec = parse_form_1040_text(pages)
+        assert rec.tax_exempt_interest == 0.0
