@@ -67,7 +67,11 @@ def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
     else:
         scan = f"scan: skipped ({summary.scan.error})"
 
-    return " · ".join([portfolio, ss, scan])
+    quote = f"quote: {summary.market_quote.candidates_recorded} candidates"
+    if summary.market_quote.error:
+        quote += f" (unavailable: {summary.market_quote.error})"
+
+    return " · ".join([portfolio, ss, scan, quote])
 
 
 def _render_attribution_table(instance_owner: str) -> None:

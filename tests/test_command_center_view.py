@@ -37,7 +37,13 @@ from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.pdf_import import PdfImportResult
 from models.sourced import Provenance, Source, SourcedValue
-from views._shared import PortfolioSyncSummary, ScanSyncSummary, SsSyncSummary, SyncEverythingResult
+from views._shared import (
+    MarketQuoteSyncSummary,
+    PortfolioSyncSummary,
+    ScanSyncSummary,
+    SsSyncSummary,
+    SyncEverythingResult,
+)
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
@@ -86,6 +92,7 @@ def _canned_sync_everything_result() -> SyncEverythingResult:
         portfolio=PortfolioSyncSummary(candidates_recorded=2, server_available=True, error=None),
         ss=SsSyncSummary(candidates_recorded=1, warnings=[]),
         scan=ScanSyncSummary(result=scan_result, error=None),
+        market_quote=MarketQuoteSyncSummary(candidates_recorded=1, error=None),
     )
 
 
@@ -122,6 +129,7 @@ def test_sync_everything_button_invokes_handler_and_renders_summary(
     assert "portfolio: 2 candidates" in rendered
     assert "SS: 1 candidates" in rendered
     assert "scan: 3 files, 1 errors" in rendered
+    assert "quote: 1 candidates" in rendered
 
     # Pending count reflects contributions from all three sources (existing
     # review-gate mechanism, untouched by this change).

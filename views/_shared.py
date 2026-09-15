@@ -22,13 +22,14 @@ Reusable pieces every later wave depends on:
    ``views/ytd_income.py`` and ``views/setup/parameters.py``).
 
 4. ``sync_everything`` — the Command Center's "Sync everything" action (W2
-   Part B). Fans out to the three already-candidate-based ingestion paths
-   (FinExtract portfolio, FinExtract SS, unified PDF folder scan),
-   independently error-isolated so one unreachable source never blocks the
-   others. Every produced value lands PENDING via the existing candidate
-   paths (``record_snapshot_candidates``, ``record_ss_fra_candidate`` via
-   ``_sync_ssa_for``, ``run_folder_scan``) — the freeze-until-confirm gate is
-   untouched, nothing here ever commits.
+   Part B). Fans out to the four already-candidate-based ingestion paths
+   (FinExtract portfolio, FinExtract SS, unified PDF folder scan, Yahoo
+   TXN market quote), independently error-isolated so one unreachable
+   source never blocks the others. Every produced value lands PENDING via
+   the existing candidate paths (``record_snapshot_candidates``,
+   ``record_ss_fra_candidate`` via ``_sync_ssa_for``, ``run_folder_scan``,
+   ``handle_txn_quote_fetch``) — the freeze-until-confirm gate is untouched,
+   nothing here ever commits.
 """
 
 from __future__ import annotations
@@ -245,6 +246,36 @@ def _sync_scan_source() -> ScanSyncSummary:
 
 
 @dataclass(frozen=True)
+class MarketQuoteSyncSummary:
+    """One leg of ``sync_everything`` — the Yahoo Finance TXN market-quote refresh."""
+
+    candidates_recorded: int
+    error: str | None
+
+
+def _sync_market_quote_source() -> MarketQuoteSyncSummary:
+    """Fetch a live TXN quote via Yahoo Finance and record it as a candidate.
+
+    Reuses ``handle_txn_quote_fetch`` (the same call the option-exercise
+    page's "Fetch TXN quote (Yahoo)" button makes), so the fetch + candidate
+    -record logic lives in exactly one place. A Yahoo failure (network error,
+    bad payload, non-200) must not abort the rest of "Sync everything" —
+    it degrades to a reported error, matching the portfolio/ss/scan legs'
+    error-isolation pattern (this source never raises out of here).
+    """
+    from views.option_exercise._partials._helpers import handle_txn_quote_fetch
+
+    try:
+        result = handle_txn_quote_fetch()
+    except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
+        return MarketQuoteSyncSummary(candidates_recorded=0, error=str(exc))
+
+    if not result.ok:
+        return MarketQuoteSyncSummary(candidates_recorded=0, error=result.error)
+    return MarketQuoteSyncSummary(candidates_recorded=1, error=None)
+
+
+@dataclass(frozen=True)
 class SyncEverythingResult:
     """Combined summary of the Command Center's "Sync everything" action.
 
@@ -255,20 +286,23 @@ class SyncEverythingResult:
     portfolio: PortfolioSyncSummary
     ss: SsSyncSummary
     scan: ScanSyncSummary
+    market_quote: MarketQuoteSyncSummary
 
 
 def sync_everything(hh: Household) -> SyncEverythingResult:
-    """Fan out to the portfolio/SS/scan sources, independently error-isolated.
+    """Fan out to the portfolio/SS/scan/market-quote sources, independently
+    error-isolated.
 
-    Each source is wrapped so a failure in one (e.g. FinExtract unreachable)
-    never prevents the others from running. Records everything through the
-    existing candidate paths only — never commits, never writes ``Household``
-    directly.
+    Each source is wrapped so a failure in one (e.g. FinExtract or Yahoo
+    unreachable) never prevents the others from running. Records everything
+    through the existing candidate paths only — never commits, never writes
+    ``Household`` directly.
     """
     return SyncEverythingResult(
         portfolio=_sync_portfolio_source(hh),
         ss=_sync_ss_source(),
         scan=_sync_scan_source(),
+        market_quote=_sync_market_quote_source(),
     )
 
 
