@@ -24,6 +24,68 @@ class Form1040ParseError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Shared regex fragments — ONE definition reused by every tax year below.
+# ---------------------------------------------------------------------------
+# Bug history (2026-09-14): ANCHORS[2025] was first added as a verbatim copy
+# of 2024. The IRS relettered Form 1040 line 11 to "11a" for tax year 2025
+# ("This is your adjusted gross income . . . 11a 236,962." instead of
+# "... 11 245,397."). The old skip `(?:11\s+)?` requires "11" immediately
+# followed by whitespace; against "11a" that fails, the optional group
+# backtracks to zero-width, and the amount capture then starts matching at
+# "11a" itself — `\d[\d,]*` grabs the digits "11" off the front of the line
+# token and stops at the letter "a", silently returning 11.0 instead of
+# 236962.0. 2023 and 2024 were audited against real PDFs and were NOT
+# affected (their line tokens never carry an unexpected suffix).
+#
+# Fix: every anchor below is built from two reusable, newline-safe pieces:
+#   _LEADER    — dot leaders / spaces between a label and its value; never
+#                matches "\n", so an anchor can't accidentally bridge onto a
+#                neighbouring line (rejected: a `[\s\S]`-based "run to the
+#                trailing period" design was considered and rejected for
+#                exactly this reason — on an empty box, such as taxable_ss
+#                or feie on this household's returns, it can cross onto the
+#                next line and silently capture an unrelated neighbour's
+#                amount instead of correctly producing no match).
+#   _line_skip — an OPTIONAL line-number token: the expected numeral plus at
+#                most one lowercase letter suffix (tolerates "11" -> "11a",
+#                "2a", "3b", "8d", etc.), followed by REQUIRED horizontal
+#                whitespace. The amount itself is captured by an ATOMIC
+#                group (`(?>...)`, Python 3.11+) followed by a negative
+#                lookahead for a trailing letter. Atomic = no backtracking:
+#                if a line-number-shaped token isn't fully consumed by
+#                _line_skip (an unrecognised shape, e.g. two letters), the
+#                amount capture cannot fall back to grabbing a truncated
+#                prefix of it — the whole anchor simply fails to match. For
+#                a required field (agi) that surfaces as Form1040ParseError,
+#                a visible failure, instead of a silently wrong value.
+# Verified 2026-09-14 against all three real PDFs (2023/2024/2025) — see the
+# 18-cell table in the accompanying commit/PR description.
+
+_LEADER = r"(?:[^\S\n]|\.)+"  # dot-leaders and/or horizontal space; never "\n"
+_AMOUNT = r"(\(?-?\$?(?>\d[\d,]*)\)?)(?![a-zA-Z])"
+
+
+def _line_skip(numeral: str) -> str:
+    """Optional "<numeral><single-letter-suffix?><required-gap>" skip.
+
+    Tolerates an IRS relettering (numeral gains/loses a trailing letter)
+    without ever letting the amount capture swallow part of the token —
+    see the module-level comment above _LEADER for the full mechanism.
+    """
+    return r"(?:" + numeral + r"[a-z]?[^\S\n]+)?"
+
+
+_AGI_REGEX = r"This is your adjusted gross income" + _LEADER + _line_skip("11") + _AMOUNT
+_TAX_EXEMPT_INTEREST_REGEX = r"Tax-exempt interest" + _LEADER + _line_skip("2") + _AMOUNT
+_QUALIFIED_DIVIDENDS_REGEX = r"Qualified dividends" + _LEADER + _line_skip("3") + _AMOUNT
+_ORDINARY_DIVIDENDS_REGEX = r"Ordinary dividends" + _LEADER + _line_skip("3") + _AMOUNT
+# SS block has free text ("6a  b Taxable amount . . .") between the label and
+# "6b" — bounded to 80 chars, but [^\n] (not [\s\S]) so it can never cross a
+# newline onto a neighbouring line.
+_TAXABLE_SS_REGEX = r"Social security benefits[^\n]{0,80}6b[^\S\n]+" + _AMOUNT
+_FEIE_REGEX = r"Foreign earned income exclusion" + _LEADER + _line_skip("8") + _AMOUNT
+
+# ---------------------------------------------------------------------------
 # Per-year anchor maps
 # ---------------------------------------------------------------------------
 # Each anchor entry has:
@@ -31,152 +93,101 @@ class Form1040ParseError(Exception):
 #   regex  : pattern with one capture group for the raw currency string
 #   optional: if True, missing field → 0.0 (no error)
 #
-# Verified 2026-06-09 against a real TurboTax 2023 export.
-# 2024 and 2025 use the same stable IRS line numbers (unchanged since 2020
-# redesign). 2025 verified 2026-09-14 against a real 2025 Form 1040: agi,
-# tax_exempt_interest, qualified_dividends and ordinary_dividends all match
-# the 2024 patterns; taxable_ss and feie legitimately no-match in all three
-# years (2023/2024/2025) because those boxes are empty on this return, and
-# both are `optional`, so they correctly default to 0.0.
+# Verified 2026-06-09 against a real TurboTax 2023 export. 2024 and 2025 use
+# the same stable IRS line numbers (unchanged since the 2020 redesign) via
+# the shared _line_skip("11")/_line_skip("2")/etc. fragments above, which
+# tolerate 2025's "11" -> "11a" relettering without drifting into three
+# separate copies. All three years verified 2026-09-14 against real PDFs;
+# taxable_ss and feie legitimately no-match in all three years because those
+# boxes are empty on this household's returns, and both are `optional`, so
+# they correctly default to 0.0.
 
 ANCHORS: dict[int, dict[str, dict[str, Any]]] = {
     2023: {
-        "agi": {
-            "form": "f1040",
-            "line": "11",
-            # TurboTax repeats the line number after the label with dot leaders:
-            # "This is your adjusted gross income .......... 11  162,433"
-            # Without the (?:11\s+)? skip, [\s.]* bridges to the first digit
-            # and captures "11" (the repeated line token) instead of the value.
-            # The skip is optional so synthetic fixtures without the repeat still pass.
-            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
-            "optional": False,
-        },
+        "agi": {"form": "f1040", "line": "11", "regex": _AGI_REGEX, "optional": False},
         "tax_exempt_interest": {
             "form": "f1040",
             "line": "2a",
-            # "Tax-exempt interest .......... 2a  2,511" — 2a already consumed.
-            # Optional skip guards against any layout variant without the label.
-            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
+            "regex": _TAX_EXEMPT_INTEREST_REGEX,
             "optional": True,
         },
         "qualified_dividends": {
             "form": "f1040",
             "line": "3a",
-            # "Qualified dividends .......... 3a  500" — 3a already consumed.
-            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
+            "regex": _QUALIFIED_DIVIDENDS_REGEX,
             "optional": True,
         },
         "ordinary_dividends": {
             "form": "f1040",
             "line": "3b",
-            # "Ordinary dividends .......... 3b  1,200" — 3b already consumed.
-            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
+            "regex": _ORDINARY_DIVIDENDS_REGEX,
             "optional": True,
         },
         "taxable_ss": {
             "form": "f1040",
             "line": "6b",
-            # SS block spans multiple text segments; allow up to 80 chars gap.
-            # 6b is already consumed in the [\s\S]{0,80}6b\s+ span.
-            "regex": r"Social security benefits[\s\S]{0,80}6b\s+(\d[\d,]*)",
+            "regex": _TAXABLE_SS_REGEX,
             "optional": True,
         },
-        "feie": {
-            "form": "sch1",
-            "line": "8d",
-            # TurboTax repeats the line number after the label with dot leaders:
-            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
-            # guards against layouts without the repeated 8d.
-            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
-            "optional": True,
-        },
+        "feie": {"form": "sch1", "line": "8d", "regex": _FEIE_REGEX, "optional": True},
     },
     2024: {
-        # IRS line numbers unchanged from 2023 — same anchors apply
-        "agi": {
-            "form": "f1040",
-            "line": "11",
-            # See 2023 agi comment — optional (?:11\s+)? skip for realistic layout.
-            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
-            "optional": False,
-        },
+        "agi": {"form": "f1040", "line": "11", "regex": _AGI_REGEX, "optional": False},
         "tax_exempt_interest": {
             "form": "f1040",
             "line": "2a",
-            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
+            "regex": _TAX_EXEMPT_INTEREST_REGEX,
             "optional": True,
         },
         "qualified_dividends": {
             "form": "f1040",
             "line": "3a",
-            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
+            "regex": _QUALIFIED_DIVIDENDS_REGEX,
             "optional": True,
         },
         "ordinary_dividends": {
             "form": "f1040",
             "line": "3b",
-            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
+            "regex": _ORDINARY_DIVIDENDS_REGEX,
             "optional": True,
         },
         "taxable_ss": {
             "form": "f1040",
             "line": "6b",
-            "regex": r"Social security benefits[\s\S]{0,80}6b\s+(\d[\d,]*)",
+            "regex": _TAXABLE_SS_REGEX,
             "optional": True,
         },
-        "feie": {
-            "form": "sch1",
-            "line": "8d",
-            # TurboTax repeats the line number after the label with dot leaders:
-            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
-            # guards against layouts without the repeated 8d.
-            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
-            "optional": True,
-        },
+        "feie": {"form": "sch1", "line": "8d", "regex": _FEIE_REGEX, "optional": True},
     },
     2025: {
-        # IRS line numbers unchanged from 2023/2024 — same anchors apply
-        "agi": {
-            "form": "f1040",
-            "line": "11",
-            # See 2023 agi comment — optional (?:11\s+)? skip for realistic layout.
-            "regex": r"This is your adjusted gross income[\s.]+(?:11\s+)?(\(?-?\$?\d[\d,]*\)?)",
-            "optional": False,
-        },
+        # Line 11 -> "11a" relettering (see module comment); _AGI_REGEX
+        # already tolerates it via _line_skip("11")'s optional [a-z]? suffix.
+        "agi": {"form": "f1040", "line": "11a", "regex": _AGI_REGEX, "optional": False},
         "tax_exempt_interest": {
             "form": "f1040",
             "line": "2a",
-            "regex": r"Tax-exempt interest[\s.]+(?:2a\s+)?(\d[\d,]*)",
+            "regex": _TAX_EXEMPT_INTEREST_REGEX,
             "optional": True,
         },
         "qualified_dividends": {
             "form": "f1040",
             "line": "3a",
-            "regex": r"Qualified dividends[\s.]+(?:3a\s+)?(\d[\d,]*)",
+            "regex": _QUALIFIED_DIVIDENDS_REGEX,
             "optional": True,
         },
         "ordinary_dividends": {
             "form": "f1040",
             "line": "3b",
-            "regex": r"Ordinary dividends[\s.]+(?:3b\s+)?(\d[\d,]*)",
+            "regex": _ORDINARY_DIVIDENDS_REGEX,
             "optional": True,
         },
         "taxable_ss": {
             "form": "f1040",
             "line": "6b",
-            "regex": r"Social security benefits[\s\S]{0,80}6b\s+(\d[\d,]*)",
+            "regex": _TAXABLE_SS_REGEX,
             "optional": True,
         },
-        "feie": {
-            "form": "sch1",
-            "line": "8d",
-            # TurboTax repeats the line number after the label with dot leaders:
-            # "Foreign earned income exclusion ...... 8d 6,500". Optional skip
-            # guards against layouts without the repeated 8d.
-            "regex": r"Foreign earned income exclusion[\s.]+(?:8d\s+)?(\d[\d,]*)",
-            "optional": True,
-        },
+        "feie": {"form": "sch1", "line": "8d", "regex": _FEIE_REGEX, "optional": True},
     },
 }
 
