@@ -1,13 +1,16 @@
-"""Portfolio tab — the FinExtract sync core, and the thin tab-body composition.
+"""Portfolio sync core.
 
 The equity-grants table (and its ``GRANTS_KEY`` governance card) moved into
 ``views/setup/_partials/_options.py:render_options_partial`` as of Task 5 of the
 ui-shell-theme-toggle plan. The Sync-from-FinExtract button, the read-only
 accounts/holdings tables, and the Account Type Overrides expander moved into
-``views/setup/_partials/_portfolio.py:render_portfolio_partial`` as of Task 6 — this
-module now holds only ``sync_portfolio_from_finextract`` (the sync core,
-also reused directly by ``views._shared.sync_everything``) and
-``render_portfolio_tab``, which composes the two partials.
+``views/setup/_partials/_portfolio.py:render_portfolio_partial`` as of Task 6.
+``render_portfolio_tab``, the thin tab-body composition that used to call
+both partials, was deleted by PR B (2026-09): it had zero callers left
+anywhere (production or tests) once ``views/shells/domains_shell.py`` took
+over composing every Setup-domain partial directly. This module now holds
+only ``sync_portfolio_from_finextract`` (the sync core, also reused directly
+by ``views._shared.sync_everything``).
 """
 
 from __future__ import annotations
@@ -36,7 +39,6 @@ from engine.portfolio_sync import (
 from models.household import Household
 from models.sourced import Source
 from models.ytd_income import YTDSnapshot
-from views.setup._partials import render_options_partial, render_portfolio_partial
 
 
 @dataclass(frozen=True)
@@ -155,15 +157,3 @@ def sync_portfolio_from_finextract(hh: Household) -> PortfolioSyncOutcome:
         dividend_history_synced=div_rollup.server_available,
         option_exercises_synced=exercises.server_available,
     )
-
-
-def render_portfolio_tab(hh: Household) -> None:
-    """Extracted from setup.py render() — portfolio tab body.
-
-    Composes the two Portfolio-tab partials (Task 6): the sync
-    button/accounts-holdings-tables/overrides partial, then the
-    equity-grants/stock-price partial (Task 5), in the same relative order
-    as the pre-Task-6 inline body.
-    """
-    render_portfolio_partial(hh, st)
-    render_options_partial(hh, st)

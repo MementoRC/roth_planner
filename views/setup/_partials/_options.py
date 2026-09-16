@@ -22,10 +22,15 @@ from ._clamp import clamp as _clamp
 
 def render_options_partial(hh: Household, container) -> None:
     """Render the Options (Stock Grants) partial: the read-only equity-grants
-    table plus the ``txn_price_now`` stock-price input. Their
-    trust/manual-override/confirm governance cards do NOT render here — they
-    render exclusively in ``views/setup/command_center.py``'s generic
-    per-pending-field loop.
+    table. Its trust/manual-override/confirm governance card does NOT render
+    here — it renders exclusively in ``views/setup/command_center.py``'s
+    generic per-pending-field loop.
+
+    The ``txn_price_now`` stock-price input (previously rendered here too)
+    moved out into ``render_stock_price_widget`` (PR B, 2026-09) — it now
+    renders from ``views/shells/domains_shell.py``'s Data tab, beside the
+    sync controls that refresh it, rather than under Options. See
+    ``render_stock_price_widget``'s docstring for the rationale.
 
     Note: ``hh`` parameter is unused in this function's body; it is retained
     for interface parity with ``render_household_partial`` and
@@ -34,8 +39,8 @@ def render_options_partial(hh: Household, container) -> None:
     all Setup-domain partials for Task 8's shell composition.
 
     Unlike ``render_household_partial``/``render_accounts_partial``, this
-    partial takes no ``owner`` argument — grants and the stock price are
-    household-level, not per-person.
+    partial takes no ``owner`` argument — grants are household-level, not
+    per-person.
 
     The equity-grants table (moved from ``views/setup/portfolio.py``'s old
     ``_render_grants_section``, formerly rendered once per Me/All Portfolio
@@ -46,34 +51,16 @@ def render_options_partial(hh: Household, container) -> None:
     + All tab): the grants field's governance card (rendered by Command
     Center, keyed ``trust_grants``/``manual_grants``/``confirm_grants``)
     would raise ``DuplicateWidgetID`` if this table were rendered from two
-    call sites in the same script run — this dedup, and the txn_price
-    relocation described next, are a single deliberate Task 5 decision (NOT
-    an application of Task 3's reordering exception, which was scoped only
-    to minor same-tab cosmetic reordering and does not cover either of these
-    changes — see below).
+    call sites in the same script run — this dedup was a deliberate Task 5
+    decision (NOT an application of Task 3's reordering exception, which was
+    scoped only to minor same-tab cosmetic reordering and does not cover
+    this cross-tab move).
 
-    ``txn_price_now`` is a Command-Center-governed sourced field (one of
-    ``HOUSEHOLD_SCALAR_FIELDS``) aliased to the ``"txn_price"`` session key
-    (see ``session_keys_for_writeback``/``_apply_confirm_to_session``'s
-    docstring for why) — the widget reads/writes
-    ``st.session_state.txn_price`` (not ``hh.txn_price_now``, which is a
-    ``SourcedValue`` post-resolve and would raise
-    ``StreamlitMixedNumericTypesError``), moved (same unkeyed
-    controlled-widget shape) from ``views/setup/parameters.py``'s Joint
-    sub-tab to here, co-located with the stock-grants table it prices.
-
-    This is a cross-tab, user-visible Classic-mode layout change (Parameters
-    -> Joint to Portfolio), which exceeds Task 5's literal text. A
-    2026-07-24 spec-compliance review of commit 19e04f69 flagged it as such
-    and flagged this docstring's prior (incorrect) citation of "Task 3's
-    accepted-reordering exception" as not actually covering a cross-tab
-    move. The project owner reviewed and explicitly APPROVED it the same day
-    as a deliberate Task 5 design decision: all Options-domain fields
-    (equity grants + the stock price that prices them) consolidate into
-    exactly one call site, rendered from the Portfolio tab, going forward.
-    See ``tests/test_setup_options_partial.py`` for the regression test that
-    pins the Stock Price widget to the Portfolio tab (and asserts its
-    absence from Parameters -> Joint).
+    ``txn_price_now``'s earlier history (its Task-5 move here from
+    ``views/setup/parameters.py``'s Joint sub-tab, and the 2026-07-24 owner
+    approval of that cross-tab relocation) now lives on
+    ``render_stock_price_widget``'s docstring, since the widget itself moved
+    there.
 
     The grants field's own governance card (rendered by Command Center) has
     no manual-override ``number_input`` (see ``_render_field_card``'s
@@ -112,6 +99,21 @@ def render_options_partial(hh: Household, container) -> None:
             "all grants are shown here."
         )
 
+
+def render_stock_price_widget(container) -> None:
+    """Render the ``txn_price_now`` stock-price ``number_input`` alone.
+
+    Extracted out of ``render_options_partial`` (PR B, 2026-09) so
+    ``views/shells/domains_shell.py``'s Data tab can render it beside the
+    sync controls that already refresh it (the "Sync everything" button's
+    Yahoo-quote leg) — it is a market-sourced value, not an Options-domain
+    input, and the Stock Grants table it used to be co-located with stays
+    under Options. Preserves the exact same clamp, ``min_value``/``step``/
+    ``format``, dynamic ``_stock_ticker`` label, and
+    ``st.session_state.txn_price`` assignment this widget has always used
+    (see ``render_options_partial``'s docstring for why it reads/writes
+    ``st.session_state.txn_price`` rather than ``hh.txn_price_now``).
+    """
     container.subheader("Stock Price")
     st.session_state.txn_price = container.number_input(
         f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",

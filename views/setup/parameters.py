@@ -1,11 +1,16 @@
-"""Parameters tab — Me/Spouse/Joint sub-tabs (PDF 1040 import, filing-status pickers).
+"""Parameters — single-filer derivation, filing-status vocabulary, and the
+PDF 1040 import helper.
 
-Growth-rate/living-expenses/ACA-benchmark/enhanced-subsidies/advance-APTC/
-Medicare-Part-B/CPI/prior-year-MAGI-anchor widgets, plus the survivor-scenario
-and inherited-IRAs expanders, moved into
-``views/setup/_partials._assumptions:render_assumptions_partial`` as of Task 7
-of the ui-shell-theme-toggle plan — this module's Joint sub-tab now just calls
-that partial (see ``render_parameters_tab``).
+The Me/Spouse/Joint sub-tab composition (``render_parameters_tab``) that
+used to live in this module was deleted (zero production callers — the
+Classic shell that routed through it was already removed; every surviving
+Setup shell, e.g. ``views/shells/domains_shell.py``, composes
+``views/setup/_partials/`` directly, including
+``views/setup/_partials._assumptions:render_assumptions_partial`` for the
+growth-rate/living-expenses/ACA-benchmark/enhanced-subsidies/advance-APTC/
+Medicare-Part-B/CPI/prior-year-MAGI-anchor widgets plus the survivor-scenario
+and inherited-IRAs expanders). ``_render_pdf_1040_import`` below is still
+called directly by those shells.
 """
 
 from __future__ import annotations
@@ -24,11 +29,6 @@ from engine.tax_return_pdf import (
 )
 from models.household import Household
 from views._format import fmt_dollars
-from views.setup._partials import (
-    render_accounts_partial,
-    render_assumptions_partial,
-    render_household_partial,
-)
 
 
 def apply_single_filer(hh: Household) -> Household:
@@ -139,42 +139,3 @@ def _render_pdf_1040_import() -> None:
                     "Rerunning…"
                 )
                 st.rerun()
-
-
-def render_parameters_tab(hh: Household) -> None:
-    """Extracted from setup.py render() — parameters tab body."""
-    # Household filing status — gate that activates the engine's Single-filer paths.
-    _is_single = bool(render_household_partial(hh, st, "joint"))
-    # NOTE: spouse inputs are intentionally NOT zeroed in session_state here — doing so
-    # permanently destroyed the user's real spouse balances on a Single→MFJ round-trip
-    # (audit C9 / ui-streamlit-4). The spouse widgets are disabled while Single, and the
-    # single-filer zeroing is applied to the DERIVED Household in app.get_household()
-    # via apply_single_filer().
-
-    me_sub, spouse_sub, joint_sub = st.tabs(["Me", "Spouse", "Joint"])
-
-    with me_sub:
-        render_household_partial(hh, me_sub, "your")
-        render_accounts_partial(hh, me_sub, "your")
-
-    with spouse_sub:
-        if _is_single:
-            st.info(
-                "Single filer — spouse inputs are disabled and treated as zero. "
-                "Switch Filing status to Married filing jointly to re-enable."
-            )
-        render_household_partial(hh, spouse_sub, "spouse")
-        render_accounts_partial(hh, spouse_sub, "spouse")
-
-    with joint_sub:
-        # growth_rate/living_expenses/ACA-benchmark/enhanced-subsidies/
-        # advance-APTC/Medicare-Part-B/CPI/prior-year-MAGI-anchor (incl. its
-        # governance card), survivor-scenario, and inherited-IRAs widgets
-        # moved into render_assumptions_partial as of Task 7 of the
-        # ui-shell-theme-toggle plan. _render_pdf_1040_import (not part of
-        # that field list) now renders AFTER this call instead of between
-        # the MAGI anchor and the survivor-scenario expander — a minor
-        # same-tab reorder accepted under the plan's Task 3 exception (see
-        # render_assumptions_partial's docstring).
-        render_assumptions_partial(hh, joint_sub)
-        _render_pdf_1040_import()

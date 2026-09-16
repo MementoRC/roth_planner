@@ -12,8 +12,8 @@ differs from Classic (Owner decisions 4/5 in
 
 The Household tab needs 3 partial calls (``"joint"``/``"your"``/``"spouse"``)
 since ``render_household_partial`` is per-owner — the same 3-call pattern
-``views/setup/parameters.py:render_parameters_tab`` established in Task 3,
-just composed into ONE tab (via two side-by-side columns for Me/Spouse)
+``views/setup/parameters.py:render_parameters_tab`` (now deleted) established
+in Task 3, just composed into ONE tab (via two side-by-side columns for Me/Spouse)
 instead of split across 3 sub-tabs. Accounts similarly needs 2 calls
 (``"your"``/``"spouse"``); Options/Assumptions/Portfolio are household-level
 (no owner split, 1 call each).
@@ -37,6 +37,12 @@ before the move:
 - ``render_command_center(hh)`` -- was its own tab (added when the UI shell
   collapsed to Domains-only; Classic/Contextual, its only other callers,
   were already deleted at that point).
+- ``render_stock_price_widget(st)`` -- added by PR B (2026-09), moved out of
+  ``render_options_partial`` (Options tab). ``txn_price_now`` is a
+  market-sourced value already refreshed by "Sync everything"'s Yahoo-quote
+  leg, so it renders here beside the sync controls instead of under Options
+  (the Stock Grants table stays under Options). Renders its own "Stock
+  Price" ``st.subheader`` internally.
 - ``render_sync_scan_partial(hh)`` -- was called from
   ``views/ytd_income/__init__.py``'s "Update Your Data" tab, which is now
   display-only (manual entry + headroom review). Its CODE was deliberately
@@ -45,10 +51,15 @@ before the move:
   so tests exercising the partial directly keep working unchanged. It saves
   its own snapshot via ``engine.portfolio_sync.save_ytd_snapshot`` at its own
   internal call sites, so scanning/applying from this tab persists to disk
-  without requiring a visit to the YTD page.
+  without requiring a visit to the YTD page. Its section header reads "PDF
+  Statements" (renamed by PR B from "YTD Sync & Scan", vocabulary inherited
+  from this partial's previous home on the YTD page that no longer describes
+  where it lives).
 - ``render_data_bridge_tab(hh)`` -- takes no ``container`` arg, renders via
   bare ``st.*`` calls internally, so it must run inside a ``with`` block for
-  Streamlit's ambient "current container" to place it in this tab.
+  Streamlit's ambient "current container" to place it in this tab. Its
+  section header reads "Import previous data" (renamed by PR B from "Data
+  bridge" for the same user-facing-clarity reason).
 - ``_render_pdf_1040_import()`` -- same no-``container``-arg reasoning as
   ``render_data_bridge_tab`` above. Imported directly from
   ``views.setup.parameters`` despite its leading underscore (Python does not
@@ -70,6 +81,7 @@ from views.setup._partials import (
     render_household_partial,
     render_options_partial,
     render_portfolio_partial,
+    render_stock_price_widget,
 )
 from views.setup._state import autosave_user_defaults
 from views.setup.command_center import render_command_center
@@ -108,9 +120,20 @@ def render(hh: Household) -> None:
         # unchanged. See this module's docstring for the full rationale.
         st.subheader("Command Center")
         render_command_center(hh)
-        st.subheader("YTD Sync & Scan")
+        # txn_price_now is a market-sourced value that "Sync everything"
+        # already refreshes via its Yahoo-quote leg, so its widget renders
+        # here beside the sync controls rather than under Options (PR B,
+        # 2026-09) -- see render_stock_price_widget's docstring.
+        render_stock_price_widget(st)
+        # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09) --
+        # that name was vocabulary inherited from this partial's previous
+        # home on the YTD page and no longer describes where it lives.
+        st.subheader("PDF Statements")
         render_sync_scan_partial(hh)
-        st.subheader("Data bridge")
+        # "Import previous data": renamed from "Data bridge" (PR B, 2026-09)
+        # for the same reason -- clearer to a user than the internal
+        # mechanism name.
+        st.subheader("Import previous data")
         render_data_bridge_tab(hh)
         st.subheader("1040 Import")
         _render_pdf_1040_import()
@@ -139,10 +162,10 @@ def render(hh: Household) -> None:
     render_portfolio_partial(hh, tab_portfolio)
 
     # audit-0823 models-views/M2: this shell composes views/setup/_partials/
-    # directly and never routes through render_parameters_tab, so it never
-    # got autosave for free the way the (now-deleted) Classic/Contextual
-    # shells did. Must run last, after every partial above has had a chance
-    # to mutate session_state.
+    # directly and never routed through render_parameters_tab (now itself
+    # deleted), so it never got autosave for free the way the (now-deleted)
+    # Classic/Contextual shells did. Must run last, after every partial
+    # above has had a chance to mutate session_state.
     autosave_user_defaults()
 
 

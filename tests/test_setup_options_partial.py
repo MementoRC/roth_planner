@@ -1,5 +1,8 @@
-"""Tests for ``views/setup/_partials.py:render_options_partial`` — the
-equity-grants table + ``txn_price_now`` stock-price widget.
+"""Tests for ``views/setup/_partials/_options.py``: ``render_options_partial``
+(the equity-grants table) and ``render_stock_price_widget`` (the
+``txn_price_now`` stock-price widget, PR B, 2026-09 — split out of
+``render_options_partial`` and called from the "📥 Data" tab instead of
+Options; see that function's docstring).
 
 Task-5 reversal: this partial's inline trust/manual/confirm governance
 cards (``txn_price_now``, grants) were removed — those cards render
@@ -81,10 +84,9 @@ def _render_options_with_pending(pending: set[str]) -> None:
     from models.household import Household
     from views.setup._partials import render_options_partial
 
-    # txn_price is read unconditionally (st.session_state.txn_price, not
-    # .get()) by render_options_partial's own price widget -- must be
-    # pre-seeded (setdefault, not a plain assignment, so a confirm button's
-    # rerun of this same function doesn't clobber the just-confirmed value).
+    # PR B (2026-09) moved the txn_price widget out of render_options_partial
+    # (see _render_stock_price_widget below) -- this seed is now defensive
+    # only, kept in case some future field this partial owns reads it too.
     st.session_state.setdefault("txn_price", 100)
     st.session_state["_pending_review"] = pending
     render_options_partial(Household(), st)
@@ -116,12 +118,26 @@ def test_options_partial_does_not_render_txn_price_now_card_even_when_pending(
     assert not any(w.key == "confirm_txn_price_now" for w in at.button)
 
 
-def test_options_partial_txn_price_widget_round_trip(clean_command_center_caches) -> None:
+def _render_stock_price_widget(txn_price: float = 100) -> None:
+    """PR B (2026-09): the txn_price widget moved out of
+    render_options_partial into render_stock_price_widget (now called from
+    the Data tab, not Options) -- these two tests below drive it directly at
+    its new home instead of through render_options_partial.
+    """
+    import streamlit as st
+
+    from views.setup._partials import render_stock_price_widget
+
+    st.session_state["txn_price"] = txn_price
+    render_stock_price_widget(st)
+
+
+def test_stock_price_widget_txn_price_round_trip(clean_command_center_caches) -> None:
     """Unkeyed-widget safety net (Owner decision 5): drive a distinct sentinel
-    value through the plain (not-pending) txn_price number_input and confirm
+    value through the plain txn_price number_input and confirm
     session_state.txn_price reflects it, catching a typo'd attribute name.
     """
-    at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": set()})
+    at = AppTest.from_function(_render_stock_price_widget, kwargs={"txn_price": 100})
     at.run()
     assert not at.exception
 
@@ -137,20 +153,10 @@ def test_options_partial_txn_price_widget_round_trip(clean_command_center_caches
 # no user interaction. Must FAIL on unmodified source.
 
 
-def _render_options_with_txn_price(txn_price: float) -> None:
-    import streamlit as st
-
-    from models.household import Household
-    from views.setup._partials import render_options_partial
-
-    st.session_state["txn_price"] = txn_price
-    render_options_partial(Household(), st)
-
-
 def test_txn_price_negative_persisted_value_does_not_crash(
     clean_command_center_caches,
 ) -> None:
-    at = AppTest.from_function(_render_options_with_txn_price, kwargs={"txn_price": -50})
+    at = AppTest.from_function(_render_stock_price_widget, kwargs={"txn_price": -50})
     at.run()
     assert not at.exception
     widget = next(w for w in at.number_input if w.label.endswith("Current Price"))
@@ -187,16 +193,18 @@ def test_options_partial_does_not_render_grants_card_even_when_pending(
 # is composed into the real ``st.tabs()`` nesting.
 #
 # Domains-only shell update (refactor/domains-only-shell): the widget moved
-# AGAIN. ``views/shells/domains_shell.py`` composes
-# ``render_options_partial`` under its "Options" tab (co-located with the
-# stock-grants table, matching the ``_options.py`` partial name), not under
-# "Portfolio" — the "Portfolio" tab there now composes only
-# ``render_portfolio_partial`` (holdings/sync/overrides), which never touches
-# ``txn_price``. ``views/setup/portfolio.py:render_portfolio_tab``, the
-# function that used to co-locate options+portfolio under one "Portfolio"
-# tab, has zero production callers left (verified by grep across app.py and
-# views/) — only this file's own tab search string was stale, not the
-# widget's actual location. Search for "Options" below, not "Portfolio".
+# to the "Options" tab (``views/shells/domains_shell.py`` co-located it with
+# the stock-grants table via ``render_options_partial``).
+#
+# PR B (2026-09): the widget moved a THIRD time, out of Options entirely,
+# into the "📥 Data" tab via the new ``render_stock_price_widget`` (called
+# directly from ``domains_shell.py``, not through ``render_options_partial``
+# anymore) — it is a market-sourced value already refreshed by "Sync
+# everything"'s Yahoo-quote leg, so it now renders beside the sync controls.
+# ``views/setup/portfolio.py:render_portfolio_tab``, the function that used
+# to co-locate options+portfolio under one "Portfolio" tab, was deleted in
+# the same PR (zero callers left, verified by grep across app.py and
+# views/). Search for "📥 Data" below, not "Options".
 
 _APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -221,36 +229,22 @@ def _find_tab_block(block, label: str):
     return None
 
 
-def test_txn_price_widget_renders_once_under_options(
+def test_txn_price_widget_renders_once_under_data_tab(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """Owner decision 6: the Stock Price widget lives under Setup -> Options
-    (co-located with the stock-grants table via ``render_options_partial``,
-    per ``views/shells/domains_shell.py``'s Domains-only tab composition).
+    """Owner decision 6 (as amended by PR B, 2026-09): the Stock Price widget
+    lives under Setup -> "📥 Data" now, rendered by the new
+    ``render_stock_price_widget`` called directly from
+    ``views/shells/domains_shell.py`` — no longer co-located with the
+    stock-grants table under Options (see this file's module-level comment
+    block above for the full move history).
 
-    Previously this test pinned "under Portfolio, NOT under Setup ->
-    Parameters -> Joint" (the widget's pre-Task-5 location). Both halves of
-    that are now stale against the Domains-only shell:
-
-    - the "Joint" sub-tab lookup: ``views/setup/parameters.py``'s
-      ``render_parameters_tab`` — the only function that ever built a
-      "Joint" sub-tab — lost its last caller when the Classic shell was
-      deleted, so that sub-tab no longer renders and the lookup returned
-      ``None`` unconditionally, making the negative check meaningless (and
-      a false failure once ``joint_tab is not None`` was asserted).
-    - the "Portfolio" tab lookup: the widget moved again, to the "Options"
-      tab (``views/shells/domains_shell.py`` calls
-      ``render_options_partial(hh, tab_options)``; the "Portfolio" tab
-      there composes only ``render_portfolio_partial``, which never touches
-      ``txn_price``).
-
-    Rather than re-pin a second tab name that a future shell refactor could
-    just as easily invalidate again, the guard now checks that the widget's
-    label appears EXACTLY ONCE across the entire rendered page, regardless
-    of which tab(s) exist. This is strictly stronger than "not under
-    Joint"/"under Portfolio": it also catches duplication into a *new*
-    rival tab that never existed at all when this test was written, not
-    just a resurrection of an old, since-deleted one.
+    Rather than re-pin a tab name that a future shell refactor could just as
+    easily invalidate again, the guard also checks that the widget's label
+    appears EXACTLY ONCE across the entire rendered page, regardless of
+    which tab(s) exist — this is strictly stronger than "under Data": it
+    also catches duplication into a *new* rival tab that never existed at
+    all when this test was written.
     """
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
@@ -267,19 +261,19 @@ def test_txn_price_widget_renders_once_under_options(
 
     # The widget label is f"{ticker} Current Price" — app.py's real seeding
     # path (config/defaults.py's synthetic "ACME" ticker) differs from
-    # render_options_partial's own isolated-call fallback ("Stock", used by
-    # this file's other tests, which never go through app.py's
+    # render_stock_price_widget's own isolated-call fallback ("Stock", used
+    # by this file's other tests, which never go through app.py's
     # _seed_session_state()). Read the actual seeded ticker rather than
     # hardcoding either.
     expected_label = f"{at.session_state['_stock_ticker']} Current Price"
 
-    options_tab = _find_tab_block(at.main, "Options")
-    assert options_tab is not None, "Options tab not found in rendered Setup page"
+    data_tab = _find_tab_block(at.main, "📥 Data")
+    assert data_tab is not None, "📥 Data tab not found in rendered Setup page"
 
-    assert any(w.label == expected_label for w in options_tab.number_input)
+    assert any(w.label == expected_label for w in data_tab.number_input)
 
     # Structure-independent uniqueness guard: the widget must appear exactly
-    # once anywhere on the page, not merely "not under Joint" (see docstring).
+    # once anywhere on the page, not merely "under Data" (see docstring).
     match_count = sum(1 for w in at.number_input if w.label == expected_label)
     assert match_count == 1, (
         f"expected exactly one {expected_label!r} number_input on the page, found {match_count}"
