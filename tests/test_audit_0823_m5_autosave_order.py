@@ -11,18 +11,18 @@ Pre-fix, the autosave lived at the end of
 statement of *tab 2* -- so it ran before tabs 3 and 4 had instantiated
 their widgets.
 
-That ordering matters because the Portfolio tab's stock-price widget is an
-UNKEYED controlled widget (``views/setup/_partials/_options.py``)::
+That ordering matters because the stock-price widget is an UNKEYED
+controlled widget (``views/setup/_partials/_options.py``)::
 
     st.session_state.txn_price = container.number_input(...)
 
 With no ``key=``, Streamlit never restores the user's new value into
 ``session_state`` at script start; the value reaches ``session_state`` ONLY
-via that explicit assignment, at instantiation time, in tab 3. So on the
-rerun the edit itself triggers, a tab-2 autosave reads the PRE-EDIT value
-and persists it. The edit is flushed one rerun late -- it self-heals on any
-further interaction, so the real loss window is "user edits the stock price,
-then immediately navigates away".
+via that explicit assignment, at instantiation time, wherever its owning tab
+renders. So on the rerun the edit itself triggers, a tab-2 autosave reads
+the PRE-EDIT value and persists it. The edit is flushed one rerun late -- it
+self-heals on any further interaction, so the real loss window is "user
+edits the stock price, then immediately navigates away".
 
 The old Domains/Hub/Wizard shells already called ``autosave_user_defaults()``
 as the last statement of their ``render()`` (audit-0823 M2, PR #462).
@@ -33,14 +33,19 @@ Now that the UI shell has been collapsed to Domains-only (the surviving
 ``views/shells/domains_shell.py``), this test re-points at that shell via
 ``views.shells.render_setup`` and keeps guarding the same regression: the
 autosave call must still be the LAST statement of ``render()``, after every
-tab (including the Options tab, which owns the unkeyed stock-price widget)
-has had a chance to mutate session_state. The patch target below is
+tab has had a chance to mutate session_state. The patch target below is
 ``views.shells.domains_shell``'s own ``render_options_partial`` binding
-(imported from ``views.setup._partials``) -- domains_shell.py calls it
-directly rather than through ``views/setup/portfolio.py``'s old
-``render_portfolio_tab`` composition.
+(imported from ``views.setup._partials``) -- it is a representative stand-in
+for "some tab body writes session_state.txn_price"; PR B (2026-09) actually
+moved the real unkeyed stock-price widget out of ``render_options_partial``
+into ``render_stock_price_widget`` (called from the Data tab, even earlier
+in source order than Options), which only makes this ordering guarantee
+stronger, not weaker -- the stubbed call site still runs before the
+shell's ``autosave_user_defaults()``. ``render_portfolio_tab``, the old
+Classic-shell composition function this docstring used to contrast against,
+was deleted (zero callers left) by that same PR.
 
-The stub below stands in for the real unkeyed widget by performing the same
+The stub below stands in for an unkeyed widget by performing the same
 ``st.session_state.txn_price = <new value>`` assignment the real one does at
 instantiation, which keeps the test about ORDERING rather than about
 Streamlit's widget-value plumbing.
@@ -122,7 +127,9 @@ def test_domains_autosave_sees_portfolio_tab_edits(
     )
 
     def _fake_options_partial(hh, container) -> None:
-        """Stand-in for the real unkeyed controlled widget in the Options tab."""
+        """Stand-in for an unkeyed controlled widget write in the Options tab
+        (the real stock-price widget now lives elsewhere -- see module
+        docstring -- this stub only needs to represent SOME tab-body write)."""
         st.session_state.txn_price = _EDITED_TXN_PRICE
 
     monkeypatch.setattr(domains_shell_mod, "render_options_partial", _fake_options_partial)

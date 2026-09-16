@@ -108,32 +108,6 @@ class TestPdf1040ImportHelper:
             "head_of_household",
         }
 
-    def test_pdf_1040_import_called_in_joint_sub(self):
-        """_render_pdf_1040_import must be called inside render() (joint sub-tab context)."""
-        import inspect
-
-        from views import setup
-
-        # Post-refactor: Joint sub-tab moved into render_parameters_tab (PR #145).
-        source = inspect.getsource(setup.render_parameters_tab)
-        assert "_render_pdf_1040_import()" in source, (
-            "_render_pdf_1040_import() not called in render_parameters_tab — widget not wired up"
-        )
-        # Task 7 (ui-shell-theme-toggle): the prior-year-MAGI anchor (and the rest of
-        # the Joint tab's assumptions widgets) moved into
-        # views.setup._partials._assumptions.render_assumptions_partial, called
-        # once from here — this test now pins THAT call's position relative to
-        # _render_pdf_1040_import() instead of the (no-longer-present) private
-        # helper name.
-        assumptions_pos = source.find("render_assumptions_partial(")
-        pdf_pos = source.find("_render_pdf_1040_import()")
-        assert assumptions_pos != -1
-        assert pdf_pos != -1
-        assert assumptions_pos < pdf_pos, (
-            "_render_pdf_1040_import() appears before render_assumptions_partial() — "
-            "expected PDF import to follow the assumptions widgets"
-        )
-
 
 class TestPdfRecordRoundTrip:
     """Confirm save/load round-trip preserves filing_status and magi."""
@@ -191,33 +165,6 @@ class TestFilingStatusGate:
 
         assert filing_status_from_label("Single") == "Single"
         assert filing_status_from_label("Single") not in _FILING_STATUS_OPTIONS
-
-    def test_widget_renders_before_subtabs(self):
-        """The filing-status radio (rendered by ``render_household_partial(hh, st,
-        "joint")``, extracted from ``render_parameters_tab`` in Task 3) must still
-        run before the Me/Spouse/Joint sub-tabs are created, so spouse state can be
-        zeroed in the same render pass."""
-        import inspect
-
-        from views import setup
-        from views.setup._partials import render_household_partial
-
-        tab_source = inspect.getsource(setup.render_parameters_tab)
-        partial_call_pos = tab_source.find('render_household_partial(hh, st, "joint")')
-        tabs_pos = tab_source.find("st.tabs(")
-        assert partial_call_pos != -1, (
-            'render_household_partial(hh, st, "joint") call not found in render_parameters_tab'
-        )
-        assert tabs_pos != -1
-        assert partial_call_pos < tabs_pos, (
-            "Filing status must render before the Me/Spouse/Joint sub-tabs so spouse "
-            "state can be zeroed in the same render pass"
-        )
-
-        partial_source = inspect.getsource(render_household_partial)
-        assert '"Filing status"' in partial_source, (
-            "Filing status radio not found in render_household_partial's 'joint' branch"
-        )
 
     def test_filing_status_written_to_session_state(self):
         import inspect

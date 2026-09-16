@@ -23,7 +23,9 @@ behavior change) with one module per partial:
 - ``_household.py`` — Task 3: ``render_household_partial`` +
   ``filing_status_from_label``.
 - ``_accounts.py`` — Task 4: ``render_accounts_partial`` + ``_sync_ssa_for``.
-- ``_options.py`` — Task 5: ``render_options_partial``.
+- ``_options.py`` — Task 5: ``render_options_partial``. Also
+  ``render_stock_price_widget`` (PR B, 2026-09), split out of
+  ``render_options_partial`` so the Data tab can render it separately.
 - ``_portfolio.py`` — Task 6: ``render_portfolio_partial`` + its private
   table/expander helpers.
 - ``_assumptions.py`` — Task 7: ``render_assumptions_partial`` + its private
@@ -56,7 +58,7 @@ from ._household import (
     filing_status_from_label,
     render_household_partial,
 )
-from ._options import render_options_partial
+from ._options import render_options_partial, render_stock_price_widget
 from ._portfolio import (
     _no_data_msg,
     _render_account_type_overrides,
@@ -70,6 +72,7 @@ __all__ = [
     "render_household_partial",
     "render_accounts_partial",
     "render_options_partial",
+    "render_stock_price_widget",
     "render_portfolio_partial",
     "render_assumptions_partial",
     "filing_status_from_label",

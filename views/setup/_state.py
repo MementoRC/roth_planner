@@ -113,15 +113,15 @@ def _user_defaults_from_session() -> dict:
 def autosave_user_defaults() -> None:
     """Persist the session's current household/account/assumption fields to
     .user_defaults.json, honouring the same suppress guard
-    render_parameters_tab always has.
+    render_parameters_tab (now deleted) used to have.
 
     Pulled out of views/setup/parameters.py so every Setup shell can call it
     (audit-0823 models-views/M2) -- Domains/Hub/Wizard compose
-    views/setup/_partials/ directly and never routed through
-    render_parameters_tab, so they never reached this save at all. Session
-    edits made through those three shells vanished on restart. Callers
-    should invoke this as the LAST statement of their render(), same
-    position render_parameters_tab already uses.
+    views/setup/_partials/ directly and never routed through the
+    now-deleted render_parameters_tab, so they never reached this save at
+    all. Session edits made through those three shells vanished on restart.
+    Callers should invoke this as the LAST statement of their render(), same
+    position render_parameters_tab used to use before it was retired.
 
     save_user_defaults merges the returned dict onto whatever is already on
     disk, so a partial payload (e.g. the Wizard renders one step's fields per

@@ -14,12 +14,10 @@ from ._partials import filing_status_from_label
 from .parameters import (
     _FILING_STATUS_OPTIONS,
     _render_pdf_1040_import,
-    render_parameters_tab,
 )
 
 __all__ = [
     "_FILING_STATUS_OPTIONS",
     "_render_pdf_1040_import",
     "filing_status_from_label",
-    "render_parameters_tab",
 ]
