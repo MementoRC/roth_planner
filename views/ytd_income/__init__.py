@@ -18,7 +18,6 @@ from models.ytd_income import YTDSnapshot
 from views.ytd_income._partials import (
     render_analysis_partial,
     render_manual_entry_partial,
-    render_sync_scan_partial,
 )
 
 
@@ -56,7 +55,6 @@ def render(hh: Household) -> None:
 def _render_tabs(hh: Household) -> YTDSnapshot:
     tab1, tab2 = st.tabs(["Update Your Data", "Review Headroom"])
     with tab1:
-        render_sync_scan_partial(hh)
         ytd = render_manual_entry_partial(hh)
     with tab2:
         render_analysis_partial(hh, ytd)

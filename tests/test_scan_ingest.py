@@ -180,6 +180,7 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
         # golden the value/source/detail, matching record_magi_candidates'
         # contract; the timestamp naturally differs run to run).
         mock_fetch_ex.return_value = MagicMock(server_available=False)
+        sync_scan_mod.render_sync_scan_partial(hh)
         ytd_income_mod.render(hh)
 
     from engine.tax_return_pdf import load_pdf_tax_records
@@ -431,6 +432,7 @@ class TestA2RewiredYtdIncomeView:
             patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_scan.call_count == 1

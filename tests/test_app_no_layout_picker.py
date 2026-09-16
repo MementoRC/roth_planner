@@ -57,7 +57,12 @@ def test_no_ui_theme_session_state_key(app_test: AppTest) -> None:
 
 def test_setup_page_renders_domains_shell_only(app_test: AppTest) -> None:
     """With the picker gone, the default landing page (Setup) always renders
-    the Domains shell's tab set -- there is no other layout it could be."""
+    the Domains shell's tab set -- there is no other layout it could be.
+
+    PR A consolidated the four separate ingest entry points (Command Center,
+    the YTD sync/scan partial, Data bridge, 1040 Import) into one leading
+    "📥 Data" tab -- see ``views/shells/domains_shell.py``'s module docstring.
+    This golden is the full, exact, ordered 6-tab list post-consolidation."""
     tab_container = next(
         child
         for child in app_test.main.children.values()
@@ -65,12 +70,10 @@ def test_setup_page_renders_domains_shell_only(app_test: AppTest) -> None:
     )
     labels = [tab.label for tab in tab_container.children.values()]
     assert labels == [
-        "🎛️ Command Center",
+        "📥 Data",
         "Household",
         "Accounts",
         "Options",
         "Assumptions",
         "Portfolio",
-        "Data bridge",
-        "1040 Import",
     ]
