@@ -185,6 +185,18 @@ def test_options_partial_does_not_render_grants_card_even_when_pending(
 # fixture) rather than an isolated ``render_options_partial`` call, since the
 # whole point is to verify tab PLACEMENT, which only exists once the partial
 # is composed into the real ``st.tabs()`` nesting.
+#
+# Domains-only shell update (refactor/domains-only-shell): the widget moved
+# AGAIN. ``views/shells/domains_shell.py`` composes
+# ``render_options_partial`` under its "Options" tab (co-located with the
+# stock-grants table, matching the ``_options.py`` partial name), not under
+# "Portfolio" — the "Portfolio" tab there now composes only
+# ``render_portfolio_partial`` (holdings/sync/overrides), which never touches
+# ``txn_price``. ``views/setup/portfolio.py:render_portfolio_tab``, the
+# function that used to co-locate options+portfolio under one "Portfolio"
+# tab, has zero production callers left (verified by grep across app.py and
+# views/) — only this file's own tab search string was stale, not the
+# widget's actual location. Search for "Options" below, not "Portfolio".
 
 _APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -209,14 +221,36 @@ def _find_tab_block(block, label: str):
     return None
 
 
-def test_txn_price_widget_renders_under_portfolio_not_parameters_joint(
+def test_txn_price_widget_renders_once_under_options(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """Owner decision 6: the Stock Price widget lives under Setup -> Portfolio
-    (co-located with the stock-grants table via ``render_options_partial``),
-    NOT under Setup -> Parameters -> Joint (its pre-Task-5 location). Pins
-    the deliberate cross-tab move so a future refactor can't silently drop
-    or relocate it without a test failing.
+    """Owner decision 6: the Stock Price widget lives under Setup -> Options
+    (co-located with the stock-grants table via ``render_options_partial``,
+    per ``views/shells/domains_shell.py``'s Domains-only tab composition).
+
+    Previously this test pinned "under Portfolio, NOT under Setup ->
+    Parameters -> Joint" (the widget's pre-Task-5 location). Both halves of
+    that are now stale against the Domains-only shell:
+
+    - the "Joint" sub-tab lookup: ``views/setup/parameters.py``'s
+      ``render_parameters_tab`` — the only function that ever built a
+      "Joint" sub-tab — lost its last caller when the Classic shell was
+      deleted, so that sub-tab no longer renders and the lookup returned
+      ``None`` unconditionally, making the negative check meaningless (and
+      a false failure once ``joint_tab is not None`` was asserted).
+    - the "Portfolio" tab lookup: the widget moved again, to the "Options"
+      tab (``views/shells/domains_shell.py`` calls
+      ``render_options_partial(hh, tab_options)``; the "Portfolio" tab
+      there composes only ``render_portfolio_partial``, which never touches
+      ``txn_price``).
+
+    Rather than re-pin a second tab name that a future shell refactor could
+    just as easily invalidate again, the guard now checks that the widget's
+    label appears EXACTLY ONCE across the entire rendered page, regardless
+    of which tab(s) exist. This is strictly stronger than "not under
+    Joint"/"under Portfolio": it also catches duplication into a *new*
+    rival tab that never existed at all when this test was written, not
+    just a resurrection of an old, since-deleted one.
     """
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
@@ -239,10 +273,14 @@ def test_txn_price_widget_renders_under_portfolio_not_parameters_joint(
     # hardcoding either.
     expected_label = f"{at.session_state['_stock_ticker']} Current Price"
 
-    portfolio_tab = _find_tab_block(at.main, "💼 Portfolio")
-    joint_tab = _find_tab_block(at.main, "Joint")
-    assert portfolio_tab is not None, "Portfolio tab not found in rendered Setup page"
-    assert joint_tab is not None, "Parameters -> Joint sub-tab not found in rendered Setup page"
+    options_tab = _find_tab_block(at.main, "Options")
+    assert options_tab is not None, "Options tab not found in rendered Setup page"
 
-    assert any(w.label == expected_label for w in portfolio_tab.number_input)
-    assert not any(w.label == expected_label for w in joint_tab.number_input)
+    assert any(w.label == expected_label for w in options_tab.number_input)
+
+    # Structure-independent uniqueness guard: the widget must appear exactly
+    # once anywhere on the page, not merely "not under Joint" (see docstring).
+    match_count = sum(1 for w in at.number_input if w.label == expected_label)
+    assert match_count == 1, (
+        f"expected exactly one {expected_label!r} number_input on the page, found {match_count}"
+    )

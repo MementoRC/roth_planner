@@ -1,5 +1,5 @@
 """Characterization test — freezes the current Setup page's widget `key=` set
-and 4 tab labels as a "must not change" baseline.
+and 8 tab labels as a "must not change" baseline.
 
 This is the safety net for the UI-shell-theme-toggle plan (Tasks 3-9): those
 tasks extract widgets out of ``views/setup/parameters.py``,
@@ -49,11 +49,14 @@ from streamlit.testing.v1 import AppTest
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
-# The complete, frozen set of widget `key=` values present across all 4 Setup
-# tabs (Command Center / Parameters / Portfolio / Data bridge) for a fresh
-# demo household: no pending review items, no portfolio snapshot, no
-# inherited IRAs, no survivor scenario, no scanned 1040, no generated/pasted
-# data-bridge keypair. Recorded 2026-07-24 against development @ b425485.
+# The complete, frozen set of widget `key=` values present across all 8 Setup
+# tabs (Command Center / Household / Accounts / Options / Assumptions /
+# Portfolio / Data bridge / 1040 Import — the Domains shell's grouping,
+# refactor/domains-only-shell) for a fresh demo household: no pending review
+# items, no portfolio snapshot, no inherited IRAs, no survivor scenario, no
+# scanned 1040, no generated/pasted data-bridge keypair. Originally recorded
+# 2026-07-24 against development @ b425485 (Classic's 4-tab grouping); tab
+# grouping updated for the Domains-only shell, widget-key set unchanged.
 EXPECTED_WIDGET_KEYS = frozenset(
     {
         # Parameters tab
@@ -79,9 +82,13 @@ EXPECTED_WIDGET_KEYS = frozenset(
 
 EXPECTED_TAB_LABELS = [
     "🎛️ Command Center",
-    "📊 Parameters",
-    "💼 Portfolio",
-    "🔗 Data bridge",
+    "Household",
+    "Accounts",
+    "Options",
+    "Assumptions",
+    "Portfolio",
+    "Data bridge",
+    "1040 Import",
 ]
 
 
