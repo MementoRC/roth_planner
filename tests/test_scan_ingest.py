@@ -108,6 +108,9 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
     mock_st.form.return_value.__exit__ = MagicMock(return_value=False)
     mock_st.form_submit_button.return_value = False
     mock_st.button.return_value = False
+    # views/ytd_income/__init__.py:_render_tabs unpacks st.tabs(...) into two
+    # tab objects and uses each as a `with tab:` context manager.
+    mock_st.tabs.return_value = (MagicMock(), MagicMock())
     return mock_st
 
 

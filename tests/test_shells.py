@@ -1,37 +1,33 @@
-"""Tests for ``views/shells/`` — Tasks 8-9 of the ui-shell-theme-toggle plan.
+"""Tests for ``views/shells/`` — the single surviving Domains shell.
 
-Two guarantees per shell:
-  1. Smoke: each of the 4 implemented shells (Classic/Domains/Hub/Contextual)
-     renders without exception for a demo household.
-  2. Key-set parity: editing the same field (``your_ira``) through
-     Domains/Hub/Contextual updates the exact same ``session_state`` key
-     Classic does — proving no silent fork of the data model (Owner
-     decisions 4/5 in
+Classic/Hub/Contextual/Wizard were retired when the UI shell was collapsed
+to Domains-only; this module keeps the guarantees that still apply to the
+one shell that remains:
+  1. Smoke: the shell renders without exception for a demo household.
+  2. Key-set parity: editing ``your_ira`` through the shell updates the
+     expected ``session_state`` key (no silent fork of the data model —
+     Owner decisions 4/5 in
      ``docs/superpowers/plans/2026-07-24-ui-shell-theme-toggle.md``).
+  3. The "Import 1040 PDF" workflow parity fix (originally added for
+     Domains/Hub post-Task-8) still renders and reuses Classic's old widget
+     key.
+  4. audit-0823 M2: the shell's autosave still reaches ``save_user_defaults``,
+     respects ``_suppress_snapshot_autoload``, and carries session-edited
+     values.
 
-Task 9 adds Contextual's own status-bar tests further down (a household
-with a missing/stale/conflict field shows the matching chip; an all-good
-household shows the "All set" affirmation with no chips).
-
-Each shell is exercised directly via ``AppTest.from_function`` with a small
-self-contained session-state seed (NOT via the real ``app.py`` — Task 10
-hasn't wired the theme selector into ``app.py`` yet, and app.py's script-level
-sidebar/page-dispatch would always render Classic regardless of which shell
-we want to test). Only ONE shell's ``render(hh)`` is ever called per AppTest
-run — the widget-key-uniqueness concern the plan flags for Task 8 doesn't
-apply here since each test function calls exactly one shell.
+Each is exercised directly via ``AppTest.from_function`` with a small
+self-contained session-state seed (not via the real ``app.py`` — mirrors the
+original Task 8/9 rationale of testing the shell in isolation).
 
 ``AppTest.from_function`` extracts and execs only the target function's OWN
 source text in a fresh namespace — it does NOT carry along this module's
 other top-level names (a sibling helper function is invisible inside the
-executed function, confirmed empirically: an earlier draft that called a
-module-level ``_seed_demo_session_state()`` helper from 3 separate
-``_render_*`` functions raised ``NameError`` at AppTest run time). So the
-seed logic below lives entirely INSIDE the one function passed to
-``AppTest.from_function``, parametrized by ``theme`` via ``kwargs=`` (mirrors
-``tests/test_setup_shell_characterization.py``'s
-``_render_portfolio_with_snapshot(snap)`` pattern of a single self-contained
-target function taking parameters through ``kwargs``).
+executed function, confirmed empirically). So the seed logic below lives
+entirely INSIDE the one function passed to ``AppTest.from_function``.
+
+The bundle export/import symmetry tests further down (Task 8 of the original
+plan) exercise ``views/setup/data_bridge.py`` helpers directly and have no
+dependency on the theme axis — they are unchanged by the shell collapse.
 """
 
 from __future__ import annotations
@@ -39,20 +35,10 @@ from __future__ import annotations
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from views.shells import THEMES, render_setup
 
-_SHELL_NAME_TO_THEME = {
-    "classic": "Classic",
-    "domains": "Domains",
-    "hub": "Hub",
-    "contextual": "Contextual",
-    "wizard": "Wizard",
-}
-
-
-def _render_shell(theme: str, seed_1040_scanned: bool = False) -> None:
+def _render_shell(seed_1040_scanned: bool = False) -> None:
     """AppTest.from_function target: seed a minimal demo session_state, then
-    render the shell named by *theme* ("Classic"/"Domains"/"Hub").
+    render the Domains shell.
 
     Seeds the fields every partial reads without a ``.get()`` fallback
     (``your_ira``/``spouse_ira``/``your_ss_fra``/``spouse_ss_fra``/
@@ -65,7 +51,7 @@ def _render_shell(theme: str, seed_1040_scanned: bool = False) -> None:
     ``seed_1040_scanned=True`` additionally seeds
     ``st.session_state["_pdf_1040_scanned"]`` with a fake scanned
     Form1040Record, exercising the "Import 1040 PDF" section's confirmation
-    UI (added to Domains/Hub post-Task-8 for parity with Classic).
+    UI.
     """
     import streamlit as st
 
@@ -109,13 +95,13 @@ def _render_shell(theme: str, seed_1040_scanned: bool = False) -> None:
             )
         }
 
-    render_setup(Household(), theme)
+    render_setup(Household())
 
 
-def _run_shell(shell_name: str, monkeypatch, seed_1040_scanned: bool = False) -> AppTest:
-    """Run the shell named by *shell_name* ("classic"/"domains"/"hub") under
-    ``AppTest``, neutralizing local-disk sources of non-determinism the same
-    way ``tests/test_setup_shell_characterization.py``'s ``setup_app_test``
+def _run_shell(monkeypatch, seed_1040_scanned: bool = False) -> AppTest:
+    """Run the Domains shell under ``AppTest``, neutralizing local-disk
+    sources of non-determinism the same way
+    ``tests/test_setup_shell_characterization.py``'s ``setup_app_test``
     fixture does (a developer's real V2 pubkey / PDF-tax cache must not leak
     into these tests).
     """
@@ -127,10 +113,7 @@ def _run_shell(shell_name: str, monkeypatch, seed_1040_scanned: bool = False) ->
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_function(
-        _render_shell,
-        kwargs={"theme": _SHELL_NAME_TO_THEME[shell_name], "seed_1040_scanned": seed_1040_scanned},
-    )
+    at = AppTest.from_function(_render_shell, kwargs={"seed_1040_scanned": seed_1040_scanned})
     at.run()
     return at
 
@@ -139,45 +122,25 @@ def _number_input_by_label(at: AppTest, label: str):
     return next(w for w in at.number_input if w.label == label)
 
 
-# --- THEMES / render_setup dispatcher --------------------------------------
+# --- Smoke test: the shell renders without exception ------------------------
 
 
-def test_themes_list_matches_plan_scope() -> None:
-    assert THEMES == ["Classic", "Domains", "Hub", "Contextual", "Wizard"]
-
-
-def test_render_setup_unknown_theme_raises_value_error() -> None:
-    from models.household import Household
-
-    with pytest.raises(ValueError, match="Unknown UI theme"):
-        render_setup(Household(), "Nonexistent")
-
-
-# --- Smoke tests: each shell renders without exception ---------------------
-
-
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual", "wizard"])
-def test_shell_renders_without_exception(
-    shell_name, clean_command_center_caches, monkeypatch
-) -> None:
-    at = _run_shell(shell_name, monkeypatch)
+def test_shell_renders_without_exception(clean_command_center_caches, monkeypatch) -> None:
+    at = _run_shell(monkeypatch)
     assert not at.exception
 
 
-# --- Key-set parity: Domains/Hub/Contextual touch the same session_state key
-# as Classic
+# --- Key-set parity: editing touches the same session_state key -------------
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub", "contextual"])
 def test_your_ira_edit_updates_same_session_state_key(
-    shell_name, clean_command_center_caches, monkeypatch
+    clean_command_center_caches, monkeypatch
 ) -> None:
-    """Setting ``your_ira`` through each shell must update the identical
-    ``session_state["your_ira"]`` key — proves Domains/Hub/Contextual don't
-    fork the data model onto a differently-named key (Task 8's key-set parity
-    check).
+    """Setting ``your_ira`` through the shell must update the identical
+    ``session_state["your_ira"]`` key — proves it doesn't fork the data
+    model onto a differently-named key.
     """
-    at = _run_shell(shell_name, monkeypatch)
+    at = _run_shell(monkeypatch)
     assert not at.exception
 
     _number_input_by_label(at, "Your Trad IRA").set_value(999_000).run()
@@ -186,464 +149,35 @@ def test_your_ira_edit_updates_same_session_state_key(
     assert at.session_state["your_ira"] == 999_000
 
 
-# --- 1040 PDF import section: parity fix (Domains/Hub, post-Task-8) --------
+# --- 1040 PDF import section: parity fix -------------------------------------
 
 
-@pytest.mark.parametrize("shell_name", ["domains", "hub"])
 def test_1040_import_section_renders_without_exception(
-    shell_name, clean_command_center_caches, monkeypatch
+    clean_command_center_caches, monkeypatch
 ) -> None:
-    """The "Import 1040 PDF" workflow (``_render_pdf_1040_import``) is now
-    reachable from Domains/Hub, not just Classic — closes the parity gap a
-    spec-compliance review of Task 8 found. With no scanned record pending,
-    it should render its "scan on YTD Income" caption without exception.
+    """The "Import 1040 PDF" workflow (``_render_pdf_1040_import``) is
+    reachable from the shell. With no scanned record pending, it should
+    render its "scan on YTD Income" caption without exception.
     """
-    at = _run_shell(shell_name, monkeypatch)
+    at = _run_shell(monkeypatch)
     assert not at.exception
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "domains", "hub"])
-def test_1040_import_section_reuses_classic_widget_key(
-    shell_name, clean_command_center_caches, monkeypatch
-) -> None:
-    """With a scanned 1040 record pending, Domains/Hub's confirmation
-    selectbox must carry the EXACT SAME key Classic's copy of this widget
-    uses (``_pdf_1040_filing_status_2024``) — proving the new section
-    reuses Classic's existing widget key rather than minting a new one
-    (plan Owner decision 4: no session_state key renames/forks).
+def test_1040_import_section_reuses_widget_key(clean_command_center_caches, monkeypatch) -> None:
+    """With a scanned 1040 record pending, the confirmation selectbox must
+    carry the EXACT SAME key Classic's copy of this widget used
+    (``_pdf_1040_filing_status_2024``) — proving this section reuses the
+    original widget key rather than minting a new one (plan Owner decision
+    4: no session_state key renames/forks).
     """
-    at = _run_shell(shell_name, monkeypatch, seed_1040_scanned=True)
+    at = _run_shell(monkeypatch, seed_1040_scanned=True)
     assert not at.exception
 
     matches = [w for w in at.selectbox if w.key == "_pdf_1040_filing_status_2024"]
     assert len(matches) == 1, (
-        f"expected exactly one selectbox with key '_pdf_1040_filing_status_2024' in "
-        f"{shell_name}, found {len(matches)}"
+        f"expected exactly one selectbox with key '_pdf_1040_filing_status_2024', "
+        f"found {len(matches)}"
     )
-
-
-# --- Contextual status bar (Task 9) -----------------------------------------
-#
-# Each target function below is self-contained (see the module docstring's
-# note on ``AppTest.from_function`` only carrying its OWN source) and shares
-# the same base session_state seed ``_render_shell`` uses, so Classic's
-# wrapped body renders without crashing regardless of which chip case is
-# under test.
-
-
-def _render_contextual_missing_fields() -> None:
-    """AppTest target: a brand-new, never-sourced household -> "missing"
-    chips (``your_ira``, ``grants``, ...), no "All set" affirmation.
-    """
-    import streamlit as st
-
-    from config.defaults import DEFAULTS
-    from engine.irmaa import BASE_PART_B
-    from models.household import Household
-    from views.shells import render_setup
-
-    st.session_state["_suppress_snapshot_autoload"] = True
-    st.session_state.setdefault("filing_status", "MFJ")
-    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
-    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
-    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
-    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
-    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
-    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
-    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
-    st.session_state.setdefault("growth_rate", 7.0)
-    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-    st.session_state.setdefault("advance_aptc_annual", 0)
-    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-    st.session_state.setdefault("cpi_assumption", 0.025)
-    st.session_state.setdefault("_pending_review", set())
-    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
-
-    render_setup(Household(), "Contextual")
-
-
-def _render_contextual_conflict_field() -> None:
-    """AppTest target: ``your_ira`` confirmed but ALSO in ``_pending_review``
-    -> a "conflict" chip for ``your_ira`` specifically.
-    """
-    from datetime import datetime
-
-    import streamlit as st
-
-    from config.defaults import DEFAULTS
-    from engine.irmaa import BASE_PART_B
-    from models.household import Household
-    from models.sourced import Provenance, Source, SourcedValue
-    from views.shells import render_setup
-
-    st.session_state["_suppress_snapshot_autoload"] = True
-    st.session_state.setdefault("filing_status", "MFJ")
-    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
-    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
-    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
-    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
-    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
-    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
-    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
-    st.session_state.setdefault("growth_rate", 7.0)
-    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-    st.session_state.setdefault("advance_aptc_annual", 0)
-    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-    st.session_state.setdefault("cpi_assumption", 0.025)
-    st.session_state["_pending_review"] = {"your_ira"}
-    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
-
-    hh = Household()
-    hh.your_ira = SourcedValue(
-        float(DEFAULTS["your_ira"]),
-        Provenance(source=Source.MANUAL, recorded_at=datetime.now(), detail="test fixture"),
-    )
-    render_setup(hh, "Contextual")
-
-
-def _render_contextual_stale_field() -> None:
-    """AppTest target: ``your_ira`` confirmed, but its provenance
-    ``recorded_at`` is older than ``engine.data_status.STALE_THRESHOLD_DAYS``
-    -> a "stale" chip for ``your_ira`` specifically.
-    """
-    from datetime import datetime, timedelta
-
-    import streamlit as st
-
-    from config.defaults import DEFAULTS
-    from engine.data_status import STALE_THRESHOLD_DAYS
-    from engine.irmaa import BASE_PART_B
-    from models.household import Household
-    from models.sourced import Provenance, Source, SourcedValue
-    from views.shells import render_setup
-
-    st.session_state["_suppress_snapshot_autoload"] = True
-    st.session_state.setdefault("filing_status", "MFJ")
-    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
-    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
-    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
-    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
-    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
-    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
-    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
-    st.session_state.setdefault("growth_rate", 7.0)
-    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-    st.session_state.setdefault("advance_aptc_annual", 0)
-    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-    st.session_state.setdefault("cpi_assumption", 0.025)
-    st.session_state.setdefault("_pending_review", set())
-    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
-
-    stale_at = datetime.now() - timedelta(days=STALE_THRESHOLD_DAYS + 3)
-    hh = Household()
-    hh.your_ira = SourcedValue(
-        float(DEFAULTS["your_ira"]),
-        Provenance(source=Source.MANUAL, recorded_at=stale_at, detail="test fixture"),
-    )
-    render_setup(hh, "Contextual")
-
-
-def _render_contextual_all_good(seed_identity: bool = True) -> None:
-    """AppTest target: every governed field confirmed recently, nothing
-    pending -> the "All set" affirmation and zero chips.
-
-    ``seed_identity=False`` skips the ``instance_owner`` seed below, so the
-    Command Center identity gate's warning fires instead -- used by
-    ``test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset``
-    to prove the gate's warning actually renders during a full Setup-shell
-    walk when identity is unset (the default ``seed_identity=True`` path
-    exists specifically to steer every OTHER fixture using this function away
-    from that scenario, per the comment below).
-    """
-    from datetime import datetime, timedelta
-
-    import streamlit as st
-
-    from config.defaults import DEFAULTS
-    from engine.irmaa import BASE_PART_B
-    from models.grants import StockGrant
-    from models.household import Household
-    from models.sourced import Provenance, Source, SourcedList, SourcedValue
-    from views.shells import render_setup
-
-    st.session_state["_suppress_snapshot_autoload"] = True
-    st.session_state.setdefault("filing_status", "MFJ")
-    st.session_state.setdefault("your_ira", DEFAULTS["your_ira"])
-    st.session_state.setdefault("spouse_ira", DEFAULTS["spouse_ira"])
-    st.session_state.setdefault("your_roth", DEFAULTS["your_roth"])
-    st.session_state.setdefault("spouse_roth", DEFAULTS["spouse_roth"])
-    st.session_state.setdefault("your_ss_fra", DEFAULTS["your_ss_fra"])
-    st.session_state.setdefault("spouse_ss_fra", DEFAULTS["spouse_ss_fra"])
-    st.session_state.setdefault("txn_price", DEFAULTS["stock_price_now"])
-    st.session_state.setdefault("growth_rate", 7.0)
-    st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-    st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-    st.session_state.setdefault("advance_aptc_annual", 0)
-    st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-    st.session_state.setdefault("cpi_assumption", 0.025)
-    st.session_state.setdefault("_pending_review", set())
-    st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
-    # Task 5's Command Center identity gate fires an unconditional st.warning
-    # whenever instance_owner is unset, and Command Center renders inside
-    # every Setup shell tab body on every run (see
-    # views/setup/command_center.py's module docstring) -- so this "zero
-    # warnings" assertion needs the same instance_owner seed app.py's real
-    # startup performs, or the gate's warning breaks it.
-    if seed_identity:
-        st.session_state.setdefault("instance_owner", "you")
-
-    recent = datetime.now() - timedelta(hours=1)
-    prov = Provenance(source=Source.MANUAL, recorded_at=recent, detail="test fixture")
-    hh = Household()
-    hh.your_ira = SourcedValue(float(DEFAULTS["your_ira"]), prov)
-    hh.spouse_ira = SourcedValue(float(DEFAULTS["spouse_ira"]), prov)
-    hh.your_roth = SourcedValue(float(DEFAULTS["your_roth"]), prov)
-    hh.spouse_roth = SourcedValue(float(DEFAULTS["spouse_roth"]), prov)
-    hh.txn_price_now = SourcedValue(float(DEFAULTS["stock_price_now"]), prov)
-    hh.your_ss_fra = SourcedValue(float(DEFAULTS["your_ss_fra"]), prov)
-    hh.spouse_ss_fra = SourcedValue(float(DEFAULTS["spouse_ss_fra"]), prov)
-    hh.grants = SourcedList(
-        [StockGrant(year=2019, strike=104.0, shares=100, expiry_year=2029)], [prov]
-    )
-
-    render_setup(hh, "Contextual")
-
-
-def _run_contextual(target, monkeypatch, kwargs: dict | None = None) -> AppTest:
-    """Same disk-source neutralization as ``_run_shell``, for a bespoke
-    Contextual target function that doesn't go through ``_render_shell``.
-
-    ``kwargs`` forwards to ``AppTest.from_function`` (mirrors ``_run_shell``'s
-    own kwargs-forwarding), so a bespoke target can be parametrized the same
-    way ``_render_shell``'s ``seed_1040_scanned`` is.
-    """
-    import engine.portfolio_sync as portfolio_sync_mod
-    import engine.tax_return_pdf as tax_return_pdf_mod
-    import views.setup.data_bridge as data_bridge_mod
-
-    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
-    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
-    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
-
-    at = AppTest.from_function(target, kwargs=kwargs or {})
-    at.run()
-    return at
-
-
-def test_contextual_missing_field_shows_missing_chip(
-    clean_command_center_caches, monkeypatch
-) -> None:
-    at = _run_contextual(_render_contextual_missing_fields, monkeypatch)
-    assert not at.exception
-
-    # No "All set" affirmation (Command Center's own unrelated "reconciled"
-    # success — driven purely by an empty _pending_review, not by missing
-    # fields — is allowed to coexist and is deliberately not asserted here).
-    assert not any("All set" in s.value for s in at.success)
-    warnings = [w.value for w in at.warning]
-    assert any("Your IRA balance" in w and "missing" in w for w in warnings)
-
-
-def test_contextual_chip_jump_button_sets_nav_page(
-    clean_command_center_caches, monkeypatch
-) -> None:
-    """Clicking a status chip's "Edit in Command Center ->" jump button (the
-    ``command_center_button`` reused from ``views/_shared.py``) must set
-    ``session_state[NAV_KEY]`` to the Setup page label — the actual mechanism
-    ``app.py``'s sidebar radio uses to navigate on the next rerun. Proves the
-    jump button really works when triggered from a Contextual status chip,
-    not just that it renders.
-    """
-    from views._shared import NAV_KEY, SETUP_PAGE
-
-    at = _run_contextual(_render_contextual_missing_fields, monkeypatch)
-    assert not at.exception
-
-    jump_buttons = [b for b in at.button if b.key == "status_jump_your_ira"]
-    assert len(jump_buttons) == 1, (
-        f"expected exactly one jump button with key 'status_jump_your_ira', found {len(jump_buttons)}"
-    )
-
-    jump_buttons[0].click().run()
-
-    assert not at.exception
-    assert at.session_state[NAV_KEY] == SETUP_PAGE
-
-
-def test_contextual_conflict_field_shows_conflict_chip(
-    clean_command_center_caches, monkeypatch
-) -> None:
-    at = _run_contextual(_render_contextual_conflict_field, monkeypatch)
-    assert not at.exception
-
-    assert not any("All set" in s.value for s in at.success)
-    warnings = [w.value for w in at.warning]
-    assert any("Your IRA balance" in w and "conflict" in w for w in warnings)
-
-
-def test_contextual_stale_field_shows_stale_chip(clean_command_center_caches, monkeypatch) -> None:
-    at = _run_contextual(_render_contextual_stale_field, monkeypatch)
-    assert not at.exception
-
-    assert not any("All set" in s.value for s in at.success)
-    warnings = [w.value for w in at.warning]
-    assert any("Your IRA balance" in w and "stale" in w for w in warnings)
-
-
-def test_contextual_all_good_household_shows_affirmation_no_chips(
-    clean_command_center_caches, monkeypatch
-) -> None:
-    at = _run_contextual(_render_contextual_all_good, monkeypatch)
-    assert not at.exception
-
-    assert any("All set" in s.value for s in at.success)
-    # The fixture's `_pending_review` is empty so no "rejected" candidate
-    # warning can fire here; the all-good household simply has none to filter.
-    warnings = [w.value for w in at.warning]
-    assert warnings == []
-
-
-def test_contextual_all_good_household_shows_identity_gate_warning_when_owner_unset(
-    clean_command_center_caches, monkeypatch
-) -> None:
-    """Command Center's identity gate (Task 5) must render its ``st.warning``
-    during a FULL Setup-shell walk when ``instance_owner`` is unset --
-    ``_render_contextual_all_good``'s default ``seed_identity=True`` path
-    steers every OTHER fixture using it away from this scenario, so this test
-    is the only coverage of the gate's warning actually surfacing through a
-    real shell render rather than a bespoke Command-Center-only AppTest.
-    """
-    at = _run_contextual(_render_contextual_all_good, monkeypatch, kwargs={"seed_identity": False})
-    assert not at.exception
-
-    warnings = [w.value for w in at.warning]
-    assert any("no owner set yet" in w for w in warnings), (
-        f"expected the identity gate warning, got: {warnings}"
-    )
-
-
-def test_wizard_next_advances_step() -> None:
-    from streamlit.testing.v1 import AppTest
-
-    def _script() -> None:
-        from models.household import Household
-        from views import shells as s
-
-        s.render_setup(Household(), "Wizard")
-
-    at = AppTest.from_function(_script).run()
-    next_btns = [b for b in at.button if b.label == "Next"]
-    assert next_btns, "Next button missing"
-    next_btns[0].click().run()
-    assert at.session_state["wizard_step"] == 1
-
-
-def test_wizard_back_clamps_at_zero() -> None:
-    from streamlit.testing.v1 import AppTest
-
-    def _script() -> None:
-        from models.household import Household
-        from views import shells as s
-
-        s.render_setup(Household(), "Wizard")
-
-    at = AppTest.from_function(_script).run()
-    # already at step 0: Back should be disabled (or a click must not go negative)
-    back_btns = [b for b in at.button if b.label == "Back"]
-    assert back_btns
-    assert back_btns[0].disabled is True
-
-
-def test_wizard_next_clamps_at_last_step() -> None:
-    from streamlit.testing.v1 import AppTest
-
-    def _script() -> None:
-        import streamlit as st
-
-        from config.defaults import DEFAULTS
-        from engine.irmaa import BASE_PART_B
-        from models.household import Household
-        from views import shells as s
-
-        # Assumptions (last step) reads several session_state fields directly
-        # (no .get() fallback) -- mirror the seeding pattern the module-level
-        # _render_shell() helper above uses for Domains/Hub/Contextual,
-        # trimmed to what render_assumptions_partial actually needs.
-        st.session_state["_suppress_snapshot_autoload"] = True
-        st.session_state.setdefault("growth_rate", 7.0)
-        st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-        st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-        st.session_state.setdefault("advance_aptc_annual", 0)
-        st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-        st.session_state.setdefault("cpi_assumption", 0.025)
-        st.session_state.setdefault("_pending_review", set())
-
-        st.session_state["wizard_step"] = 4  # last (assumptions)
-        s.render_setup(Household(), "Wizard")
-
-    at = AppTest.from_function(_script).run()
-    assert not at.exception
-    next_btns = [b for b in at.button if b.label == "Next"]
-    assert next_btns
-    assert next_btns[0].disabled is True
-
-
-def test_wizard_shows_step_completeness() -> None:
-    from streamlit.testing.v1 import AppTest
-
-    def _script() -> None:
-        from models.household import Household
-        from views import shells as s
-
-        s.render_setup(Household(), "Wizard")  # step 0 = household (has governed fields)
-
-    at = AppTest.from_function(_script).run()
-    assert not at.exception
-    texts = (
-        [c.value for c in at.caption]
-        + [w.value for w in at.warning]
-        + [su.value for su in at.success]
-    )
-    assert any("complete" in t.lower() for t in texts)
-
-
-def test_wizard_final_step_exposes_bridge_and_1040(monkeypatch) -> None:
-    from streamlit.testing.v1 import AppTest
-
-    import views.setup.data_bridge as data_bridge_mod
-
-    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
-
-    def _script() -> None:
-        import streamlit as st
-
-        from config.defaults import DEFAULTS
-        from engine.irmaa import BASE_PART_B
-        from models.household import Household
-        from views import shells as s
-
-        st.session_state["_suppress_snapshot_autoload"] = True
-        st.session_state.setdefault("growth_rate", 7.0)
-        st.session_state.setdefault("living_expenses", DEFAULTS["living_expenses"])
-        st.session_state.setdefault("aca_benchmark_premium_annual", 21_600.0)
-        st.session_state.setdefault("advance_aptc_annual", 0)
-        st.session_state.setdefault("medicare_part_b_base_monthly", BASE_PART_B / 12)
-        st.session_state.setdefault("cpi_assumption", 0.025)
-        st.session_state.setdefault("_pending_review", set())
-
-        st.session_state["wizard_step"] = 4
-        s.render_setup(Household(), "Wizard")
-
-    at = AppTest.from_function(_script).run()
-    assert not at.exception
-
-    expander_labels = [e.label for e in at.expander]
-    subheader_texts = [sh.value for sh in at.subheader]
-    assert any("1040" in lbl for lbl in expander_labels), expander_labels
-    assert any("bridge" in txt.lower() for txt in subheader_texts), subheader_texts
 
 
 # --- Task 8: bundle export/import symmetry ---------------------------------
@@ -1019,36 +553,19 @@ def test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt(
     assert not any("Importing as" in c for c in captions), captions
 
 
-def test_wizard_registered_and_renders() -> None:
-    from streamlit.testing.v1 import AppTest
-
-    from views import shells
-
-    assert "Wizard" in shells.THEMES
-
-    def _script() -> None:
-        from models.household import Household
-        from views import shells as s
-
-        s.render_setup(Household(), "Wizard")
-
-    at = AppTest.from_function(_script).run()
-    assert not at.exception
-
-
 # --- audit-0823 M2: shell autosave parity -----------------------------------
 #
-# Domains/Hub/Wizard compose views/setup/_partials/ directly and never routed
-# through views/setup/parameters.py:render_parameters_tab, so they never
-# reached the save_user_defaults() autosave Classic/Contextual get for free.
-# _render_shell()/_run_shell() above always seed _suppress_snapshot_autoload
-# = True (needed to keep the OTHER shell tests from touching disk-autoload
-# concerns), which would also suppress the autosave itself and make these
-# tests vacuous -- so this section uses its own no-suppress seed/runner pair
-# instead of reusing _run_shell.
+# The Domains shell composes views/setup/_partials/ directly and never
+# routed through views/setup/parameters.py:render_parameters_tab, so it
+# never reached the save_user_defaults() autosave Classic/Contextual got for
+# free (both now deleted). _render_shell()/_run_shell() above always seed
+# _suppress_snapshot_autoload = True (needed to keep the OTHER shell tests
+# from touching disk-autoload concerns), which would also suppress the
+# autosave itself and make these tests vacuous -- so this section uses its
+# own no-suppress seed/runner pair instead of reusing _run_shell.
 
 
-def _render_shell_no_suppress(theme: str) -> None:
+def _render_shell_no_suppress() -> None:
     """Same seed as ``_render_shell`` above, minus ``_suppress_snapshot_autoload``
     -- needed so the real (non-suppressed) autosave path actually fires.
     """
@@ -1076,10 +593,10 @@ def _render_shell_no_suppress(theme: str) -> None:
     st.session_state.setdefault("_pending_review", set())
     st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
 
-    render_setup(Household(), theme)
+    render_setup(Household())
 
 
-def _run_shell_no_suppress(shell_name: str, monkeypatch) -> AppTest:
+def _run_shell_no_suppress(monkeypatch) -> AppTest:
     """``_run_shell``'s disk-source neutralization, paired with the
     no-suppress seed above instead of ``_render_shell``."""
     import engine.portfolio_sync as portfolio_sync_mod
@@ -1090,9 +607,7 @@ def _run_shell_no_suppress(shell_name: str, monkeypatch) -> AppTest:
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_function(
-        _render_shell_no_suppress, kwargs={"theme": _SHELL_NAME_TO_THEME[shell_name]}
-    )
+    at = AppTest.from_function(_render_shell_no_suppress)
     at.run()
     return at
 
@@ -1100,10 +615,7 @@ def _run_shell_no_suppress(shell_name: str, monkeypatch) -> AppTest:
 def _patch_state_autosave(monkeypatch):
     """Patch ``save_user_defaults`` at ``views.setup._state``'s point of use --
     the module the audit-0823/M2 fix binds the name into via
-    ``autosave_user_defaults()``. ``raising=False`` lets the same patch apply
-    whether or not the name is imported there yet, so one test body runs RED
-    before the fix (name absent / spy never reached) and GREEN after it
-    (spy is what actually gets called) without being rewritten in between.
+    ``autosave_user_defaults()``.
     """
     from unittest.mock import MagicMock
 
@@ -1114,64 +626,32 @@ def _patch_state_autosave(monkeypatch):
     return spy
 
 
-@pytest.mark.parametrize("shell_name", ["domains", "hub", "wizard"])
 def test_shell_autosave_reaches_save_user_defaults(
-    shell_name, clean_command_center_caches, monkeypatch
+    clean_command_center_caches, monkeypatch
 ) -> None:
-    """audit-0823 M2: Domains/Hub/Wizard must persist session edits the same
-    way Classic/Contextual already do. Before the fix, none of these three
-    shells ever calls save_user_defaults -- edits made through them vanish on
-    restart. RED until views/setup/_state.py grows a shared
-    autosave_user_defaults() helper and each shell's render() calls it.
+    """audit-0823 M2: the Domains shell must persist session edits.
+
+    Without this, edits made through the shell vanish on restart.
     """
     spy = _patch_state_autosave(monkeypatch)
-    at = _run_shell_no_suppress(shell_name, monkeypatch)
+    at = _run_shell_no_suppress(monkeypatch)
     assert not at.exception
-    assert spy.called, f"{shell_name} shell did not reach save_user_defaults"
+    assert spy.called, "Domains shell did not reach save_user_defaults"
 
 
-@pytest.mark.parametrize("shell_name", ["classic", "contextual"])
-def test_classic_contextual_still_reach_save_user_defaults(
-    shell_name, clean_command_center_caches, monkeypatch
-) -> None:
-    """Non-regression companion: Classic/Contextual already reach the
-    autosave via views.setup.parameters.render_parameters_tab and must keep
-    doing so, both BEFORE and AFTER the audit-0823/M2 fix -- which moves the
-    call's point of use from views.setup.parameters (its own
-    ``from config.loader import save_user_defaults`` binding, pre-fix) to
-    views.setup._state (the new shared autosave_user_defaults() helper,
-    post-fix). Patches the SAME spy onto both possible points of use
-    (raising=False, since only one exists at a time) so this test is a real
-    interception -- and never risks a real disk write -- in either state.
-    """
-    from unittest.mock import MagicMock
-
-    import views.setup._state as state_mod
-    import views.setup.parameters as parameters_mod
-
-    spy = MagicMock()
-    monkeypatch.setattr(parameters_mod, "save_user_defaults", spy, raising=False)
-    monkeypatch.setattr(state_mod, "save_user_defaults", spy, raising=False)
-    at = _run_shell_no_suppress(shell_name, monkeypatch)
-    assert not at.exception
-    assert spy.called, f"{shell_name} shell no longer reaches save_user_defaults"
-
-
-@pytest.mark.parametrize("shell_name", ["domains", "hub", "wizard"])
 def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
-    shell_name, clean_command_center_caches, monkeypatch
+    clean_command_center_caches, monkeypatch
 ) -> None:
-    """``_suppress_snapshot_autoload=True`` must suppress the save in the new
-    shells too, matching Classic (views/setup/parameters.py:184-185) -- the
-    sentinel is session-wide, not Classic-specific (app.py:108/122,
+    """``_suppress_snapshot_autoload=True`` must suppress the save -- the
+    sentinel is session-wide, not shell-specific (app.py:108/122,
     views/setup/_state.py:212). Uses ``_run_shell`` (not the no-suppress
     variant), which already seeds the flag.
     """
     spy = _patch_state_autosave(monkeypatch)
-    at = _run_shell(shell_name, monkeypatch)
+    at = _run_shell(monkeypatch)
     assert not at.exception
     assert not spy.called, (
-        f"{shell_name} shell called save_user_defaults despite _suppress_snapshot_autoload=True"
+        "Domains shell called save_user_defaults despite _suppress_snapshot_autoload=True"
     )
 
 
@@ -1183,7 +663,7 @@ def test_shell_autosave_payload_carries_session_edited_value(
     session-edited value, not merely that the function was called with
     something."""
     spy = _patch_state_autosave(monkeypatch)
-    at = _run_shell_no_suppress("domains", monkeypatch)
+    at = _run_shell_no_suppress(monkeypatch)
     assert not at.exception
 
     _number_input_by_label(at, "Your Trad IRA").set_value(999_000).run()

@@ -29,18 +29,26 @@ object nested inside the outer "Portfolio" tab.
 A 7th tab, "1040 Import", was added post-Task-8 (spec-compliance review of
 this commit) to close a parity gap: ``views/setup/parameters.py``'s
 ``_render_pdf_1040_import`` (the "Import 1040 PDF" confirm-and-save
-workflow) is a genuine, distinct user-facing feature that Task 8 left
-reachable only from Classic mode. It is imported directly from
-``views.setup.parameters`` despite its leading underscore — the same
-pattern ``views/setup/__init__.py`` already uses for this exact function
+workflow) is a genuine, distinct user-facing feature that Task 8 originally
+left reachable only from the now-deleted Classic shell. It is imported
+directly from ``views.setup.parameters`` despite its leading underscore
 (Python does not enforce module privacy, and this codebase already crosses
 "private" module boundaries this way). Called with no ``container`` arg,
 same as ``render_data_bridge_tab`` — it renders via bare ``st.*`` calls
 internally and must run inside a ``with`` block so Streamlit's ambient
 "current container" places it in this tab. It reuses the exact SAME widget
-keys Classic's copy does (``_pdf_1040_filing_status_<year>`` /
-``_pdf_1040_save_<year>``) — no new keys introduced, per the plan's "no
-session_state key renames" principle (Owner decision 4).
+keys the deleted Classic shell's copy used
+(``_pdf_1040_filing_status_<year>`` / ``_pdf_1040_save_<year>``) — no new
+keys introduced, per the plan's "no session_state key renames" principle
+(Owner decision 4).
+
+An 8th tab, "🎛️ Command Center", was added when the UI shell was collapsed
+to Domains-only: Classic and Contextual (both deleted at that point) were
+the only remaining callers of ``views/setup/__init__.py``'s old ``render()``,
+which is where Command Center used to be reached from. With those shells
+gone, ``render_command_center`` had no live caller left, so this shell now
+renders it directly — FIRST in the tab list, since it is the data-review/sync
+gate a user should see before editing any domain tab.
 """
 
 from __future__ import annotations
@@ -56,15 +64,17 @@ from views.setup._partials import (
     render_portfolio_partial,
 )
 from views.setup._state import autosave_user_defaults
+from views.setup.command_center import render_command_center
 from views.setup.data_bridge import render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
 
 
 def render(hh: Household) -> None:
-    """Render the Domains Setup layout: 7 tabs grouped by data domain."""
+    """Render the Domains Setup layout: 8 tabs grouped by data domain."""
     st.title("⚙️ Setup — Domains")
 
     (
+        tab_command_center,
         tab_household,
         tab_accounts,
         tab_options,
@@ -74,6 +84,7 @@ def render(hh: Household) -> None:
         tab_1040,
     ) = st.tabs(
         [
+            "🎛️ Command Center",
             "Household",
             "Accounts",
             "Options",
@@ -83,6 +94,9 @@ def render(hh: Household) -> None:
             "1040 Import",
         ]
     )
+
+    with tab_command_center:
+        render_command_center(hh)
 
     tab_household.subheader("Filing status")
     _is_single = bool(render_household_partial(hh, tab_household, "joint"))
@@ -110,9 +124,7 @@ def render(hh: Household) -> None:
     with tab_bridge:
         # render_data_bridge_tab(hh) takes no container arg — it renders via
         # bare `st.*` calls internally, so it must run inside a `with` block
-        # for Streamlit's ambient "current container" to place it in this
-        # tab (same pattern views/setup/__init__.py's Classic composition
-        # already uses for this exact function).
+        # for Streamlit's ambient "current container" to place it in this tab.
         render_data_bridge_tab(hh)
 
     with tab_1040:
@@ -122,8 +134,9 @@ def render(hh: Household) -> None:
 
     # audit-0823 models-views/M2: this shell composes views/setup/_partials/
     # directly and never routes through render_parameters_tab, so it never
-    # reached the autosave Classic/Contextual get for free. Must run last,
-    # after every partial above has had a chance to mutate session_state.
+    # got autosave for free the way the (now-deleted) Classic/Contextual
+    # shells did. Must run last, after every partial above has had a chance
+    # to mutate session_state.
     autosave_user_defaults()
 
 

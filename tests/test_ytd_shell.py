@@ -2,32 +2,23 @@
 Phase 3 (YTD Income pilot) plan
 (``docs/superpowers/plans/2026-07-28-ui-shell-phase3-ytd-pilot-plan.md``).
 
-Prior tasks (1-8) landed the theme-aware ``render(hh, theme=...)`` dispatcher
-with its data-completeness caption. Unlike the mocked-``st`` unit tests in
-``tests/test_views_ytd_income.py`` (which verify behavior is preserved
-across the refactor), these tests drive a REAL rendered Streamlit session via
-``streamlit.testing.v1.AppTest`` — proving the actual widgets, badges, and
-tab structure behave correctly, not just that the underlying computation is
-unchanged.
+Prior tasks (1-8) landed the ``render(hh)`` dispatcher with its
+data-completeness caption; the theme axis was removed when the UI shell was
+collapsed to Domains-only (the surviving ``views/shells/domains_shell.py``).
+Unlike the mocked-``st`` unit tests in ``tests/test_views_ytd_income.py``
+(which verify behavior is preserved across the refactor), these tests drive
+a REAL rendered Streamlit session via ``streamlit.testing.v1.AppTest`` —
+proving the actual widgets, badges, and tab structure behave correctly, not
+just that the underlying computation is unchanged.
 
 Mirrors ``tests/test_shells.py``'s established ``AppTest.from_function``
 pattern: a single self-contained target function (``_render_ytd``) seeds a
 minimal ``Household``/``session_state`` and calls
 ``views.ytd_income.render(...)``. As that module's docstring notes (verified
 empirically there), ``AppTest.from_function`` execs only the target
-function's OWN source in a fresh namespace — no other names from this module
+function's OWN source text in a fresh namespace — no other names from this module
 are visible inside it — so all imports/setup live entirely inside
 ``_render_ytd``.
-
-Theme is threaded through ``session_state["ui_theme"]`` rather than a
-``render(theme=...)`` kwarg fixed at ``AppTest.from_function`` construction
-time: the key-stability test (Step 4) needs to flip the theme *between*
-``.run()`` calls on the SAME ``AppTest`` instance, which a construction-time
-kwarg can't do (kwargs are re-applied on every rerun, so a fixed kwarg would
-stomp any theme change made via direct ``session_state`` mutation). This
-also exercises ``render()``'s own ``theme is None -> session_state`` fallback
-path, matching how the real ``ui_theme`` selectbox in ``app.py`` drives
-``views.shells.render_setup`` (see ``tests/test_app_theme_switch.py``).
 
 ``render()`` unconditionally calls ``engine.portfolio_sync.save_ytd_snapshot``
 at the end, and its ``render_sync_scan_partial`` reads several repo-root
@@ -49,9 +40,7 @@ from engine.data_status import YTD_STALE_AFTER_DAYS
 def _render_ytd(snapshot_date: str | None = None) -> None:
     """AppTest.from_function target: seed a minimal ``Household`` and an
     optional ``YTDSnapshot`` (to control the completeness badge), then
-    render ``views.ytd_income`` with ``theme=None`` so it falls back to
-    ``session_state["ui_theme"]`` — letting callers drive the theme purely
-    through ``session_state`` (see module docstring).
+    render ``views.ytd_income``.
     """
     import streamlit as st
 
@@ -63,10 +52,10 @@ def _render_ytd(snapshot_date: str | None = None) -> None:
     if snapshot_date is not None:
         st.session_state["ytd_snapshot"] = YTDSnapshot(snapshot_date=snapshot_date)
 
-    render(Household(), theme=None)
+    render(Household())
 
 
-def _run_ytd(monkeypatch, snapshot_date: str | None = None, ui_theme: str = "Classic") -> AppTest:
+def _run_ytd(monkeypatch, snapshot_date: str | None = None) -> AppTest:
     """Run ``_render_ytd`` under ``AppTest``, neutralizing the repo-root JSON
     caches ``render_sync_scan_partial`` reads/writes on every render (mirrors
     ``tests/test_shells.py``'s ``_run_shell`` disk-source neutralization).
@@ -83,7 +72,6 @@ def _run_ytd(monkeypatch, snapshot_date: str | None = None, ui_theme: str = "Cla
     monkeypatch.setattr(koinly_report_pdf_mod, "load_koinly_report", lambda: None)
 
     at = AppTest.from_function(_render_ytd, kwargs={"snapshot_date": snapshot_date})
-    at.session_state["ui_theme"] = ui_theme
     at.run()
     return at
 
@@ -105,7 +93,7 @@ def _badge_captions(at: AppTest) -> list[str]:
 
 
 def test_completeness_caption_shown_when_snapshot_missing(monkeypatch) -> None:
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     assert not at.exception
 
     badges = _badge_captions(at)
@@ -114,7 +102,7 @@ def test_completeness_caption_shown_when_snapshot_missing(monkeypatch) -> None:
 
 def test_completeness_caption_shown_when_snapshot_stale(monkeypatch) -> None:
     stale_date = (datetime.now() - timedelta(days=YTD_STALE_AFTER_DAYS + 5)).isoformat()
-    at = _run_ytd(monkeypatch, snapshot_date=stale_date, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=stale_date)
     assert not at.exception
 
     badges = _badge_captions(at)
@@ -123,65 +111,31 @@ def test_completeness_caption_shown_when_snapshot_stale(monkeypatch) -> None:
 
 def test_completeness_caption_absent_when_snapshot_recent(monkeypatch) -> None:
     recent_date = datetime.now().isoformat()
-    at = _run_ytd(monkeypatch, snapshot_date=recent_date, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=recent_date)
     assert not at.exception
 
     assert _badge_captions(at) == []
 
 
-# --- Step 3: Domains-layout test ---------------------------------------------
+# --- Step 3: tab-layout test --------------------------------------------------
 
 
-def test_domains_layout_has_two_tabs_and_preserves_all_classic_widgets(monkeypatch) -> None:
-    at_classic = _run_ytd(monkeypatch, ui_theme="Classic")
-    assert not at_classic.exception
-
-    at_domains = _run_ytd(monkeypatch, ui_theme="Domains")
-    assert not at_domains.exception
+def test_layout_has_two_tabs_and_multiple_manual_entry_widgets(monkeypatch) -> None:
+    at = _run_ytd(monkeypatch)
+    assert not at.exception
 
     tab_container = next(
         child
-        for child in at_domains.main.children.values()
+        for child in at.main.children.values()
         if getattr(child, "type", None) == "tab_container"
     )
     labels = [tab.label for tab in tab_container.children.values()]
     assert labels == ["Update Your Data", "Review Headroom"]
 
-    # No field dropped: same count AND same set of number_input labels in
-    # both (count alone would miss a dropped duplicate-labeled widget; the
-    # label-set alone would miss a dropped widget whose label has a
-    # surviving duplicate elsewhere on the page).
-    assert len(at_domains.number_input) == len(at_classic.number_input)
-    classic_labels = {w.label for w in at_classic.number_input}
-    domains_labels = {w.label for w in at_domains.number_input}
-    assert domains_labels == classic_labels
-    assert len(classic_labels) > 5, "expected multiple manual-entry number inputs, found too few"
-
-    # Representative widget-count cross-check on another widget type.
-    assert len(at_domains.checkbox) == len(at_classic.checkbox)
-    assert len(at_domains.button) == len(at_classic.button)
-
-
-# --- Step 4: key-stability test ----------------------------------------------
-
-
-def test_manual_entry_value_survives_theme_switch_roundtrip(monkeypatch) -> None:
-    at = _run_ytd(monkeypatch, ui_theme="Classic")
-    assert not at.exception
-
-    _number_input_by_label(at, "Wages YTD").set_value(123_000).run()
-    assert not at.exception
-    assert _number_input_by_label(at, "Wages YTD").value == 123_000
-
-    at.session_state["ui_theme"] = "Domains"
-    at.run()
-    assert not at.exception
-    assert _number_input_by_label(at, "Wages YTD").value == 123_000
-
-    at.session_state["ui_theme"] = "Classic"
-    at.run()
-    assert not at.exception
-    assert _number_input_by_label(at, "Wages YTD").value == 123_000
+    number_input_labels = {w.label for w in at.number_input}
+    assert len(number_input_labels) > 5, (
+        "expected multiple manual-entry number inputs, found too few"
+    )
 
 
 # --- Task 6: owner-resolution + scan-gating tests ----------------------------
@@ -279,7 +233,7 @@ def _scan(at):
 
 def test_no_brokerage_owner_selectbox_renders_after_scan(monkeypatch, tmp_path) -> None:
     _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
@@ -293,7 +247,7 @@ def test_no_brokerage_owner_selectbox_renders_after_scan(monkeypatch, tmp_path) 
 
 def test_no_koinly_owner_selectbox_renders_after_scan(monkeypatch, tmp_path) -> None:
     _patch_scan(monkeypatch, tmp_path, koinly_reports=[_koinly_report(owner_key="Jane Doe")])
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
@@ -316,7 +270,7 @@ def test_account_type_confirm_selectbox_still_renders_for_unknown_tax_status(
         tmp_path,
         brokerage_records=[_brokerage_record(account_number="****-*999", account_type="unknown")],
     )
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
@@ -325,14 +279,14 @@ def test_account_type_confirm_selectbox_still_renders_for_unknown_tax_status(
 
 
 def test_scan_button_disabled_when_instance_owner_unset(monkeypatch) -> None:
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
 
     assert not at.exception
     assert next(b for b in at.button if b.key == "scan_pdf_folder_btn").disabled is True
 
 
 def test_scan_button_enabled_when_instance_owner_set(monkeypatch) -> None:
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     at.run()
 
@@ -349,7 +303,7 @@ def test_apply_button_disabled_when_instance_owner_unset(monkeypatch, tmp_path) 
     """
     import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
 
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
 
     # statement_by_account is cached into session_state on first render (see
     # "statement_by_account" not in st.session_state) and never reloaded
@@ -372,7 +326,7 @@ def test_apply_button_disabled_when_instance_owner_unset(monkeypatch, tmp_path) 
 def test_apply_button_enabled_when_instance_owner_set(monkeypatch, tmp_path) -> None:
     import engine.brokerage_statement_pdf as brokerage_statement_pdf_mod
 
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     monkeypatch.setattr(
         brokerage_statement_pdf_mod,
         "load_statement_records",
@@ -402,7 +356,7 @@ def test_holder_name_mismatch_warns_but_does_not_block(monkeypatch, tmp_path) ->
     # The name says "spouse"; this instance attributes the account to "you".
     monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
     _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
@@ -420,7 +374,7 @@ def test_holder_name_match_is_silent(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "you"})
     _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key="Jane Doe")])
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
@@ -451,7 +405,7 @@ def test_apply_button_warns_on_holder_name_mismatch_but_does_not_block(
     _patch_scan(monkeypatch, tmp_path)
     monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
 
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     # Patched AFTER _run_ytd -- its own neutralizing patch
     # (load_statement_records -> {}) runs during construction and would
     # otherwise clobber this one if set beforehand (see the existing
@@ -483,7 +437,7 @@ def test_absent_holder_name_is_silent(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(sync_scan_mod, "load_owner_map", lambda: {"jane doe": "spouse"})
     _patch_scan(monkeypatch, tmp_path, brokerage_records=[_brokerage_record(owner_key=None)])
-    at = _run_ytd(monkeypatch, snapshot_date=None, ui_theme="Classic")
+    at = _run_ytd(monkeypatch, snapshot_date=None)
     at.session_state["instance_owner"] = "you"
     _scan(at)
 
