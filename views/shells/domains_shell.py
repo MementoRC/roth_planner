@@ -118,13 +118,15 @@ def render(hh: Household) -> None:
         # in views/ytd_income/_partials/_sync_scan.py (only the call moved
         # here) -- deliberate, so tests that drive it directly keep working
         # unchanged. See this module's docstring for the full rationale.
-        st.subheader("Command Center")
-        render_command_center(hh)
-        # txn_price_now is a market-sourced value that "Sync everything"
-        # already refreshes via its Yahoo-quote leg, so its widget renders
-        # here beside the sync controls rather than under Options (PR B,
-        # 2026-09) -- see render_stock_price_widget's docstring.
-        render_stock_price_widget(st)
+        #
+        # Section order (PR C, 2026-09): getting data IN is this tab's
+        # primary job, so the two import sections -- PDF Statements and
+        # Import previous data -- now come FIRST, ahead of the sync/review
+        # controls (Command Center, Stock Price) and the 1040 Import
+        # secondary path. A user opening this tab should not have to scroll
+        # past maintenance actions to reach the ingest entry points they
+        # came here for.
+        #
         # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09) --
         # that name was vocabulary inherited from this partial's previous
         # home on the YTD page and no longer describes where it lives.
@@ -135,6 +137,13 @@ def render(hh: Household) -> None:
         # mechanism name.
         st.subheader("Import previous data")
         render_data_bridge_tab(hh)
+        st.subheader("Command Center")
+        render_command_center(hh)
+        # txn_price_now is a market-sourced value that "Sync everything"
+        # already refreshes via its Yahoo-quote leg, so its widget renders
+        # here beside the sync controls rather than under Options (PR B,
+        # 2026-09) -- see render_stock_price_widget's docstring.
+        render_stock_price_widget(st)
         st.subheader("1040 Import")
         _render_pdf_1040_import()
 
