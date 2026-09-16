@@ -6,10 +6,9 @@ shows the resulting per-year TXN price row, a live "Remaining" readout, a
 read-only dollar mirror grid (spread income by tax year), and inline
 validation. Persists via ``engine.exercise_schedule_store``.
 
-Supports Classic (unchanged) and Domains (2-tab: Edit Allocation / Review
-Impact) layouts via the theme-aware ``render(hh, theme)`` dispatcher,
-mirroring the YTD Income pilot (Phase 3). Computation lives entirely in
-``_partials/`` — this module owns only the Streamlit dispatch.
+Renders as a 2-tab (Edit Allocation / Review Impact) layout, mirroring the
+YTD Income pilot (Phase 3). Computation lives entirely in ``_partials/`` —
+this module owns only the Streamlit dispatch.
 
 Module-attribute indirection: handle_txn_quote_fetch, save_exercise_schedule,
 and clear_exercise_schedule are imported here (not just in _partials/) so
@@ -44,7 +43,7 @@ __all__ = [
 ]
 
 
-def render(hh: Household, theme: str | None = None) -> None:
+def render(hh: Household) -> None:
     st.title("Option Exercise Planner")
     st.caption(
         "Choose how many shares of each grant to exercise in which year — "
@@ -59,11 +58,7 @@ def render(hh: Household, theme: str | None = None) -> None:
     if _completeness.issues:
         st.caption(f"⚠️ {_completeness.issues[0].detail}")
 
-    _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
-    if _theme == "Domains":
-        _render_domains(hh)
-    else:
-        _render_classic(hh)
+    _render_tabs(hh)
 
 
 def _prep(
@@ -90,7 +85,7 @@ def _prep(
     return schedule, years, explicit_schedule, explicit_price_years
 
 
-def _render_domains(hh: Household) -> None:
+def _render_tabs(hh: Household) -> None:
     schedule, years, explicit_schedule, explicit_price_years = _prep(hh)
     tab1, tab2 = st.tabs(["Edit Allocation", "Review Impact"])
     with tab1:
@@ -101,13 +96,3 @@ def _render_domains(hh: Household) -> None:
         render_validate_save_partial(hh, norm, price_by_year, effective_base, effective_growth)
     with tab2:
         render_review_partial(hh, years, norm, price_by_year)
-
-
-def _render_classic(hh: Household) -> None:
-    schedule, years, explicit_schedule, explicit_price_years = _prep(hh)
-    price_by_year, effective_base, effective_growth = render_price_basis_partial(
-        hh, years, explicit_schedule, explicit_price_years
-    )
-    norm = render_grid_partial(hh, years, schedule)
-    render_review_partial(hh, years, norm, price_by_year)
-    render_validate_save_partial(hh, norm, price_by_year, effective_base, effective_growth)

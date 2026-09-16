@@ -25,10 +25,10 @@ under `AppTest.dataframe` -- `at.dataframe[0].value` is the pandas DataFrame
 actually rendered in the grid widget. There is NO separate `at.data_editor`
 accessor in this streamlit version (`hasattr(at, "data_editor")` is `False`
 on a built `AppTest`); `st.data_editor` elements are exposed through the same
-`dataframe` list as `st.dataframe`. Classic layout renders the editable grid
-as the FIRST such element (Price & Basis renders no dataframe; the two
-Review-Impact mirror tables render after it), so `at.dataframe[0]` is safe to
-index directly.
+`dataframe` list as `st.dataframe`. The "Edit Allocation" tab renders the
+editable grid as the FIRST such element (Price & Basis renders no dataframe;
+the two Review-Impact mirror tables render after it, in the second tab), so
+`at.dataframe[0]` is safe to index directly.
 
 Per the audit's own methodology note, the headline $102K conversion-tax
 exposure attributed to this collision is NOT reachable on real data: the
@@ -59,7 +59,7 @@ def _render_oe(grants) -> None:
 
     st.session_state["_suppress_snapshot_autoload"] = True
     hh = Household(grants=grants, base_year=2026)
-    render(hh, theme=None)
+    render(hh)
 
 
 def _run_oe(monkeypatch, grants: list[StockGrant]) -> AppTest:
@@ -69,7 +69,6 @@ def _run_oe(monkeypatch, grants: list[StockGrant]) -> AppTest:
     monkeypatch.setattr(oe_module, "clear_exercise_schedule", lambda: None)
 
     at = AppTest.from_function(_render_oe, kwargs={"grants": grants})
-    at.session_state["ui_theme"] = "Classic"
     at.run()
     return at
 

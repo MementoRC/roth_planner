@@ -109,7 +109,6 @@ DYNAMIC_PERSONAL_KEYS = [
 MUST_SURVIVE_KEYS = [
     ("instance_owner", "you"),
     ("instance_owner_gate_choice", "you"),
-    ("ui_theme", "Domains"),
     ("nav_page", "Conversion Planner"),
 ]
 

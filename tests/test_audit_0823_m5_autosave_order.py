@@ -1,6 +1,7 @@
-"""audit-0823 models-views/M5: Classic/Contextual autosave must run LAST.
+"""audit-0823 models-views/M5: the Setup shell's autosave must run LAST.
 
-``views/setup/__init__.py:render`` composes four tabs in source order:
+``views/setup/__init__.py:render`` used to compose four tabs in source
+order:
 
     1. Command Center   2. Parameters   3. Portfolio   4. Data bridge
 
@@ -23,10 +24,21 @@ and persists it. The edit is flushed one rerun late -- it self-heals on any
 further interaction, so the real loss window is "user edits the stock price,
 then immediately navigates away".
 
-The other three shells (Domains/Hub/Wizard) already call
-``autosave_user_defaults()`` as the last statement of their ``render()``
-(audit-0823 M2, PR #462). Classic and Contextual -- which both wrap
-``views.setup.render`` -- were the two that did not.
+The old Domains/Hub/Wizard shells already called ``autosave_user_defaults()``
+as the last statement of their ``render()`` (audit-0823 M2, PR #462).
+Classic and Contextual -- which both wrapped ``views.setup.render`` -- were
+the two that did not.
+
+Now that the UI shell has been collapsed to Domains-only (the surviving
+``views/shells/domains_shell.py``), this test re-points at that shell via
+``views.shells.render_setup`` and keeps guarding the same regression: the
+autosave call must still be the LAST statement of ``render()``, after every
+tab (including the Options tab, which owns the unkeyed stock-price widget)
+has had a chance to mutate session_state. The patch target below is
+``views.shells.domains_shell``'s own ``render_options_partial`` binding
+(imported from ``views.setup._partials``) -- domains_shell.py calls it
+directly rather than through ``views/setup/portfolio.py``'s old
+``render_portfolio_tab`` composition.
 
 The stub below stands in for the real unkeyed widget by performing the same
 ``st.session_state.txn_price = <new value>`` assignment the real one does at
@@ -42,8 +54,8 @@ from streamlit.testing.v1 import AppTest
 _EDITED_TXN_PRICE = 987.65
 
 
-def _seed_and_render_classic() -> None:
-    """Seed the session the way the Setup shells expect, then render Classic.
+def _seed_and_render_domains() -> None:
+    """Seed the session the way the Setup shell expects, then render it.
 
     Deliberately does NOT set ``_suppress_snapshot_autoload`` -- that guard
     makes ``autosave_user_defaults()`` return early, which would make this
@@ -73,12 +85,12 @@ def _seed_and_render_classic() -> None:
     st.session_state.setdefault("_pending_review", set())
     st.session_state.setdefault("_stock_ticker", DEFAULTS["stock_ticker"])
 
-    render_setup(Household(), "Classic")
+    render_setup(Household())
 
 
 @pytest.fixture
 def _neutralize_disk_sources(monkeypatch):
-    """Same disk-source neutralization tests/test_shells.py's shell runners use."""
+    """Same disk-source neutralization tests/test_shells.py's shell runner uses."""
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
     import views.setup.data_bridge as data_bridge_mod
@@ -89,20 +101,20 @@ def _neutralize_disk_sources(monkeypatch):
 
 
 @pytest.mark.usefixtures("_neutralize_disk_sources")
-def test_classic_autosave_sees_portfolio_tab_edits(
+def test_domains_autosave_sees_portfolio_tab_edits(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """audit-0823 M5: the Classic autosave must observe tab-3 session writes.
+    """audit-0823 M5: the shell's autosave must observe Portfolio-tab session writes.
 
-    RED while ``autosave_user_defaults()`` is the last statement of
-    ``render_parameters_tab`` (tab 2): the payload carries the pre-edit
-    stock price. GREEN once the call moves to the last statement of
-    ``views.setup.render``, after all four tabs have rendered.
+    RED while ``autosave_user_defaults()`` runs before the Portfolio tab has
+    rendered: the payload would carry the pre-edit stock price. GREEN once
+    the call is the last statement of the shell's ``render()``, after every
+    tab (including Portfolio) has rendered.
     """
     import streamlit as st
 
     import views.setup._state as state_mod
-    import views.setup.portfolio as portfolio_mod
+    import views.shells.domains_shell as domains_shell_mod
 
     saved_payloads: list[dict] = []
     monkeypatch.setattr(
@@ -110,26 +122,26 @@ def test_classic_autosave_sees_portfolio_tab_edits(
     )
 
     def _fake_options_partial(hh, container) -> None:
-        """Stand-in for the real unkeyed controlled widget in tab 3."""
+        """Stand-in for the real unkeyed controlled widget in the Options tab."""
         st.session_state.txn_price = _EDITED_TXN_PRICE
 
-    monkeypatch.setattr(portfolio_mod, "render_options_partial", _fake_options_partial)
+    monkeypatch.setattr(domains_shell_mod, "render_options_partial", _fake_options_partial)
 
-    at = AppTest.from_function(_seed_and_render_classic).run()
+    at = AppTest.from_function(_seed_and_render_domains).run()
     assert not at.exception
 
-    assert saved_payloads, "Classic shell never reached save_user_defaults"
+    assert saved_payloads, "Setup shell never reached save_user_defaults"
     assert saved_payloads[-1]["stock_price_now"] == _EDITED_TXN_PRICE, (
-        "autosave ran before the Portfolio tab wrote session_state.txn_price — "
+        "autosave ran before a tab wrote session_state.txn_price — "
         "the edit is persisted one rerun late"
     )
 
 
 @pytest.mark.usefixtures("_neutralize_disk_sources")
-def test_classic_autosave_runs_exactly_once_per_render(
+def test_domains_autosave_runs_exactly_once_per_render(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """Moving the call must not leave a second autosave behind in tab 2."""
+    """Moving the call must not leave a second autosave behind mid-render."""
     import views.setup._state as state_mod
 
     calls: list[dict] = []
@@ -137,7 +149,7 @@ def test_classic_autosave_runs_exactly_once_per_render(
         state_mod, "save_user_defaults", lambda payload: calls.append(dict(payload))
     )
 
-    at = AppTest.from_function(_seed_and_render_classic).run()
+    at = AppTest.from_function(_seed_and_render_domains).run()
     assert not at.exception
 
     assert len(calls) == 1, f"expected exactly one autosave per render, got {len(calls)}"

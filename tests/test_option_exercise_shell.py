@@ -38,19 +38,16 @@ def _render_oe(schedule=None) -> None:
     grant = StockGrant(year=2019, strike=104.0, shares=1000, expiry_year=2029)
     hh = Household(grants=[grant], base_year=2026)
     hh.exercise_schedule = schedule
-    render(hh, theme=None)
+    render(hh)
 
 
-def _run_oe(
-    monkeypatch, schedule: ExerciseSchedule | None = None, ui_theme: str = "Classic"
-) -> AppTest:
+def _run_oe(monkeypatch, schedule: ExerciseSchedule | None = None) -> AppTest:
     import views.option_exercise as oe_module
 
     monkeypatch.setattr(oe_module, "save_exercise_schedule", lambda s: None)
     monkeypatch.setattr(oe_module, "clear_exercise_schedule", lambda: None)
 
     at = AppTest.from_function(_render_oe, kwargs={"schedule": schedule})
-    at.session_state["ui_theme"] = ui_theme
     at.run()
     return at
 
@@ -63,7 +60,7 @@ def _badge_captions(at: AppTest) -> list[str]:
 
 
 def test_badge_shown_when_schedule_missing(monkeypatch) -> None:
-    at = _run_oe(monkeypatch, schedule=None, ui_theme="Classic")
+    at = _run_oe(monkeypatch, schedule=None)
     assert not at.exception
     assert any("No exercise plan confirmed" in b for b in _badge_captions(at))
 
@@ -71,7 +68,7 @@ def test_badge_shown_when_schedule_missing(monkeypatch) -> None:
 def test_badge_shown_when_partially_allocated(monkeypatch) -> None:
     schedule = ExerciseSchedule()
     schedule.set_shares(_grant().key(), 2029, 500)  # 500 of 1000 shares allocated
-    at = _run_oe(monkeypatch, schedule=schedule, ui_theme="Classic")
+    at = _run_oe(monkeypatch, schedule=schedule)
     assert not at.exception
     assert any("not yet allocated" in b for b in _badge_captions(at))
 
@@ -79,16 +76,16 @@ def test_badge_shown_when_partially_allocated(monkeypatch) -> None:
 def test_badge_absent_when_fully_allocated(monkeypatch) -> None:
     schedule = ExerciseSchedule()
     schedule.set_shares(_grant().key(), 2029, 1000)  # fully allocated
-    at = _run_oe(monkeypatch, schedule=schedule, ui_theme="Classic")
+    at = _run_oe(monkeypatch, schedule=schedule)
     assert not at.exception
     assert _badge_captions(at) == []
 
 
-# --- Step 3: Domains-layout test ---------------------------------------------
+# --- Step 3: tab-layout test --------------------------------------------------
 
 
-def test_domains_layout_has_two_tabs(monkeypatch) -> None:
-    at = _run_oe(monkeypatch, ui_theme="Domains")
+def test_layout_has_two_tabs(monkeypatch) -> None:
+    at = _run_oe(monkeypatch)
     assert not at.exception
 
     tab_container = next(
@@ -98,35 +95,6 @@ def test_domains_layout_has_two_tabs(monkeypatch) -> None:
     )
     labels = [tab.label for tab in tab_container.children.values()]
     assert labels == ["Edit Allocation", "Review Impact"]
-
-
-# --- Step 4: key-stability test ----------------------------------------------
-
-
-def test_widget_keys_stable_across_theme_switch(monkeypatch) -> None:
-    import views.option_exercise as oe_module
-
-    monkeypatch.setattr(oe_module, "save_exercise_schedule", lambda s: None)
-    monkeypatch.setattr(oe_module, "clear_exercise_schedule", lambda: None)
-
-    at = AppTest.from_function(_render_oe, kwargs={"schedule": None})
-    at.session_state["ui_theme"] = "Classic"
-    at.run()
-    assert not at.exception
-
-    growth_input = next(w for w in at.number_input if w.label == "Assumed TXN growth (%/yr)")
-    growth_input.set_value(9.0).run()
-    assert not at.exception
-
-    at.session_state["ui_theme"] = "Domains"
-    at.run()
-    assert not at.exception
-    assert next(w for w in at.number_input if w.label == "Assumed TXN growth (%/yr)").value == 9.0
-
-    at.session_state["ui_theme"] = "Classic"
-    at.run()
-    assert not at.exception
-    assert next(w for w in at.number_input if w.label == "Assumed TXN growth (%/yr)").value == 9.0
 
 
 # --- Step 5: Reset-button interception test ----------------------------------
@@ -142,7 +110,6 @@ def test_reset_button_clears_schedule(monkeypatch) -> None:
     schedule = ExerciseSchedule()
     schedule.set_shares(_grant().key(), 2029, 1000)  # fully allocated, no badge initially
     at = AppTest.from_function(_render_oe, kwargs={"schedule": schedule})
-    at.session_state["ui_theme"] = "Classic"
     at.run()
     assert not at.exception
     assert _badge_captions(at) == []  # sanity: starts fully allocated, no badge

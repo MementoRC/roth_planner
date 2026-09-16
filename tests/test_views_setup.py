@@ -14,23 +14,25 @@ def test_setup_module_imports():
     """views.setup must import without error."""
     from views import setup
 
-    assert hasattr(setup, "render")
+    assert setup is not None
 
 
-def test_render_signature():
-    """render must accept a Household and return None."""
-    from views import setup
+def test_render_setup_signature():
+    """views.shells.render_setup (the surviving Setup entry point, now that
+    views.setup.render has been deleted) must accept a single Household and
+    return None -- the theme parameter is gone with the deleted shells."""
+    from views import shells
 
-    sig = inspect.signature(setup.render)
+    sig = inspect.signature(shells.render_setup)
     params = list(sig.parameters.values())
-    assert len(params) == 1, "render must take exactly one positional arg"
+    assert len(params) == 1, "render_setup must take exactly one positional arg (hh)"
     assert params[0].annotation is Household or params[0].annotation == "Household"
 
 
-def test_render_is_callable():
-    from views import setup
+def test_render_setup_is_callable():
+    from views import shells
 
-    assert callable(setup.render)
+    assert callable(shells.render_setup)
 
 
 class TestPyodideGating:

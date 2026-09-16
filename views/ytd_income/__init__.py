@@ -22,7 +22,7 @@ from views.ytd_income._partials import (
 )
 
 
-def render(hh: Household, theme: str | None = None) -> None:
+def render(hh: Household) -> None:
     st.title("YTD Income & Conversion Headroom")
     st.caption(
         "Track mid-year income events and see how much Roth conversion room remains. "
@@ -34,8 +34,7 @@ def render(hh: Household, theme: str | None = None) -> None:
     if _completeness.issues:
         st.caption(f"⚠️ {_completeness.issues[0].detail}")
 
-    _theme = theme if theme is not None else st.session_state.get("ui_theme", "Classic")
-    ytd = _render_domains(hh) if _theme == "Domains" else _render_classic(hh)
+    ytd = _render_tabs(hh)
 
     # audit-0823 M1: save ONLY when session_state actually holds a real
     # "ytd_snapshot" -- never when the returned `ytd` is nothing but
@@ -54,14 +53,7 @@ def render(hh: Household, theme: str | None = None) -> None:
         save_ytd_snapshot(ytd)
 
 
-def _render_classic(hh: Household) -> YTDSnapshot:
-    render_sync_scan_partial(hh)
-    ytd = render_manual_entry_partial(hh)
-    render_analysis_partial(hh, ytd)
-    return ytd
-
-
-def _render_domains(hh: Household) -> YTDSnapshot:
+def _render_tabs(hh: Household) -> YTDSnapshot:
     tab1, tab2 = st.tabs(["Update Your Data", "Review Headroom"])
     with tab1:
         render_sync_scan_partial(hh)
