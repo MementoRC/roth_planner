@@ -466,6 +466,7 @@ class TestManualEntryAutoDeselect:
             mock_exercises.server_available = False
             mock_fetch_ex.return_value = mock_exercises
 
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         # Assert: session_state["ytd_manual_entry"] was set to False
@@ -513,6 +514,7 @@ class TestManualEntryAutoDeselect:
             mock_exercises.server_available = False
             mock_fetch_ex.return_value = mock_exercises
 
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         # Assert: ytd_manual_entry was NOT set to False in the success branch
@@ -577,6 +579,7 @@ class TestManualEntryAutoDeselect:
             mock_exercises.server_available = False
             mock_fetch_ex.return_value = mock_exercises
 
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         result = mock_st.session_state.ytd_snapshot
@@ -623,6 +626,7 @@ class TestManualEntryAutoDeselect:
             mock_exercises.server_available = False
             mock_fetch_ex.return_value = mock_exercises
 
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         result = mock_st.session_state.ytd_snapshot
@@ -1065,6 +1069,7 @@ class TestBrokerageStatementSync:
             patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         setitem_calls = [
@@ -1129,6 +1134,7 @@ class TestBrokerageStatementSync:
             patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_save_snapshot.called, (
@@ -1187,6 +1193,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         setitem_calls = [
@@ -1225,6 +1232,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_st.error.called, "Expected st.error for blank statement-folder input"
@@ -1256,6 +1264,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_st.error.called, (
@@ -1300,6 +1309,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_st.error.called, "Expected st.error for a folder path containing '..'"
@@ -1338,6 +1348,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_st.error.called, "Expected st.error for a folder input containing '..'"
@@ -1377,6 +1388,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         assert mock_st.error.called, "Expected st.error for a folder outside the home directory"
@@ -1435,6 +1447,7 @@ class TestBrokerageStatementSync:
             patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         mock_save_records.assert_called_once()
@@ -1493,6 +1506,7 @@ class TestBrokerageStatementSync:
         ):
             mock_apply.return_value = cached_by_account
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         mock_apply.assert_called_once_with(cached_by_account, {})
@@ -1565,6 +1579,7 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
         mock_save_override.assert_called_once_with("XXXX5555", "taxable")
@@ -1631,6 +1646,7 @@ class TestOwnerAttributionScanFlow:
             patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
             patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
         ):
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
     def test_two_owner_koinly_scan_sums_not_overrides(self, tmp_path, monkeypatch):
@@ -1830,6 +1846,7 @@ class TestBrokerageOwnerAttributionScanFlow:
                 stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
             ),
         ):
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
     def test_two_owner_brokerage_scan_sums_not_overrides(self, tmp_path, monkeypatch):
@@ -1997,6 +2014,7 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
                 stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
             ),
         ):
+            sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
 
     def test_combined_koinly_and_brokerage_scan_resolves_both_owners(self, tmp_path, monkeypatch):

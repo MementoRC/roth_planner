@@ -1,5 +1,5 @@
 """Characterization test — freezes the current Setup page's widget `key=` set
-and 8 tab labels as a "must not change" baseline.
+and 6 tab labels as a "must not change" baseline.
 
 This is the safety net for the UI-shell-theme-toggle plan (Tasks 3-9): those
 tasks extract widgets out of ``views/setup/parameters.py``,
@@ -49,14 +49,20 @@ from streamlit.testing.v1 import AppTest
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
-# The complete, frozen set of widget `key=` values present across all 8 Setup
-# tabs (Command Center / Household / Accounts / Options / Assumptions /
-# Portfolio / Data bridge / 1040 Import — the Domains shell's grouping,
-# refactor/domains-only-shell) for a fresh demo household: no pending review
+# The complete, frozen set of widget `key=` values present across all 6 Setup
+# tabs (📥 Data / Household / Accounts / Options / Assumptions / Portfolio —
+# the Domains shell's grouping) for a fresh demo household: no pending review
 # items, no portfolio snapshot, no inherited IRAs, no survivor scenario, no
 # scanned 1040, no generated/pasted data-bridge keypair. Originally recorded
 # 2026-07-24 against development @ b425485 (Classic's 4-tab grouping); tab
-# grouping updated for the Domains-only shell, widget-key set unchanged.
+# grouping updated for the Domains-only shell. PR A (2026-09) then
+# consolidated Command Center / Data bridge / 1040 Import (formerly 3
+# separate tabs) into the single "📥 Data" tab AND relocated
+# render_sync_scan_partial's call site there from views/ytd_income -- that
+# partial's widget keys (scan_pdf_folder_btn / statement_folder_path /
+# ytd_sync_btn) are NEW to Setup as of this move (they always existed, just
+# not on this page before), so the widget-key set below is NOT unchanged
+# across that step, unlike the earlier tab-grouping-only refactor.
 EXPECTED_WIDGET_KEYS = frozenset(
     {
         # Parameters tab
@@ -69,6 +75,11 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "sync_everything_btn",
         "instance_owner_gate_choice",
         "instance_owner_gate_save",
+        # YTD Sync & Scan section (views/ytd_income/_partials/_sync_scan.py,
+        # relocated onto this page by PR A -- see module docstring)
+        "ytd_sync_btn",
+        "statement_folder_path",
+        "scan_pdf_folder_btn",
         # Data bridge tab
         "gen_keypair",
         "_v2_privkey_input",
@@ -81,14 +92,12 @@ EXPECTED_WIDGET_KEYS = frozenset(
 )
 
 EXPECTED_TAB_LABELS = [
-    "🎛️ Command Center",
+    "📥 Data",
     "Household",
     "Accounts",
     "Options",
     "Assumptions",
     "Portfolio",
-    "Data bridge",
-    "1040 Import",
 ]
 
 

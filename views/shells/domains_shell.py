@@ -1,7 +1,7 @@
-"""Domains Setup shell — Setup regrouped by data-domain (Household /
-Accounts / Options / Assumptions / Portfolio / Data bridge) instead of
-Classic's Command Center / Parameters / Portfolio / Data bridge grouping
-(Task 8 of the ui-shell-theme-toggle plan).
+"""Domains Setup shell — Setup regrouped by data-domain (Data / Household /
+Accounts / Options / Assumptions / Portfolio) instead of Classic's Command
+Center / Parameters / Portfolio / Data bridge grouping (Task 8 of the
+ui-shell-theme-toggle plan).
 
 Composes the SAME five partials Tasks 3-7 extracted
 (``views/setup/_partials/``) plus
@@ -26,29 +26,37 @@ honor (see ``views/setup/_partials/_portfolio.py``'s module docstring for
 the code-quality fix this exercises): a real Streamlit ``st.tabs(...)`` tab
 object nested inside the outer "Portfolio" tab.
 
-A 7th tab, "1040 Import", was added post-Task-8 (spec-compliance review of
-this commit) to close a parity gap: ``views/setup/parameters.py``'s
-``_render_pdf_1040_import`` (the "Import 1040 PDF" confirm-and-save
-workflow) is a genuine, distinct user-facing feature that Task 8 originally
-left reachable only from the now-deleted Classic shell. It is imported
-directly from ``views.setup.parameters`` despite its leading underscore
-(Python does not enforce module privacy, and this codebase already crosses
-"private" module boundaries this way). Called with no ``container`` arg,
-same as ``render_data_bridge_tab`` — it renders via bare ``st.*`` calls
-internally and must run inside a ``with`` block so Streamlit's ambient
-"current container" places it in this tab. It reuses the exact SAME widget
-keys the deleted Classic shell's copy used
-(``_pdf_1040_filing_status_<year>`` / ``_pdf_1040_save_<year>``) — no new
-keys introduced, per the plan's "no session_state key renames" principle
-(Owner decision 4).
+PR A ("consolidate all data ingest into one 📥 Data tab", relocation only, no
+behaviour change) collapsed the four previously-separate ingest entry points
+-- Command Center, the YTD page's sync/scan partial, Data bridge, and 1040
+Import -- into ONE "📥 Data" tab, FIRST in the tab list since it is the
+data-review/sync gate a user should see before editing any domain tab. Each
+sub-section keeps its own ``st.subheader`` and is called exactly as it was
+before the move:
 
-An 8th tab, "🎛️ Command Center", was added when the UI shell was collapsed
-to Domains-only: Classic and Contextual (both deleted at that point) were
-the only remaining callers of ``views/setup/__init__.py``'s old ``render()``,
-which is where Command Center used to be reached from. With those shells
-gone, ``render_command_center`` had no live caller left, so this shell now
-renders it directly — FIRST in the tab list, since it is the data-review/sync
-gate a user should see before editing any domain tab.
+- ``render_command_center(hh)`` -- was its own tab (added when the UI shell
+  collapsed to Domains-only; Classic/Contextual, its only other callers,
+  were already deleted at that point).
+- ``render_sync_scan_partial(hh)`` -- was called from
+  ``views/ytd_income/__init__.py``'s "Update Your Data" tab, which is now
+  display-only (manual entry + headroom review). Its CODE was deliberately
+  NOT moved (still lives in
+  ``views/ytd_income/_partials/_sync_scan.py``) — only the call site moved —
+  so tests exercising the partial directly keep working unchanged. It saves
+  its own snapshot via ``engine.portfolio_sync.save_ytd_snapshot`` at its own
+  internal call sites, so scanning/applying from this tab persists to disk
+  without requiring a visit to the YTD page.
+- ``render_data_bridge_tab(hh)`` -- takes no ``container`` arg, renders via
+  bare ``st.*`` calls internally, so it must run inside a ``with`` block for
+  Streamlit's ambient "current container" to place it in this tab.
+- ``_render_pdf_1040_import()`` -- same no-``container``-arg reasoning as
+  ``render_data_bridge_tab`` above. Imported directly from
+  ``views.setup.parameters`` despite its leading underscore (Python does not
+  enforce module privacy, and this codebase already crosses "private" module
+  boundaries this way); reuses the exact SAME widget keys
+  (``_pdf_1040_filing_status_<year>`` / ``_pdf_1040_save_<year>``) — no new
+  keys introduced, per the plan's "no session_state key renames" principle
+  (Owner decision 4).
 """
 
 from __future__ import annotations
@@ -67,36 +75,45 @@ from views.setup._state import autosave_user_defaults
 from views.setup.command_center import render_command_center
 from views.setup.data_bridge import render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
+from views.ytd_income._partials import render_sync_scan_partial
 
 
 def render(hh: Household) -> None:
-    """Render the Domains Setup layout: 8 tabs grouped by data domain."""
+    """Render the Domains Setup layout: 6 tabs grouped by data domain."""
     st.title("⚙️ Setup — Domains")
 
     (
-        tab_command_center,
+        tab_data,
         tab_household,
         tab_accounts,
         tab_options,
         tab_assumptions,
         tab_portfolio,
-        tab_bridge,
-        tab_1040,
     ) = st.tabs(
         [
-            "🎛️ Command Center",
+            "📥 Data",
             "Household",
             "Accounts",
             "Options",
             "Assumptions",
             "Portfolio",
-            "Data bridge",
-            "1040 Import",
         ]
     )
 
-    with tab_command_center:
+    with tab_data:
+        # PR A (relocation only, no behaviour change): all data-ingest entry
+        # points now live in one tab. render_sync_scan_partial's CODE stays
+        # in views/ytd_income/_partials/_sync_scan.py (only the call moved
+        # here) -- deliberate, so tests that drive it directly keep working
+        # unchanged. See this module's docstring for the full rationale.
+        st.subheader("Command Center")
         render_command_center(hh)
+        st.subheader("YTD Sync & Scan")
+        render_sync_scan_partial(hh)
+        st.subheader("Data bridge")
+        render_data_bridge_tab(hh)
+        st.subheader("1040 Import")
+        _render_pdf_1040_import()
 
     tab_household.subheader("Filing status")
     _is_single = bool(render_household_partial(hh, tab_household, "joint"))
@@ -120,17 +137,6 @@ def render(hh: Household) -> None:
     render_options_partial(hh, tab_options)
     render_assumptions_partial(hh, tab_assumptions)
     render_portfolio_partial(hh, tab_portfolio)
-
-    with tab_bridge:
-        # render_data_bridge_tab(hh) takes no container arg — it renders via
-        # bare `st.*` calls internally, so it must run inside a `with` block
-        # for Streamlit's ambient "current container" to place it in this tab.
-        render_data_bridge_tab(hh)
-
-    with tab_1040:
-        # _render_pdf_1040_import() takes no container arg — same reason as
-        # render_data_bridge_tab above.
-        _render_pdf_1040_import()
 
     # audit-0823 models-views/M2: this shell composes views/setup/_partials/
     # directly and never routes through render_parameters_tab, so it never

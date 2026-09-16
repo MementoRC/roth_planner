@@ -39,20 +39,29 @@ from engine.data_status import YTD_STALE_AFTER_DAYS
 
 def _render_ytd(snapshot_date: str | None = None) -> None:
     """AppTest.from_function target: seed a minimal ``Household`` and an
-    optional ``YTDSnapshot`` (to control the completeness badge), then
-    render ``views.ytd_income``.
+    optional ``YTDSnapshot`` (to control the completeness badge), then render
+    the sync/scan partial followed by ``views.ytd_income``.
+
+    ``render_sync_scan_partial`` moved to Setup's "Data" tab
+    (``views/shells/domains_shell.py``) and is no longer called by
+    ``views.ytd_income.render`` -- it is called here explicitly, in the same
+    session/render pass, so this file's scan-button/widget assertions keep
+    exercising the identical behavior in its new host.
     """
     import streamlit as st
 
     from models.household import Household
     from models.ytd_income import YTDSnapshot
     from views.ytd_income import render
+    from views.ytd_income._partials import render_sync_scan_partial
 
     st.session_state["_suppress_snapshot_autoload"] = True
     if snapshot_date is not None:
         st.session_state["ytd_snapshot"] = YTDSnapshot(snapshot_date=snapshot_date)
 
-    render(Household())
+    hh = Household()
+    render_sync_scan_partial(hh)
+    render(hh)
 
 
 def _run_ytd(monkeypatch, snapshot_date: str | None = None) -> AppTest:
