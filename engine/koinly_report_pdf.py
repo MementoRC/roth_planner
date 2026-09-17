@@ -57,6 +57,10 @@ _CURRENCY = r"\$\s*(-?[\d,]+(?:\.\d{1,2})?)"
 _OWNER_NAME_RE = re.compile(r"Prepared for\s+(.+)", re.IGNORECASE)
 _OWNER_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
+# Koinly prints report identity only on the cover/header pages; cap the owner
+# search so a report with no owner text doesn't require a full read.
+_OWNER_SEARCH_MAX_PAGES = 5
+
 PARSER_VERSION = "1.0.0"
 
 
@@ -180,20 +184,24 @@ def _extract_income(income_text: str) -> tuple[float, dict[str, float], float | 
 
 
 def _search_owner_pattern(pages: Sequence[str], pattern: re.Pattern[str]) -> re.Match[str] | None:
-    """Search *pattern* over ``pages`` incrementally, stopping as soon as a
-    match is provably final. See ``extract_owner_key``'s docstring for the
-    correctness proof; this returns EXACTLY what ``pattern.search("\\n".join
-    (pages))`` would, just without necessarily reading every page to get there.
+    """Search *pattern* over at most the first ``_OWNER_SEARCH_MAX_PAGES`` of
+    ``pages``, incrementally, stopping as soon as a match is provably final.
+    See ``extract_owner_key``'s docstring for the correctness argument; this
+    returns EXACTLY what ``pattern.search("\\n".join(pages[:_OWNER_SEARCH_MAX_PAGES]))``
+    would, just without necessarily reading every one of those pages to get
+    there (and never touches a page past the cap).
 
     Maintains ``prefix = "\\n".join(pages[:k])`` incrementally (append "\\n" +
     page text; no quadratic re-joins) and re-searches the growing prefix after
     each page. A match ending strictly before the end of the prefix is final
     and returned immediately; otherwise the walk continues. After the last
-    page, falls back to a search of the full prefix (identical to the old
-    eager behaviour) so the return value never diverges from it.
+    page within the cap, falls back to a search of the full prefix so the
+    return value never diverges from a full search of that same prefix.
     """
+    max_pages = min(len(pages), _OWNER_SEARCH_MAX_PAGES)
     prefix = ""
-    for i, page in enumerate(pages):
+    for i in range(max_pages):
+        page = pages[i]
         prefix = page if i == 0 else prefix + "\n" + page
         m = pattern.search(prefix)
         if m is not None and m.end() < len(prefix):
@@ -205,61 +213,20 @@ def extract_owner_key(pages: Sequence[str]) -> str | None:
     """Best-effort extraction of an owner-identifying string (name or email)
     from a Koinly report's cover/header text.
 
-    TODO(verify): the "Prepared for <name>" anchor is UNVERIFIED against a
-    real Koinly report cover page -- confirm against
-    PDF-Statements/koinly_2026_complete_tax_report_July.pdf and adjust the
-    regex before relying on this in production. Returns None (never guesses)
-    when no name or email pattern is found, matching the design's documented
-    fallback to manual owner selection in the UI.
+    Only the first ``_OWNER_SEARCH_MAX_PAGES`` pages are searched -- Koinly
+    prints the report's identity on its cover/header pages; anything beyond
+    that is transaction tables. If owner text only appears later, this
+    returns None, which already means "fall back to manual owner selection
+    in the UI" -- it never guesses a wrong owner.
 
-    Reads pages incrementally via ``_search_owner_pattern`` (lazy-safe, same
-    priority order as before: name, then email) instead of eagerly joining
-    every page up front, stopping as soon as a match is PROVABLY final --
-    identical to what an eager ``"\\n".join(pages)`` search would return, in
-    every case:
-
-    1. A match ending strictly before the end of the current accumulated
-       prefix cannot be extended by appending more text. ``(.+)`` never
-       matches ``"\\n"``, so such a match is already terminated by a ``"\\n"``
-       (or the pattern's own end) that is already present in the prefix;
-       appending text after that terminator cannot reach backward into the
-       match.
-    2. No earlier-starting match can appear as more text is appended.
-       Consider a starting position ``p`` earlier than the found match's
-       start that failed to match within the accumulated prefix. Pages are
-       joined with a literal ``"\\n"``, so the character immediately
-       following the old prefix is always ``"\\n"``. For the attempt at
-       ``p`` to newly succeed after appending text, it would have to consume
-       that ``"\\n"`` -- but it can only have failed at the very end of the
-       prefix (a partial match earlier would already have been found), and
-       every character it still needs at that point comes from ``\\s+``
-       (which CAN match ``"\\n"``, but only when nothing non-whitespace has
-       been consumed by the tail yet) or from the newline-free tail that
-       comes after ``\\s+`` starts consuming non-whitespace. Since the found
-       match's own text (its non-whitespace tail) lies strictly between
-       ``p``'s anchor and the prefix end, everything from ``p`` up to the
-       prefix end would have to be pure whitespace for ``p`` to still be
-       "only needing \\s+" at the boundary -- contradicting the existence of
-       the found match's non-whitespace content in that same span. So ``p``
-       cannot resurrect as an earlier-starting match. Hence the leftmost
-       match in the full joined text equals the first match found by this
-       walk.
-
-    This argument covers any pattern whose only newline-crossing element is
-    a leading ``\\s+``/whitespace run followed by a newline-free tail --
-    which is exactly ``_OWNER_NAME_RE``. ``_OWNER_EMAIL_RE`` =
-    ``r"[\\w.+-]+@[\\w-]+\\.[\\w.-]+"`` has no whitespace element at all (a
-    zero-length instance of that leading run), so it satisfies the argument
-    trivially and, more strongly, can never span a page boundary in the
-    first place -- every character class in it excludes ``"\\n"``, so a
-    partial match run out of input at a prefix end always fails again (not
-    "needs more") once the boundary ``"\\n"`` is the next character.
-
-    Falls back to a full-prefix search after the last page in both cases, so
-    the result is IDENTICAL to the old eager implementation always -- this
-    only changes how many pages get read, never what gets returned. Pages
-    already read while searching one pattern are cached by ``LazyPageTexts``,
-    so trying the next pattern costs nothing for pages already visited.
+    Tries ``_OWNER_NAME_RE`` first, then ``_OWNER_EMAIL_RE``, via
+    ``_search_owner_pattern``, which reads the capped pages incrementally
+    and stops early once a match ends before the end of the text read so
+    far. That early match is already the final answer: ``(.+)`` stops at a
+    newline, so an earlier-starting match could only still be pending by
+    needing nothing but whitespace between its "Prepared for" and the
+    current read boundary -- contradicted by the found match's own
+    non-whitespace text already occupying that span.
     """
     name_m = _search_owner_pattern(pages, _OWNER_NAME_RE)
     if name_m:
@@ -347,8 +314,9 @@ def parse_koinly_pdf(data: bytes) -> KoinlyReport:
     a report that can run to hundreds). Parsing runs INSIDE the ``with``
     block, since a page's text can only be extracted while its parent PDF
     is still open. ``extract_owner_key`` (called from ``parse_koinly_text``)
-    reads pages incrementally too, stopping as soon as a match is provably
-    final -- see its docstring for the proof.
+    only searches the first ``_OWNER_SEARCH_MAX_PAGES`` pages, reading them
+    incrementally and stopping as soon as a match is provably final -- see
+    its docstring.
     """
     import io
 

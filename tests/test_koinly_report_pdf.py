@@ -197,9 +197,11 @@ class TestExtractOwnerKey:
 
 # ---------------------------------------------------------------------------
 # TestExtractOwnerKeyIncrementalWalk — extract_owner_key's page-by-page
-# early-stop walk must return EXACTLY what the old eager
-# "\n".join(pages) + regex search returned, in every boundary shape, while
-# reading as few pages as the proof in its docstring allows.
+# early-stop walk must return EXACTLY what an eager
+# "\n".join(pages[:_OWNER_SEARCH_MAX_PAGES]) + regex search would return, in
+# every boundary shape, while reading as few of those (at most 5) pages as
+# the argument in its docstring allows, and NEVER reading a page past the
+# cap.
 # ---------------------------------------------------------------------------
 
 
@@ -218,46 +220,76 @@ class TestExtractOwnerKeyIncrementalWalk:
         assert result == expected == "Jane Doe"
         assert max(recording.accessed) == 1
 
-    def test_boundary_trailing_anchor_no_whitespace_yet(self) -> None:
-        # Page 5 ends with literal "Prepared for" and NOTHING after it (no
-        # trailing whitespace); the name resumes on page 6. `\s+` requires
-        # >=1 char it doesn't have yet, so the page-5-only prefix has no
-        # match at all (not even a same-position partial) — the walk must
-        # continue to page 6, where the page-join "\n" supplies the `\s+`
-        # and the name completes. Result equals the full-join result.
+    def test_owner_on_last_searched_page_found(self) -> None:
+        # Index 4 is the LAST page within the 5-page cap (indices 0-4) — the
+        # cap must not be off-by-one and exclude it.
         pages = [_FILLER_KOINLY_PAGE] * 90
-        pages[5] = "Cover filler text ending with Prepared for"
-        pages[6] = "Jane Six\nMore cover text.\n"
+        pages[4] = "Prepared for Page Four Owner\n"
         recording = _RecordingPages(pages)
 
         result = extract_owner_key(recording)
         expected = extract_owner_key(pages)
 
-        assert result == expected == "Jane Six"
-        assert max(recording.accessed) == 6
+        assert result == expected == "Page Four Owner"
+        assert max(recording.accessed) == 4
 
-    def test_boundary_name_plus_more_page_content_stops_at_newline(self) -> None:
-        # Page 5 ends with "Prepared for Jane" (no trailing newline); page 6
-        # opens with more text. `.+` cannot cross the page-join "\n", so the
-        # name is "Jane" only — in BOTH the old full-join code and here.
-        # After page 5, the match runs to the prefix end exactly (m.end() ==
-        # len(prefix)), so the walk reads page 6 before finalizing, but the
-        # match itself does not grow.
+    def test_owner_on_first_excluded_page_returns_none(self) -> None:
+        # Index 5 is the first page EXCLUDED by the cap — owner text placed
+        # there must never be seen.
         pages = [_FILLER_KOINLY_PAGE] * 90
-        pages[5] = "Cover filler text.\nPrepared for Jane"
-        pages[6] = " Doe continues here.\nMore cover text.\n"
+        pages[5] = "Prepared for Page Five Owner\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result is None
+        assert result == expected
+        assert max(recording.accessed) == 4
+
+    def test_boundary_trailing_anchor_at_cap_edge_returns_none(self) -> None:
+        # Documented edge of the cap: page 4 (last searched page) ends with
+        # literal "Prepared for" and nothing after it; the name resumes on
+        # page 5, which is beyond the cap and never read. Under the old
+        # uncapped walk this would have continued to page 5 and found "Jane
+        # Six" (see the pre-cap version of this test); under the cap it must
+        # return None instead, since the join that would supply the `\s+`
+        # and the name never happens.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[4] = "Cover filler text ending with Prepared for"
+        pages[5] = "Jane Six\nMore cover text.\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result is None
+        assert result == expected
+        assert max(recording.accessed) == 4
+
+    def test_boundary_name_split_across_pages_within_cap(self) -> None:
+        # Boundary-crossing case kept INSIDE the cap (indices 1 -> 2, both
+        # searched): page 1 ends with "Prepared for Jane" (no trailing
+        # newline); page 2 opens with more text. `.+` cannot cross the
+        # page-join "\n", so the name is "Jane" only, equal to a full join
+        # of just the first 5 pages.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[1] = "Cover filler text.\nPrepared for Jane"
+        pages[2] = " Doe continues here.\nMore cover text.\n"
         recording = _RecordingPages(pages)
 
         result = extract_owner_key(recording)
         expected = extract_owner_key(pages)
 
         assert result == expected == "Jane"
-        assert max(recording.accessed) == 6
+        assert max(recording.accessed) == 2
 
-    def test_owner_absent_email_present_late_matches_full_join(self) -> None:
-        # No "Prepared for" anywhere -> the name walk must read every page.
-        # The email walk then finds a match on page 85 and stops there
-        # (entirely newline-free pattern, cannot cross a page boundary).
+    def test_owner_absent_email_present_beyond_cap_returns_none(self) -> None:
+        # No "Prepared for" anywhere within the cap -> the name walk reads
+        # only the first 5 pages. The email walk then also only reads those
+        # same 5 pages, so an email on page 85 (well beyond the cap) is never
+        # seen and the overall result is None -- unlike the pre-cap behaviour
+        # where this same layout found the email on the late page.
         pages = [_FILLER_KOINLY_PAGE] * 90
         pages[85] = "Contact: jane.doe@example.com\n"
         recording = _RecordingPages(pages)
@@ -265,9 +297,13 @@ class TestExtractOwnerKeyIncrementalWalk:
         result = extract_owner_key(recording)
         expected = extract_owner_key(pages)
 
-        assert result == expected == "jane.doe@example.com"
+        assert result is None
+        assert result == expected
 
     def test_neither_name_nor_email_present_matches_full_join(self) -> None:
+        # Cap changes the ceiling on pages read: previously this had to walk
+        # all 90 pages before concluding absence; now it only ever reads the
+        # first 5 (indices 0-4).
         pages = [_FILLER_KOINLY_PAGE] * 90
         recording = _RecordingPages(pages)
 
@@ -276,13 +312,12 @@ class TestExtractOwnerKeyIncrementalWalk:
 
         assert result is None
         assert result == expected
-        assert max(recording.accessed) == 89
+        assert max(recording.accessed) == 4
 
-    def test_name_on_last_page_no_trailing_newline_matches_full_join(self) -> None:
-        # Name on the very last page with nothing after it at all: `.+`
-        # still matches to the true end of string, matching the old
-        # full-join behaviour (there's no next page to distinguish "end of
-        # this page" from "end of everything").
+    def test_name_on_last_page_of_document_beyond_cap_returns_none(self) -> None:
+        # Name on the very last page of a 90-page document (index 89) is far
+        # beyond the 5-page cap -- being the document's last page does not
+        # exempt it; it is simply never read.
         pages = [_FILLER_KOINLY_PAGE] * 90
         pages[-1] = "Prepared for Last Page Owner"
         recording = _RecordingPages(pages)
@@ -290,8 +325,9 @@ class TestExtractOwnerKeyIncrementalWalk:
         result = extract_owner_key(recording)
         expected = extract_owner_key(pages)
 
-        assert result == expected == "Last Page Owner"
-        assert max(recording.accessed) == 89
+        assert result is None
+        assert result == expected
+        assert max(recording.accessed) == 4
 
 
 def test_extract_income_two_column_page_picks_income_total_not_expenses():
@@ -413,19 +449,21 @@ class TestParseKoinlyTextLazySequence:
 
         assert _report_sans_captured_at(result) == _report_sans_captured_at(expected)
         # NOTE: no "Prepared for" name or email pattern appears anywhere in
-        # this bundle, so extract_owner_key's incremental walk (see its
-        # docstring) never finds an early-final match and must read through
-        # to the last page before falling back to a full-prefix search —
-        # this is the one case where the early-stop optimisation cannot help.
-        # The year marker / Capital gains / Income summary lookups are
-        # independently lazy (see TestFindPageLazyAccess) but that saving is
-        # masked here by the owner-key step that runs after them.
-        assert max(recording.accessed) == 89
+        # this bundle. With the 5-page owner-search cap, extract_owner_key's
+        # incremental walk (see its docstring) never finds a match and is
+        # bounded at index 4 regardless -- it no longer needs to read through
+        # to the last page to conclude absence. The year marker / Capital
+        # gains / Income summary lookups are independently lazy (see
+        # TestFindPageLazyAccess, bounded at index 3) so the overall ceiling
+        # here is set by the owner-key cap, not those lookups.
+        assert max(recording.accessed) == 4
 
-    def test_owner_key_found_on_late_page_still_extracted(self) -> None:
-        # Owner text on a late page (index 80 of 90) must still be found —
-        # and, with the early-stop walk, the read now stops at page 80
-        # instead of continuing through to page 89.
+    def test_owner_key_beyond_cap_not_extracted(self) -> None:
+        # Owner text on a late page (index 80 of 90) is beyond the 5-page
+        # owner-search cap, so it is now NEVER found -- this replaces the
+        # pre-cap test that expected it to be found (with the read stopping
+        # early at page 80). No page index >= 5 is accessed by
+        # extract_owner_key's walk.
         pages = [_FILLER_KOINLY_PAGE] * 90
         pages[1] = _CG_PAGE
         pages[3] = _INCOME_PAGE
@@ -435,9 +473,9 @@ class TestParseKoinlyTextLazySequence:
         result = parse_koinly_text(recording)
         expected = parse_koinly_text(pages)
 
-        assert result.owner_key == "Claude R Cirba"
+        assert result.owner_key is None
         assert _report_sans_captured_at(result) == _report_sans_captured_at(expected)
-        assert max(recording.accessed) == 80
+        assert max(recording.accessed) == 4
 
 
 # ---------------------------------------------------------------------------
