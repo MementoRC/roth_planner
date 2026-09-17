@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 import pytest
 
@@ -639,3 +640,125 @@ Form 1040 (2024)  U.S. Individual Income Tax Return
         ]
         rec = parse_form_1040_text(pages)
         assert rec.tax_exempt_interest == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestLazyPageAccess — parse_form_1040_text must work over any Sequence[str]
+# (not just list[str]) and only touch the pages it actually needs.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPages(Sequence[str]):
+    """Wraps a plain list[str]; logs every index accessed via __getitem__.
+
+    A real ``Sequence[str]`` (not just a duck-typed stand-in) that reports
+    exactly which indices were touched, so tests can assert on laziness
+    directly without pulling in pdfplumber/LazyPageTexts itself.
+    """
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = pages
+        self.accessed: list[int] = []
+
+    def __len__(self) -> int:
+        return len(self._pages)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            indices = range(*index.indices(len(self._pages)))
+            self.accessed.extend(indices)
+            return [self._pages[i] for i in indices]
+        normalized = index + len(self._pages) if index < 0 else index
+        self.accessed.append(normalized)
+        return self._pages[normalized]
+
+    def __iter__(self) -> Iterator[str]:
+        for i in range(len(self._pages)):
+            yield self[i]
+
+
+def _record_sans_captured_at(rec: Form1040Record) -> dict[str, Any]:
+    d = rec.to_dict()
+    d.pop("captured_at", None)
+    return d
+
+
+class TestLazyPageAccess:
+    def test_only_accesses_pages_up_to_last_needed_index(self) -> None:
+        # 50-page bundle: Form 1040 at index 0, Schedule 1 at index 2, the
+        # remaining 47 pages are filler that must never be touched.
+        pages = [_FILLER_PAGE] * 50
+        pages[0] = _F1040_2023
+        pages[2] = _SCH1_2023
+        recording = _RecordingPages(pages)
+
+        result = parse_form_1040_text(recording)
+        expected = parse_form_1040_text(pages)
+
+        assert _record_sans_captured_at(result) == _record_sans_captured_at(expected)
+        assert max(recording.accessed) <= 2
+
+
+# ---------------------------------------------------------------------------
+# TestParseForm1040PdfWrapper — the pdfplumber-facing wrapper must extract
+# text lazily (via LazyPageTexts) and produce identical results to the pure
+# parser over the same page texts.
+# ---------------------------------------------------------------------------
+
+
+class _FakePdfPage:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.extract_calls = 0
+
+    def extract_text(self) -> str:
+        self.extract_calls += 1
+        return self._text
+
+    def close(self) -> None:
+        pass
+
+
+class _FakePdf:
+    def __init__(self, pages: list[_FakePdfPage], metadata: dict[str, Any]) -> None:
+        self.pages = pages
+        self.metadata = metadata
+
+    def __enter__(self) -> _FakePdf:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class TestParseForm1040PdfWrapper:
+    def test_wrapper_matches_pure_parse_and_only_reads_needed_pages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Form 1040 at index 0, Schedule 1 at index 2 — only pages 0..2 should
+        # ever be extracted, regardless of the 10 filler pages after them.
+        texts = [_F1040_2023, _FILLER_PAGE, _SCH1_2023] + [_FILLER_PAGE] * 10
+        fake_pages = [_FakePdfPage(t) for t in texts]
+        fake_pdf = _FakePdf(fake_pages, {"Creator": "Intuit FPS Engine v4"})
+
+        def fake_open(_stream: object) -> _FakePdf:
+            return fake_pdf
+
+        monkeypatch.setattr("pdfplumber.open", fake_open)
+
+        from engine.tax_return_pdf import parse_form_1040_pdf
+
+        result = parse_form_1040_pdf(b"irrelevant-bytes")
+        expected = parse_form_1040_text(texts, pdf_creator="Intuit FPS Engine v4")
+
+        assert _record_sans_captured_at(result) == _record_sans_captured_at(expected)
+        accessed = [i for i, p in enumerate(fake_pages) if p.extract_calls > 0]
+        assert accessed
+        assert max(accessed) <= 2
+        assert all(p.extract_calls <= 1 for p in fake_pages)

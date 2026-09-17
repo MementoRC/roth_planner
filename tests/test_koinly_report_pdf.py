@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import Any, overload
 
 import pytest
 
@@ -10,6 +12,7 @@ from engine.koinly_report_pdf import (
     INCOME_CATEGORIES,
     KoinlyParseError,
     KoinlyReport,
+    _find_page,
     _parse_currency,
     extract_owner_key,
     load_koinly_report,
@@ -192,6 +195,105 @@ class TestExtractOwnerKey:
         assert extract_owner_key([_CG_PAGE, _INCOME_PAGE]) is None
 
 
+# ---------------------------------------------------------------------------
+# TestExtractOwnerKeyIncrementalWalk — extract_owner_key's page-by-page
+# early-stop walk must return EXACTLY what the old eager
+# "\n".join(pages) + regex search returned, in every boundary shape, while
+# reading as few pages as the proof in its docstring allows.
+# ---------------------------------------------------------------------------
+
+
+class TestExtractOwnerKeyIncrementalWalk:
+    def test_owner_on_early_page_stops_within_one_page(self) -> None:
+        # Owner text on page index 1 of 90, with more content following it on
+        # the SAME page — the match ends well before the prefix end, so the
+        # walk finalizes at page 1 itself; page 2 is never read.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[1] = "Prepared for Jane Doe\nMore cover-page text follows.\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result == expected == "Jane Doe"
+        assert max(recording.accessed) == 1
+
+    def test_boundary_trailing_anchor_no_whitespace_yet(self) -> None:
+        # Page 5 ends with literal "Prepared for" and NOTHING after it (no
+        # trailing whitespace); the name resumes on page 6. `\s+` requires
+        # >=1 char it doesn't have yet, so the page-5-only prefix has no
+        # match at all (not even a same-position partial) — the walk must
+        # continue to page 6, where the page-join "\n" supplies the `\s+`
+        # and the name completes. Result equals the full-join result.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[5] = "Cover filler text ending with Prepared for"
+        pages[6] = "Jane Six\nMore cover text.\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result == expected == "Jane Six"
+        assert max(recording.accessed) == 6
+
+    def test_boundary_name_plus_more_page_content_stops_at_newline(self) -> None:
+        # Page 5 ends with "Prepared for Jane" (no trailing newline); page 6
+        # opens with more text. `.+` cannot cross the page-join "\n", so the
+        # name is "Jane" only — in BOTH the old full-join code and here.
+        # After page 5, the match runs to the prefix end exactly (m.end() ==
+        # len(prefix)), so the walk reads page 6 before finalizing, but the
+        # match itself does not grow.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[5] = "Cover filler text.\nPrepared for Jane"
+        pages[6] = " Doe continues here.\nMore cover text.\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result == expected == "Jane"
+        assert max(recording.accessed) == 6
+
+    def test_owner_absent_email_present_late_matches_full_join(self) -> None:
+        # No "Prepared for" anywhere -> the name walk must read every page.
+        # The email walk then finds a match on page 85 and stops there
+        # (entirely newline-free pattern, cannot cross a page boundary).
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[85] = "Contact: jane.doe@example.com\n"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result == expected == "jane.doe@example.com"
+
+    def test_neither_name_nor_email_present_matches_full_join(self) -> None:
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result is None
+        assert result == expected
+        assert max(recording.accessed) == 89
+
+    def test_name_on_last_page_no_trailing_newline_matches_full_join(self) -> None:
+        # Name on the very last page with nothing after it at all: `.+`
+        # still matches to the true end of string, matching the old
+        # full-join behaviour (there's no next page to distinguish "end of
+        # this page" from "end of everything").
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[-1] = "Prepared for Last Page Owner"
+        recording = _RecordingPages(pages)
+
+        result = extract_owner_key(recording)
+        expected = extract_owner_key(pages)
+
+        assert result == expected == "Last Page Owner"
+        assert max(recording.accessed) == 89
+
+
 def test_extract_income_two_column_page_picks_income_total_not_expenses():
     # Real pdfplumber flattening of the side-by-side Income/Expenses summary page:
     # the Expenses column's "Total $0.27" appears BEFORE the income "Total $384.45"
@@ -221,3 +323,168 @@ def test_extract_income_two_column_page_picks_income_total_not_expenses():
     assert summed == pytest.approx(384.45)
     assert per_category["Reward"] == pytest.approx(384.45)
     assert reported_total == pytest.approx(384.45)  # income Total, NOT the $0.27 expenses total
+
+
+# ---------------------------------------------------------------------------
+# TestLazyPageAccess — parse_koinly_text and _find_page must work over any
+# Sequence[str] (not just list[str]) and only touch the pages they need.
+# ---------------------------------------------------------------------------
+
+_FILLER_KOINLY_PAGE = "This is a filler page with no Koinly section markers.\n"
+
+
+class _RecordingPages(Sequence[str]):
+    """Wraps a plain list[str]; logs every index accessed via __getitem__.
+
+    A real ``Sequence[str]`` (not just a duck-typed stand-in) that reports
+    exactly which indices were touched, so tests can assert on laziness
+    directly without pulling in pdfplumber/LazyPageTexts itself.
+    """
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = pages
+        self.accessed: list[int] = []
+
+    def __len__(self) -> int:
+        return len(self._pages)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            indices = range(*index.indices(len(self._pages)))
+            self.accessed.extend(indices)
+            return [self._pages[i] for i in indices]
+        normalized = index + len(self._pages) if index < 0 else index
+        self.accessed.append(normalized)
+        return self._pages[normalized]
+
+    def __iter__(self) -> Iterator[str]:
+        for i in range(len(self._pages)):
+            yield self[i]
+
+
+def _report_sans_captured_at(report: KoinlyReport) -> dict[str, Any]:
+    d = report.to_dict()
+    d.pop("captured_at", None)
+    return d
+
+
+class TestFindPageLazyAccess:
+    """_find_page's first-match+break scan (the section lookups on the parse
+    path) only needs pages up to the matching index."""
+
+    def test_capital_gains_summary_only_reads_needed_pages(self) -> None:
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[1] = _CG_PAGE
+        recording = _RecordingPages(pages)
+
+        result = _find_page(recording, "Capital gains summary")
+
+        assert result == _CG_PAGE
+        assert max(recording.accessed) <= 1
+
+    def test_income_summary_only_reads_needed_pages(self) -> None:
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[3] = _INCOME_PAGE
+        recording = _RecordingPages(pages)
+
+        result = _find_page(recording, "Income summary")
+
+        assert result == _INCOME_PAGE
+        assert max(recording.accessed) <= 3
+
+
+class TestParseKoinlyTextLazySequence:
+    def test_equivalent_result_via_recording_sequence(self) -> None:
+        # 90-page bundle: Capital gains summary (+ year marker) at index 1,
+        # Income summary at index 3.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[1] = _CG_PAGE
+        pages[3] = _INCOME_PAGE
+        recording = _RecordingPages(pages)
+
+        result = parse_koinly_text(recording)
+        expected = parse_koinly_text(pages)
+
+        assert _report_sans_captured_at(result) == _report_sans_captured_at(expected)
+        # NOTE: no "Prepared for" name or email pattern appears anywhere in
+        # this bundle, so extract_owner_key's incremental walk (see its
+        # docstring) never finds an early-final match and must read through
+        # to the last page before falling back to a full-prefix search —
+        # this is the one case where the early-stop optimisation cannot help.
+        # The year marker / Capital gains / Income summary lookups are
+        # independently lazy (see TestFindPageLazyAccess) but that saving is
+        # masked here by the owner-key step that runs after them.
+        assert max(recording.accessed) == 89
+
+    def test_owner_key_found_on_late_page_still_extracted(self) -> None:
+        # Owner text on a late page (index 80 of 90) must still be found —
+        # and, with the early-stop walk, the read now stops at page 80
+        # instead of continuing through to page 89.
+        pages = [_FILLER_KOINLY_PAGE] * 90
+        pages[1] = _CG_PAGE
+        pages[3] = _INCOME_PAGE
+        pages[80] = "Prepared for Claude R Cirba\n"
+        recording = _RecordingPages(pages)
+
+        result = parse_koinly_text(recording)
+        expected = parse_koinly_text(pages)
+
+        assert result.owner_key == "Claude R Cirba"
+        assert _report_sans_captured_at(result) == _report_sans_captured_at(expected)
+        assert max(recording.accessed) == 80
+
+
+# ---------------------------------------------------------------------------
+# TestParseKoinlyPdfWrapper — the pdfplumber-facing wrapper must extract text
+# lazily (via LazyPageTexts) and produce identical results to the pure parser.
+# ---------------------------------------------------------------------------
+
+
+class _FakeKoinlyPdfPage:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.extract_calls = 0
+
+    def extract_text(self) -> str:
+        self.extract_calls += 1
+        return self._text
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeKoinlyPdf:
+    def __init__(self, pages: list[_FakeKoinlyPdfPage]) -> None:
+        self.pages = pages
+
+    def __enter__(self) -> _FakeKoinlyPdf:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class TestParseKoinlyPdfWrapper:
+    def test_wrapper_matches_pure_parse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        texts = [_FILLER_KOINLY_PAGE, _CG_PAGE, _FILLER_KOINLY_PAGE, _INCOME_PAGE]
+        fake_pages = [_FakeKoinlyPdfPage(t) for t in texts]
+        fake_pdf = _FakeKoinlyPdf(fake_pages)
+
+        def fake_open(_stream: object) -> _FakeKoinlyPdf:
+            return fake_pdf
+
+        monkeypatch.setattr("pdfplumber.open", fake_open)
+
+        from engine.koinly_report_pdf import parse_koinly_pdf
+
+        result = parse_koinly_pdf(b"irrelevant-bytes")
+        expected = parse_koinly_text(texts)
+
+        assert _report_sans_captured_at(result) == _report_sans_captured_at(expected)
+        assert all(p.extract_calls <= 1 for p in fake_pages)

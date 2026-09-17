@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -356,14 +357,17 @@ def is_form_1040(pages: list[str]) -> bool:
 
 
 def parse_form_1040_text(
-    pages: list[str],
+    pages: Sequence[str],
     *,
     pdf_creator: str | None = None,
 ) -> Form1040Record:
-    """Parse Form 1040 fields from a list of per-page text strings.
+    """Parse Form 1040 fields from a sequence of per-page text strings.
 
-    Pure function — no I/O, no pdfplumber. The ``pages`` list mirrors
-    pdfplumber's ``page.extract_text()`` output (one string per PDF page).
+    Pure function — no I/O, no pdfplumber. ``pages`` mirrors pdfplumber's
+    ``page.extract_text()`` output (one string per PDF page); it may be a
+    plain ``list[str]`` or a lazily-extracting ``Sequence`` (see
+    ``engine/pdf_page_text.py``) — this function only ever indexes,
+    enumerates, and takes ``len()``, all of which lazy sequences support.
 
     Steps:
     1. Scan for ``Form 1040 (YYYY)`` footer → f1040_page_index + tax_year.
@@ -472,20 +476,28 @@ def parse_form_1040_pdf(data: bytes) -> Form1040Record:
     The pdfplumber import is intentionally deferred so this module stays
     importable in Pyodide (public web build) — only local installs with
     pdfplumber available will call this function.
+
+    Pages are wrapped in ``LazyPageTexts`` so only the pages
+    ``parse_form_1040_text`` actually reads (the Form 1040 and Schedule 1
+    footer pages — typically 2 of a document that can run to hundreds) are
+    ever sent through pdfplumber's per-page text extraction. Parsing runs
+    INSIDE the ``with`` block, since a page's text can only be extracted
+    while its parent PDF is still open.
     """
     import io
 
     # Deferred: pdfplumber unavailable in Pyodide
     import pdfplumber
 
+    from engine.pdf_page_text import LazyPageTexts
+
     with pdfplumber.open(io.BytesIO(data)) as pdf:
-        pages = [page.extract_text() or "" for page in pdf.pages]
+        pages = LazyPageTexts(pdf.pages)
         metadata = pdf.metadata or {}
         pdf_creator: str | None = metadata.get("Creator") or metadata.get("creator")
         if isinstance(pdf_creator, bytes):
             pdf_creator = pdf_creator.decode("utf-8", errors="replace")
-
-    return parse_form_1040_text(pages, pdf_creator=pdf_creator)
+        return parse_form_1040_text(pages, pdf_creator=pdf_creator)
 
 
 # ---------------------------------------------------------------------------
