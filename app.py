@@ -9,6 +9,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from views._style import inject_app_css  # noqa: E402
+
+inject_app_css()
+
 
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
