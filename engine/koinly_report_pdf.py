@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +56,10 @@ _CURRENCY = r"\$\s*(-?[\d,]+(?:\.\d{1,2})?)"
 # before relying on this in production.
 _OWNER_NAME_RE = re.compile(r"Prepared for\s+(.+)", re.IGNORECASE)
 _OWNER_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+# Koinly prints report identity only on the cover/header pages; cap the owner
+# search so a report with no owner text doesn't require a full read.
+_OWNER_SEARCH_MAX_PAGES = 5
 
 PARSER_VERSION = "1.0.0"
 
@@ -109,7 +114,7 @@ def _parse_currency(raw: str) -> float:
     return float(s)
 
 
-def _find_page(pages: list[str], anchor: str) -> str | None:
+def _find_page(pages: Sequence[str], anchor: str) -> str | None:
     """Return the first page text containing *anchor* as its own section heading
     (case-insensitive), i.e. *anchor* starting a line, not preceded by a table-of-
     contents numeral like "1. ". The report's cover page lists every section title
@@ -178,22 +183,55 @@ def _extract_income(income_text: str) -> tuple[float, dict[str, float], float | 
     return summed, per_category, reported_total
 
 
-def extract_owner_key(pages: list[str]) -> str | None:
+def _search_owner_pattern(pages: Sequence[str], pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """Search *pattern* over at most the first ``_OWNER_SEARCH_MAX_PAGES`` of
+    ``pages``, incrementally, stopping as soon as a match is provably final.
+    See ``extract_owner_key``'s docstring for the correctness argument; this
+    returns EXACTLY what ``pattern.search("\\n".join(pages[:_OWNER_SEARCH_MAX_PAGES]))``
+    would, just without necessarily reading every one of those pages to get
+    there (and never touches a page past the cap).
+
+    Maintains ``prefix = "\\n".join(pages[:k])`` incrementally (append "\\n" +
+    page text; no quadratic re-joins) and re-searches the growing prefix after
+    each page. A match ending strictly before the end of the prefix is final
+    and returned immediately; otherwise the walk continues. After the last
+    page within the cap, falls back to a search of the full prefix so the
+    return value never diverges from a full search of that same prefix.
+    """
+    max_pages = min(len(pages), _OWNER_SEARCH_MAX_PAGES)
+    prefix = ""
+    for i in range(max_pages):
+        page = pages[i]
+        prefix = page if i == 0 else prefix + "\n" + page
+        m = pattern.search(prefix)
+        if m is not None and m.end() < len(prefix):
+            return m
+    return pattern.search(prefix)
+
+
+def extract_owner_key(pages: Sequence[str]) -> str | None:
     """Best-effort extraction of an owner-identifying string (name or email)
     from a Koinly report's cover/header text.
 
-    TODO(verify): the "Prepared for <name>" anchor is UNVERIFIED against a
-    real Koinly report cover page -- confirm against
-    PDF-Statements/koinly_2026_complete_tax_report_July.pdf and adjust the
-    regex before relying on this in production. Returns None (never guesses)
-    when no name or email pattern is found, matching the design's documented
-    fallback to manual owner selection in the UI.
+    Only the first ``_OWNER_SEARCH_MAX_PAGES`` pages are searched -- Koinly
+    prints the report's identity on its cover/header pages; anything beyond
+    that is transaction tables. If owner text only appears later, this
+    returns None, which already means "fall back to manual owner selection
+    in the UI" -- it never guesses a wrong owner.
+
+    Tries ``_OWNER_NAME_RE`` first, then ``_OWNER_EMAIL_RE``, via
+    ``_search_owner_pattern``, which reads the capped pages incrementally
+    and stops early once a match ends before the end of the text read so
+    far. That early match is already the final answer: ``(.+)`` stops at a
+    newline, so an earlier-starting match could only still be pending by
+    needing nothing but whitespace between its "Prepared for" and the
+    current read boundary -- contradicted by the found match's own
+    non-whitespace text already occupying that span.
     """
-    full_text = "\n".join(pages)
-    name_m = _OWNER_NAME_RE.search(full_text)
+    name_m = _search_owner_pattern(pages, _OWNER_NAME_RE)
     if name_m:
         return name_m.group(1).strip().splitlines()[0].strip()
-    email_m = _OWNER_EMAIL_RE.search(full_text)
+    email_m = _search_owner_pattern(pages, _OWNER_EMAIL_RE)
     if email_m:
         return email_m.group(0)
     return None
@@ -216,8 +254,13 @@ def is_koinly_report(pages: list[str]) -> bool:
     return has_koinly and has_tax_year
 
 
-def parse_koinly_text(pages: list[str]) -> KoinlyReport:
-    """Parse crypto YTD figures from Koinly report page texts. Pure -- no I/O."""
+def parse_koinly_text(pages: Sequence[str]) -> KoinlyReport:
+    """Parse crypto YTD figures from Koinly report page texts. Pure -- no I/O.
+
+    ``pages`` mirrors pdfplumber's ``page.extract_text()`` output (one
+    string per page); it may be a plain ``list[str]`` or a lazily-extracting
+    ``Sequence`` (see ``engine/pdf_page_text.py``).
+    """
     year: int | None = None
     for text in pages:
         ym = _TAX_YEAR_RE.search(text)
@@ -263,14 +306,27 @@ def parse_koinly_text(pages: list[str]) -> KoinlyReport:
 
 def parse_koinly_pdf(data: bytes) -> KoinlyReport:
     """Parse a Koinly report PDF from raw bytes. pdfplumber import deferred
-    (Pyodide-safe) -- only local installs call this."""
+    (Pyodide-safe) -- only local installs call this.
+
+    Pages are wrapped in ``LazyPageTexts`` so ``page.extract_text()`` only
+    runs for the pages ``parse_koinly_text`` actually reads (year marker,
+    "Capital gains summary", "Income summary" -- typically 2 early pages of
+    a report that can run to hundreds). Parsing runs INSIDE the ``with``
+    block, since a page's text can only be extracted while its parent PDF
+    is still open. ``extract_owner_key`` (called from ``parse_koinly_text``)
+    only searches the first ``_OWNER_SEARCH_MAX_PAGES`` pages, reading them
+    incrementally and stopping as soon as a match is provably final -- see
+    its docstring.
+    """
     import io
 
     import pdfplumber
 
+    from engine.pdf_page_text import LazyPageTexts
+
     with pdfplumber.open(io.BytesIO(data)) as pdf:
-        pages = [page.extract_text() or "" for page in pdf.pages]
-    return parse_koinly_text(pages)
+        pages = LazyPageTexts(pdf.pages)
+        return parse_koinly_text(pages)
 
 
 # ---------------------------------------------------------------------------
