@@ -80,6 +80,10 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "ytd_sync_btn",
         "statement_folder_path",
         "scan_pdf_folder_btn",
+        # Uploaded-PDF import (public-pdf-upload work): renders in BOTH
+        # environments, unlike the folder-path widgets above it.
+        "pdf_upload",
+        "scan_uploaded_pdfs_btn",
         # Data bridge tab
         "gen_keypair",
         "_v2_privkey_input",

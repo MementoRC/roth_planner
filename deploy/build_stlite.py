@@ -29,6 +29,16 @@ REQUIREMENTS = [
     "pandas",
     "requests",
     "pynacl",
+    # pdfminer.six==20251230: the EXACT version pdfplumber==0.11.9 requires.
+    # pdfplumber itself is NOT listed here -- stlite's requirements list
+    # cannot skip dependencies, and pdfplumber's declared pypdfium2/Pillow
+    # deps have no WASM wheels (only pdfplumber/display.py imports them, via
+    # Page.to_image(), which this app never calls). Instead
+    # views/_pdf_runtime.py installs pdfplumber at RUNTIME with
+    # micropip.install("pdfplumber==0.11.9", deps=False) -- pinning
+    # pdfminer.six here up front means that runtime install has nothing left
+    # to resolve.
+    "pdfminer.six==20251230",
 ]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 # Default stlite version (overridable via --stlite-version)
 #

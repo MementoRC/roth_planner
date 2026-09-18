@@ -305,6 +305,108 @@ class TestA1ScanAndRecordPureHelper:
         assert not store.has_candidates(f"prior_year_magi.{_GOLDEN_YEAR}")
 
 
+class TestScanDocumentsAndRecordMatchesFolderPath:
+    """``scan_documents_and_record`` (bytes path, public/Pyodide site) must
+    persist EXACTLY what ``scan_and_record`` (folder path) persists for the
+    same parsed documents -- both delegate to the same ``_record_scan_result``
+    core, but this pins that they stay in lockstep from the outside too."""
+
+    def test_same_pdf_cache_and_magi_candidate(self, tmp_path, clean_candidate_store):
+        from engine.data_sources.scan_ingest import scan_documents_and_record
+
+        folder_cache_path = tmp_path / "folder_cache.json"
+        folder_store_path = tmp_path / "folder_candidates.json"
+        docs_cache_path = tmp_path / "docs_cache.json"
+        docs_store_path = tmp_path / "docs_candidates.json"
+
+        with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
+            folder_result = scan_and_record(
+                tmp_path,
+                store_path=folder_store_path,
+                pdf_cache_path=folder_cache_path,
+                recorded_at=_RECORDED_AT,
+            )
+
+        with patch("engine.pdf_import.scan_pdf_documents", return_value=_fixed_result()):
+            docs_result = scan_documents_and_record(
+                [("statement.pdf", b"irrelevant-bytes-classification-is-mocked")],
+                store_path=docs_store_path,
+                pdf_cache_path=docs_cache_path,
+                recorded_at=_RECORDED_AT,
+            )
+
+        assert docs_result.pdf_cache.keys() == folder_result.pdf_cache.keys()
+        for year in folder_result.pdf_cache:
+            assert docs_result.pdf_cache[year].magi == folder_result.pdf_cache[year].magi
+
+        import json
+
+        assert json.loads(docs_cache_path.read_text()) == json.loads(folder_cache_path.read_text())
+
+        folder_store = CandidateStore.load(folder_store_path)
+        docs_store = CandidateStore.load(docs_store_path)
+        folder_candidates = folder_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
+        docs_candidates = docs_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
+        assert [c.value for c in folder_candidates] == [c.value for c in docs_candidates]
+        assert [c.prov.source for c in folder_candidates] == [
+            c.prov.source for c in docs_candidates
+        ]
+        assert [c.prov.detail for c in folder_candidates] == [
+            c.prov.detail for c in docs_candidates
+        ]
+
+    def test_no_streamlit_import(self):
+        """Same guarantee as scan_and_record: engine.data_sources.scan_ingest
+        stays a pure engine module."""
+        import engine.data_sources.scan_ingest as mod
+
+        assert "streamlit" not in getattr(mod, "__dict__", {})
+
+
+class TestRunUploadedScanMatchesRunFolderScan:
+    """``views._shared.run_uploaded_scan`` writes the same
+    ``_pdf_1040_scanned`` session key as ``run_folder_scan``, for the same
+    parsed documents. Same repo-root-cache isolation pattern as
+    ``_run_ytd_scan`` above (``Path.home`` + ``_PDF_TAX_CACHE_PATH``
+    monkeypatched to *tmp_path*; ``clean_candidate_store`` isolates
+    ``CANDIDATE_STORE_PATH``, which ``run_uploaded_scan`` -- like
+    ``run_folder_scan`` -- has no override parameter for)."""
+
+    def test_writes_pdf_1040_scanned_session_key(
+        self, tmp_path, monkeypatch, clean_candidate_store
+    ):
+        import engine.tax_return_pdf as tax_return_pdf_mod
+        import views._shared as shared_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(
+            tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json"
+        )
+
+        mock_st = MagicMock()
+        session_state: dict = {}
+        mock_st.session_state.__setitem__.side_effect = session_state.__setitem__
+        mock_st.session_state.__getitem__.side_effect = session_state.__getitem__
+
+        with (
+            patch.object(shared_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_documents", return_value=_fixed_result()),
+        ):
+            result = shared_mod.run_uploaded_scan(
+                [("statement.pdf", b"bytes")], recorded_at=_RECORDED_AT
+            )
+
+        assert result.form_1040_count == 1
+        assert set(session_state["_pdf_1040_scanned"]) == {_GOLDEN_YEAR}
+        assert session_state["_pdf_1040_scanned"][_GOLDEN_YEAR].magi == _GOLDEN_MAGI
+
+        from engine.tax_return_pdf import load_pdf_tax_records
+
+        persisted = load_pdf_tax_records()
+        assert set(persisted) == {_GOLDEN_YEAR}
+        assert persisted[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
+
+
 class TestAuditHighIrmaaFeieScope:
     """Audit HIGH: prior_year_magi (IRMAA-scoped) must not receive the
     FEIE-inclusive Roth/ACA-flavor MAGI. End-to-end through scan_and_record

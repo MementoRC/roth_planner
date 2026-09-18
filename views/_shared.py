@@ -21,6 +21,11 @@ Reusable pieces every later wave depends on:
    shape (W2 Part A — kills the ``_pdf_1040_scanned`` dual-writer between
    ``views/ytd_income.py`` and ``views/setup/parameters.py``).
 
+   ``run_uploaded_scan`` is its bytes-based sibling for the public (Pyodide)
+   site, which has no filesystem and can only hand over uploaded PDF bytes —
+   wraps ``scan_documents_and_record`` instead, writes the identical session
+   shape, so the two entry points cannot silently diverge.
+
 4. ``sync_everything`` — the Command Center's "Sync everything" action (W2
    Part B). Fans out to the four already-candidate-based ingestion paths
    (FinExtract portfolio, FinExtract SS, unified PDF folder scan, Yahoo
@@ -46,7 +51,11 @@ from config.loader import load_defaults
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.resolver import GRANTS_KEY
-from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
+from engine.data_sources.scan_ingest import (
+    ScanIngestResult,
+    scan_and_record,
+    scan_documents_and_record,
+)
 from engine.data_sources.snapshot_ingest import record_snapshot_candidates
 from engine.data_status import (
     SETUP_STEP_GROUPS,
@@ -114,6 +123,24 @@ def run_folder_scan(folder_path: Path, *, recorded_at: datetime | None = None) -
     new 1040s leaves whatever was already in session state untouched).
     """
     result = scan_and_record(folder_path, recorded_at=recorded_at)
+    if result.form_1040_count:
+        st.session_state["_pdf_1040_scanned"] = result.pdf_cache
+    return result
+
+
+def run_uploaded_scan(
+    documents: list[tuple[str, bytes]], *, recorded_at: datetime | None = None
+) -> ScanIngestResult:
+    """Scan uploaded PDF bytes and write the single canonical ``_pdf_1040_scanned``.
+
+    Bytes-based sibling of :func:`run_folder_scan` for the public (Pyodide)
+    site, which has no filesystem and can only hand over uploaded bytes.
+    Delegates to :func:`~engine.data_sources.scan_ingest.scan_documents_and_record`
+    (the bytes-based sibling of ``scan_and_record``) so the 1040-cache-merge
+    and MAGI-candidate recording cannot drift from the folder path -- same
+    session-state write, same only-when-a-1040-was-found condition.
+    """
+    result = scan_documents_and_record(documents, recorded_at=recorded_at)
     if result.form_1040_count:
         st.session_state["_pdf_1040_scanned"] = result.pdf_cache
     return result

@@ -71,28 +71,28 @@ _FILING_STATUS_LABELS = {
 def _render_pdf_1040_import() -> None:
     """Confirm-and-save UI for Form 1040 records already scanned elsewhere.
 
-    Gated behind ``is_pyodide()`` — pdfplumber is not available in the web
-    build. The scan itself (folder input, "Scan folder" button, MAGI
-    candidate recording, pdf-tax-cache persist) lives on the YTD Income page
-    (``views/ytd_income.py``, via ``views._shared.run_folder_scan``) — this is
-    the single scan entry point (W2 Part A killed the duplicate folder/scan/
-    writer that used to live here, audit defect #3). This block only reads
-    the shared ``st.session_state["_pdf_1040_scanned"]`` result (single
-    canonical shape) and shows a confirmation preview with the filing-status
-    selectbox (parser leaves it None); on confirm, persists the
-    Form1040Record (with the chosen filing status). MAGI itself was already
-    recorded as a candidate by the scan — this loop never re-records it.
+    No longer gated behind ``is_pyodide()`` — the public site can now scan a
+    1040 too, via the uploader on Setup ▸ Data (``views/ytd_income/_partials/
+    _sync_scan.py:_render_pdf_uploader``, which installs pdfplumber at
+    runtime through ``views._pdf_runtime.ensure_pdf_backend``). The scan
+    itself (folder input + "Scan folder" button locally, the uploader
+    everywhere, MAGI candidate recording, pdf-tax-cache persist) lives on
+    that same Data tab — this is the single scan entry point (W2 Part A
+    killed the duplicate folder/scan/writer that used to live here, audit
+    defect #3). This block only reads the shared
+    ``st.session_state["_pdf_1040_scanned"]`` result (single canonical
+    shape) and shows a confirmation preview with the filing-status selectbox
+    (parser leaves it None); on confirm, persists the Form1040Record (with
+    the chosen filing status). MAGI itself was already recorded as a
+    candidate by the scan — this loop never re-records it.
     """
     with st.expander("📄 Import 1040 PDF (TurboTax export)", expanded=False):
-        if is_pyodide():
-            st.caption("1040 PDF import requires a local install.")
-            return
-
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
         if not scanned_records:
             st.caption(
-                "Scan your statement folder on the YTD Income page ('Scan folder') to "
-                "import a Form 1040 PDF — parsed years appear here for confirmation."
+                "Scan your statements on the Setup ▸ Data tab ('Scan folder' locally, "
+                "or upload PDFs directly) to import a Form 1040 PDF — parsed years "
+                "appear here for confirmation."
             )
             return
         for _year in sorted(scanned_records):
@@ -120,6 +120,11 @@ def _render_pdf_1040_import() -> None:
                 help="Select the filing status for this return (parser cannot auto-detect checkboxes).",
             )
 
+            if is_pyodide():
+                st.caption(
+                    "⚠️ This browser session's data is lost on reload — use "
+                    "**⚙️ Setup ▸ 🔗 Data bridge ▸ Export my data** to keep it."
+                )
             if st.button("Save 1040 record", key=f"_pdf_1040_save_{rec.tax_year}"):
                 rec.filing_status = chosen_status
                 records = load_pdf_tax_records()
