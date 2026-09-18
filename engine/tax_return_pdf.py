@@ -347,12 +347,15 @@ def _extract_field(
 # ---------------------------------------------------------------------------
 
 
-def is_form_1040(pages: list[str]) -> bool:
+def is_form_1040(pages: Sequence[str]) -> bool:
     """True if any page carries the IRS "Form 1040 (YYYY)" footer.
 
     Content-based detection independent of filename. Note a full TurboTax export
     can also list 1099 broker payer names, so the document-level classifier
-    (engine/pdf_import.py) runs broker detection only AFTER this check."""
+    (engine/pdf_import.py) runs broker detection only AFTER this check.
+
+    ``pages`` accepts a plain ``list[str]`` or a lazily-extracting ``Sequence``
+    (see ``engine/pdf_page_text.py``) -- only iteration is used here."""
     return any(re.search(r"Form 1040\s*\((\d{4})\)", page or "", re.IGNORECASE) for page in pages)
 
 

@@ -240,7 +240,7 @@ def extract_owner_key(pages: Sequence[str]) -> str | None:
 _TAX_YEAR_RE = re.compile(r"TAX\s+YEAR\s+(\d{4})", re.IGNORECASE)
 
 
-def is_koinly_report(pages: list[str]) -> bool:
+def is_koinly_report(pages: Sequence[str]) -> bool:
     """True if *pages* look like a Koinly crypto tax report.
 
     Content-based, since filenames are unreliable. Requires BOTH the vendor

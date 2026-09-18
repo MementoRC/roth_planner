@@ -61,7 +61,7 @@ from __future__ import annotations
 import calendar
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -275,12 +275,16 @@ def extract_owner_key(full_text: str) -> str | None:
     return None
 
 
-def parse_statement_text(pages: list[str]) -> list[BrokerageStatementRecord]:
+def parse_statement_text(pages: Sequence[str]) -> list[BrokerageStatementRecord]:
     """Detect broker, then dispatch to the broker-specific parser.
 
     Returns one record per account found in the document. Schwab, Vanguard
     and UBS statements are always single-account (one-element list); IBKR
     and Fidelity's consolidated statements can contain multiple accounts.
+    ``pages`` accepts a plain ``list[str]`` or a lazily-extracting
+    ``Sequence`` (see ``engine/pdf_page_text.py``); this joins all pages
+    unconditionally, so brokerage classification/parsing reads every page
+    regardless of laziness -- that is expected (see engine/pdf_import.py).
     """
     full_text = "\n".join(pages)
     broker = _detect_broker(full_text)
