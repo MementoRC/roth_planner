@@ -5,6 +5,8 @@ No Streamlit dependency — safe to import in tests and engine modules.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from engine.portfolio_sync import PortfolioSnapshot
 from engine.portfolio_sync.classify import _resolve_override
 
@@ -52,8 +54,39 @@ SCALAR_KEYS: list[str] = [
     "spouse_is_sole_beneficiary",
 ]
 
+# Household-wide scalars: shared values that cannot legitimately differ between
+# the two people in this model. Everything else in SCALAR_KEYS is per-person —
+# either a `your_*` field (cross-mapped below) or a `spouse_*` field (the
+# sender's view of the RECEIVER, deliberately dropped).
+#
+# These are the fields the as_spouse cross-map used to discard outright, which
+# left a receiver who had never set them computing on config/defaults.py's
+# synthetic Acme demo values: filing_status moves every bracket,
+# living_expenses drives the withdrawal waterfall, and the ACA/Medicare pair
+# drives subsidy and surcharge math.
+JOINT_FIELDS: frozenset[str] = frozenset(
+    {
+        "filing_status",
+        "living_expenses",
+        "cpi_assumption",
+        "growth_rate",
+        "stock_price_now",
+        "txn_price_growth_rate",
+        "aca_benchmark_premium_annual",
+        "aca_enhanced_subsidies_active",
+        "advance_aptc_annual",
+        "medicare_part_b_base_monthly",
+        "spouse_is_sole_beneficiary",
+    }
+)
 
-def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
+
+def build_user_defaults_session_updates(
+    data: dict,
+    *,
+    as_spouse: bool,
+    receiver_persisted: Mapping[str, object] | None = None,
+) -> dict:
     """Compute session_state updates from a .user_defaults.json payload.
 
     Pure function — returns a ``{session_key: value}`` dict without writing to
@@ -63,12 +96,32 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
     When ``as_spouse=False`` (default), the file represents the receiver's own
     data — all known scalar keys and ``grant_strikes`` are passed through.
     When ``as_spouse=True``, the file represents the spouse's data (their
-    planner export from their own perspective); only ``your_age``/``your_ira``/
-    ``your_ss_fra`` are extracted and cross-mapped to the receiver's
-    ``spouse_age``/``spouse_ira``/``spouse_ss_fra`` slots. The spouse's view of
-    the receiver, joint fields, and grant data are deliberately discarded
-    — the receiver's own data is authoritative for those slots, and only the
-    receiver has TXN NQO grants in this household model.
+    planner export from their own perspective); the ten ``your_*`` fields are
+    cross-mapped to the receiver's ``spouse_*`` slots. The spouse's view of the
+    receiver (their ``spouse_*`` keys) and their grant data stay discarded —
+    the receiver's own data is authoritative there, and only the receiver has
+    TXN NQO grants in this household model.
+
+    ``receiver_persisted`` is the receiver's raw ``.user_defaults.json``
+    (:func:`config.loader.load_raw_user_defaults`) and unlocks the JOINT_FIELDS
+    rule. Those are shared household values, and dropping them wholesale left a
+    receiver who had never set them computing on demo defaults while believing
+    they had imported real data. For each joint field the bundle carries:
+
+    * absent from the persisted file -> the receiver never set it, take the
+      sender's value;
+    * present and different -> keep the receiver's deliberate choice and append
+      to the ``_bundle_joint_conflicts`` list so the UI can surface it;
+    * present and equal -> nothing to do.
+
+    Presence in the PERSISTED FILE is the test, not presence in session state
+    (``app.py``'s ``_seed_session_state`` fills every scalar before any import
+    runs, so nothing is ever absent there) and not equality against the
+    defaults (the app writes that file itself on every Setup change, so
+    "equals the default" usually means deliberately chosen).
+
+    Omitting ``receiver_persisted`` keeps the historical behaviour of dropping
+    every joint field, so callers that have not been updated are unaffected.
     """
     updates: dict = {}
     if as_spouse:
@@ -87,6 +140,29 @@ def build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
         for file_k, sess_k in spouse_field_map.items():
             if file_k in data:
                 updates[sess_k] = data[file_k]
+        if receiver_persisted is not None:
+            conflicts: list[dict] = []
+            for file_k in sorted(JOINT_FIELDS):
+                if file_k not in data:
+                    continue
+                sess_k = "txn_price" if file_k == "stock_price_now" else file_k
+                if file_k not in receiver_persisted:
+                    # Never persisted => the receiver has never set this, so the
+                    # only real value in the household is the sender's.
+                    updates[sess_k] = data[file_k]
+                elif receiver_persisted[file_k] != data[file_k]:
+                    # Persisted => a deliberate choice. Keep it, but say so: a
+                    # silent divergence on a field that is shared by definition
+                    # is how both sides end up confidently wrong.
+                    conflicts.append(
+                        {
+                            "field": file_k,
+                            "mine": receiver_persisted[file_k],
+                            "theirs": data[file_k],
+                        }
+                    )
+            if conflicts:
+                updates["_bundle_joint_conflicts"] = conflicts
         return updates
     for k in SCALAR_KEYS:
         if k in data:

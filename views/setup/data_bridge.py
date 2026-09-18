@@ -251,6 +251,35 @@ def _import_target_owner() -> str:
     return "spouse" if (_this_instance_owner() or "you") == "you" else "you"
 
 
+def _render_joint_field_conflicts() -> None:
+    """Surface joint household fields where this import disagreed with us.
+
+    ``filing_status``, ``living_expenses``, the CPI/growth rates and the
+    ACA/Medicare figures are shared by definition — the two people in a
+    household cannot legitimately hold different values. When the receiver has
+    already set one deliberately, the import keeps the receiver's value
+    (``engine/upload_merge.py``) rather than letting whoever imported last win.
+    That is the safe default, but a silent divergence is how both sides end up
+    confidently wrong, so say it out loud and let the user reconcile.
+
+    Read here rather than at the import site because the import stages its
+    updates into ``_pending_defaults`` and immediately reruns; the values only
+    reach session_state when ``_drain_pending_defaults`` runs at the top of the
+    NEXT script run. Popped on display so it shows once.
+    """
+    conflicts = st.session_state.pop("_bundle_joint_conflicts", None)
+    if not conflicts:
+        return
+    lines = "\n".join(
+        f"- **{c['field']}** — yours: `{c['mine']}` · theirs: `{c['theirs']}`" for c in conflicts
+    )
+    st.warning(
+        "These household-wide settings differ between the two planners. Your "
+        "own values were kept — the import did not change them. They should "
+        "match, so update whichever side is out of date:\n\n" + lines
+    )
+
+
 def _handle_personal_uploads() -> None:
     """Widget to full-replace one owner's slot from a sealed ``roth_bridge.enc`` bundle.
 
@@ -280,6 +309,7 @@ def _handle_personal_uploads() -> None:
             "Values stay in this browser only; refresh = back to demo. "
             "`.enc` files require the private key configured above."
         )
+        _render_joint_field_conflicts()
         bundle_file = st.file_uploader(
             "roth_bridge.enc (setup scalars + portfolio + PDF ledger)",
             type=["enc"],
