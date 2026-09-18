@@ -363,29 +363,39 @@ def _handle_personal_uploads() -> None:
                             )
                     st.session_state["portfolio_snapshot"] = new_snapshot
                     st.session_state.pop("_suppress_snapshot_autoload", None)
-                    # Seed session_state["ytd_snapshot"] from the bundle's own "ytd"
-                    # section BEFORE _rederive_ytd_from_ledger runs. We are not
-                    # deleting that function's `if snap is None: return` guard --
-                    # we are satisfying its precondition, which in Pyodide (no
-                    # persistent filesystem, so .ytd_cache.json never exists across
-                    # page loads) was previously NEVER satisfied, making the whole
-                    # re-derive a permanent no-op in the browser.
+                    # Ensure session_state["ytd_snapshot"] exists BEFORE
+                    # _rederive_ytd_from_ledger runs: we are not deleting that
+                    # function's `if snap is None: return` guard, we are satisfying
+                    # its precondition, which in Pyodide (no persistent filesystem,
+                    # so .ytd_cache.json never exists across page loads) was
+                    # previously NEVER satisfied, making the whole re-derive a
+                    # permanent no-op in the browser.
+                    #
+                    # The seed must NEVER be the sender's snapshot. The bundle's "ytd"
+                    # section is household-wide, not owner-sliced
+                    # (engine/bridge_bundle.py:99), while the re-derive below only
+                    # restores the 5 brokerage fields plus the 3 crypto ones -- so
+                    # adopting the sender's object silently handed them every OTHER
+                    # field. Measured on a real A->B->A cycle: wages 100,000 -> 77,000,
+                    # withholding 20,000 -> 7,700, conversions 30,000 -> 700, qualified
+                    # dividends 4,000 -> 7, and nqo_exercise_ytd 50,000 -> 0 -- the last
+                    # erasing all option income, since only one person in the household
+                    # holds options. Only the receiver's own values are correct here;
+                    # the ledger-derived fields still combine both people below.
                     incoming_ytd = read_bundle_ytd(data)
-                    if incoming_ytd is not None:
-                        st.session_state["ytd_snapshot"] = incoming_ytd
                     ledger_slice = data["sections"].get("ledger") or {}
                     ledger_has_data = bool(
                         ledger_slice.get("koinly") or ledger_slice.get("brokerage")
                     )
-                    if "ytd_snapshot" not in st.session_state and ledger_has_data:
-                        # v2 bundle (or a v3 bundle exported with ytd=None): no "ytd"
-                        # section but real ledger data to re-derive from. In Pyodide
-                        # load_ytd_snapshot() always returns None, so without seeding
-                        # a blank snapshot here, the ledger-derived YTD figures are
-                        # silently dropped on every first upload of every browser
-                        # session -- there is nothing for _rederive_ytd_from_ledger
-                        # to overwrite onto.
-                        st.session_state["ytd_snapshot"] = YTDSnapshot()
+                    if "ytd_snapshot" not in st.session_state and (
+                        ledger_has_data or incoming_ytd is not None
+                    ):
+                        # The receiver's own persisted snapshot where one exists
+                        # (desktop), else blank (Pyodide, where load_ytd_snapshot()
+                        # always returns None). Blank is the deliberate cost of this
+                        # fix: the sender's wages/withholding do not cross, and must
+                        # be entered by hand if the household wants a combined figure.
+                        st.session_state["ytd_snapshot"] = load_ytd_snapshot() or YTDSnapshot()
                     _rederive_ytd_from_ledger(new_ledger)
                     # v3-or-older bundle (or a v4 bundle whose exporter had no
                     # PortfolioSnapshot loaded): strike prices came through but no
