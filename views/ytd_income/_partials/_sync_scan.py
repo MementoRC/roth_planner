@@ -1,9 +1,11 @@
 import streamlit as st
 
 from engine.account_attribution import load_account_overrides, resolve_account_owner
+from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_bridge_browser import is_pyodide
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.pdf_ledger import (
+    PdfLedger,
     derive_brokerage_totals,
     derive_koinly_totals,
     load_ledger,
@@ -63,6 +65,12 @@ def render_sync_scan_partial(hh: Household) -> None:
     instance_owner = instance_owner or "household"
     account_overrides = load_account_overrides()
     owner_map = load_owner_map()
+    # Loaded unconditionally (like account_overrides/owner_map above) so it is
+    # available to _render_scan_review below regardless of is_pyodide() --
+    # moved out of the local-only `else:` branch it used to sit in (was
+    # loaded once per render there too, just later; load_ledger() is a
+    # pure Path.exists()-guarded read, identical either way).
+    ledger = load_ledger()
 
     # --- Section 1: YTD Income Entry ---
     st.markdown("### YTD Income Entry")
@@ -136,7 +144,6 @@ def render_sync_scan_partial(hh: Household) -> None:
             load_statement_records,
             partition_by_account_type,
             pick_latest_per_account,
-            save_account_type_override,
             save_statement_folder_path,
             save_statement_records,
             validate_local_folder,
@@ -149,10 +156,9 @@ def render_sync_scan_partial(hh: Household) -> None:
             key="statement_folder_path",
             help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
         )
-        # Loaded once per render (not only inside the button branch below) so the
-        # per-owner breakdown expander reflects on-disk ledger state even on
-        # renders where "Scan folder" was not clicked this run.
-        ledger = load_ledger()
+        # ledger is loaded once per render up top (with account_overrides/
+        # owner_map) so the per-owner breakdown expander reflects on-disk
+        # ledger state even on renders where "Scan folder" was not clicked.
         if not identity_set:
             st.caption(
                 "Scanning is unavailable until this planner instance has an "
@@ -303,168 +309,225 @@ def render_sync_scan_partial(hh: Household) -> None:
                 )
             st.session_state["statement_by_account"] = _cached_by_account
 
-        statement_by_account = st.session_state.get("statement_by_account", {})
-        if statement_by_account:
-            stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(
-                statement_by_account
+    # --- Section 2: statement review + Apply-to-YTD-snapshot ---
+    # Deliberately OUTSIDE the is_pyodide() gate above -- reachable whenever
+    # scan results exist in session state, regardless of platform. Today,
+    # under Pyodide, "statement_by_account" is never populated: both writers
+    # (the "Scan folder" button handler and the on-disk cache fallback just
+    # above) live inside the local-only `else:` branch, so this is a no-op
+    # there -- identical to before the split. Step 2's uploader will give
+    # Pyodide a third writer of that same key, which is the whole point of
+    # this move.
+    statement_by_account = st.session_state.get("statement_by_account", {})
+    if statement_by_account:
+        ledger = _render_scan_review(
+            statement_by_account, ledger, account_overrides, owner_map, instance_owner, identity_set
+        )
+
+    if not is_pyodide():
+        _render_koinly_summary(ledger)
+
+
+def _render_scan_review(
+    statement_by_account: dict[str, BrokerageStatementRecord],
+    ledger: PdfLedger,
+    account_overrides: dict[tuple[str, str], str],
+    owner_map: dict[str, str],
+    instance_owner: str,
+    identity_set: bool,
+) -> PdfLedger:
+    """Render the per-account statement review table, owner-attribution
+    widgets, and the Apply-to-YTD-snapshot flow; return the (possibly
+    mutated) *ledger*.
+
+    Pure move out of render_sync_scan_partial's local-only ``else`` branch
+    (was the body of its ``if statement_by_account:``) so this can render
+    regardless of is_pyodide() -- same widget keys, same write/rerun order,
+    unchanged. Caller only invokes this when statement_by_account is
+    non-empty, exactly as before the split.
+
+    Imports below are LOCAL (not module-level) on purpose -- re-executed on
+    every call so tests that ``patch("engine.brokerage_statement_pdf.X", ...)``
+    still reach these call sites, exactly like the local import this body
+    used to share with the rest of render_sync_scan_partial's ``else``
+    branch before the split (a module-level import would freeze the
+    original function object at collection time, unreachable by that
+    patch target -- see this file's own TestM1UnconditionalSaveGuard-style
+    lesson elsewhere in the suite).
+    """
+    from engine.brokerage_statement_pdf import (
+        apply_account_type_overrides,
+        load_account_type_overrides,
+        partition_by_account_type,
+        save_account_type_override,
+    )
+
+    stmt_taxable, stmt_excluded, stmt_unknown = partition_by_account_type(statement_by_account)
+
+    # partition_by_account_type holds PARTIAL records (an incomplete
+    # statement, e.g. no parseable period date) out of stmt_taxable, in
+    # the same needs-confirmation bucket as accounts of unstated tax
+    # status. Split the two apart: for a partial record whose type IS
+    # known the tax-status selectbox below asks the wrong question, and
+    # answering it would leave the account held anyway. An account that
+    # is BOTH type-unknown and partial stays in stmt_unknown for now and
+    # surfaces here on the next rerun, once its type is confirmed.
+    stmt_partial = {
+        acc: rec
+        for acc, rec in stmt_unknown.items()
+        if rec.missing_fields and rec.account_type != "unknown"
+    }
+    stmt_unknown = {acc: rec for acc, rec in stmt_unknown.items() if acc not in stmt_partial}
+
+    # Opting a partial record in is an explicit, per-account act -- never
+    # a default. Acknowledged ones join the Apply button's payload below.
+    for account_number, rec in stmt_partial.items():
+        gaps = ", ".join(f.replace("_", " ") for f in rec.missing_fields)
+        st.info(
+            f"**{rec.broker} {account_number}** parsed, but incomplete — "
+            f"could not read: {gaps}. "
+            f"Figures that DID parse: dividends ${rec.dividends_taxable_ytd:,.2f}, "
+            f"interest ${rec.interest_taxable_ytd:,.2f}, "
+            f"STCG ${rec.stcg_net_ytd:,.2f}, LTCG ${rec.ltcg_net_ytd:,.2f}. "
+            "Without a statement period this record cannot be ordered against "
+            "other statements for the same account, so a newer one will not "
+            "supersede it automatically."
+        )
+        if st.checkbox(
+            f"Use {account_number} anyway ({gaps} missing)",
+            key=f"partial_ack_{account_number}",
+        ):
+            stmt_taxable[account_number] = rec
+
+    if stmt_excluded:
+        st.info(
+            "Excluded (retirement account, never counted toward taxable YTD income): "
+            + ", ".join(
+                f"{acc} ({rec.broker}, {rec.account_type})" for acc, rec in stmt_excluded.items()
             )
+        )
 
-            # partition_by_account_type holds PARTIAL records (an incomplete
-            # statement, e.g. no parseable period date) out of stmt_taxable, in
-            # the same needs-confirmation bucket as accounts of unstated tax
-            # status. Split the two apart: for a partial record whose type IS
-            # known the tax-status selectbox below asks the wrong question, and
-            # answering it would leave the account held anyway. An account that
-            # is BOTH type-unknown and partial stays in stmt_unknown for now and
-            # surfaces here on the next rerun, once its type is confirmed.
-            stmt_partial = {
-                acc: rec
-                for acc, rec in stmt_unknown.items()
-                if rec.missing_fields and rec.account_type != "unknown"
-            }
-            stmt_unknown = {
-                acc: rec for acc, rec in stmt_unknown.items() if acc not in stmt_partial
-            }
-
-            # Opting a partial record in is an explicit, per-account act -- never
-            # a default. Acknowledged ones join the Apply button's payload below.
-            for account_number, rec in stmt_partial.items():
-                gaps = ", ".join(f.replace("_", " ") for f in rec.missing_fields)
-                st.info(
-                    f"**{rec.broker} {account_number}** parsed, but incomplete — "
-                    f"could not read: {gaps}. "
-                    f"Figures that DID parse: dividends ${rec.dividends_taxable_ytd:,.2f}, "
-                    f"interest ${rec.interest_taxable_ytd:,.2f}, "
-                    f"STCG ${rec.stcg_net_ytd:,.2f}, LTCG ${rec.ltcg_net_ytd:,.2f}. "
-                    "Without a statement period this record cannot be ordered against "
-                    "other statements for the same account, so a newer one will not "
-                    "supersede it automatically."
+    if stmt_unknown:
+        st.warning(
+            f"{len(stmt_unknown)} account(s) have no stated tax status in their statement "
+            "(this is normal for Schwab) — confirm each before its figures count:"
+        )
+        for account_number, rec in stmt_unknown.items():
+            choice = st.selectbox(
+                f"Account {account_number} ({rec.broker})",
+                options=["-- confirm --", "taxable", "traditional_ira", "roth_ira"],
+                key=f"account_type_confirm_{account_number}",
+            )
+            if choice != "-- confirm --":
+                save_account_type_override(account_number, choice)
+                # Refresh the cached statement_by_account in-place so the
+                # confirmed classification sticks across the rerun below --
+                # otherwise the stale session_state dict is reused on the
+                # next run and the account is re-classified as unknown
+                # until a fresh "Scan folder" click.
+                st.session_state["statement_by_account"] = apply_account_type_overrides(
+                    statement_by_account, load_account_type_overrides()
                 )
-                if st.checkbox(
-                    f"Use {account_number} anyway ({gaps} missing)",
-                    key=f"partial_ack_{account_number}",
+                st.rerun()
+
+    if stmt_taxable:
+        st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
+        if not identity_set:
+            st.caption(
+                "Applying is unavailable until this planner instance has an "
+                "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+            )
+        # disabled=True (not hidden), same convention as "Scan folder" above --
+        # this button independently re-resolves owners from disk-loaded
+        # records (resolve_account_owner below), so gating the scan alone
+        # would leave this a live write path to "household" attribution.
+        if st.button(
+            "Apply to YTD snapshot",
+            key="apply_statements_btn",
+            disabled=not identity_set,
+        ):
+            _apply_had_mismatch = False
+            for account_number, rec in stmt_taxable.items():
+                resolved = resolve_account_owner(
+                    rec.broker, account_number, account_overrides, instance_owner
+                )
+                if _warn_on_holder_name_mismatch(
+                    rec.owner_key, resolved, owner_map, account_number
                 ):
-                    stmt_taxable[account_number] = rec
+                    _apply_had_mismatch = True
+                ledger = write_brokerage_contribution(ledger, resolved, rec)
+            save_ledger(ledger)
 
-            if stmt_excluded:
-                st.info(
-                    "Excluded (retirement account, never counted toward taxable YTD income): "
-                    + ", ".join(
-                        f"{acc} ({rec.broker}, {rec.account_type})"
-                        for acc, rec in stmt_excluded.items()
-                    )
+            brokerage_totals = derive_brokerage_totals(ledger)
+            prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
+            apply_brokerage_totals(prev_ytd, brokerage_totals)
+            prev_ytd.with_snapshot_date()
+            st.session_state.ytd_snapshot = prev_ytd
+            st.session_state["ytd_manual_entry"] = False
+            save_ytd_snapshot(prev_ytd)
+            st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+            # WARN, NEVER BLOCK: the write above already completed --
+            # this only withholds the immediate rerun so a fired
+            # mismatch warning survives to be seen, instead of being
+            # wiped by a same-render st.rerun() (see
+            # _warn_on_holder_name_mismatch's docstring).
+            if not _apply_had_mismatch:
+                st.rerun()
+
+    return ledger
+
+
+def _render_koinly_summary(ledger: PdfLedger) -> None:
+    """Render the read-only last-scanned-Koinly-report display and the
+    per-owner crypto/brokerage breakdown expanders.
+
+    Pure move out of render_sync_scan_partial's local-only ``else`` branch.
+    The caller wraps this call in ``if not is_pyodide():`` -- the same
+    condition this block carried inline before the split (there it was
+    nested a second time under an already-``not is_pyodide()`` else, so
+    the inner check was always true and is dropped here as redundant, not
+    as a behavior change).
+    """
+    from engine.koinly_report_pdf import load_koinly_report
+
+    if "koinly_report" not in st.session_state:
+        _cached_koinly = load_koinly_report()
+        if _cached_koinly is not None:
+            st.session_state["koinly_report"] = _cached_koinly
+
+    koinly_report = st.session_state.get("koinly_report")
+    if koinly_report is not None:
+        # Read-only display of the most recently scanned Koinly report.
+        # No "Apply" button: the ledger derive-sum (below) is now the sole
+        # source of crypto_*_ytd, applied automatically during scan --  a
+        # separate manual apply here would risk double-counting against
+        # newer scans already folded into the ledger.
+        st.write(f"**Last scanned Koinly report (tax year {koinly_report.tax_year}):**")
+        kc1, kc2, kc3 = st.columns(3)
+        kc1.metric("Short-term gains", fmt_dollars(koinly_report.crypto_stcg))
+        kc2.metric("Long-term gains", fmt_dollars(koinly_report.crypto_ltcg))
+        kc3.metric("Income (staking/DeFi)", fmt_dollars(koinly_report.crypto_income))
+        _mismatch = koinly_report.provenance.get("income_total_mismatch")
+        if _mismatch:
+            st.warning(_mismatch)
+
+    if ledger.get("koinly"):
+        with st.expander("Per-owner crypto breakdown"):
+            for owner, figures in sorted(ledger["koinly"].items()):
+                st.caption(
+                    f"{owner.title()}: STCG {fmt_dollars(figures['stcg'])}, "
+                    f"LTCG {fmt_dollars(figures['ltcg'])}, "
+                    f"Income {fmt_dollars(figures['income'])}"
                 )
 
-            if stmt_unknown:
-                st.warning(
-                    f"{len(stmt_unknown)} account(s) have no stated tax status in their statement "
-                    "(this is normal for Schwab) — confirm each before its figures count:"
+    if ledger.get("brokerage"):
+        with st.expander("Per-owner brokerage breakdown"):
+            for owner, accounts in sorted(ledger["brokerage"].items()):
+                totals = derive_brokerage_totals({"koinly": {}, "brokerage": {owner: accounts}})
+                st.caption(
+                    f"{owner.title()} ({len(accounts)} account(s)): "
+                    f"Interest {fmt_dollars(totals['interest_ytd'])}, "
+                    f"Dividends {fmt_dollars(totals['ordinary_dividends_ytd'])}, "
+                    f"STCG {fmt_dollars(totals['stcg_ytd'])}, "
+                    f"LTCG {fmt_dollars(totals['ltcg_ytd'])}"
                 )
-                for account_number, rec in stmt_unknown.items():
-                    choice = st.selectbox(
-                        f"Account {account_number} ({rec.broker})",
-                        options=["-- confirm --", "taxable", "traditional_ira", "roth_ira"],
-                        key=f"account_type_confirm_{account_number}",
-                    )
-                    if choice != "-- confirm --":
-                        save_account_type_override(account_number, choice)
-                        # Refresh the cached statement_by_account in-place so the
-                        # confirmed classification sticks across the rerun below --
-                        # otherwise the stale session_state dict is reused on the
-                        # next run and the account is re-classified as unknown
-                        # until a fresh "Scan folder" click.
-                        st.session_state["statement_by_account"] = apply_account_type_overrides(
-                            statement_by_account, load_account_type_overrides()
-                        )
-                        st.rerun()
-
-            if stmt_taxable:
-                st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
-                if not identity_set:
-                    st.caption(
-                        "Applying is unavailable until this planner instance has an "
-                        "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
-                    )
-                # disabled=True (not hidden), same convention as "Scan folder" above --
-                # this button independently re-resolves owners from disk-loaded
-                # records (resolve_account_owner below), so gating the scan alone
-                # would leave this a live write path to "household" attribution.
-                if st.button(
-                    "Apply to YTD snapshot",
-                    key="apply_statements_btn",
-                    disabled=not identity_set,
-                ):
-                    _apply_had_mismatch = False
-                    for account_number, rec in stmt_taxable.items():
-                        resolved = resolve_account_owner(
-                            rec.broker, account_number, account_overrides, instance_owner
-                        )
-                        if _warn_on_holder_name_mismatch(
-                            rec.owner_key, resolved, owner_map, account_number
-                        ):
-                            _apply_had_mismatch = True
-                        ledger = write_brokerage_contribution(ledger, resolved, rec)
-                    save_ledger(ledger)
-
-                    brokerage_totals = derive_brokerage_totals(ledger)
-                    prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-                    apply_brokerage_totals(prev_ytd, brokerage_totals)
-                    prev_ytd.with_snapshot_date()
-                    st.session_state.ytd_snapshot = prev_ytd
-                    st.session_state["ytd_manual_entry"] = False
-                    save_ytd_snapshot(prev_ytd)
-                    st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
-                    # WARN, NEVER BLOCK: the write above already completed --
-                    # this only withholds the immediate rerun so a fired
-                    # mismatch warning survives to be seen, instead of being
-                    # wiped by a same-render st.rerun() (see
-                    # _warn_on_holder_name_mismatch's docstring).
-                    if not _apply_had_mismatch:
-                        st.rerun()
-
-        if not is_pyodide():
-            from engine.koinly_report_pdf import load_koinly_report
-
-            if "koinly_report" not in st.session_state:
-                _cached_koinly = load_koinly_report()
-                if _cached_koinly is not None:
-                    st.session_state["koinly_report"] = _cached_koinly
-
-            koinly_report = st.session_state.get("koinly_report")
-            if koinly_report is not None:
-                # Read-only display of the most recently scanned Koinly report.
-                # No "Apply" button: the ledger derive-sum (below) is now the sole
-                # source of crypto_*_ytd, applied automatically during scan --  a
-                # separate manual apply here would risk double-counting against
-                # newer scans already folded into the ledger.
-                st.write(f"**Last scanned Koinly report (tax year {koinly_report.tax_year}):**")
-                kc1, kc2, kc3 = st.columns(3)
-                kc1.metric("Short-term gains", fmt_dollars(koinly_report.crypto_stcg))
-                kc2.metric("Long-term gains", fmt_dollars(koinly_report.crypto_ltcg))
-                kc3.metric("Income (staking/DeFi)", fmt_dollars(koinly_report.crypto_income))
-                _mismatch = koinly_report.provenance.get("income_total_mismatch")
-                if _mismatch:
-                    st.warning(_mismatch)
-
-            if ledger.get("koinly"):
-                with st.expander("Per-owner crypto breakdown"):
-                    for owner, figures in sorted(ledger["koinly"].items()):
-                        st.caption(
-                            f"{owner.title()}: STCG {fmt_dollars(figures['stcg'])}, "
-                            f"LTCG {fmt_dollars(figures['ltcg'])}, "
-                            f"Income {fmt_dollars(figures['income'])}"
-                        )
-
-            if ledger.get("brokerage"):
-                with st.expander("Per-owner brokerage breakdown"):
-                    for owner, accounts in sorted(ledger["brokerage"].items()):
-                        totals = derive_brokerage_totals(
-                            {"koinly": {}, "brokerage": {owner: accounts}}
-                        )
-                        st.caption(
-                            f"{owner.title()} ({len(accounts)} account(s)): "
-                            f"Interest {fmt_dollars(totals['interest_ytd'])}, "
-                            f"Dividends {fmt_dollars(totals['ordinary_dividends_ytd'])}, "
-                            f"STCG {fmt_dollars(totals['stcg_ytd'])}, "
-                            f"LTCG {fmt_dollars(totals['ltcg_ytd'])}"
-                        )
