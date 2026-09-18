@@ -21,8 +21,22 @@ def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict
     Thin wrapper around :func:`engine.upload_merge.build_user_defaults_session_updates`.
     Pure function — returns a ``{session_key: value}`` dict without writing to state.
     See the engine module for full mapping rules.
+
+    On the spouse path it supplies the receiver's RAW persisted overrides, which
+    is what lets joint household fields cross when the receiver has never set
+    them. Read through :func:`config.loader.load_raw_user_defaults` (not
+    ``load_defaults``, which overlays DEFAULTS and would make three joint fields
+    look set on a fresh install) and imported lazily so the module attribute can
+    be monkeypatched in tests.
     """
-    return build_user_defaults_session_updates(data, as_spouse=as_spouse)
+    receiver_persisted: dict | None = None
+    if as_spouse:
+        from config import loader
+
+        receiver_persisted = loader.load_raw_user_defaults()
+    return build_user_defaults_session_updates(
+        data, as_spouse=as_spouse, receiver_persisted=receiver_persisted
+    )
 
 
 def _apply_user_defaults_to_session(data: dict, *, as_spouse: bool = False) -> None:

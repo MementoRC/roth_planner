@@ -169,6 +169,51 @@ def clear_user_defaults() -> None:
         path.unlink(missing_ok=True)
 
 
+def load_raw_user_defaults() -> dict:
+    """Return the RAW persisted override keys — no ``DEFAULTS`` overlay.
+
+    Answers one question: *which scalars has this user deliberately set?*
+    :func:`save_user_defaults` writes every scalar present in session state
+    whenever Setup data changes (``views/setup/_state.py``'s
+    ``_user_defaults_from_session``), so a key's presence in this file is the
+    app's own record of a deliberate choice, and its absence means the user has
+    never touched it.
+
+    Deliberately NOT :func:`load_defaults` — that returns ``{**DEFAULTS,
+    **overrides}``, so ``living_expenses``, ``stock_price_now`` and
+    ``spouse_is_sole_beneficiary`` would look "set" on a brand-new install
+    purely because ``DEFAULTS`` carries them.
+
+    Session state is equally unusable for this: ``app.py``'s
+    ``_seed_session_state`` ``setdefault``s every scalar before any view runs,
+    so nothing is ever absent there.
+
+    Honours ``ROTH_PLANNER_IGNORE_USER_DEFAULTS`` and the
+    ``ROTH_PLANNER_DEFAULTS`` env path exactly as :func:`load_defaults` does —
+    the two readers of this file must never disagree about whether it counts.
+    """
+    env_path_str = os.environ.get("ROTH_PLANNER_DEFAULTS")
+    if env_path_str:
+        env_path = Path(env_path_str)
+        if env_path.exists():
+            if env_path.suffix == ".json":
+                return dict(_load_overrides_from_json(env_path))
+            return _load_overrides_from_py(env_path)
+
+    if os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
+        return {}
+
+    json_path = _USER_DEFAULTS_PATH
+    if json_path.exists():
+        return dict(_load_overrides_from_json(json_path))
+
+    py_path = Path(".user_defaults.py")
+    if py_path.exists():
+        return _load_overrides_from_py(py_path)
+
+    return {}
+
+
 def load_defaults() -> dict:
     """Return DEFAULTS overlaid with user overrides if present."""
     env_path_str = os.environ.get("ROTH_PLANNER_DEFAULTS")
