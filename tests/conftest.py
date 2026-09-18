@@ -209,6 +209,12 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     )
     _patch_default(
         monkeypatch,
+        _scan_ingest_mod.scan_documents_and_record,
+        "store_path",
+        _tmp(".candidate_store.json"),
+    )
+    _patch_default(
+        monkeypatch,
         _option_exercise_helpers_mod.handle_txn_quote_fetch,
         "store_path",
         _tmp(".candidate_store.json"),

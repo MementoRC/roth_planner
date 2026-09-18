@@ -2071,3 +2071,56 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
 
         assert set(persisted_ledger["brokerage"].keys()) == {"spouse"}
         assert set(persisted_ledger["koinly"].keys()) == {"you"}
+
+
+class TestScanReviewReachableUnderPyodide:
+    """feat/public-pdf-upload Step 1: render_sync_scan_partial's per-account
+    review table + Apply-to-YTD-snapshot flow (extracted as module-level
+    ``_render_scan_review``) must render whenever "statement_by_account"
+    already holds scan results in session_state, REGARDLESS of
+    is_pyodide() -- only the FinExtract sync button and the "Scan folder"
+    SOURCE controls stay is_pyodide()-gated. Today nothing writes that
+    session_state key under Pyodide (both writers -- the "Scan folder"
+    handler and its on-disk cache fallback -- live inside the local-only
+    ``else:`` branch), so this test seeds the key directly to simulate what
+    Step 2's browser uploader will do."""
+
+    def test_review_table_renders_under_pyodide_with_scan_results_present(self):
+        rec = BrokerageStatementRecord(
+            account_number="XXXX9999",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=20.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        # Seed EXACTLY the session_state key the local scan (or its on-disk
+        # cache fallback) would normally write -- proves reachability from
+        # session_state alone, independent of how the key got populated.
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "statement_by_account": {"XXXX9999": rec},
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "is_pyodide", return_value=True),
+        ):
+            sync_scan_mod.render_sync_scan_partial(hh)
+
+        rendered_captions = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Counted toward YTD income" in c for c in rendered_captions), (
+            "Expected _render_scan_review's per-account review table to render "
+            "even under is_pyodide()=True once statement_by_account already "
+            f"holds scan results in session_state; captions seen: {rendered_captions}"
+        )

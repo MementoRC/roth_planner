@@ -21,6 +21,7 @@ drive that interactive flow.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -101,14 +102,16 @@ def _merge_and_persist_pdf_cache(
         _tax_return_pdf_mod._PDF_TAX_CACHE_PATH = original_path  # noqa: SLF001
 
 
-def scan_and_record(
-    folder: Path,
+def _record_scan_result(
+    result: PdfImportResult,
     *,
-    store_path: str | Path = CANDIDATE_STORE_PATH,
-    pdf_cache_path: str | Path | None = None,
-    recorded_at: datetime | None = None,
+    store_path: str | Path,
+    pdf_cache_path: str | Path | None,
+    recorded_at: datetime | None,
 ) -> ScanIngestResult:
-    """Scan *folder*, record 1040 MAGI candidates, persist the merged pdf cache.
+    """Shared core behind :func:`scan_and_record` and
+    :func:`scan_documents_and_record`: record 1040 MAGI candidates and persist
+    the merged pdf cache for an already-scanned *result*.
 
     Reproduces exactly what ``views/ytd_income.py``'s and
     ``views/setup/parameters.py``'s scan handlers used to do inline for Form
@@ -123,10 +126,11 @@ def scan_and_record(
     is the FEIE-inclusive Roth/ACA-flavor MAGI. Feeding the wrong flavor here
     was an audit HIGH finding (fabricated IRMAA surcharge for filers with a
     foreign earned income exclusion).
-    """
-    from engine.pdf_import import scan_pdf_folder
 
-    result = scan_pdf_folder(Path(folder))
+    Kept a single entry point so the folder path (reads a directory) and the
+    bytes path (public/Pyodide site, no filesystem) cannot silently diverge in
+    what they merge/record for the exact same set of parsed documents.
+    """
     when = recorded_at or datetime.now()
 
     pdf_cache: dict[int, Form1040Record] = {}
@@ -154,4 +158,51 @@ def scan_and_record(
         errors=list(result.errors),
         raw=result,
         pdf_cache=pdf_cache,
+    )
+
+
+def scan_and_record(
+    folder: Path,
+    *,
+    store_path: str | Path = CANDIDATE_STORE_PATH,
+    pdf_cache_path: str | Path | None = None,
+    recorded_at: datetime | None = None,
+) -> ScanIngestResult:
+    """Scan *folder*, record 1040 MAGI candidates, persist the merged pdf cache.
+
+    Local-install entry point: reads a directory from disk. See
+    :func:`scan_documents_and_record` for the bytes-based (public/Pyodide
+    site) sibling — both delegate to :func:`_record_scan_result` for the
+    actual merge/record/persist work.
+    """
+    from engine.pdf_import import scan_pdf_folder
+
+    result = scan_pdf_folder(Path(folder))
+    return _record_scan_result(
+        result, store_path=store_path, pdf_cache_path=pdf_cache_path, recorded_at=recorded_at
+    )
+
+
+def scan_documents_and_record(
+    documents: Iterable[tuple[str, bytes]],
+    *,
+    store_path: str | Path = CANDIDATE_STORE_PATH,
+    pdf_cache_path: str | Path | None = None,
+    recorded_at: datetime | None = None,
+) -> ScanIngestResult:
+    """Scan already-read PDF bytes, record 1040 MAGI candidates, persist the
+    merged pdf cache.
+
+    Bytes-based sibling of :func:`scan_and_record` for the public (Pyodide)
+    site, which has no filesystem and can only hand over uploaded bytes.
+    *documents* is an iterable of ``(name, bytes)`` pairs, passed straight
+    through to :func:`engine.pdf_import.scan_pdf_documents`. Delegates to the
+    same :func:`_record_scan_result` core as the folder path, so the two
+    cannot silently diverge in what they merge/record.
+    """
+    from engine.pdf_import import scan_pdf_documents
+
+    result = scan_pdf_documents(documents)
+    return _record_scan_result(
+        result, store_path=store_path, pdf_cache_path=pdf_cache_path, recorded_at=recorded_at
     )
