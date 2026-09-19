@@ -341,7 +341,7 @@ def render(hh: Household):
             )
         else:
             st.caption(
-                f"Default sweep: you die at ages {death_ages} — set a Survivor scenario in **⚙️ Setup → 📊 Parameters → Joint** to model a specific case."
+                f"Default sweep: you die at ages {death_ages} — set a Survivor scenario in **⚙️ Setup → Assumptions** to model a specific case."
             )
 
         survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)

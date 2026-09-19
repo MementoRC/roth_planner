@@ -82,60 +82,69 @@ def _render_attribution_table(instance_owner: str) -> None:
     if not by_account:
         return
     overrides = load_account_overrides()
-    st.subheader("Account attribution")
-    for account_number, rec in sorted(by_account.items()):
-        resolved = resolve_account_owner(rec.broker, account_number, overrides, instance_owner)
-        col_label, col_owner, col_clear = st.columns([3, 2, 1])
-        col_label.caption(f"{account_number} ({rec.broker}, {rec.account_type})")
-        choice = col_owner.selectbox(
-            f"Owner for {account_number}",
-            ["you", "spouse", "household"],
-            index=["you", "spouse", "household"].index(resolved),
-            key=f"attribution_owner_{account_number}",
-            label_visibility="collapsed",
-        )
-        if choice != resolved:
-            try:
-                save_account_override(rec.broker, account_number, choice)
-            except CorruptAccountAttributionError as exc:
-                st.error(
-                    f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                    "(corrupt or truncated); this override was NOT saved. Restore "
-                    "the file from a backup or contact support before retrying."
-                )
-            else:
-                # No session-state pop needed here: on the immediate rerun,
-                # resolve_account_owner() will read back the override we just
-                # wrote, so `resolved` will equal `choice` and this keyed
-                # selectbox's already-current session-state value (`choice`,
-                # set by Streamlit when the user interacted with it) matches
-                # it exactly. Desync only arises on the Clear path below,
-                # where the override disappears but the widget key does not.
-                st.rerun()
-        if (rec.broker, account_number) in overrides and col_clear.button(
-            "Clear", key=f"attribution_clear_{account_number}"
-        ):
-            try:
-                delete_account_override(rec.broker, account_number)
-            except CorruptAccountAttributionError as exc:
-                st.error(
-                    f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                    "(corrupt or truncated); this override was NOT cleared. Restore "
-                    "the file from a backup or contact support before retrying."
-                )
-            else:
-                # Streamlit only honours a keyed widget's index= kwarg on its
-                # FIRST creation; on every later rerun the persisted
-                # session_state[key] value wins over index=, even though
-                # `resolved` (computed above from the now-overrideless store)
-                # has already fallen back to instance_owner. Without this
-                # pop, the next render's `choice` stays the stale overridden
-                # value, `choice != resolved` fires again, and the override
-                # we just deleted gets immediately re-saved -- Clear becomes
-                # a no-op with two redundant disk writes. Popping forces the
-                # widget to re-derive from index=resolved on the next render.
-                st.session_state.pop(f"attribution_owner_{account_number}", None)
-                st.rerun()
+    # Collapsed by default: this is correction UI, not primary flow. Expanded,
+    # nine accounts is ~350px of selectboxes wedged between Command Center's
+    # owner gate and the two import sections a first-time user actually came
+    # for -- it pushed both of them below the fold. The account count rides in
+    # the label so the section stays discoverable while closed.
+    #
+    # An st.expander is not an st.column, so the st.columns([3, 2, 1]) rows
+    # below are still nested exactly one level inside the shell's outer
+    # column -- unchanged from before, and within Streamlit's one-level limit.
+    with st.expander(f"Account attribution ({len(by_account)} accounts)", expanded=False):
+        for account_number, rec in sorted(by_account.items()):
+            resolved = resolve_account_owner(rec.broker, account_number, overrides, instance_owner)
+            col_label, col_owner, col_clear = st.columns([3, 2, 1])
+            col_label.caption(f"{account_number} ({rec.broker}, {rec.account_type})")
+            choice = col_owner.selectbox(
+                f"Owner for {account_number}",
+                ["you", "spouse", "household"],
+                index=["you", "spouse", "household"].index(resolved),
+                key=f"attribution_owner_{account_number}",
+                label_visibility="collapsed",
+            )
+            if choice != resolved:
+                try:
+                    save_account_override(rec.broker, account_number, choice)
+                except CorruptAccountAttributionError as exc:
+                    st.error(
+                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
+                        "(corrupt or truncated); this override was NOT saved. Restore "
+                        "the file from a backup or contact support before retrying."
+                    )
+                else:
+                    # No session-state pop needed here: on the immediate rerun,
+                    # resolve_account_owner() will read back the override we just
+                    # wrote, so `resolved` will equal `choice` and this keyed
+                    # selectbox's already-current session-state value (`choice`,
+                    # set by Streamlit when the user interacted with it) matches
+                    # it exactly. Desync only arises on the Clear path below,
+                    # where the override disappears but the widget key does not.
+                    st.rerun()
+            if (rec.broker, account_number) in overrides and col_clear.button(
+                "Clear", key=f"attribution_clear_{account_number}"
+            ):
+                try:
+                    delete_account_override(rec.broker, account_number)
+                except CorruptAccountAttributionError as exc:
+                    st.error(
+                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
+                        "(corrupt or truncated); this override was NOT cleared. Restore "
+                        "the file from a backup or contact support before retrying."
+                    )
+                else:
+                    # Streamlit only honours a keyed widget's index= kwarg on its
+                    # FIRST creation; on every later rerun the persisted
+                    # session_state[key] value wins over index=, even though
+                    # `resolved` (computed above from the now-overrideless store)
+                    # has already fallen back to instance_owner. Without this
+                    # pop, the next render's `choice` stays the stale overridden
+                    # value, `choice != resolved` fires again, and the override
+                    # we just deleted gets immediately re-saved -- Clear becomes
+                    # a no-op with two redundant disk writes. Popping forces the
+                    # widget to re-derive from index=resolved on the next render.
+                    st.session_state.pop(f"attribution_owner_{account_number}", None)
+                    st.rerun()
 
 
 def render_command_center(hh: Household) -> None:
@@ -154,10 +163,26 @@ def render_command_center(hh: Household) -> None:
     identity_set = bool(instance_owner)
 
     if not identity_set:
-        st.warning(
-            "This planner instance has no owner set yet. Scanning and "
-            "syncing are unavailable until you answer below."
-        )
+        # Three states, not two. The radio below only takes effect when Save
+        # runs save_instance_owner(), so a user who picks an option and stops
+        # sees an unchanged "no owner set yet" and reasonably concludes the
+        # page is broken. The pending choice IS detectable: the radio is
+        # keyed, so its value survives the rerun Streamlit performs on
+        # selection, and is readable here even though the widget renders
+        # below. Read-only -- this does not preselect anything, so the
+        # index=None guarantee documented below is untouched.
+        _pending_choice = st.session_state.get("instance_owner_gate_choice")
+        if _pending_choice is None:
+            st.warning(
+                "This planner instance has no owner set yet. Scanning and "
+                "syncing are unavailable until you answer below."
+            )
+        else:
+            st.warning(
+                f"**{_pending_choice}** is selected but not saved yet. Press "
+                "**Save** below to apply it — scanning and syncing stay "
+                "unavailable until you do."
+            )
         # index=None (no preselection) is deliberate and load-bearing -- do
         # NOT restore a default here. Streamlit's default radio behavior
         # preselects option 0 ("Me"), which would let a reflexive Save click

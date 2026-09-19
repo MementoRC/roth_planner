@@ -47,20 +47,28 @@ def _render_ytd(snapshot_date: str | None = None) -> None:
     ``views.ytd_income.render`` -- it is called here explicitly, in the same
     session/render pass, so this file's scan-button/widget assertions keep
     exercising the identical behavior in its new host.
+
+    Both halves are called, mirroring what the Data tab does. The partial was
+    split (2026-09) so the ingest controls can sit in a half-width column
+    while the scan RESULTS -- the per-account review table, the "Apply to YTD
+    snapshot" button, the Koinly summary -- render full width beneath both
+    columns. ``render_sync_scan_partial`` returns the context its results half
+    needs; calling only the first half renders the uploader but none of the
+    review widgets this file asserts on.
     """
     import streamlit as st
 
     from models.household import Household
     from models.ytd_income import YTDSnapshot
     from views.ytd_income import render
-    from views.ytd_income._partials import render_sync_scan_partial
+    from views.ytd_income._partials import render_sync_scan_partial, render_sync_scan_results
 
     st.session_state["_suppress_snapshot_autoload"] = True
     if snapshot_date is not None:
         st.session_state["ytd_snapshot"] = YTDSnapshot(snapshot_date=snapshot_date)
 
     hh = Household()
-    render_sync_scan_partial(hh)
+    render_sync_scan_results(render_sync_scan_partial(hh))
     render(hh)
 
 

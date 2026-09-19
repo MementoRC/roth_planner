@@ -90,7 +90,7 @@ def _render_pdf_1040_import() -> None:
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
         if not scanned_records:
             st.caption(
-                "Scan your statements on the Setup ▸ Data tab ('Scan folder' locally, "
+                "Scan your statements in **PDF Statements**, above ('Scan folder' locally, "
                 "or upload PDFs directly) to import a Form 1040 PDF — parsed years "
                 "appear here for confirmation."
             )
@@ -123,7 +123,7 @@ def _render_pdf_1040_import() -> None:
             if is_pyodide():
                 st.caption(
                     "⚠️ This browser session's data is lost on reload — use "
-                    "**⚙️ Setup ▸ 🔗 Data bridge ▸ Export my data** to keep it."
+                    "**Import previous data ▸ 📦 Export my data**, above, to keep it."
                 )
             if st.button("Save 1040 record", key=f"_pdf_1040_save_{rec.tax_year}"):
                 rec.filing_status = chosen_status
@@ -132,8 +132,8 @@ def _render_pdf_1040_import() -> None:
                 with st.spinner("Saving…"):
                     save_pdf_tax_records(records)
                 st.info(
-                    "1 prior-year MAGI value detected — review & confirm it in the "
-                    "🎛️ Command Center tab."
+                    "1 prior-year MAGI value detected — review & confirm it in "
+                    "**Command Center**, above."
                 )
                 # Drop the confirmed year so it doesn't re-prompt on rerun
                 scanned_records.pop(_year, None)

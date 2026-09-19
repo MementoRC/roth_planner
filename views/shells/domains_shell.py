@@ -85,9 +85,27 @@ from views.setup._partials import (
 )
 from views.setup._state import autosave_user_defaults
 from views.setup.command_center import render_command_center
-from views.setup.data_bridge import render_data_bridge_tab
+from views.setup.data_bridge import _this_instance_owner, render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
-from views.ytd_income._partials import render_sync_scan_partial
+from views.ytd_income._partials import render_sync_scan_partial, render_sync_scan_results
+
+
+def _render_owner_required_placeholder() -> None:
+    """Stand in for an import section while this instance has no owner.
+
+    Streamlit has no disabled *container*, so a section whose every control is
+    ``disabled=not identity_set`` previously rendered in full and merely inert:
+    a permanently greyed button with a small grey caption reads as "busy", not
+    "blocked". Replacing the body with one visible sentence says which state
+    the page is in and where to leave it.
+
+    This suppresses more than the gated widgets -- the keypair generator and
+    the V2 private-key box are not themselves identity-gated -- which is
+    deliberate, not incidental: the order a first-time user must follow is
+    owner, then key, then import, so surfacing the key box before an owner
+    exists invites step two before step one.
+    """
+    st.info("Set this planner instance's owner in **Command Center**, above, to unlock importing.")
 
 
 def render(hh: Household) -> None:
@@ -119,33 +137,124 @@ def render(hh: Household) -> None:
         # here) -- deliberate, so tests that drive it directly keep working
         # unchanged. See this module's docstring for the full rationale.
         #
-        # Section order (PR C, 2026-09): getting data IN is this tab's
-        # primary job, so the two import sections -- PDF Statements and
-        # Import previous data -- now come FIRST, ahead of the sync/review
-        # controls (Command Center, Stock Price) and the 1040 Import
-        # secondary path. A user opening this tab should not have to scroll
-        # past maintenance actions to reach the ingest entry points they
-        # came here for.
+        # Section order (2026-09): DEPENDENCY order, which supersedes the
+        # earlier import-first arrangement (PR C). That arrangement optimised
+        # for the returning user -- one whose instance already has an owner and
+        # a key, for whom Command Center is maintenance noise to scroll past.
+        # But every control in both import sections is GATED on instance
+        # identity (`disabled=not identity_set`: _sync_scan.py's "Scan uploaded
+        # PDFs" and "Apply to YTD snapshot", data_bridge.py's "Apply" and the
+        # export), and the widget that satisfies that gate lives in Command
+        # Center. Rendering the gated sections ABOVE the control that unlocks
+        # them meant a first-time user met a disabled button first and was told
+        # to go somewhere they had already scrolled past -- a permanently
+        # greyed-out button reads as "busy", not "blocked".
         #
-        # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09) --
-        # that name was vocabulary inherited from this partial's previous
-        # home on the YTD page and no longer describes where it lives.
-        st.subheader("PDF Statements")
-        render_sync_scan_partial(hh)
-        # "Import previous data": renamed from "Data bridge" (PR B, 2026-09)
-        # for the same reason -- clearer to a user than the internal
-        # mechanism name.
-        st.subheader("Import previous data")
-        render_data_bridge_tab(hh)
-        st.subheader("Command Center")
-        render_command_center(hh)
-        # txn_price_now is a market-sourced value that "Sync everything"
-        # already refreshes via its Yahoo-quote leg, so its widget renders
-        # here beside the sync controls rather than under Options (PR B,
-        # 2026-09) -- see render_stock_price_widget's docstring.
-        render_stock_price_widget(st)
-        st.subheader("1040 Import")
-        _render_pdf_1040_import()
+        # So Command Center leads, and the two import paths sit BESIDE each
+        # other beneath it: they are alternatives, not steps -- a spouse
+        # restores a bundle, or scans their own statements, or does both in
+        # either order -- and stacking them implied a sequence that does not
+        # exist. tests/test_data_tab_section_order.py pins the sequence.
+        #
+        # Command Center is constrained to 2:1 rather than full-span: on a
+        # first run its whole body is a warning, an owner radio and Save, which
+        # looks lost across the full page. It is NOT narrow enough for a third,
+        # though -- once identity is set it renders _render_attribution_table,
+        # one st.columns([3, 2, 1]) row per account (caption | owner selectbox
+        # | Clear). At a third of the page those sub-columns cramp and the
+        # account label wraps. The right column is margin, not a slot.
+        #
+        # Script order inside the columns IS the render order (left column
+        # body executes first) and is also what a narrow viewport sees once
+        # Streamlit stacks them: Import previous data, then PDF Statements.
+        # No st.subheader here: render_command_center opens with its own
+        # st.header("🎛️ Command Center") (views/setup/command_center.py), so a
+        # subheader above it rendered the name twice, plain then large. The
+        # other three sections need theirs -- render_data_bridge_tab and
+        # _render_pdf_1040_import do not self-title, and
+        # render_stock_price_widget already renders its own (which is why it
+        # never had one here either).
+        col_center, _col_center_gutter = st.columns([2, 1])
+        with col_center:
+            render_command_center(hh)
+        # Read (never redefine) the same identity state the import controls
+        # already gate on -- _this_instance_owner is data_bridge's own helper,
+        # so there is one source of truth for "does this instance have an
+        # owner", not a second copy that can drift (cf. #498).
+        identity_set = bool(_this_instance_owner())
+        # border=True on each column body (the same st.container(border=True)
+        # idiom render_command_center uses for its field cards): the two
+        # sections hold different amounts of content, so without a frame the
+        # shorter one just trails off into whitespace and the pair reads as a
+        # broken alignment rather than as two alternatives. The title goes
+        # INSIDE the frame so each column is one self-contained card.
+        col_import, col_pdf = st.columns(2)
+        with col_import:
+            with st.container(border=True):
+                # "Import previous data": renamed from "Data bridge" (PR B,
+                # 2026-09) -- clearer to a user than the internal mechanism
+                # name. Stays FIRST in this column: it is step two of the
+                # first-run sequence (owner -> key -> import), and the two
+                # sections below it are a lone setting and a secondary route.
+                st.subheader("Import previous data")
+                if identity_set:
+                    render_data_bridge_tab(hh)
+                else:
+                    _render_owner_required_placeholder()
+            # Stock Price and 1040 Import moved into this column (2026-09) from
+            # the foot of the page, where they sat BELOW the full-width scan
+            # results -- and those results grow substantially once a scan has
+            # run, pushing both steadily further down. Inside a column each
+            # grows independently of its neighbour, so nothing lands beneath an
+            # expanding block.
+            #
+            # Each gets its OWN border rather than joining the card above. Two
+            # reasons, and the first is a correctness constraint: that card's
+            # body is swapped for _render_owner_required_placeholder when the
+            # instance has no owner, and NEITHER of these is owner-gated --
+            # folding them in would hide a stock price and a 1040 importer
+            # behind a gate that does not apply to them. Second, a card titled
+            # "Import previous data" is the wrong container for a market quote.
+            #
+            # txn_price_now lives on this tab at all (rather than under
+            # Options) because it is a market-sourced value that "Sync
+            # everything" already refreshes via its Yahoo-quote leg -- PR B,
+            # 2026-09; see render_stock_price_widget's docstring.
+            # It self-titles ("Stock Price") and takes its container as an
+            # argument, so it is handed one directly rather than wrapped in
+            # `with`.
+            render_stock_price_widget(st.container(border=True))
+            with st.container(border=True):
+                st.subheader("1040 Import")
+                _render_pdf_1040_import()
+        scan_ctx = None
+        with col_pdf, st.container(border=True):
+            # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
+            # -- that name was vocabulary inherited from this partial's
+            # previous home on the YTD page and no longer describes where it
+            # lives. render_sync_scan_partial no longer emits its own
+            # "### YTD Income Entry" under this: two h3s back to back.
+            #
+            # Only the INGEST controls render in this column. What a scan
+            # PRODUCES comes back as a context and renders full width below
+            # (see render_sync_scan_results): the review banner lists whole
+            # account numbers, which wrap badly at half width, and the
+            # results were most of why this column ran twice as tall as its
+            # neighbour -- the imbalance the borders were drawing attention
+            # to rather than fixing.
+            st.subheader("PDF Statements")
+            if identity_set:
+                scan_ctx = render_sync_scan_partial(hh)
+            else:
+                _render_owner_required_placeholder()
+        # Full width, beneath both cards: scan OUTPUT, not a third ingest
+        # path. scan_ctx is None only when the owner gate replaced the column
+        # body with the placeholder -- in which case no scan could have been
+        # run from here anyway, matching the pre-split behaviour where the
+        # whole partial (results included) was suppressed. Renders nothing
+        # when there is nothing to show; see render_sync_scan_results.
+        if scan_ctx is not None:
+            render_sync_scan_results(scan_ctx)
 
     tab_household.subheader("Filing status")
     _is_single = bool(render_household_partial(hh, tab_household, "joint"))

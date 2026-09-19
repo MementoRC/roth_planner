@@ -225,7 +225,7 @@ page = st.sidebar.radio(
 _pending_count = len(st.session_state.get("_pending_review") or ())
 if _pending_count:
     st.sidebar.warning(
-        f"⚠️ {_pending_count} data field(s) awaiting review — see Setup ▸ Command Center"
+        f"⚠️ {_pending_count} data field(s) awaiting review — see ⚙️ Setup ▸ 📥 Data ▸ Command Center"
     )
 
 # L6 (audit 0702): the generated V2 keypair is displayed only on the Setup page

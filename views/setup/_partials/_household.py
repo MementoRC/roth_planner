@@ -77,7 +77,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
                 "zeroed and single-filer brackets, standard deduction, IRMAA/NIIT "
                 "thresholds, and ACA FPL apply. To model a spouse dying mid-projection, "
                 "leave this on Married filing jointly and use the Survivor scenario "
-                "(Joint sub-tab)."
+                "on the Assumptions tab."
             ),
         )
         _is_single = filing_status_from_label(_filing_choice) == "Single"

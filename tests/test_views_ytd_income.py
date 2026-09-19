@@ -1579,7 +1579,11 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
-            sync_scan_mod.render_sync_scan_partial(hh)
+            # Both halves, mirroring the Data tab: the tax-status selectbox and
+            # its save_account_type_override call live in _render_scan_review,
+            # which moved into render_sync_scan_results when the partial was
+            # split so the results could render full width (2026-09).
+            sync_scan_mod.render_sync_scan_results(sync_scan_mod.render_sync_scan_partial(hh))
             ytd_income_mod.render(hh)
 
         mock_save_override.assert_called_once_with("XXXX5555", "taxable")
@@ -2116,7 +2120,11 @@ class TestScanReviewReachableUnderPyodide:
             patch.object(sync_scan_mod, "st", mock_st),
             patch.object(sync_scan_mod, "is_pyodide", return_value=True),
         ):
-            sync_scan_mod.render_sync_scan_partial(hh)
+            # _render_scan_review moved into render_sync_scan_results when the
+            # partial was split (2026-09). The point of this test is unchanged
+            # and still load-bearing: the review half must stay OUTSIDE the
+            # is_pyodide() gate, so it renders in the browser too.
+            sync_scan_mod.render_sync_scan_results(sync_scan_mod.render_sync_scan_partial(hh))
 
         rendered_captions = [str(c.args[0]) for c in mock_st.caption.call_args_list]
         assert any("Counted toward YTD income" in c for c in rendered_captions), (

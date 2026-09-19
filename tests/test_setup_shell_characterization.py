@@ -124,6 +124,18 @@ def setup_app_test(clean_command_center_caches, monkeypatch) -> AppTest:
 
     at = AppTest.from_file(str(APP_PATH))
     at.session_state["_suppress_snapshot_autoload"] = True
+    # An owner is seeded because this snapshot's job is to freeze the FULL
+    # Setup widget-key set, and the Data tab's two import sections only render
+    # their bodies once this instance has one (views/shells/domains_shell.py
+    # replaces them with a placeholder otherwise -- a first-time user should
+    # not be handed controls that cannot work yet). Without this, 12 keys
+    # (bundle_upload, pdf_upload, apply_uploads, gen_keypair, save_v2_privkey,
+    # _v2_privkey_input, _export_recipient_pubkey, reset_demo,
+    # scan_pdf_folder_btn, scan_uploaded_pdfs_btn, statement_folder_path,
+    # ytd_sync_btn) drop out and this test characterizes the EMPTY first-run
+    # page instead of the working one. The placeholder state has its own
+    # coverage in tests/test_data_tab_section_order.py, both directions.
+    at.session_state["instance_owner"] = "you"
     at.run()
     assert not at.exception
     return at
@@ -161,12 +173,74 @@ def test_setup_tab_labels_unchanged(setup_app_test: AppTest) -> None:
     assert _top_level_tab_labels(setup_app_test) == EXPECTED_TAB_LABELS
 
 
+# Setup no longer has ONE widget-key set: two groups are mutually exclusive,
+# so no single render can contain both and the frozen set above is the UNION.
+#
+# - The owner gate (radio + Save) renders only while this instance has NO
+#   owner (views/setup/command_center.py's `if not identity_set:`).
+# - The two Data-tab import sections render their bodies only ONCE it has one
+#   (views/shells/domains_shell.py swaps in a placeholder otherwise).
+#
+# Both groups stay covered by asserting each state separately rather than
+# dropping either from the baseline.
+_OWNER_GATE_KEYS = frozenset({"instance_owner_gate_choice", "instance_owner_gate_save"})
+
+_IMPORT_SECTION_KEYS = frozenset(
+    {
+        "_export_recipient_pubkey",
+        "_v2_privkey_input",
+        "apply_uploads",
+        "bundle_upload",
+        "gen_keypair",
+        "pdf_upload",
+        "reset_demo",
+        "save_v2_privkey",
+        "scan_pdf_folder_btn",
+        "scan_uploaded_pdfs_btn",
+        "statement_folder_path",
+        "ytd_sync_btn",
+    }
+)
+
+
 def test_setup_widget_key_set_unchanged(setup_app_test: AppTest) -> None:
+    """Owner set: everything but the owner gate, which has been satisfied."""
+    expected = EXPECTED_WIDGET_KEYS - _OWNER_GATE_KEYS
     actual = _all_widget_keys(setup_app_test)
-    missing = EXPECTED_WIDGET_KEYS - actual
-    extra = actual - EXPECTED_WIDGET_KEYS
+    missing = expected - actual
+    extra = actual - expected
     assert not missing, f"Widget keys disappeared from Setup: {sorted(missing)}"
     assert not extra, f"New/unexpected widget keys appeared on Setup: {sorted(extra)}"
+
+
+def test_setup_widget_key_set_unchanged_without_an_owner(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """No owner: the gate is present and the import bodies are not.
+
+    The counterpart to the test above -- together they cover every key in
+    EXPECTED_WIDGET_KEYS, so making the import sections owner-gated did not
+    quietly drop 12 keys out of this characterization.
+    """
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["_suppress_snapshot_autoload"] = True
+    at.run()
+    assert not at.exception
+
+    expected = EXPECTED_WIDGET_KEYS - _IMPORT_SECTION_KEYS
+    actual = _all_widget_keys(at)
+    missing = expected - actual
+    extra = actual - expected
+    assert not missing, f"Widget keys disappeared from first-run Setup: {sorted(missing)}"
+    assert not extra, f"New/unexpected widget keys on first-run Setup: {sorted(extra)}"
 
 
 # --- Task 3 supplementary safety net: render_household_partial ----------------
