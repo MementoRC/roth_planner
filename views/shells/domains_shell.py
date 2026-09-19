@@ -85,9 +85,27 @@ from views.setup._partials import (
 )
 from views.setup._state import autosave_user_defaults
 from views.setup.command_center import render_command_center
-from views.setup.data_bridge import render_data_bridge_tab
+from views.setup.data_bridge import _this_instance_owner, render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
 from views.ytd_income._partials import render_sync_scan_partial
+
+
+def _render_owner_required_placeholder() -> None:
+    """Stand in for an import section while this instance has no owner.
+
+    Streamlit has no disabled *container*, so a section whose every control is
+    ``disabled=not identity_set`` previously rendered in full and merely inert:
+    a permanently greyed button with a small grey caption reads as "busy", not
+    "blocked". Replacing the body with one visible sentence says which state
+    the page is in and where to leave it.
+
+    This suppresses more than the gated widgets -- the keypair generator and
+    the V2 private-key box are not themselves identity-gated -- which is
+    deliberate, not incidental: the order a first-time user must follow is
+    owner, then key, then import, so surfacing the key box before an owner
+    exists invites step two before step one.
+    """
+    st.info("Set this planner instance's owner in **Command Center**, above, to unlock importing.")
 
 
 def render(hh: Household) -> None:
@@ -119,30 +137,74 @@ def render(hh: Household) -> None:
         # here) -- deliberate, so tests that drive it directly keep working
         # unchanged. See this module's docstring for the full rationale.
         #
-        # Section order (PR C, 2026-09): getting data IN is this tab's
-        # primary job, so the two import sections -- PDF Statements and
-        # Import previous data -- now come FIRST, ahead of the sync/review
-        # controls (Command Center, Stock Price) and the 1040 Import
-        # secondary path. A user opening this tab should not have to scroll
-        # past maintenance actions to reach the ingest entry points they
-        # came here for.
+        # Section order (2026-09): DEPENDENCY order, which supersedes the
+        # earlier import-first arrangement (PR C). That arrangement optimised
+        # for the returning user -- one whose instance already has an owner and
+        # a key, for whom Command Center is maintenance noise to scroll past.
+        # But every control in both import sections is GATED on instance
+        # identity (`disabled=not identity_set`: _sync_scan.py's "Scan uploaded
+        # PDFs" and "Apply to YTD snapshot", data_bridge.py's "Apply" and the
+        # export), and the widget that satisfies that gate lives in Command
+        # Center. Rendering the gated sections ABOVE the control that unlocks
+        # them meant a first-time user met a disabled button first and was told
+        # to go somewhere they had already scrolled past -- a permanently
+        # greyed-out button reads as "busy", not "blocked".
         #
-        # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09) --
-        # that name was vocabulary inherited from this partial's previous
-        # home on the YTD page and no longer describes where it lives.
-        st.subheader("PDF Statements")
-        render_sync_scan_partial(hh)
-        # "Import previous data": renamed from "Data bridge" (PR B, 2026-09)
-        # for the same reason -- clearer to a user than the internal
-        # mechanism name.
-        st.subheader("Import previous data")
-        render_data_bridge_tab(hh)
-        st.subheader("Command Center")
-        render_command_center(hh)
+        # So Command Center leads, and the two import paths sit BESIDE each
+        # other beneath it: they are alternatives, not steps -- a spouse
+        # restores a bundle, or scans their own statements, or does both in
+        # either order -- and stacking them implied a sequence that does not
+        # exist. tests/test_data_tab_section_order.py pins the sequence.
+        #
+        # Command Center is constrained to 2:1 rather than full-span: on a
+        # first run its whole body is a warning, an owner radio and Save, which
+        # looks lost across the full page. It is NOT narrow enough for a third,
+        # though -- once identity is set it renders _render_attribution_table,
+        # one st.columns([3, 2, 1]) row per account (caption | owner selectbox
+        # | Clear). At a third of the page those sub-columns cramp and the
+        # account label wraps. The right column is margin, not a slot.
+        #
+        # Script order inside the columns IS the render order (left column
+        # body executes first) and is also what a narrow viewport sees once
+        # Streamlit stacks them: Import previous data, then PDF Statements.
+        # No st.subheader here: render_command_center opens with its own
+        # st.header("🎛️ Command Center") (views/setup/command_center.py), so a
+        # subheader above it rendered the name twice, plain then large. The
+        # other three sections need theirs -- render_data_bridge_tab and
+        # _render_pdf_1040_import do not self-title, and
+        # render_stock_price_widget already renders its own (which is why it
+        # never had one here either).
+        col_center, _col_center_gutter = st.columns([2, 1])
+        with col_center:
+            render_command_center(hh)
+        # Read (never redefine) the same identity state the import controls
+        # already gate on -- _this_instance_owner is data_bridge's own helper,
+        # so there is one source of truth for "does this instance have an
+        # owner", not a second copy that can drift (cf. #498).
+        identity_set = bool(_this_instance_owner())
+        col_import, col_pdf = st.columns(2)
+        with col_import:
+            # "Import previous data": renamed from "Data bridge" (PR B,
+            # 2026-09) -- clearer to a user than the internal mechanism name.
+            st.subheader("Import previous data")
+            if identity_set:
+                render_data_bridge_tab(hh)
+            else:
+                _render_owner_required_placeholder()
+        with col_pdf:
+            # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
+            # -- that name was vocabulary inherited from this partial's
+            # previous home on the YTD page and no longer describes where it
+            # lives.
+            st.subheader("PDF Statements")
+            if identity_set:
+                render_sync_scan_partial(hh)
+            else:
+                _render_owner_required_placeholder()
         # txn_price_now is a market-sourced value that "Sync everything"
-        # already refreshes via its Yahoo-quote leg, so its widget renders
-        # here beside the sync controls rather than under Options (PR B,
-        # 2026-09) -- see render_stock_price_widget's docstring.
+        # already refreshes via its Yahoo-quote leg, so its widget renders in
+        # this tab rather than under Options (PR B, 2026-09) -- see
+        # render_stock_price_widget's docstring.
         render_stock_price_widget(st)
         st.subheader("1040 Import")
         _render_pdf_1040_import()

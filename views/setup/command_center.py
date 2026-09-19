@@ -154,10 +154,26 @@ def render_command_center(hh: Household) -> None:
     identity_set = bool(instance_owner)
 
     if not identity_set:
-        st.warning(
-            "This planner instance has no owner set yet. Scanning and "
-            "syncing are unavailable until you answer below."
-        )
+        # Three states, not two. The radio below only takes effect when Save
+        # runs save_instance_owner(), so a user who picks an option and stops
+        # sees an unchanged "no owner set yet" and reasonably concludes the
+        # page is broken. The pending choice IS detectable: the radio is
+        # keyed, so its value survives the rerun Streamlit performs on
+        # selection, and is readable here even though the widget renders
+        # below. Read-only -- this does not preselect anything, so the
+        # index=None guarantee documented below is untouched.
+        _pending_choice = st.session_state.get("instance_owner_gate_choice")
+        if _pending_choice is None:
+            st.warning(
+                "This planner instance has no owner set yet. Scanning and "
+                "syncing are unavailable until you answer below."
+            )
+        else:
+            st.warning(
+                f"**{_pending_choice}** is selected but not saved yet. Press "
+                "**Save** below to apply it — scanning and syncing stay "
+                "unavailable until you do."
+            )
         # index=None (no preselection) is deliberate and load-bearing -- do
         # NOT restore a default here. Streamlit's default radio behavior
         # preselects option 0 ("Me"), which would let a reflexive Save click

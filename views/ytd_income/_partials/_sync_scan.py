@@ -187,7 +187,7 @@ def _apply_scan_result(
             "below before their income can be applied."
         )
     if result.form_1040_records:
-        st.info("Form 1040 MAGI saved — set filing status on Setup → Parameters.")
+        st.info("Form 1040 MAGI saved — set filing status on the **Household** tab.")
     if result.skipped:
         st.info(
             "Skipped (recognized, nothing to import): "
@@ -262,7 +262,7 @@ def _render_pdf_uploader(
     if not identity_set:
         st.caption(
             "Importing is unavailable until this planner instance has an "
-            "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+            "owner — set it in **Command Center**, above."
         )
     scan_clicked = st.button(
         "Scan uploaded PDFs", key="scan_uploaded_pdfs_btn", disabled=not identity_set
@@ -297,7 +297,7 @@ def _render_pdf_uploader(
     if is_pyodide():
         st.caption(
             "⚠️ This browser session's data is lost on reload — use "
-            "**⚙️ Setup ▸ 🔗 Data bridge ▸ Export my data** to keep it."
+            "**Import previous data ▸ 📦 Export my data** to keep it."
         )
     return ledger
 
@@ -332,7 +332,7 @@ def render_sync_scan_partial(hh: Household) -> None:
     if is_pyodide():
         st.caption(
             "Live sync requires a local install. "
-            "Use the **⚙️ Setup → 🔗 Data bridge** tab to upload a snapshot."
+            "Use the **Import previous data** section to upload a snapshot."
         )
     else:
         col_sync, col_status = st.columns([1, 3])
@@ -582,12 +582,12 @@ def _render_scan_review(
         if not identity_set:
             st.caption(
                 "Applying is unavailable until this planner instance has an "
-                "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+                "owner — set it in **Command Center**, above."
             )
         if is_pyodide():
             st.caption(
                 "⚠️ This browser session's data is lost on reload — use "
-                "**⚙️ Setup ▸ 🔗 Data bridge ▸ Export my data** to keep it."
+                "**Import previous data ▸ 📦 Export my data** to keep it."
             )
         # disabled=True (not hidden), same convention as "Scan folder" above --
         # this button independently re-resolves owners from disk-loaded

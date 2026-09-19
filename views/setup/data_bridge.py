@@ -327,7 +327,7 @@ def _handle_personal_uploads() -> None:
         else:
             st.caption(
                 "Importing is unavailable until this planner instance has an "
-                "owner — set it on **🎛️ Command Center**."
+                "owner — set it in **Command Center**, above."
             )
         col_a, col_b = st.columns(2)
         apply_clicked = col_a.button(
@@ -572,7 +572,7 @@ def _handle_personal_exports() -> None:
             if not identity_set:
                 st.caption(
                     "Export is unavailable until this planner instance has an "
-                    "owner — set it on **🎛️ Command Center**."
+                    "owner — set it in **Command Center**, above."
                 )
             if identity_set:
                 # Poisons-the-receiver defence: an export built from a
