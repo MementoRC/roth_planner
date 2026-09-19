@@ -298,20 +298,42 @@ def _render_pdf_uploader(
         return ledger
 
     combined = PdfImportResult()
-    for uploaded_file in uploaded:
-        st.write(f"Reading {uploaded_file.name}…")
-        try:
-            single = run_uploaded_scan([(uploaded_file.name, uploaded_file.getvalue())]).raw
-        except BaseException as exc:  # noqa: BLE001 -- one bad file must not kill the scan
-            combined.errors.append((uploaded_file.name, str(exc)))
-            st.warning(f"{uploaded_file.name}: {exc}")
-            continue
-        combined.brokerage_records.extend(single.brokerage_records)
-        combined.koinly_reports.extend(single.koinly_reports)
-        combined.form_1040_records.update(single.form_1040_records)
-        combined.skipped.extend(single.skipped)
-        combined.unrecognized.extend(single.unrecognized)
-        combined.errors.extend(single.errors)
+    n = len(uploaded)
+    imported = 0
+    failed = 0
+    with st.status(f"Scanning {n} PDF(s)…", expanded=True) as status:
+        progress = st.progress(0.0)
+        for i, uploaded_file in enumerate(uploaded, start=1):
+            progress.progress((i - 1) / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
+            try:
+                single = run_uploaded_scan([(uploaded_file.name, uploaded_file.getvalue())]).raw
+            except BaseException as exc:  # noqa: BLE001 -- one bad file must not kill the scan
+                combined.errors.append((uploaded_file.name, str(exc)))
+                st.warning(f"{uploaded_file.name}: {exc}")
+                st.write(f"{uploaded_file.name}: failed to parse")
+                failed += 1
+                progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
+                continue
+            combined.brokerage_records.extend(single.brokerage_records)
+            combined.koinly_reports.extend(single.koinly_reports)
+            combined.form_1040_records.update(single.form_1040_records)
+            combined.skipped.extend(single.skipped)
+            combined.unrecognized.extend(single.unrecognized)
+            combined.errors.extend(single.errors)
+            if single.errors:
+                failed += 1
+                for name, msg in single.errors:
+                    st.warning(f"{name}: {msg}")
+                st.write(f"{uploaded_file.name}: failed to parse")
+            else:
+                imported += 1
+                st.write(f"{uploaded_file.name}: recognized")
+            progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
+
+        status.update(
+            label=f"Scanned {n} file(s) — {imported} imported, {failed} failed",
+            state="error" if failed else "complete",
+        )
 
     ledger = _apply_scan_result(
         combined,
