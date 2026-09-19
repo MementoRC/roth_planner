@@ -87,7 +87,7 @@ from views.setup._state import autosave_user_defaults
 from views.setup.command_center import render_command_center
 from views.setup.data_bridge import _this_instance_owner, render_data_bridge_tab
 from views.setup.parameters import _render_pdf_1040_import
-from views.ytd_income._partials import render_sync_scan_partial
+from views.ytd_income._partials import render_sync_scan_partial, render_sync_scan_results
 
 
 def _render_owner_required_placeholder() -> None:
@@ -197,17 +197,34 @@ def render(hh: Household) -> None:
                 render_data_bridge_tab(hh)
             else:
                 _render_owner_required_placeholder()
+        scan_ctx = None
         with col_pdf, st.container(border=True):
             # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
             # -- that name was vocabulary inherited from this partial's
             # previous home on the YTD page and no longer describes where it
             # lives. render_sync_scan_partial no longer emits its own
             # "### YTD Income Entry" under this: two h3s back to back.
+            #
+            # Only the INGEST controls render in this column. What a scan
+            # PRODUCES comes back as a context and renders full width below
+            # (see render_sync_scan_results): the review banner lists whole
+            # account numbers, which wrap badly at half width, and the
+            # results were most of why this column ran twice as tall as its
+            # neighbour -- the imbalance the borders were drawing attention
+            # to rather than fixing.
             st.subheader("PDF Statements")
             if identity_set:
-                render_sync_scan_partial(hh)
+                scan_ctx = render_sync_scan_partial(hh)
             else:
                 _render_owner_required_placeholder()
+        # Full width, beneath both cards: scan OUTPUT, not a third ingest
+        # path. scan_ctx is None only when the owner gate replaced the column
+        # body with the placeholder -- in which case no scan could have been
+        # run from here anyway, matching the pre-split behaviour where the
+        # whole partial (results included) was suppressed. Renders nothing
+        # when there is nothing to show; see render_sync_scan_results.
+        if scan_ctx is not None:
+            render_sync_scan_results(scan_ctx)
         # txn_price_now is a market-sourced value that "Sync everything"
         # already refreshes via its Yahoo-quote leg, so its widget renders in
         # this tab rather than under Options (PR B, 2026-09) -- see

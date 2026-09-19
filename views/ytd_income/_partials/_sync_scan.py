@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 import streamlit as st
 
 from engine.account_attribution import load_account_overrides, resolve_account_owner
@@ -22,6 +24,31 @@ from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
 from views._pdf_runtime import ensure_pdf_backend, pdf_backend_error
 from views._shared import run_folder_scan, run_uploaded_scan
+
+
+class ScanRenderContext(NamedTuple):
+    """What ``render_sync_scan_results`` needs from ``render_sync_scan_partial``.
+
+    The two used to be one function. They were split so the *inputs* (sync
+    button, folder expander, uploader) can sit in a half-width column while
+    the *results* (per-account review, Apply-to-YTD, Koinly summary) render
+    full width beneath both columns -- the account-number lists in the review
+    banner wrap badly at half width, and the results were most of why the
+    right column ran twice as tall as the left.
+
+    Passed explicitly rather than re-derived in the results half. Every
+    ledger-mutating path in ``_apply_scan_result`` does call ``save_ledger``,
+    so a second ``load_ledger()`` would return the same thing *today* -- but
+    that equivalence is an invariant nothing enforces, and a future mutation
+    path added without a save would silently desynchronise the two halves.
+    Threading the value through cannot drift.
+    """
+
+    ledger: PdfLedger
+    account_overrides: dict[tuple[str, str], str]
+    owner_map: dict[str, str]
+    instance_owner: str
+    identity_set: bool
 
 
 def _warn_on_holder_name_mismatch(
@@ -302,7 +329,15 @@ def _render_pdf_uploader(
     return ledger
 
 
-def render_sync_scan_partial(hh: Household) -> None:
+def render_sync_scan_partial(hh: Household) -> ScanRenderContext:
+    """Render the ways to get statement data IN: FinExtract sync, the
+    local-only folder scan, and the uploader.
+
+    Returns the state its results half needs -- the caller must pass the
+    returned context to ``render_sync_scan_results`` to render what a scan
+    produced. Callers that only exercise the ingest controls can ignore the
+    return value.
+    """
     # Resolve once per render. "household" is a defensive last-resort only
     # (mirrors the old ad-hoc `or "household"` default this replaces) --
     # Command Center's identity gate (views/setup/command_center.py) is the
@@ -474,15 +509,46 @@ def render_sync_scan_partial(hh: Household) -> None:
         identity_set=identity_set,
     )
 
-    # --- Section 2: statement review + Apply-to-YTD-snapshot ---
-    # Deliberately OUTSIDE the is_pyodide() gate above -- reachable whenever
-    # scan results exist in session state, regardless of platform. Both the
-    # local-only folder scan and the uploader above can populate
-    # "statement_by_account" now, so this renders identically either way.
+    # Section 2 (statement review + Apply-to-YTD-snapshot, Koinly summary) is
+    # NOT rendered here -- it is returned to the caller to render, see
+    # ScanRenderContext and render_sync_scan_results below.
+    return ScanRenderContext(
+        ledger=ledger,
+        account_overrides=account_overrides,
+        owner_map=owner_map,
+        instance_owner=instance_owner,
+        identity_set=identity_set,
+    )
+
+
+def render_sync_scan_results(ctx: ScanRenderContext) -> None:
+    """Render what a scan PRODUCED: the per-account statement review, the
+    Apply-to-YTD-snapshot flow, and the Koinly summary.
+
+    Split out of ``render_sync_scan_partial`` (placement only -- same calls,
+    same order, same gating) so the caller can render these full width while
+    the ingest controls stay in their column. Nothing here paints unless
+    there is something to show: ``_render_scan_review`` is called only for a
+    non-empty ``statement_by_account`` exactly as before, and
+    ``_render_koinly_summary`` emits nothing without a stored report or a
+    non-empty ledger -- so a fresh page gets no empty block.
+
+    Deliberately OUTSIDE any is_pyodide() gate on the review half -- reachable
+    whenever scan results exist in session state, regardless of platform. Both
+    the local-only folder scan and the uploader can populate
+    "statement_by_account", so this renders identically either way. The Koinly
+    half keeps its own ``not is_pyodide()`` gate, unchanged.
+    """
+    ledger = ctx.ledger
     statement_by_account = st.session_state.get("statement_by_account", {})
     if statement_by_account:
         ledger = _render_scan_review(
-            statement_by_account, ledger, account_overrides, owner_map, instance_owner, identity_set
+            statement_by_account,
+            ledger,
+            ctx.account_overrides,
+            ctx.owner_map,
+            ctx.instance_owner,
+            ctx.identity_set,
         )
 
     if not is_pyodide():
