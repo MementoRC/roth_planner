@@ -1,12 +1,14 @@
 """Pins the render order of the Setup Data tab's sections.
 
 ``views/shells/domains_shell.py``'s ``with tab_data:`` block has been ordered
-three ways. Originally Command Center -> Stock Price -> PDF Statements ->
+four ways. Originally Command Center -> Stock Price -> PDF Statements ->
 Import previous data -> 1040 Import; then (PR C, 2026-09) import-first, so
-the two ingest sections led; now (2026-09) Command Center first, constrained
+the two ingest sections led; then (2026-09) Command Center first, constrained
 to the left two thirds (``st.columns([2, 1])``, right column empty as
 margin), with the two import sections SIDE BY SIDE beneath it in
-``st.columns(2)``, then Stock Price and 1040 Import.
+``st.columns(2)`` and Stock Price / 1040 Import full width below them; now
+(2026-09) those last two moved INTO the left column, stacked beneath Import
+previous data as their own bordered cards.
 
 The import-first arrangement optimised for the returning user, but every
 control in both import sections is gated on instance identity
@@ -15,11 +17,19 @@ Command Center. Rendering the gated sections above their unlock meant a
 first-time user met a disabled button and was pointed at a section they had
 already scrolled past.
 
-The expected sequence below is unchanged by the columns: the left column's
-body executes first, so script order still yields Import previous data before
-PDF Statements. That is also the stacked order a narrow viewport sees. This
-test therefore pins both the vertical sequence and, implicitly, which section
-occupies the left column -- swapping the columns would fail it.
+Stock Price and 1040 Import moved off the page foot because they sat below
+the full-width scan results, which grow substantially once a scan has run.
+Import previous data stays FIRST within its column: it is step two of the
+first-run sequence (owner -> key -> import), whereas Stock Price is a lone
+setting and 1040 Import a secondary route.
+
+Script order IS render order -- the left column's body executes in full
+before the right column's -- so the sequence below now reads down the left
+column and then into the right. That is also what a narrow viewport sees once
+Streamlit stacks the columns, which means Stock Price and 1040 Import appear
+ABOVE PDF Statements there. This test therefore pins both the vertical
+sequence and, implicitly, which sections occupy the left column -- swapping
+the columns would fail it.
 
 No prior test pinned this order (see domains_shell.py's PR A commit message:
 "Known gap, not addressed here: no test pins the Data tab's section
@@ -51,9 +61,9 @@ _DATA_TAB_SECTION_LABELS = frozenset(
 # separately by _COMMAND_CENTER_HEADER below -- it renders FIRST, above these.
 EXPECTED_ORDER = [
     "Import previous data",
-    "PDF Statements",
     "Stock Price",
     "1040 Import",
+    "PDF Statements",
 ]
 
 _COMMAND_CENTER_HEADER = "🎛️ Command Center"
@@ -139,6 +149,26 @@ def test_import_sections_are_replaced_by_placeholder_without_an_owner(
     upload_keys = {w.key for w in at.get("file_uploader")}
     assert "bundle_upload" not in upload_keys
     assert "pdf_upload" not in upload_keys
+
+
+def test_stock_price_and_1040_import_survive_a_missing_owner(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Moving them into the left column must not put them behind the owner gate.
+
+    Import previous data shares that column, and its body IS swapped for the
+    placeholder without an owner. Stock Price and 1040 Import are not
+    owner-gated and never were, so they get their own bordered cards outside
+    that branch. Folding them into the same card would have hidden a market
+    quote and a PDF importer behind a gate that does not apply to them --
+    silently, since the placeholder explains the import section, not them.
+    """
+    at = _run_shell(monkeypatch)
+    assert not at.exception
+
+    rendered = [s.value for s in at.subheader if s.value in _DATA_TAB_SECTION_LABELS]
+    assert "Stock Price" in rendered
+    assert "1040 Import" in rendered
 
 
 def _render_shell_with_owner() -> None:

@@ -189,14 +189,44 @@ def render(hh: Household) -> None:
         # broken alignment rather than as two alternatives. The title goes
         # INSIDE the frame so each column is one self-contained card.
         col_import, col_pdf = st.columns(2)
-        with col_import, st.container(border=True):
-            # "Import previous data": renamed from "Data bridge" (PR B,
-            # 2026-09) -- clearer to a user than the internal mechanism name.
-            st.subheader("Import previous data")
-            if identity_set:
-                render_data_bridge_tab(hh)
-            else:
-                _render_owner_required_placeholder()
+        with col_import:
+            with st.container(border=True):
+                # "Import previous data": renamed from "Data bridge" (PR B,
+                # 2026-09) -- clearer to a user than the internal mechanism
+                # name. Stays FIRST in this column: it is step two of the
+                # first-run sequence (owner -> key -> import), and the two
+                # sections below it are a lone setting and a secondary route.
+                st.subheader("Import previous data")
+                if identity_set:
+                    render_data_bridge_tab(hh)
+                else:
+                    _render_owner_required_placeholder()
+            # Stock Price and 1040 Import moved into this column (2026-09) from
+            # the foot of the page, where they sat BELOW the full-width scan
+            # results -- and those results grow substantially once a scan has
+            # run, pushing both steadily further down. Inside a column each
+            # grows independently of its neighbour, so nothing lands beneath an
+            # expanding block.
+            #
+            # Each gets its OWN border rather than joining the card above. Two
+            # reasons, and the first is a correctness constraint: that card's
+            # body is swapped for _render_owner_required_placeholder when the
+            # instance has no owner, and NEITHER of these is owner-gated --
+            # folding them in would hide a stock price and a 1040 importer
+            # behind a gate that does not apply to them. Second, a card titled
+            # "Import previous data" is the wrong container for a market quote.
+            #
+            # txn_price_now lives on this tab at all (rather than under
+            # Options) because it is a market-sourced value that "Sync
+            # everything" already refreshes via its Yahoo-quote leg -- PR B,
+            # 2026-09; see render_stock_price_widget's docstring.
+            # It self-titles ("Stock Price") and takes its container as an
+            # argument, so it is handed one directly rather than wrapped in
+            # `with`.
+            render_stock_price_widget(st.container(border=True))
+            with st.container(border=True):
+                st.subheader("1040 Import")
+                _render_pdf_1040_import()
         scan_ctx = None
         with col_pdf, st.container(border=True):
             # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
@@ -225,13 +255,6 @@ def render(hh: Household) -> None:
         # when there is nothing to show; see render_sync_scan_results.
         if scan_ctx is not None:
             render_sync_scan_results(scan_ctx)
-        # txn_price_now is a market-sourced value that "Sync everything"
-        # already refreshes via its Yahoo-quote leg, so its widget renders in
-        # this tab rather than under Options (PR B, 2026-09) -- see
-        # render_stock_price_widget's docstring.
-        render_stock_price_widget(st)
-        st.subheader("1040 Import")
-        _render_pdf_1040_import()
 
     tab_household.subheader("Filing status")
     _is_single = bool(render_household_partial(hh, tab_household, "joint"))
