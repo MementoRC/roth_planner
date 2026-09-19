@@ -182,8 +182,14 @@ def render(hh: Household) -> None:
         # so there is one source of truth for "does this instance have an
         # owner", not a second copy that can drift (cf. #498).
         identity_set = bool(_this_instance_owner())
+        # border=True on each column body (the same st.container(border=True)
+        # idiom render_command_center uses for its field cards): the two
+        # sections hold different amounts of content, so without a frame the
+        # shorter one just trails off into whitespace and the pair reads as a
+        # broken alignment rather than as two alternatives. The title goes
+        # INSIDE the frame so each column is one self-contained card.
         col_import, col_pdf = st.columns(2)
-        with col_import:
+        with col_import, st.container(border=True):
             # "Import previous data": renamed from "Data bridge" (PR B,
             # 2026-09) -- clearer to a user than the internal mechanism name.
             st.subheader("Import previous data")
@@ -191,11 +197,12 @@ def render(hh: Household) -> None:
                 render_data_bridge_tab(hh)
             else:
                 _render_owner_required_placeholder()
-        with col_pdf:
+        with col_pdf, st.container(border=True):
             # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
             # -- that name was vocabulary inherited from this partial's
             # previous home on the YTD page and no longer describes where it
-            # lives.
+            # lives. render_sync_scan_partial no longer emits its own
+            # "### YTD Income Entry" under this: two h3s back to back.
             st.subheader("PDF Statements")
             if identity_set:
                 render_sync_scan_partial(hh)

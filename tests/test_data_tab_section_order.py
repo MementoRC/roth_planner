@@ -35,11 +35,12 @@ from __future__ import annotations
 
 from streamlit.testing.v1 import AppTest
 
-# The 5 subheaders authored directly in domains_shell.py's tab_data block
-# (excludes "Account attribution", which render_command_center renders as a
-# NESTED subheader inside the "Command Center" section -- filtering to just
-# this set keeps the assertion independent of subheaders any partial might
-# add or remove internally).
+# The subheaders authored directly in domains_shell.py's tab_data block.
+# Filtering to just this set keeps the assertion independent of subheaders any
+# partial might add or remove internally. "Account attribution" used to need
+# explicit exclusion here (render_command_center emitted it as a nested
+# subheader); it is now a collapsed st.expander label, so it is not a
+# subheader at all and cannot reach this list either way.
 _DATA_TAB_SECTION_LABELS = frozenset(
     {"PDF Statements", "Import previous data", "Stock Price", "1040 Import"}
 )

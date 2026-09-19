@@ -261,7 +261,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     if prior_year_tax == 0:
         st.warning(
             "Prior year tax unknown — only current-year estimate path active. "
-            "Upload your prior year 1040 PDF in ⚙️ Setup → 📊 Parameters → Joint to unlock "
+            "Upload your prior year 1040 PDF in ⚙️ Setup → 📥 Data to unlock "
             "the 110% safe-harbor rule."
         )
     g1, g2, g3 = st.columns(3)

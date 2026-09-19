@@ -44,7 +44,7 @@ def _warn_on_holder_name_mismatch(
         st.warning(
             f"Account {account_label}: the statement's holder name maps to "
             f"'{named_owner}' but this instance attributes it to '{resolved}'. "
-            "Double check the account attribution table on Setup ▸ Command Center."
+            "Double check the account attribution table in **Command Center**, above."
         )
         return True
     return False
@@ -326,9 +326,14 @@ def render_sync_scan_partial(hh: Household) -> None:
     # pure Path.exists()-guarded read, identical either way).
     ledger = load_ledger()
 
-    # --- Section 1: YTD Income Entry ---
-    st.markdown("### YTD Income Entry")
-
+    # --- Section 1: sync + folder/upload import ---
+    # No heading here. This partial's only caller is domains_shell.py's Data
+    # tab, which already titles the column "PDF Statements" (st.subheader, an
+    # h3) immediately above; a "### YTD Income Entry" h3 right under it
+    # rendered two same-weight headings back to back with nothing between --
+    # the same defect the shell's duplicate "Command Center" subheader had.
+    # The column title names the section; the sub-sections below sit a level
+    # down.
     if is_pyodide():
         st.caption(
             "Live sync requires a local install. "
@@ -384,13 +389,6 @@ def render_sync_scan_partial(hh: Household) -> None:
                 with col_status:
                     st.warning("FinExtract unavailable — use manual entry below")
 
-        st.markdown("##### Import from PDF folder")
-        st.caption(
-            "Drop every statement in one folder — brokerage statements, your Koinly "
-            "crypto tax report, and TurboTax 1040 exports. One scan identifies each file "
-            "by its contents (filenames are ignored) and imports everything it recognizes: "
-            "statement interest/dividends/gains, Koinly crypto figures, and prior-year 1040 MAGI."
-        )
         from engine.brokerage_statement_pdf import (
             apply_account_type_overrides,
             load_account_type_overrides,
@@ -400,46 +398,62 @@ def render_sync_scan_partial(hh: Household) -> None:
             validate_local_folder,
         )
 
-        default_folder = load_statement_folder_path() or ""
-        folder_input = st.text_input(
-            "PDF folder",
-            value=default_folder,
-            key="statement_folder_path",
-            help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
-        )
-        # ledger is loaded once per render up top (with account_overrides/
-        # owner_map) so the per-owner breakdown expander reflects on-disk
-        # ledger state even on renders where "Scan folder" was not clicked.
-        if not identity_set:
+        # Collapsed by default. This path needs a real local filesystem -- it
+        # sits inside the not-is_pyodide() branch and never renders on the
+        # public site at all -- yet its heading, paragraph, folder input and
+        # button were most of this column's height, which is why the column ran
+        # far past its neighbour and left the page lopsided. The uploaded-PDF
+        # section below stays open: that is the path the public site and a
+        # first-time user actually take. An expander body still executes every
+        # run, so collapsing changes nothing but what is painted.
+        with st.expander("Import from PDF folder", expanded=False):
             st.caption(
-                "Scanning is unavailable until this planner instance has an "
-                "owner — set it on **⚙️ Setup ▸ 🎛️ Command Center**."
+                "Drop every statement in one folder — brokerage statements, your Koinly "
+                "crypto tax report, and TurboTax 1040 exports. One scan identifies each file "
+                "by its contents (filenames are ignored) and imports everything it recognizes: "
+                "statement interest/dividends/gains, Koinly crypto figures, and prior-year "
+                "1040 MAGI."
             )
-        # disabled=True (not hidden), same convention as Command Center's
-        # "⟳ Sync everything" button in Task 5.
-        if st.button("Scan folder", key="scan_pdf_folder_btn", disabled=not identity_set):
-            # Local single-user desktop tool: path validation (under $HOME, no
-            # '..') lives in validate_local_folder.
-            folder_path, folder_err = validate_local_folder(folder_input)
-            if folder_err:
-                st.error(folder_err)
-            else:
-                save_statement_folder_path(str(folder_path))
-                # Single scan entry point + single _pdf_1040_scanned writer
-                # (W2 Part A) -- the actual scan_pdf_folder call, 1040-MAGI
-                # candidate recording, and pdf-tax-cache persist all live in
-                # run_folder_scan / scan_and_record now. The parse/apply/
-                # report step below (_apply_scan_result) is shared with the
-                # uploaded-PDF path so the two cannot silently drift apart.
-                result = run_folder_scan(folder_path).raw
-                ledger = _apply_scan_result(
-                    result,
-                    ledger=ledger,
-                    account_overrides=account_overrides,
-                    owner_map=owner_map,
-                    instance_owner=instance_owner,
-                    not_found_message="No importable financial PDFs found in that folder.",
+            default_folder = load_statement_folder_path() or ""
+            folder_input = st.text_input(
+                "PDF folder",
+                value=default_folder,
+                key="statement_folder_path",
+                help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
+            )
+            # ledger is loaded once per render up top (with account_overrides/
+            # owner_map) so the per-owner breakdown expander reflects on-disk
+            # ledger state even on renders where "Scan folder" was not clicked.
+            if not identity_set:
+                st.caption(
+                    "Scanning is unavailable until this planner instance has an "
+                    "owner — set it in **Command Center**, above."
                 )
+            # disabled=True (not hidden), same convention as Command Center's
+            # "⟳ Sync everything" button in Task 5.
+            if st.button("Scan folder", key="scan_pdf_folder_btn", disabled=not identity_set):
+                # Local single-user desktop tool: path validation (under $HOME,
+                # no '..') lives in validate_local_folder.
+                folder_path, folder_err = validate_local_folder(folder_input)
+                if folder_err:
+                    st.error(folder_err)
+                else:
+                    save_statement_folder_path(str(folder_path))
+                    # Single scan entry point + single _pdf_1040_scanned writer
+                    # (W2 Part A) -- the actual scan_pdf_folder call, 1040-MAGI
+                    # candidate recording, and pdf-tax-cache persist all live in
+                    # run_folder_scan / scan_and_record now. The parse/apply/
+                    # report step below (_apply_scan_result) is shared with the
+                    # uploaded-PDF path so the two cannot silently drift apart.
+                    result = run_folder_scan(folder_path).raw
+                    ledger = _apply_scan_result(
+                        result,
+                        ledger=ledger,
+                        account_overrides=account_overrides,
+                        owner_map=owner_map,
+                        instance_owner=instance_owner,
+                        not_found_message=("No importable financial PDFs found in that folder."),
+                    )
 
         if "statement_by_account" not in st.session_state:
             _cached_by_account = load_statement_records()

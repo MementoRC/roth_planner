@@ -22,7 +22,9 @@ from models.household import Household
 def _no_data_msg(noun: str) -> str:
     """Return an empty-state message adapted for the current runtime environment."""
     if is_pyodide():
-        return f"No {noun} loaded — upload a data file in ⚙️ Setup → \U0001f517 Data Bridge."
+        return (
+            f"No {noun} loaded — upload a data file on the 📥 Data tab, under Import previous data."
+        )
     return f"No {noun} loaded — use the Sync button below (local install) or upload a data file."
 
 
@@ -231,7 +233,7 @@ def render_portfolio_partial(hh: Household, container) -> None:
             "FinExtract sync isn't available on the public site — browsers block "
             "the HTTPS page from reaching your local FinExtract server "
             "(http://127.0.0.1:7890), no matter how it's running. "
-            "Bring in real data instead via ⚙️ Setup → \U0001f517 Data Bridge "
+            "Bring in real data instead from the 📥 Data tab, under Import previous data "
             "(encrypted upload from a local install)."
         )
     else:
