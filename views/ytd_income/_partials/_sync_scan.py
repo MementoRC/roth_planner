@@ -1,3 +1,4 @@
+import hashlib
 from typing import NamedTuple
 
 import streamlit as st
@@ -256,6 +257,19 @@ def _render_pdf_uploader(
     parsing carries any cross-document state) -- results are accumulated
     into one ``PdfImportResult`` and applied/reported together via
     ``_apply_scan_result``, exactly like the folder path.
+
+    Each file is content-digested (sha256 of ``getvalue()``, not filename --
+    an edited file reusing the same name must still be rescanned) BEFORE
+    parsing. The digest of every successfully-parsed file is kept in
+    ``st.session_state["_pdf_scanned_digests"]`` for the life of the browser
+    session, so re-clicking "Scan uploaded PDFs" after adding one more file
+    to the uploader (the user's actual workflow -- the widget keeps every
+    previously-added file selected) does not re-read files already scanned.
+    The same set also catches an accidental duplicate selected within one
+    click: it is checked and updated in place as the loop runs, so the
+    second copy is skipped the moment the first is recognized. A failed
+    parse (exception or a reported error) does NOT add its digest, so a
+    transient failure can be retried on the next click.
     """
     st.markdown("##### Import from uploaded PDFs")
     st.caption(
@@ -300,11 +314,22 @@ def _render_pdf_uploader(
     combined = PdfImportResult()
     n = len(uploaded)
     imported = 0
+    skipped_scanned = 0
     failed = 0
+    scanned_digests = st.session_state.get("_pdf_scanned_digests")
+    if scanned_digests is None:
+        scanned_digests = set()
+        st.session_state["_pdf_scanned_digests"] = scanned_digests
     with st.status(f"Scanning {n} PDF(s)…", expanded=True) as status:
         progress = st.progress(0.0)
         for i, uploaded_file in enumerate(uploaded, start=1):
             progress.progress((i - 1) / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
+            digest = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
+            if digest in scanned_digests:
+                skipped_scanned += 1
+                st.write(f"{uploaded_file.name}: already scanned — skipped")
+                progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
+                continue
             try:
                 single = run_uploaded_scan([(uploaded_file.name, uploaded_file.getvalue())]).raw
             except BaseException as exc:  # noqa: BLE001 -- one bad file must not kill the scan
@@ -327,11 +352,18 @@ def _render_pdf_uploader(
                 st.write(f"{uploaded_file.name}: failed to parse")
             else:
                 imported += 1
+                # Only a SUCCESSFUL parse is remembered -- a failed one
+                # (above, or single.errors just below) is retryable on the
+                # next click rather than silently stuck "skipped" forever.
+                scanned_digests.add(digest)
                 st.write(f"{uploaded_file.name}: recognized")
             progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
 
         status.update(
-            label=f"Scanned {n} file(s) — {imported} imported, {failed} failed",
+            label=(
+                f"Scanned {n} file(s) — {imported} imported, "
+                f"{skipped_scanned} skipped, {failed} failed"
+            ),
             state="error" if failed else "complete",
         )
 
