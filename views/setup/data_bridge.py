@@ -183,13 +183,17 @@ def _handle_v2_privkey() -> None:
     after a page reload.
     """
 
-    has_key = "data_bridge_privkey_b64" in st.session_state
+    stored_key = st.session_state.get("data_bridge_privkey_b64")
+    has_key = stored_key is not None
     # Auto-expand on the public site when no key is set — user needs to act.
     expand = is_pyodide() and not has_key
 
     with st.expander("\U0001f511 V2 private key", expanded=expand):
         if has_key:
-            st.caption("\U0001f510 Private key loaded for this session.")
+            # Visible confirmation that the key is actually SAVED, not merely
+            # typed — see the unsaved-warning branch below for why this
+            # distinction matters. Never show the key itself.
+            st.caption("\U0001f510 Private key saved for this session.")
             if st.button("Clear", key="clear_v2_privkey"):
                 st.session_state.pop("data_bridge_privkey_b64", None)
                 st.rerun()
@@ -204,6 +208,15 @@ def _handle_v2_privkey() -> None:
             key="_v2_privkey_input",
             help="From `~/.finextract/data-bridge.priv` on your local host.",
         )
+        # Saved-vs-unsaved must be visibly distinct: a password field holding
+        # typed-but-unsaved text is otherwise indistinguishable from a saved
+        # one (dots either way), so a user who pastes a key and never clicks
+        # Save can believe it is already in effect — and is then told by the
+        # export section, below, that no key is available. Compare WITHOUT
+        # ever displaying the value, its length, or logging it — only
+        # whether the stripped input differs from what is actually stored.
+        if key_input.strip() and key_input.strip() != (stored_key or ""):
+            st.caption("⚠️ Key entered but not saved yet — click Save to use it.")
         if st.button("Save", key="save_v2_privkey") and key_input:
             try:
                 decode_keymaterial(key_input)

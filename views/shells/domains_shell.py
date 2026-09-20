@@ -224,9 +224,6 @@ def render(hh: Household) -> None:
             # argument, so it is handed one directly rather than wrapped in
             # `with`.
             render_stock_price_widget(st.container(border=True))
-            with st.container(border=True):
-                st.subheader("1040 Import")
-                _render_pdf_1040_import()
         scan_ctx = None
         with col_pdf, st.container(border=True):
             # "PDF Statements": renamed from "YTD Sync & Scan" (PR B, 2026-09)
@@ -247,6 +244,19 @@ def render(hh: Household) -> None:
                 scan_ctx = render_sync_scan_partial(hh)
             else:
                 _render_owner_required_placeholder()
+        # 1040 Import renders into col_import (matching the original visual
+        # order: below Stock Price) but only AFTER render_sync_scan_partial has
+        # run above. render_sync_scan_partial's scan button writes
+        # st.session_state["_pdf_1040_scanned"] (views/_shared.py:127,145);
+        # _render_pdf_1040_import reads that key and returns early when empty
+        # (views/setup/parameters.py:90-97). Calling it before the scan ran in
+        # this same script pass meant a fresh scan's result never appeared
+        # until the NEXT rerun. `with col_import:` can be re-entered here --
+        # Streamlit appends to the column's existing placeholder rather than
+        # replacing it -- so the on-page order is unchanged.
+        with col_import, st.container(border=True):
+            st.subheader("1040 Import")
+            _render_pdf_1040_import()
         # Full width, beneath both cards: scan OUTPUT, not a third ingest
         # path. scan_ctx is None only when the owner gate replaced the column
         # body with the placeholder -- in which case no scan could have been
