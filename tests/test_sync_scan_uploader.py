@@ -289,3 +289,72 @@ class TestAlreadyScannedFileIsSkipped:
         assert mock_run.call_count == 1
         reads = [c.args[0] for c in mock_st.write.call_args_list]
         assert any("b.pdf" in r and "already scanned" in r for r in reads), reads
+
+
+class TestProgressBarClearedOnCompletion:
+    """A finished scan must not leave the ``st.progress`` bar (and its
+    "file N of M" label) drawn beneath the collapsed ``st.status`` summary --
+    a completed scan that still shows a live-looking progress bar reads as
+    if the app is stuck."""
+
+    def test_progress_emptied_after_successful_scan(self) -> None:
+        good_result = ScanIngestResult(
+            brokerage_count=0,
+            form_1040_count=0,
+            koinly_count=0,
+            skipped_count=0,
+            unrecognized_count=0,
+            magi_candidates_recorded=0,
+            errors=[],
+            raw=PdfImportResult(brokerage_records=[]),
+            pdf_cache={},
+        )
+        mock_st, _state = _mock_st(
+            session_extra={"instance_owner": "you"},
+            uploaded_files=[_FakeUploadedFile("good.pdf")],
+            button_clicks={"scan_uploaded_pdfs_btn"},
+        )
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "ensure_pdf_backend", return_value="ready"),
+            patch.object(sync_scan_mod, "run_uploaded_scan", return_value=good_result),
+            patch("engine.brokerage_statement_pdf.save_statement_records"),
+        ):
+            sync_scan_mod._render_pdf_uploader(
+                instance_owner="you",
+                account_overrides={},
+                owner_map={},
+                ledger={"koinly": {}, "brokerage": {}},
+                identity_set=True,
+            )
+
+        # progress = st.progress(0.0) is called exactly once, so every
+        # subsequent .progress(...)/.empty() call lands on the same mock.
+        mock_st.progress.return_value.empty.assert_called_once()
+
+    def test_progress_emptied_even_when_a_file_fails(self) -> None:
+        def _raise(_documents):
+            raise MemoryError("simulated crash")
+
+        mock_st, _state = _mock_st(
+            session_extra={"instance_owner": "you"},
+            uploaded_files=[_FakeUploadedFile("bad.pdf")],
+            button_clicks={"scan_uploaded_pdfs_btn"},
+        )
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "ensure_pdf_backend", return_value="ready"),
+            patch.object(sync_scan_mod, "run_uploaded_scan", side_effect=_raise),
+            patch("engine.brokerage_statement_pdf.save_statement_records"),
+        ):
+            sync_scan_mod._render_pdf_uploader(
+                instance_owner="you",
+                account_overrides={},
+                owner_map={},
+                ledger={"koinly": {}, "brokerage": {}},
+                identity_set=True,
+            )
+
+        mock_st.progress.return_value.empty.assert_called_once()

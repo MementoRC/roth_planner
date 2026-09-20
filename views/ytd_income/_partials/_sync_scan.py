@@ -359,6 +359,14 @@ def _render_pdf_uploader(
                 st.write(f"{uploaded_file.name}: recognized")
             progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
 
+        # Remove the progress bar once the loop finishes -- left drawn at
+        # 100% with the last file's label, a completed scan reads as if the
+        # app is stuck (screenshot-confirmed). On the normal completion path
+        # (not a conditional branch) so it runs whether or not any file
+        # failed; only the st.status summary and the per-file st.write
+        # outcome lines above remain on screen.
+        progress.empty()
+
         status.update(
             label=(
                 f"Scanned {n} file(s) — {imported} imported, "
