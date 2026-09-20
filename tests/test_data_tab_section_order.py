@@ -229,3 +229,49 @@ def test_import_sections_render_their_real_bodies_once_an_owner_is_set(
     upload_keys = {w.key for w in at.get("file_uploader")}
     assert "bundle_upload" in upload_keys
     assert "pdf_upload" in upload_keys
+
+
+def test_pdf_1040_import_runs_after_the_scan_in_the_same_pass(
+    clean_command_center_caches, monkeypatch
+) -> None:
+    """Regression for the one-rerun lag: ``render_sync_scan_partial`` writes
+    ``st.session_state["_pdf_1040_scanned"]`` (``views/_shared.py:127,145``);
+    ``_render_pdf_1040_import`` reads that key and returns early when empty
+    (``views/setup/parameters.py:90-97``). If the shell called the 1040
+    import panel before the scan ran in the same script pass, a fresh scan's
+    result would not appear in the panel until the NEXT rerun. This asserts
+    ``domains_shell``'s own call order directly, since that is what fixes the
+    lag regardless of what a given scan happens to find.
+    """
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
+    import views.shells.domains_shell as domains_shell_mod
+
+    call_order: list[str] = []
+    original_scan = domains_shell_mod.render_sync_scan_partial
+    original_1040_import = domains_shell_mod._render_pdf_1040_import
+
+    def _tracking_scan(hh):
+        call_order.append("scan")
+        return original_scan(hh)
+
+    def _tracking_1040_import():
+        call_order.append("1040_import")
+        return original_1040_import()
+
+    monkeypatch.setattr(domains_shell_mod, "render_sync_scan_partial", _tracking_scan)
+    monkeypatch.setattr(domains_shell_mod, "_render_pdf_1040_import", _tracking_1040_import)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+
+    at = AppTest.from_function(_render_shell_with_owner)
+    at.run()
+    assert not at.exception
+
+    assert call_order == ["scan", "1040_import"], (
+        "render_sync_scan_partial must run before _render_pdf_1040_import so "
+        "a fresh scan's _pdf_1040_scanned is visible in the same pass "
+        f"-- got {call_order}"
+    )
