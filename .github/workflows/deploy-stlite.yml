@@ -25,6 +25,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # build_stlite.py vendors pdfplumber's pure-Python source directly into
+      # the stlite file map (see VENDOR_PACKAGES/_collect_vendored_packages in
+      # deploy/build_stlite.py), so pdfplumber must be importable at BUILD
+      # time, not just runtime-in-browser. The version here must stay in
+      # lockstep with VENDORED_PDFPLUMBER_VERSION in deploy/build_stlite.py --
+      # bump both together or the build's version guard will fail.
+      - name: Install build-time dependencies
+        run: pip install "pdfplumber==0.11.9"
+
       - name: Build stlite bundle
         run: python deploy/build_stlite.py --out-dir _site
 
