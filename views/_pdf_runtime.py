@@ -7,9 +7,22 @@ time -- but pdfplumber genuinely isn't INSTALLED in the stlite build until
 something puts it there. stlite's ``requirements`` list cannot skip
 dependencies, and pdfplumber's declared pypdfium2/Pillow deps have no WASM
 wheels (only ``pdfplumber/display.py`` imports them, reached solely via
-``Page.to_image()``, which this app never calls) -- so pdfplumber has to be
-installed at runtime with ``micropip.install(..., deps=False)`` instead of
-being listed in ``deploy/build_stlite.py``'s ``REQUIREMENTS``.
+``Page.to_image()``, which this app never calls) -- so pdfplumber cannot
+simply be listed in ``deploy/build_stlite.py``'s ``REQUIREMENTS``.
+
+As of ``deploy/build_stlite.py``'s ``VENDOR_PACKAGES``, the deployed bundle
+now VENDORS pdfplumber's pure-Python source directly into the file map at
+build time, so ``_pdfplumber_importable()`` normally succeeds immediately and
+:func:`ensure_pdf_backend` returns ``"ready"`` on the very first call in the
+browser. The ``micropip.install(..., deps=False)`` path below is kept only as
+a fallback for environments where the vendored source is absent -- it must
+NOT be reintroduced as a per-render background install: a fire-and-forget
+``asyncio.ensure_future`` install task never resolves on the public site,
+leaving "Setting up the PDF reader" permanently stuck there, and is the
+leading suspect -- not a proven cause -- for starving the Pyodide worker's
+message pump and wedging every rerun. The wedge does not reproduce locally
+(there, micropip reaches PyPI and the install completes), so the vendored
+build's effect on it can only be confirmed on the deployed site.
 
 This module owns that one-time install (:func:`ensure_pdf_backend`) plus a
 log-level fix that alone made a 58KB PDF appear to hang in the stlite build:
