@@ -128,6 +128,42 @@ def run_folder_scan(folder_path: Path, *, recorded_at: datetime | None = None) -
     return result
 
 
+def auto_deselect_manual_entry(session_state: Any) -> bool:
+    """Switch the page to synced-data display after a successful sync/scan,
+    UNLESS the user explicitly chose the manual-entry setting themselves.
+
+    The "Manual entry" checkbox (``views/ytd_income/_partials/_manual_entry.py``,
+    key ``ytd_manual_entry``) attaches an ``on_change`` callback that sets
+    ``st.session_state["ytd_manual_entry_explicit"]`` the moment a user touches
+    it directly. A prior sync/scan/import unconditionally forcing the checkbox
+    back off overrode that deliberate choice with no explanation — the real
+    scenario being a PDF that will not parse, so the user switches to manual
+    entry on purpose, only to have the next scan silently flip it back.
+
+    Shared by every sync/scan/import call site (``views/ytd_income/_partials/
+    _sync_scan.py`` and ``views/setup/data_bridge.py``) so the "did the user
+    choose this" check cannot drift between them. Lives here rather than in
+    ``_manual_entry.py`` because ``data_bridge.py`` (``views/setup/``) has no
+    import path to ``views/ytd_income/`` without a circular import risk;
+    ``views/_shared.py`` imports nothing from either package and is already a
+    dependency of both.
+
+    Takes *session_state* as a parameter (the caller's own ``st.session_state``)
+    rather than reaching for a module-level ``st`` here -- every call site
+    already has its own ``st`` bound (and, in tests, its own patched mock), so
+    this stays reachable through whichever ``st`` the caller is using without
+    a second, easy-to-forget patch target of its own.
+
+    Returns whether it actually deselected manual entry, so the caller can
+    surface a short note when it did NOT (the explicit-choice case) --  when
+    it DID, the caller's existing success message already covers it.
+    """
+    if session_state.get("ytd_manual_entry_explicit"):
+        return False
+    session_state["ytd_manual_entry"] = False
+    return True
+
+
 def run_uploaded_scan(
     documents: list[tuple[str, bytes]], *, recorded_at: datetime | None = None
 ) -> ScanIngestResult:

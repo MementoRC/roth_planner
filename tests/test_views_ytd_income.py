@@ -527,6 +527,228 @@ class TestManualEntryAutoDeselect:
         # Assert: rerun was NOT called
         assert not mock_st.rerun.called, "On failed sync, st.rerun() should not be called"
 
+    def test_explicit_choice_preserves_manual_entry_on_sync(self):
+        """A user who deliberately turned manual entry ON (recorded via the
+        checkbox's on_change callback as ytd_manual_entry_explicit=True) keeps
+        it ON through a successful FinExtract sync -- the fix's core case."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+        _state = {
+            "ytd_snapshot": ytd_empty,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            ltcg_ytd=50_000.0,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            "Expected ytd_manual_entry NOT to be forced off when the user chose "
+            f"it explicitly; got calls: {setitem_calls}"
+        )
+        # A successful sync still reruns -- only the checkbox override is skipped.
+        assert mock_st.rerun.called, "Expected st.rerun() still called on successful sync"
+
+    def test_explicit_choice_surfaces_note_on_sync(self):
+        """When the auto-deselect is skipped for an explicit choice, the user
+        must see a short note explaining data was synced but manual entry was
+        left on -- otherwise the skip is invisible."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+        _state = {
+            "ytd_snapshot": ytd_empty,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        caption_texts = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Manual entry stayed ON" in c for c in caption_texts), (
+            f"Expected an explanatory caption for the explicit-choice skip; got {caption_texts}"
+        )
+
+    def test_explicit_choice_preserves_manual_entry_on_brokerage_apply(self, tmp_path):
+        """The brokerage 'Apply to YTD snapshot' button (_sync_scan.py's
+        _render_scan_review, ~:760) must also honour an explicit user choice,
+        not just the FinExtract sync button above."""
+        import engine.pdf_ledger as ledger_mod
+
+        rec = BrokerageStatementRecord(
+            account_number="XXXX9999",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=20.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.button.side_effect = lambda label, **kw: label == "Apply to YTD snapshot"
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save_snapshot,
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+        ):
+            sync_scan_mod._render_scan_review(
+                {"XXXX9999": rec},
+                ledger,
+                account_overrides={},
+                owner_map={},
+                instance_owner="household",
+                identity_set=True,
+            )
+
+        assert mock_save_snapshot.called, "Expected the Apply button to save the YTD snapshot"
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry NOT forced off when chosen explicitly; got {setitem_calls}"
+        )
+        caption_texts = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Manual entry stayed ON" in c for c in caption_texts), (
+            f"Expected an explanatory caption; got {caption_texts}"
+        )
+
+    def test_data_bridge_rederive_preserves_explicit_choice(self):
+        """The .enc import path (views/setup/data_bridge.py's
+        _rederive_ytd_from_ledger) must also honour an explicit user choice,
+        not just the YTD-page sync/scan/apply paths."""
+        import views._shared as shared_mod
+        import views.setup.data_bridge as data_bridge_mod
+
+        ytd = YTDSnapshot(tax_year=2026)
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state = {"ytd_snapshot": ytd, "ytd_manual_entry_explicit": True}
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.session_state = session_state
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(data_bridge_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+            patch.object(data_bridge_mod, "save_ytd_snapshot"),
+        ):
+            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+
+        assert note_needed is True, "Expected the explicit-choice note flag to be True"
+        setitem_calls = [
+            call
+            for call in session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry NOT forced off when chosen explicitly; got {setitem_calls}"
+        )
+
+    def test_data_bridge_rederive_default_auto_deselects(self):
+        """Preserve prior behavior: without an explicit choice, the .enc
+        import path still auto-deselects manual entry."""
+        import views._shared as shared_mod
+        import views.setup.data_bridge as data_bridge_mod
+
+        ytd = YTDSnapshot(tax_year=2026)
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state: dict = {"ytd_snapshot": ytd}
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.session_state = session_state
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(data_bridge_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+            patch.object(data_bridge_mod, "save_ytd_snapshot"),
+        ):
+            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+
+        assert note_needed is False, "Expected no explicit-choice note in the default case"
+        setitem_calls = [
+            call
+            for call in session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry forced off by default; got {setitem_calls}"
+        )
+
     def test_sync_preserves_manual_only_fields_not_zeroed(self):
         """The FinExtract sync button is NQO-exercises-only now — investment income
         (interest/dividends/gains) comes from brokerage statement PDFs instead, and

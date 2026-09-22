@@ -31,6 +31,7 @@ from engine.upload_merge import extract_bundle_magi
 from models.household import Household
 from models.sourced import Source
 from models.ytd_income import YTDSnapshot
+from views._shared import auto_deselect_manual_entry
 
 from ._state import (
     _apply_user_defaults_to_session,
@@ -465,7 +466,7 @@ def _handle_personal_uploads() -> None:
                         # fix: the sender's wages/withholding do not cross, and must
                         # be entered by hand if the household wants a combined figure.
                         st.session_state["ytd_snapshot"] = load_ytd_snapshot() or YTDSnapshot()
-                    _rederive_ytd_from_ledger(new_ledger)
+                    _manual_entry_kept_explicit = _rederive_ytd_from_ledger(new_ledger)
                     # v3-or-older bundle (or a v4 bundle whose exporter had no
                     # PortfolioSnapshot loaded): strike prices came through but no
                     # grants to attach them to, so Household.grants is still the
@@ -484,6 +485,11 @@ def _handle_personal_uploads() -> None:
                             "until the sender re-exports with a current version."
                         )
                     st.success(f"Applied: {bundle_file.name} ({target_owner}). Rerunning…")
+                    if _manual_entry_kept_explicit:
+                        st.caption(
+                            "Manual entry stayed ON — you turned it on yourself, so this "
+                            "import did not switch you back to synced-data display."
+                        )
                     st.rerun()
             except EmptySnapshotWriteRefusedError:
                 st.error(
@@ -514,20 +520,26 @@ def _handle_personal_uploads() -> None:
             st.rerun()
 
 
-def _rederive_ytd_from_ledger(ledger: object) -> None:
+def _rederive_ytd_from_ledger(ledger: object) -> bool:
     """Re-derive brokerage + Koinly YTD fields onto the session snapshot after an import.
 
     Mirrors the exact field assignments in ``views/ytd_income.py`` (scan-folder
     handler): fresh overwrite (``=``, not ``+=``) so the re-derive is idempotent
     across repeated bundle imports. No-op if no YTD snapshot exists yet this
     session (nothing to overwrite onto).
+
+    Returns whether the caller should surface an explicit-choice note -- true
+    when an update happened but manual entry was left ON because the user had
+    deliberately chosen it themselves (see
+    ``views._shared.auto_deselect_manual_entry``); false both when nothing was
+    updated and when the checkbox was auto-deselected as usual.
     """
     from engine.pdf_ledger import derive_brokerage_totals, derive_koinly_totals
     from engine.portfolio_sync.ytd import apply_brokerage_totals
 
     snap = st.session_state.get("ytd_snapshot")
     if snap is None:
-        return
+        return False
 
     brokerage_totals = derive_brokerage_totals(ledger)  # type: ignore[arg-type]
     apply_brokerage_totals(snap, brokerage_totals)
@@ -539,8 +551,9 @@ def _rederive_ytd_from_ledger(ledger: object) -> None:
 
     snap.with_snapshot_date()
     st.session_state["ytd_snapshot"] = snap
-    st.session_state["ytd_manual_entry"] = False
+    deselected = auto_deselect_manual_entry(st.session_state)
     save_ytd_snapshot(snap)
+    return not deselected
 
 
 def _handle_personal_exports() -> None:

@@ -7,11 +7,21 @@ from views._format import fmt_pct
 from views.ytd_income._partials._event_log import render_event_log_partial
 
 
+def _mark_manual_entry_explicit() -> None:
+    """``on_change`` callback for the checkbox below -- records that the user
+    touched this control directly, so a later successful sync/scan/import
+    knows not to override their choice (see
+    ``views._shared.auto_deselect_manual_entry``).
+    """
+    st.session_state["ytd_manual_entry_explicit"] = True
+
+
 def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
     manual = st.checkbox(
         "Manual entry",
         value=st.session_state.get("ytd_manual_entry", True),
         key="ytd_manual_entry",
+        on_change=_mark_manual_entry_explicit,
     )
 
     # Get existing snapshot or create empty

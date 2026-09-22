@@ -24,7 +24,7 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
 from views._pdf_runtime import ensure_pdf_backend, pdf_backend_error
-from views._shared import run_folder_scan, run_uploaded_scan
+from views._shared import auto_deselect_manual_entry, run_folder_scan, run_uploaded_scan
 
 
 class ScanRenderContext(NamedTuple):
@@ -181,10 +181,11 @@ def _apply_scan_result(
             f"{len(ledger['koinly'])} owner(s))"
         )
 
+    _manual_entry_kept_explicit = False
     if applied_bits:
         _snap.with_snapshot_date()
         st.session_state.ytd_snapshot = _snap
-        st.session_state["ytd_manual_entry"] = False
+        _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
         save_ytd_snapshot(_snap)
 
     # Summary: what was parsed, what was applied, what still needs action.
@@ -203,6 +204,11 @@ def _apply_scan_result(
         st.info(not_found_message)
     if applied_bits:
         st.success("Applied to YTD snapshot: " + "; ".join(applied_bits))
+        if _manual_entry_kept_explicit:
+            st.caption(
+                "Manual entry stayed ON — you turned it on yourself, so this "
+                "import did not switch you back to synced-data display."
+            )
     if stmt_unknown_now:
         _partial_now = sum(1 for r in stmt_unknown_now.values() if r.missing_fields)
         _why = "a tax-status confirmation"
@@ -479,8 +485,14 @@ def render_sync_scan_partial(hh: Household) -> ScanRenderContext:
                     st.success(
                         f"Synced NQO exercise data ({len(ytd_snap.gain_events)} gain events)"
                     )
-                # Auto-deselect manual entry so the page switches to synced-data display
-                st.session_state["ytd_manual_entry"] = False
+                    # Auto-deselect manual entry so the page switches to
+                    # synced-data display, UNLESS the user explicitly chose
+                    # this setting themselves (see auto_deselect_manual_entry).
+                    if not auto_deselect_manual_entry(st.session_state):
+                        st.caption(
+                            "Manual entry stayed ON — you turned it on yourself, so this "
+                            "sync did not switch you back to synced-data display."
+                        )
                 st.rerun()
             else:
                 with col_status:
@@ -757,9 +769,14 @@ def _render_scan_review(
             apply_brokerage_totals(prev_ytd, brokerage_totals)
             prev_ytd.with_snapshot_date()
             st.session_state.ytd_snapshot = prev_ytd
-            st.session_state["ytd_manual_entry"] = False
+            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             save_ytd_snapshot(prev_ytd)
             st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+            if _manual_entry_kept_explicit:
+                st.caption(
+                    "Manual entry stayed ON — you turned it on yourself, so this "
+                    "apply did not switch you back to synced-data display."
+                )
             # WARN, NEVER BLOCK: the write above already completed --
             # this only withholds the immediate rerun so a fired
             # mismatch warning survives to be seen, instead of being
