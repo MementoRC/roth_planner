@@ -490,7 +490,14 @@ def test_export_disabled_and_build_skipped_when_instance_owner_unset(monkeypatch
 
 @pytest.mark.parametrize(
     ("instance_owner", "expected_label"),
-    [("you", "Spouse's data"), ("spouse", "Your data")],
+    # The "spouse" case previously expected "Your data" here, which encoded
+    # a pre-existing bug: the caption compared target_owner against the
+    # literal "spouse" instead of deriving from the radio choice, inverting
+    # the label on any non-"you" instance. Fixed in this PR (see
+    # _import_target_label in views/setup/data_bridge.py) — the label is
+    # operator-relative to the radio choice ("Spouse" -> "Spouse's data",
+    # "Me" -> "Your data"), independent of which instance renders it.
+    [("you", "Spouse's data"), ("spouse", "Spouse's data")],
 )
 def test_import_statement_names_concrete_target_owner(
     monkeypatch, instance_owner: str, expected_label: str
