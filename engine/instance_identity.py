@@ -6,8 +6,10 @@ purity rule). Sits directly in engine/, not engine/data_sources/, so
 _REPO_ROOT climbs one fewer parent than paths.py does.
 
 An "instance" is a single deployment/session of this planner (a dev laptop
-install, one browser's session on the public site). This value never changes
-automatically and is deliberately narrower than engine.pdf_owner.OwnerRole:
+install, one browser's session on the public site). This value is defaulted
+to "you" on first use by Setup ▸ Command Center (views/setup/command_center.py)
+and is user-correctable there at any time; it is still deliberately narrower
+than engine.pdf_owner.OwnerRole:
 an instance can be "you" or "spouse" but never "household" -- an instance
 belongs to a single person, even though a specific ACCOUNT it later observes
 may be jointly titled (see engine/account_attribution.py for that distinct,

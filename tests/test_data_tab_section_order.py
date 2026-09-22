@@ -133,13 +133,21 @@ def test_command_center_titles_itself_once_above_the_imports(
     assert "Command Center" not in [s.value for s in at.subheader]
 
 
-def test_import_sections_are_replaced_by_placeholder_without_an_owner(
+def test_import_sections_are_replaced_by_placeholder_when_identity_is_corrupt(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """No owner => both import bodies are suppressed, not merely inert.
+    """Corrupt identity => both import bodies are suppressed, not merely inert.
 
-    _render_shell seeds no ``instance_owner``, which is the first-run state.
+    A genuinely MISSING .instance_owner.json no longer reaches this branch:
+    render_command_center auto-defaults such an instance to "you" (and
+    persists that) inside its own render, before the shell ever checks
+    identity_set for these sections -- so this seeds a corrupt file instead,
+    the only remaining state where identity stays unset after render.
     """
+    import engine.instance_identity as instance_identity_mod
+
+    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+
     at = _run_shell(monkeypatch)
     assert not at.exception
 

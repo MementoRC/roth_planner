@@ -108,7 +108,7 @@ DYNAMIC_PERSONAL_KEYS = [
 # data. The rest are pure interface state.
 MUST_SURVIVE_KEYS = [
     ("instance_owner", "you"),
-    ("instance_owner_gate_choice", "you"),
+    ("instance_owner_change_choice", "you"),
     ("nav_page", "Conversion Planner"),
 ]
 
