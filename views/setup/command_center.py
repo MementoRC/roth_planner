@@ -44,6 +44,7 @@ from engine.instance_identity import (
     load_instance_owner,
     save_instance_owner,
 )
+from engine.pdf_owner import OwnerRole
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
@@ -156,57 +157,60 @@ def render_command_center(hh: Household) -> None:
     """
     st.header("🎛️ Command Center")
 
+    # Identity used to require an explicit, one-shot, unpreselected answer
+    # (index=None) because the choice latched permanently once saved and the
+    # gate never reappeared -- a reflexive Save on a spouse's install could
+    # irrevocably misattribute their accounts to "you". That is no longer
+    # true: identity now defaults to "you" on first use and stays correctable
+    # below for as long as this instance exists, so the irreversibility that
+    # made no-preselection necessary is gone (see
+    # docs/superpowers/specs/2026-08-29-instance-identity-design.md).
+    identity_corrupt = False
     try:
         instance_owner = st.session_state.get("instance_owner") or load_instance_owner()
     except CorruptInstanceOwnerError:
-        instance_owner = None
+        instance_owner, identity_corrupt = None, True
+
+    if instance_owner is None and not identity_corrupt:
+        try:
+            save_instance_owner(OwnerRole.YOU.value)
+        except CorruptInstanceOwnerError:
+            identity_corrupt = True
+        else:
+            instance_owner = OwnerRole.YOU.value
+            st.session_state["instance_owner"] = instance_owner
+
     identity_set = bool(instance_owner)
 
-    if not identity_set:
-        # Three states, not two. The radio below only takes effect when Save
-        # runs save_instance_owner(), so a user who picks an option and stops
-        # sees an unchanged "no owner set yet" and reasonably concludes the
-        # page is broken. The pending choice IS detectable: the radio is
-        # keyed, so its value survives the rerun Streamlit performs on
-        # selection, and is readable here even though the widget renders
-        # below. Read-only -- this does not preselect anything, so the
-        # index=None guarantee documented below is untouched.
-        _pending_choice = st.session_state.get("instance_owner_gate_choice")
-        if _pending_choice is None:
-            st.warning(
-                "This planner instance has no owner set yet. Scanning and "
-                "syncing are unavailable until you answer below."
-            )
-        else:
-            st.warning(
-                f"**{_pending_choice}** is selected but not saved yet. Press "
-                "**Save** below to apply it — scanning and syncing stay "
-                "unavailable until you do."
-            )
-        # index=None (no preselection) is deliberate and load-bearing -- do
-        # NOT restore a default here. Streamlit's default radio behavior
-        # preselects option 0 ("Me"), which would let a reflexive Save click
-        # irrevocably commit an unread default: save_instance_owner() has no
-        # other caller and identity_set latches permanently True once saved,
-        # so this gate never reappears to let the user correct a wrong
-        # answer. On a spouse's install that misattributes their accounts to
-        # "you" -- the design doc calls picking wrong "a real footgun:
-        # picking wrong overwrites your own half of the household"
-        # (docs/superpowers/specs/2026-08-29-instance-identity-design.md:97).
-        # Streamlit >=1.50 is pinned (pixi.toml), well past the 1.27 minimum
-        # for index=None, so the "keep index unset + gate Save on
-        # session_state" fallback for pre-1.27 Streamlit is not needed here.
-        choice = st.radio(
-            "Which person's data does this planner instance hold?",
-            ["Me", "Spouse"],
-            index=None,
-            key="instance_owner_gate_choice",
+    if identity_corrupt:
+        st.error(
+            "⚠️ The instance-identity file is unreadable (corrupt or truncated), "
+            "so this instance's owner could not be set. Scanning and syncing "
+            "stay unavailable until the file is restored or removed."
         )
-        if st.button("Save", key="instance_owner_gate_save", disabled=choice is None):
-            resolved_owner = "you" if choice == "Me" else "spouse"
-            save_instance_owner(resolved_owner)
-            st.session_state["instance_owner"] = resolved_owner
-            st.rerun()
+
+    if identity_set:
+        current_label = "Me" if instance_owner == OwnerRole.YOU.value else "Spouse"
+        with st.expander(f"This planner instance holds: **{current_label}**'s data"):
+            st.caption(
+                "Controls the default owner assigned to scanned PDFs, which "
+                'slot an export labels as "mine", and which person-slot an '
+                "imported legacy bundle fills."
+            )
+            new_choice = st.radio(
+                "Which person's data does this planner instance hold?",
+                ["Me", "Spouse"],
+                index=0 if instance_owner == OwnerRole.YOU.value else 1,
+                key="instance_owner_change_choice",
+            )
+            if st.button("Update", key="instance_owner_change_save"):
+                resolved_owner = (
+                    OwnerRole.YOU.value if new_choice == "Me" else OwnerRole.SPOUSE.value
+                )
+                if resolved_owner != instance_owner:
+                    save_instance_owner(resolved_owner)
+                    st.session_state["instance_owner"] = resolved_owner
+                    st.rerun()
 
     # disabled=True (not hidden) while identity is unset -- a hidden control
     # is indistinguishable from a missing feature (see views/planner.py's

@@ -445,9 +445,18 @@ def test_command_center_confirm_prior_year_magi_syncs_session_state(
     assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
 
 
-def test_command_center_identity_unset_shows_gate_and_disables_sync(
+def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync(
     clean_command_center_caches,
 ) -> None:
+    """Replaces the old gate-blocks-sync test: a genuinely unset instance no
+    longer shows a blocking gate -- it auto-defaults to "you", persists that
+    to disk without any user interaction, and enables Sync immediately. The
+    always-visible correction control (inside a collapsed expander) still
+    renders a single radio, so ``len(at.radio) == 1`` remains true but for a
+    different reason than before.
+    """
+    import engine.instance_identity as instance_identity_mod
+
     def _render() -> None:
         import streamlit as st
 
@@ -463,10 +472,12 @@ def test_command_center_identity_unset_shows_gate_and_disables_sync(
     assert not at.exception
     assert len(at.radio) == 1
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
-    assert sync_button.disabled is True
+    assert sync_button.disabled is False
+    assert at.session_state["instance_owner"] == "you"
+    assert instance_identity_mod.load_instance_owner() == "you"
 
 
-def test_command_center_identity_set_hides_gate_and_enables_sync(
+def test_command_center_identity_set_shows_correction_control_and_enables_sync(
     clean_command_center_caches, monkeypatch
 ) -> None:
     """Non-vacuous by construction: identity is set on DISK (via
@@ -481,15 +492,10 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     exactly-once call pattern -- a future memoized or double-read refactor
     should not break this assertion spuriously.
 
-    This replaces a prior version that asserted only ``len(at.radio) == 0``
-    and ``sync_button.disabled is False`` -- proven vacuous: those are also
-    the exact defaults when the gate feature doesn't exist at all (no radio
-    is ever rendered, and a plain ``st.button`` with no ``disabled=`` kwarg
-    defaults to ``disabled=False``), so the assertions passed identically
-    with the entire gate implementation commented out. Its sibling,
-    ``test_command_center_identity_unset_shows_gate_and_disables_sync``,
-    still carries the real black-box coverage for the gate's un-set/visible
-    branch, where a radio actually appearing IS a positive signal.
+    Unlike the old one-shot gate, the correction control is ALWAYS visible
+    once identity is set, so this asserts a radio DOES appear (not that it
+    is hidden) -- the radio's presence is no longer a signal that identity is
+    unset.
     """
     import views.setup.command_center as command_center_mod
     from engine.instance_identity import save_instance_owner
@@ -511,10 +517,101 @@ def test_command_center_identity_set_hides_gate_and_enables_sync(
     at.run()
 
     assert not at.exception
-    assert len(at.radio) == 0
+    assert len(at.radio) == 1
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is False
     spy.assert_called()
+
+
+def test_command_center_does_not_reset_existing_spouse_identity(
+    clean_command_center_caches,
+) -> None:
+    """An already-"spouse" instance must never be silently reset to "you" by
+    the auto-default path -- that path only fires when owner is None."""
+    import engine.instance_identity as instance_identity_mod
+
+    instance_identity_mod.save_instance_owner("spouse")
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert instance_identity_mod.load_instance_owner() == "spouse"
+    # NOT `at.session_state["instance_owner"]`: identity resolved from disk is
+    # deliberately not back-filled into session_state (mirrors the existing
+    # `st.session_state.get("instance_owner") or load_instance_owner()`
+    # contract -- only the auto-default and Update paths ever write that key).
+
+
+def test_command_center_update_control_changes_owner_and_persists(
+    clean_command_center_caches,
+) -> None:
+    """Picking "Spouse" in the correction control and clicking Update must
+    persist the change to disk, readable back via ``load_instance_owner()``."""
+    import engine.instance_identity as instance_identity_mod
+
+    instance_identity_mod.save_instance_owner("you")
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+    assert not at.exception
+
+    at.radio(key="instance_owner_change_choice").set_value("Spouse")
+    at.button(key="instance_owner_change_save").click().run()
+
+    assert not at.exception
+    assert instance_identity_mod.load_instance_owner() == "spouse"
+    assert at.session_state["instance_owner"] == "spouse"
+
+
+def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
+    clean_command_center_caches,
+) -> None:
+    """A corrupt ``.instance_owner.json`` must NOT be auto-defaulted (that
+    would either raise inside ``save_instance_owner`` or, if it somehow
+    succeeded, destroy the only copy of whatever is on disk) -- the render
+    path must leave the file byte-identical and surface a visible error."""
+    import engine.instance_identity as instance_identity_mod
+
+    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+    before = instance_identity_mod.INSTANCE_OWNER_PATH.read_text()
+
+    def _render() -> None:
+        import streamlit as st
+
+        from models.household import Household
+        from views.setup.command_center import render_command_center
+
+        st.session_state["_pending_review"] = set()
+        render_command_center(Household())
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    assert instance_identity_mod.INSTANCE_OWNER_PATH.read_text() == before
+    assert any("unreadable" in e.value.lower() for e in at.error)
+    sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
+    assert sync_button.disabled is True
+    assert "instance_owner" not in at.session_state
 
 
 def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(

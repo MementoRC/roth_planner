@@ -86,13 +86,28 @@ def test_get_household_exposes_pending_review_gate(clean_command_center_caches) 
 
 
 def test_fresh_run_creates_committed_file_with_migration_identity(
-    clean_command_center_caches,
+    clean_command_center_caches, monkeypatch
 ) -> None:
     """First-ever load (no committed baseline on disk) migrates the session
     default numerically unchanged — the "migration is a numeric no-op"
     invariant resolve_for_app relies on.
+
+    A genuinely fresh instance now auto-defaults its identity inside
+    ``render_command_center`` (see ``views/setup/command_center.py``), which
+    unlocks the Data tab's two import sections in this same render -- unlike
+    before, when a no-owner instance kept them behind a placeholder. Neutralise
+    their heavy/network-facing entry points the same way
+    ``tests/test_setup_shell_characterization.py``'s fixture already does, so
+    this migration-identity assertion isn't coupled to their behaviour.
     """
+    import engine.portfolio_sync as portfolio_sync_mod
+    import engine.tax_return_pdf as tax_return_pdf_mod
+    import views.setup.data_bridge as data_bridge_mod
     from engine.data_sources.paths import COMMITTED_PATH
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
+    monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
     for p in _new_cache_files():
         p.unlink(missing_ok=True)

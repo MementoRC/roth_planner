@@ -73,8 +73,8 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "iira_add",
         # Command Center tab
         "sync_everything_btn",
-        "instance_owner_gate_choice",
-        "instance_owner_gate_save",
+        "instance_owner_change_choice",
+        "instance_owner_change_save",
         # YTD Sync & Scan section (views/ytd_income/_partials/_sync_scan.py,
         # relocated onto this page by PR A -- see module docstring)
         "ytd_sync_btn",
@@ -176,14 +176,18 @@ def test_setup_tab_labels_unchanged(setup_app_test: AppTest) -> None:
 # Setup no longer has ONE widget-key set: two groups are mutually exclusive,
 # so no single render can contain both and the frozen set above is the UNION.
 #
-# - The owner gate (radio + Save) renders only while this instance has NO
-#   owner (views/setup/command_center.py's `if not identity_set:`).
-# - The two Data-tab import sections render their bodies only ONCE it has one
-#   (views/shells/domains_shell.py swaps in a placeholder otherwise).
+# - The correction control (radio + Update) renders only while this
+#   instance's identity is resolvable (views/setup/command_center.py's
+#   `if identity_set:`) -- which now includes a genuinely first-run instance,
+#   since it auto-defaults to "you" inside that same render. Only a CORRUPT
+#   .instance_owner.json still leaves identity unset after render.
+# - The two Data-tab import sections render their bodies only ONCE identity
+#   is set (views/shells/domains_shell.py swaps in a placeholder otherwise),
+#   for the same reason.
 #
 # Both groups stay covered by asserting each state separately rather than
 # dropping either from the baseline.
-_OWNER_GATE_KEYS = frozenset({"instance_owner_gate_choice", "instance_owner_gate_save"})
+_OWNER_GATE_KEYS = frozenset({"instance_owner_change_choice", "instance_owner_change_save"})
 
 _IMPORT_SECTION_KEYS = frozenset(
     {
@@ -204,8 +208,10 @@ _IMPORT_SECTION_KEYS = frozenset(
 
 
 def test_setup_widget_key_set_unchanged(setup_app_test: AppTest) -> None:
-    """Owner set: everything but the owner gate, which has been satisfied."""
-    expected = EXPECTED_WIDGET_KEYS - _OWNER_GATE_KEYS
+    """Owner resolvable (pre-seeded here, but a fresh instance now reaches the
+    same state via auto-default): the correction control and both import
+    bodies are all present."""
+    expected = EXPECTED_WIDGET_KEYS
     actual = _all_widget_keys(setup_app_test)
     missing = expected - actual
     extra = actual - expected
@@ -213,15 +219,20 @@ def test_setup_widget_key_set_unchanged(setup_app_test: AppTest) -> None:
     assert not extra, f"New/unexpected widget keys appeared on Setup: {sorted(extra)}"
 
 
-def test_setup_widget_key_set_unchanged_without_an_owner(
+def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(
     clean_command_center_caches, monkeypatch
 ) -> None:
-    """No owner: the gate is present and the import bodies are not.
+    """Corrupt identity: the correction control and both import bodies are
+    absent.
 
-    The counterpart to the test above -- together they cover every key in
-    EXPECTED_WIDGET_KEYS, so making the import sections owner-gated did not
-    quietly drop 12 keys out of this characterization.
+    This is the only remaining state that diverges from the test above -- a
+    genuinely MISSING .instance_owner.json no longer reaches it, since
+    render_command_center auto-defaults such an instance to "you" (and
+    persists that) within its own render, before the shell ever checks
+    identity_set for the import sections. Together with the test above, this
+    still covers every key in EXPECTED_WIDGET_KEYS.
     """
+    import engine.instance_identity as instance_identity_mod
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
     import views.setup.data_bridge as data_bridge_mod
@@ -229,18 +240,19 @@ def test_setup_widget_key_set_unchanged_without_an_owner(
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
+    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
 
     at = AppTest.from_file(str(APP_PATH))
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
     assert not at.exception
 
-    expected = EXPECTED_WIDGET_KEYS - _IMPORT_SECTION_KEYS
+    expected = EXPECTED_WIDGET_KEYS - _OWNER_GATE_KEYS - _IMPORT_SECTION_KEYS
     actual = _all_widget_keys(at)
     missing = expected - actual
     extra = actual - expected
-    assert not missing, f"Widget keys disappeared from first-run Setup: {sorted(missing)}"
-    assert not extra, f"New/unexpected widget keys on first-run Setup: {sorted(extra)}"
+    assert not missing, f"Widget keys disappeared from corrupt-identity Setup: {sorted(missing)}"
+    assert not extra, f"New/unexpected widget keys on corrupt-identity Setup: {sorted(extra)}"
 
 
 # --- Task 3 supplementary safety net: render_household_partial ----------------
