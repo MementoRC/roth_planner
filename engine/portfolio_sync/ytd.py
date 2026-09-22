@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -186,6 +186,23 @@ def ytd_from_dict(data: dict) -> YTDSnapshot:
         data["crypto_ltcg_ytd"] = 0.0
     if "crypto_income_ytd" not in data:
         data["crypto_income_ytd"] = 0.0
+    # Forward compatibility: a bundle/cache built by a NEWER peer can carry a
+    # field this build doesn't know about yet (the mirror image of the
+    # backward-compat migrations above, which handle keys going MISSING).
+    # YTDSnapshot(**data, ...) below raises TypeError on any unrecognised
+    # keyword, and bridge_bundle.read_bundle_ytd's `except (TypeError,
+    # ValueError, KeyError): return None` turns that into the ENTIRE ytd
+    # section silently vanishing -- wages, LTCG, STCG, dividends,
+    # withholding, everything -- rather than just the one field it doesn't
+    # understand. Dropping unrecognised keys here means a newer peer's
+    # bundle degrades to losing one unknown field, never the whole section.
+    # Derived from the dataclass itself, not a hand-maintained literal list,
+    # so this can't drift the moment a new field is added -- that drift is
+    # exactly the class of bug being fixed. gain_events/income_events are
+    # excluded from the allow-set: they're already popped above and passed
+    # as separate constructor args, not routed back through **data.
+    valid_field_names = {f.name for f in fields(YTDSnapshot)} - {"gain_events", "income_events"}
+    data = {k: v for k, v in data.items() if k in valid_field_names}
     return YTDSnapshot(**data, gain_events=events, income_events=income_events)
 
 

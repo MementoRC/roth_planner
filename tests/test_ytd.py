@@ -1027,6 +1027,43 @@ class TestYTDToFromDictRoundtrip:
         ytd_from_dict(data)
         assert data == original
 
+    def test_from_dict_drops_unknown_key_keeps_known_fields(self):
+        """Forward compat: a NEWER peer's bundle can carry a field this build
+        doesn't know about yet. It must be dropped, not raise -- and every
+        recognised field alongside it must still land intact."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {
+            "tax_year": 2026,
+            "wages_ytd": 150_000.0,
+            "ltcg_ytd": 50_000.0,
+            "federal_withholding_ytd": 42_000.0,
+            "some_future_field_ytd": 123.45,
+        }
+        snap = ytd_from_dict(data)
+        assert snap.wages_ytd == 150_000.0
+        assert snap.ltcg_ytd == 50_000.0
+        assert snap.federal_withholding_ytd == 42_000.0
+        assert not hasattr(snap, "some_future_field_ytd")
+
+    def test_from_dict_missing_backward_compat_keys_all_default_to_zero(self):
+        """All legacy-cache migrations (nqo_exercise_ytd, federal_withholding_ytd,
+        estimated_payments_ytd, hsa/deductible-IRA, crypto) must still default
+        correctly now that an unknown-key filter runs after them -- the filter
+        must not interfere with keys that are simply absent."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {"tax_year": 2026, "wages_ytd": 50_000.0}
+        snap = ytd_from_dict(data)
+        assert snap.nqo_exercise_ytd == 0.0
+        assert snap.federal_withholding_ytd == 0.0
+        assert snap.estimated_payments_ytd == 0.0
+        assert snap.hsa_contribution_ytd == 0.0
+        assert snap.deductible_ira_contribution_ytd == 0.0
+        assert snap.crypto_stcg_ytd == 0.0
+        assert snap.crypto_ltcg_ytd == 0.0
+        assert snap.crypto_income_ytd == 0.0
+
 
 class TestQualifiedDividendsNotDoubleCounted:
     """audit-0823 C1: no brokerage statement splits qualified vs ordinary
