@@ -248,10 +248,15 @@ def is_koinly_report(pages: Sequence[str]) -> bool:
     demands (see _TAX_YEAR_RE, reused here rather than duplicated) -- a
     detector must require at least what its parser requires, otherwise it
     claims files it cannot parse. A bare "koinly" mention (e.g. a TurboTax
-    1099 import-source line naming Koinly as a data source) is not enough."""
-    has_koinly = any("koinly" in (page or "").lower() for page in pages)
-    has_tax_year = any(_TAX_YEAR_RE.search(page or "") for page in pages)
-    return has_koinly and has_tax_year
+    1099 import-source line naming Koinly as a data source) is not enough.
+
+    Short-circuits on the vendor-name scan: if "koinly" appears nowhere,
+    the TAX YEAR scan cannot change the answer, so it is skipped entirely --
+    this avoids a second full pass over `pages`, which is frequently a
+    lazily-extracting view backed by an open pdfplumber document."""
+    if not any("koinly" in (page or "").lower() for page in pages):
+        return False
+    return any(_TAX_YEAR_RE.search(page or "") for page in pages)
 
 
 def parse_koinly_text(pages: Sequence[str]) -> KoinlyReport:
