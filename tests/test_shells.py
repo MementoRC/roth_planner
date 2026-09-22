@@ -244,8 +244,9 @@ def test_import_targets_the_other_person_with_no_radio(monkeypatch) -> None:
         # The derivation helper is asserted directly here as a focused unit
         # check (AppTest *can* populate the file_uploader and drive the real
         # Apply body -- see test_apply_uploads_end_to_end_imports_as_other_owner
-        # below, which covers that end-to-end path instead).
-        st.session_state["_test_target_owner"] = _import_target_owner()
+        # below, which covers that end-to-end path instead). "Spouse" is the
+        # radio's default choice, matching the un-driven widget state below.
+        st.session_state["_test_target_owner"] = _import_target_owner("Spouse")
 
     at = AppTest.from_function(_render)
     at.run()
@@ -369,6 +370,72 @@ def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
     assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
 
 
+@pytest.mark.parametrize("whose", ["Spouse", "Me"])
+def test_import_never_adopts_ytd_from_sender(monkeypatch, whose: str) -> None:
+    """REGRESSION (PR #497 property): the receiver's own wages/withholding/etc.
+    must never be overwritten by the sender's YTD figures, for EITHER
+    "Whose data is in this file?" choice -- the whose-data radio changes
+    which owner SLOT the import targets, not whether YTD crosses at all
+    (views/setup/data_bridge.py:417-442)."""
+    import json
+
+    import streamlit as st_mod
+    from streamlit.testing.v1 import AppTest
+
+    import engine.data_bridge_crypto as data_bridge_crypto_mod
+    import views.setup.data_bridge as data_bridge_mod
+
+    sender_bundle = {
+        "format_version": 4,
+        "sections": {
+            "setup_scalars": {},
+            "portfolio": {"accounts": []},
+            "ytd": {"wages_ytd": 100_000.0, "ira_conversions_ytd": 30_000.0},
+        },
+    }
+    payload_bytes = json.dumps(sender_bundle).encode("utf-8")
+
+    def _fake_apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
+        return existing_snapshot, existing_ledger
+
+    monkeypatch.setattr(
+        data_bridge_crypto_mod, "open_uploaded_payload", lambda raw, privkey: payload_bytes
+    )
+    monkeypatch.setattr(data_bridge_mod, "apply_bundle", _fake_apply_bundle)
+    monkeypatch.setattr(data_bridge_mod, "load_snapshot", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "save_snapshot", lambda snap, **kwargs: None)
+    monkeypatch.setattr(data_bridge_mod, "_load_pdf_ledger", lambda: {})
+    monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
+    monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+    # Pyodide-like: no persistent filesystem, so no receiver snapshot to load.
+    monkeypatch.setattr(data_bridge_mod, "load_ytd_snapshot", lambda: None)
+    monkeypatch.setattr(st_mod, "rerun", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+    uploader = next(w for w in at.file_uploader if w.key == "bundle_upload")
+    uploader.set_value(("roth_bridge.enc", payload_bytes, "application/octet-stream"))
+    if whose == "Me":
+        at.radio(key="import_whose_data").set_value("Me")
+    apply_button = next(b for b in at.button if b.key == "apply_uploads")
+    apply_button.set_value(True)
+    at.run()
+
+    assert not at.exception
+    ytd_snap = at.session_state["ytd_snapshot"]
+    assert ytd_snap.wages_ytd != 100_000.0
+    assert ytd_snap.ira_conversions_ytd != 30_000.0
+
+
 def test_export_disabled_and_build_skipped_when_instance_owner_unset(monkeypatch) -> None:
     """Spec gap 1: the export control is gated on instance identity the same
     way scan/sync/import are gated (design spec:52, :127-131). An export
@@ -423,7 +490,14 @@ def test_export_disabled_and_build_skipped_when_instance_owner_unset(monkeypatch
 
 @pytest.mark.parametrize(
     ("instance_owner", "expected_label"),
-    [("you", "Spouse's data"), ("spouse", "Your data")],
+    # The "spouse" case previously expected "Your data" here, which encoded
+    # a pre-existing bug: the caption compared target_owner against the
+    # literal "spouse" instead of deriving from the radio choice, inverting
+    # the label on any non-"you" instance. Fixed in this PR (see
+    # _import_target_label in views/setup/data_bridge.py) — the label is
+    # operator-relative to the radio choice ("Spouse" -> "Spouse's data",
+    # "Me" -> "Your data"), independent of which instance renders it.
+    [("you", "Spouse's data"), ("spouse", "Spouse's data")],
 )
 def test_import_statement_names_concrete_target_owner(
     monkeypatch, instance_owner: str, expected_label: str
@@ -448,6 +522,95 @@ def test_import_statement_names_concrete_target_owner(
 
     at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
     at.run()
+
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any(f"Importing as: **{expected_label}**" in c for c in captions), captions
+
+
+@pytest.mark.parametrize(
+    ("instance_owner", "whose", "expected"),
+    [
+        ("you", "Spouse", "spouse"),  # unchanged historical inversion
+        ("you", "Me", "you"),
+        ("spouse", "Me", "spouse"),
+        ("spouse", "Spouse", "you"),
+    ],
+)
+def test_import_target_owner_resolution(
+    monkeypatch, instance_owner: str, whose: str, expected: str
+) -> None:
+    """Unit-level regression guard for the whose-data -> target-owner
+    mapping, independent of widget rendering. "Spouse" is the unchanged,
+    historical inversion; "Me" targets this instance's own (un-inverted)
+    identity, for restoring your own backup."""
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "_this_instance_owner", lambda owner=instance_owner: owner)
+    assert data_bridge_mod._import_target_owner(whose) == expected
+
+
+def test_import_whose_data_radio_defaults_to_spouse(monkeypatch) -> None:
+    """The "Whose data is in this file?" radio must default to "Spouse"
+    (index 0) when the user touches nothing, so an accidental future flip
+    to "Me" (which would silently redirect every untouched import into the
+    user's OWN slot) is caught."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render() -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = "you"
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render)
+    at.run()
+
+    assert not at.exception
+    radio = at.radio(key="import_whose_data")
+    assert radio.index == 0
+    assert radio.value == "Spouse"
+
+
+@pytest.mark.parametrize(
+    ("instance_owner", "whose", "expected_label"),
+    [
+        ("you", "Spouse", "Spouse's data"),
+        ("you", "Me", "Your data"),
+        ("spouse", "Me", "Your data"),
+        ("spouse", "Spouse", "Spouse's data"),
+    ],
+)
+def test_import_caption_agrees_with_applied_target_for_both_choices(
+    monkeypatch, instance_owner: str, whose: str, expected_label: str
+) -> None:
+    """The "Importing as" caption and the value Apply would use must come
+    from the same resolution — this drives the radio to each choice and
+    confirms the caption names the target that choice actually produces,
+    for BOTH "Spouse" and "Me" (design spec §7(a))."""
+    from streamlit.testing.v1 import AppTest
+
+    import views.setup.data_bridge as data_bridge_mod
+
+    monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
+
+    def _render(owner: str) -> None:
+        import streamlit as st
+
+        from views.setup.data_bridge import _handle_personal_uploads
+
+        st.session_state["instance_owner"] = owner
+        _handle_personal_uploads()
+
+    at = AppTest.from_function(_render, kwargs={"owner": instance_owner})
+    at.run()
+    at.radio(key="import_whose_data").set_value(whose).run()
 
     assert not at.exception
     captions = [c.value for c in at.caption]

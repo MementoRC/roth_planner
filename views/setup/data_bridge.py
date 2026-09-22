@@ -252,16 +252,24 @@ def _this_instance_owner() -> str | None:
         return None
 
 
-def _import_target_owner() -> str:
-    """An imported bundle always belongs to the OTHER household member.
+def _import_target_owner(whose: str) -> str:
+    """Resolve which owner slot an import targets from the user's choice.
 
-    Replaces the "Whose data?" pc_role radio: this instance's own identity is
-    already known, so asking again only invites a mis-click that overwrites
-    the wrong owner's slot. Defaults to a "you" instance (so imports target
-    "spouse") when identity is unset -- the Apply button is disabled in that
-    state anyway.
+    ``whose`` is the value of the "Whose data is in this file?" radio
+    (``import_whose_data``): ``"Spouse"`` means the file is the OTHER
+    household member's export, so the target is this instance's identity
+    INVERTED (the historical, still-default behaviour). ``"Me"`` means the
+    file is this instance's OWN backup, so the target is this instance's
+    OWN identity, un-inverted -- this is what lets a backup be restored
+    into the slot it was exported from.
+
+    Defaults to a "you" instance (so "Spouse" targets "spouse") when
+    identity is unset -- the Apply button is disabled in that state anyway.
     """
-    return "spouse" if (_this_instance_owner() or "you") == "you" else "you"
+    own = _this_instance_owner() or "you"
+    if whose == "Me":
+        return own
+    return "spouse" if own == "you" else "you"
 
 
 def _render_joint_field_conflicts() -> None:
@@ -330,9 +338,25 @@ def _handle_personal_uploads() -> None:
         )
         identity_set = bool(_this_instance_owner())
         if identity_set:
-            _import_target_label = (
-                "Spouse's data" if _import_target_owner() == "spouse" else "Your data"
+            whose_data = st.radio(
+                "Whose data is in this file?",
+                ["Spouse", "Me"],
+                index=0,
+                key="import_whose_data",
+                help=(
+                    "Spouse: this file is the other household member's export "
+                    "(the normal case). Me: this file is my own backup — "
+                    "restore it into my own slot instead of theirs."
+                ),
             )
+        else:
+            whose_data = "Spouse"
+        # Resolved ONCE per script run and reused for both the caption below
+        # and the Apply handler further down, so the two can never diverge
+        # (see docs/superpowers/specs/2026-09-20-import-data-ownership-design.md §7(a)).
+        target_owner = _import_target_owner(whose_data)
+        if identity_set:
+            _import_target_label = "Your data" if whose_data == "Me" else "Spouse's data"
             st.caption(
                 f"Importing as: **{_import_target_label}** — this instance's "
                 "own identity never changes."
@@ -363,7 +387,9 @@ def _handle_personal_uploads() -> None:
                         "roth_bridge.enc."
                     )
                 else:
-                    target_owner = _import_target_owner()
+                    # target_owner was already resolved once above (same
+                    # script run as the "Importing as" caption) — reused
+                    # here rather than re-derived, so the two cannot diverge.
                     incoming_snap = _portfolio_snapshot_from_dict(
                         {"accounts": data["sections"]["portfolio"]["accounts"]}
                     )
