@@ -72,6 +72,49 @@
       .getElementById("runtime-banner-reload")
       .addEventListener("click", () => location.reload());
 
+    // Both known failure variants share one cause: stlite spawns an extra
+    // kernel mid-session, which re-binds the JS side while the Python instance
+    // that is actually rendering stops receiving messages. A stale binding
+    // throws "P.receive_websocket_from_js is not a function"; a live-but-wrong
+    // worker swallows the message in complete silence, raising nothing at all
+    // -- so the rejection listener below cannot see that half of it.
+    //
+    // The count alone is NOT a usable signal: stlite legitimately creates more
+    // than one kernel while booting (measured 2026-09-21: stlite 1.9.1 logs
+    // this line TWICE on a perfectly healthy load, 0.90.0 once). Alarming on
+    // the second would fire on every single visit.
+    //
+    // What is never normal is a NEW kernel appearing once the app is already
+    // up. Verified on live prod: three successful navigations over 105s
+    // produced zero further kernel loads, while a wedged page logged four in
+    // one second, minutes after boot. So the detector arms only after the
+    // loading panel clears, plus a grace period for late boot activity.
+    let kernelRespawnArmed = false;
+    window.__armKernelRespawnDetector = () => {
+      if (window.__kernelDetectorArming) return;
+      window.__kernelDetectorArming = true;
+      setTimeout(() => {
+        kernelRespawnArmed = true;
+      }, 15000);
+    };
+    const originalDebug = console.debug ? console.debug.bind(console) : () => {};
+    console.debug = function (...args) {
+      try {
+        const sawKernelLoad = args.some(
+          (a) => typeof a === "string" && a.includes("The kernel has been loaded")
+        );
+        if (sawKernelLoad && kernelRespawnArmed) {
+          window.__stliteShowBanner(
+            "The Python runtime restarted unexpectedly, so this page has " +
+              "stopped responding. Please reload."
+          );
+        }
+      } catch (err) {
+        // Instrumentation must never break logging.
+      }
+      return originalDebug(...args);
+    };
+
     // The loading panel is display:none once Streamlit renders, so any error
     // after that point would be written into an invisible element. Fall back
     // to the banner in that case.
@@ -127,6 +170,7 @@
       const loader = document.getElementById("loading");
       if (loader && document.querySelector("#root iframe, #root .stApp")) {
         loader.style.display = "none";
+        window.__armKernelRespawnDetector?.();
         return true;
       }
       return false;
