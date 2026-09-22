@@ -72,6 +72,38 @@
       .getElementById("runtime-banner-reload")
       .addEventListener("click", () => location.reload());
 
+    // stlite logs "The kernel has been loaded. Start connecting." via
+    // console.debug once per kernel it creates. A healthy page load produces
+    // exactly ONE. Observed 2026-09-21: a wedged page had FIVE -- four inside
+    // a single second, with no navigation. stlite had spawned extra kernels
+    // mid-session, re-binding the JS side away from the Python instance that
+    // was actually rendering. Afterwards clicks either throw (stale binding)
+    // or vanish SILENTLY (delivered to a live-but-wrong worker), and the
+    // silent variant produces no error to listen for. Counting this line
+    // catches both variants, at the moment of corruption rather than when
+    // some later click happens to fail.
+    let kernelLoadCount = 0;
+    const originalDebug = console.debug ? console.debug.bind(console) : () => {};
+    console.debug = function (...args) {
+      try {
+        const sawKernelLoad = args.some(
+          (a) => typeof a === "string" && a.includes("The kernel has been loaded")
+        );
+        if (sawKernelLoad) {
+          kernelLoadCount += 1;
+          if (kernelLoadCount > 1) {
+            window.__stliteShowBanner(
+              "The Python runtime restarted unexpectedly, so this page has " +
+                "stopped responding. Please reload."
+            );
+          }
+        }
+      } catch (err) {
+        // Instrumentation must never break logging.
+      }
+      return originalDebug(...args);
+    };
+
     // The loading panel is display:none once Streamlit renders, so any error
     // after that point would be written into an invisible element. Fall back
     // to the banner in that case.
