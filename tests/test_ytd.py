@@ -645,6 +645,51 @@ class TestAboveTheLineAdjustmentsCacheRoundtrip:
         assert loaded.deductible_ira_contribution_ytd == 0.0
 
 
+class TestEstimatedPaymentsCacheRoundtrip:
+    """save_ytd_snapshot/load_ytd_snapshot must preserve estimated_payments_ytd,
+    with a backward-compat default for caches predating the field."""
+
+    def test_roundtrip_preserves_estimated_payments_ytd(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_est.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=80_000.0,
+            federal_withholding_ytd=10_000.0,
+            estimated_payments_ytd=12_000.0,
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.estimated_payments_ytd == 12_000.0, (
+            f"Expected estimated_payments_ytd=12000 after round-trip; got {loaded.estimated_payments_ytd}"
+        )
+
+    def test_cache_missing_estimated_payments_key_migrates_to_zero(self, tmp_path, monkeypatch):
+        """Pre-existing caches lacking estimated_payments_ytd must load without raising."""
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        cache_path = tmp_path / "ytd_legacy_est.json"
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
+
+        save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
+        data = json.loads(cache_path.read_text())
+        data.pop("estimated_payments_ytd", None)
+        cache_path.write_text(json.dumps(data))
+
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.estimated_payments_ytd == 0.0
+
+
 class TestEstimateYtdFederalTax:
     """Tests for engine.tax.estimate_ytd_federal_tax."""
 

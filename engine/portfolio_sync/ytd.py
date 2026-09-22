@@ -136,6 +136,7 @@ def ytd_to_dict(ytd: YTDSnapshot) -> dict:
         "tax_exempt_interest_ytd": ytd.tax_exempt_interest_ytd,
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "federal_withholding_ytd": ytd.federal_withholding_ytd,
+        "estimated_payments_ytd": ytd.estimated_payments_ytd,
         "hsa_contribution_ytd": ytd.hsa_contribution_ytd,
         "deductible_ira_contribution_ytd": ytd.deductible_ira_contribution_ytd,
         "crypto_stcg_ytd": ytd.crypto_stcg_ytd,
@@ -170,6 +171,9 @@ def ytd_from_dict(data: dict) -> YTDSnapshot:
     # PU1-M01: migrate old caches that predate federal_withholding_ytd field.
     if "federal_withholding_ytd" not in data:
         data["federal_withholding_ytd"] = 0.0
+    # Migrate old caches that predate estimated_payments_ytd (Form 1040-ES).
+    if "estimated_payments_ytd" not in data:
+        data["estimated_payments_ytd"] = 0.0
     # Migrate old caches that predate the above-the-line HSA/IRA adjustment fields.
     if "hsa_contribution_ytd" not in data:
         data["hsa_contribution_ytd"] = 0.0

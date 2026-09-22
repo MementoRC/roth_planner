@@ -245,7 +245,11 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     st.markdown("---")
     st.subheader("Mid-Year Safe-Harbor Payment Guidance")
     prior_year_tax = load_prior_year_federal_tax()
-    already_paid = float(ytd.federal_withholding_ytd)
+    # Already paid = W-2 federal withholding + quarterly estimated tax payments
+    # (Form 1040-ES). Withholding-only understated "already paid" to $0 for
+    # anyone who pays estimated tax instead of (or in addition to) withholding,
+    # showing a full balance due even after real payments were made.
+    already_paid = float(ytd.federal_withholding_ytd) + float(ytd.estimated_payments_ytd)
     # Prior-year AGI governs the 100% vs 110% safe-harbor rule (§6654). Use the household's cached
     # prior-year MAGI as the AGI proxy; None when unknown → the engine assumes 110% and labels it.
     prior_year = _date.today().year - 1
@@ -270,7 +274,11 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
         fmt_dollars(guidance.safe_harbor_target),
         help=guidance.rule_used,
     )
-    g2.metric("Already paid YTD", fmt_dollars(guidance.already_paid_ytd))
+    g2.metric(
+        "Already paid YTD",
+        fmt_dollars(guidance.already_paid_ytd),
+        help="Federal tax withholding plus quarterly estimated tax payments (Form 1040-ES) made year-to-date.",
+    )
     g3.metric(
         f"Remaining to pay by {guidance.next_quarterly_due}",
         fmt_dollars(guidance.remaining_to_pay),

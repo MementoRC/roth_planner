@@ -635,6 +635,44 @@ class TestManualEntryAutoDeselect:
             f"sync; got {result.federal_withholding_ytd}"
         )
 
+    def test_estimated_payments_survives_sync(self):
+        """Manually-entered estimated_payments_ytd must not be wiped by an
+        NQO-only FinExtract sync, mirroring federal_withholding_ytd (C96)."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            estimated_payments_ytd=9_000.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = False
+
+        synced_ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-12")
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.estimated_payments_ytd == 9_000.0, (
+            "Expected estimated_payments_ytd=9000 preserved through NQO-only "
+            f"sync; got {result.estimated_payments_ytd}"
+        )
+
 
 class TestManualEntryPreservesNqoExerciseYtd:
     """C42 (audit-0805, HIGH): _manual_entry.py's fresh-YTDSnapshot rebuild
@@ -783,6 +821,82 @@ class TestTaxBracketAndSafeHarborSections:
         assert captured.get("filing_status") == "Single"
         assert captured.get("prior_year_agi") == 120_000.0
 
+    def test_already_paid_includes_withholding_and_estimated_payments(self):
+        """Already-paid YTD must sum W-2 withholding AND Form 1040-ES estimated
+        payments -- a quarterly-estimated-tax payer must not see $0 already-paid."""
+        from engine.tax import SafeHarborGuidance
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            wages_ytd=180_000.0,
+            federal_withholding_ytd=15_000.0,
+            estimated_payments_ytd=9_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
+            patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("already_paid_ytd") == 24_000.0, (
+            f"Expected 15000 withholding + 9000 estimated = 24000; got {captured.get('already_paid_ytd')}"
+        )
+
+    def test_estimated_payments_alone_reduce_already_paid(self):
+        """A pure estimated-tax payer (no W-2 withholding) must still show
+        already-paid > 0, not the pre-fix $0."""
+        from engine.tax import SafeHarborGuidance
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            wages_ytd=0.0,
+            federal_withholding_ytd=0.0,
+            estimated_payments_ytd=11_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
+            patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("already_paid_ytd") == 11_000.0, (
+            f"Expected estimated-payments-only already_paid_ytd=11000; got {captured.get('already_paid_ytd')}"
+        )
+
     def test_renders_capital_gains_section_with_events(self):
         """Realized Capital Gains section renders breakdown when gain_events present."""
         from models.ytd_income import RealizedGainEvent
@@ -883,6 +997,28 @@ class TestManualEntryFieldCoverage:
             f"Expected the stored -3000 LTCG loss to survive manual-entry render "
             f"unclamped; got {saved.ltcg_ytd}"
         )
+
+    def test_manual_entry_preserves_estimated_payments_ytd(self):
+        """Quarterly estimated tax payments (Form 1040-ES) entered manually must
+        survive a manual-entry render, mirroring federal_withholding_ytd."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(estimated_payments_ytd=8_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.estimated_payments_ytd == 8_000.0
 
 
 class TestIncomeEventLog:

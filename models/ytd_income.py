@@ -119,6 +119,7 @@ class YTDSnapshot:
 
     # Withholding / payments
     federal_withholding_ytd: float = 0.0  # W-2 federal tax withheld YTD
+    estimated_payments_ytd: float = 0.0  # Form 1040-ES quarterly estimated tax payments YTD
 
     # Above-the-line adjustments
     hsa_contribution_ytd: float = 0.0  # Form 8889 deductible HSA contribution (reduces AGI/MAGI)
