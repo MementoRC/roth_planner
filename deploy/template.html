@@ -130,7 +130,53 @@
         window.__stliteShowBanner(msg);
       }
     };
+    // Loud Pyodide/WASM fatal detector -- distinct from the SILENT
+    // worker-swallow mode described above. Observed in production on stlite
+    // 1.9.1: Pyodide's WASM runtime throws "RuntimeError: memory access out
+    // of bounds" (or "table index is out of bounds" / "Recursive call to
+    // fatal_error" / "unreachable executed"), firing repeatedly as BOTH
+    // uncaught errors and unhandled promise rejections -- dozens of times in
+    // a single freeze. The existing unhandledrejection listener below
+    // receives these, but its receive_websocket_from_js filter is too narrow
+    // to match them, so they were silently discarded and the page stayed
+    // frozen with no banner: the user had to open devtools to learn anything.
+    // This classifier catches that case and shows a banner exactly once,
+    // without changing the dead-channel path's own behavior.
+    const WASM_FATAL_PATTERNS = [
+      /memory access out of bounds/,
+      /table index is out of bounds/,
+      /Recursive call to fatal_error/,
+      /unreachable executed/,
+    ];
+    function __isPyodideWasmFatal(errOrReason) {
+      try {
+        const message = String((errOrReason && errOrReason.message) || errOrReason || "");
+        const stack = String((errOrReason && errOrReason.stack) || "");
+        const text = `${message}\n${stack}`;
+        if (WASM_FATAL_PATTERNS.some((re) => re.test(text))) return true;
+        if (/RuntimeError/.test(text) && /pyodide\.asm\.(wasm|js)/.test(text)) return true;
+        return false;
+      } catch (err) {
+        return false; // this classifier must never itself throw
+      }
+    }
+    let wasmFatalShown = false;
+    function __handlePyodideWasmFatal(errOrReason) {
+      if (wasmFatalShown) return; // storms dozens of times per freeze -- latch to one banner
+      wasmFatalShown = true;
+      console.error(
+        "[stlite][wasm-fatal]",
+        String((errOrReason && errOrReason.message) || errOrReason)
+      );
+      window.__stliteShowBanner(
+        "The planner's Python runtime has crashed and cannot recover. Please reload the page."
+      );
+    }
     window.addEventListener("error", (e) => {
+      if (__isPyodideWasmFatal(e.error || e)) {
+        __handlePyodideWasmFatal(e.error || e);
+        return;
+      }
       window.__stliteShowError(`Unexpected error: ${e.message || e}. Try reloading the page.`);
     });
     window.addEventListener("unhandledrejection", (e) => {
@@ -140,6 +186,10 @@
           "The Python runtime did not finish starting, so nothing on this page " +
             "will respond. Please reload."
         );
+        return;
+      }
+      if (__isPyodideWasmFatal(e.reason)) {
+        __handlePyodideWasmFatal(e.reason);
       }
     });
   </script>

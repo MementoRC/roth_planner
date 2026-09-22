@@ -155,3 +155,44 @@ class TestTemplateReferencesCurrentStlitePackage:
             "deploy/template.html should reference @stlite/browser (the current "
             "package name post-rename)"
         )
+
+
+class TestTemplateSurfacesPyodideWasmFatal:
+    """deploy/template.html must classify and surface loud Pyodide/WASM fatals.
+
+    A real production wedge on stlite 1.9.1 threw "RuntimeError: memory access
+    out of bounds" (Pyodide WASM fatal) repeatedly as both uncaught errors and
+    unhandled promise rejections. The pre-existing unhandledrejection listener
+    received these but its receive_websocket_from_js filter was too narrow to
+    match them, so the fatal was silently discarded and the page stayed frozen
+    with no banner. This is a static source-text scan only -- see the module
+    docstring's caveat about what these checks can and cannot prove.
+    """
+
+    def test_wasm_fatal_patterns_present(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        for pattern in [
+            "memory access out of bounds",
+            "table index is out of bounds",
+            "Recursive call to fatal_error",
+            "unreachable executed",
+        ]:
+            assert pattern in template, (
+                f"deploy/template.html no longer matches WASM fatal pattern {pattern!r} -- "
+                "the loud Pyodide/WASM fatal would go undetected again"
+            )
+
+    def test_wasm_fatal_classifier_is_latched(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "wasmFatalShown" in template, (
+            "deploy/template.html must latch the WASM fatal banner (it fires in a "
+            "storm of dozens of repeats per freeze) -- latch variable not found"
+        )
+        assert "__isPyodideWasmFatal" in template, (
+            "deploy/template.html must wire a WASM-fatal classifier into both the "
+            "error and unhandledrejection listeners"
+        )
+        assert "__handlePyodideWasmFatal" in template, (
+            "deploy/template.html must wire a WASM-fatal classifier into both the "
+            "error and unhandledrejection listeners"
+        )
