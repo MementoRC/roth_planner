@@ -356,7 +356,7 @@ def _handle_personal_uploads() -> None:
         # (see docs/superpowers/specs/2026-09-20-import-data-ownership-design.md §7(a)).
         target_owner = _import_target_owner(whose_data)
         if identity_set:
-            _import_target_label = "Spouse's data" if target_owner == "spouse" else "Your data"
+            _import_target_label = "Your data" if whose_data == "Me" else "Spouse's data"
             st.caption(
                 f"Importing as: **{_import_target_label}** — this instance's "
                 "own identity never changes."
