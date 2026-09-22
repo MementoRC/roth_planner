@@ -196,3 +196,98 @@ class TestTemplateSurfacesPyodideWasmFatal:
             "deploy/template.html must wire a WASM-fatal classifier into both the "
             "error and unhandledrejection listeners"
         )
+
+
+class TestTemplateSurfacesLivenessHeartbeat:
+    """deploy/template.html must actively poll the stlite kernel for liveness.
+
+    stlite's Pyodide worker installs ZERO global fault handlers and its
+    postMessage protocol has no "worker died" message type -- event:loadError
+    is load-time only, and reply.error is scoped to a single in-flight
+    command. A fatal on an un-awaited await inside the worker's async
+    dispatcher becomes an unhandled rejection on the WORKER's own global
+    scope, which per platform semantics never reaches this page's window, so
+    none of window/error/unhandledrejection listeners (including PR #507's
+    dead-channel detector and PR #508's respawn detector) can ever fire for
+    it. The worker script is an inlined data: URI baked into stlite's CDN
+    bundle and cannot be patched. The only way to detect this failure class
+    is a main-thread heartbeat: a trivial runPython() round trip (the one
+    controller API that requires an actual worker reply) probed on an
+    interval, with a timeout treated as evidence of a wedge. This is a
+    static source-text scan only -- see the module docstring's caveat about
+    what these checks can and cannot prove.
+    """
+
+    def test_heartbeat_probes_via_run_python_round_trip(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "controller.runPython(" in template, (
+            "deploy/template.html must probe liveness via controller.runPython(), "
+            "the one mount()-returned API that requires an actual worker reply "
+            "(reply:run_python) -- without this, a worker-origin fatal that emits "
+            "no signal at all is undetectable"
+        )
+        assert "controller = mount(" in template, (
+            "deploy/template.html must capture mount()'s return value so the "
+            "heartbeat can call runPython() on it"
+        )
+
+    def test_heartbeat_is_armed_only_after_load_completes(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "__armHeartbeat" in template, (
+            "deploy/template.html must arm the heartbeat via a dedicated "
+            "post-loader hook (mirroring __armKernelRespawnDetector), never "
+            "probing during startup itself"
+        )
+        assert "window.__armHeartbeat?.(controller)" in template, (
+            "deploy/template.html must arm the heartbeat from the same "
+            "post-loader callback that arms the kernel respawn detector"
+        )
+
+    def test_heartbeat_uses_conservative_forgiving_defaults(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "HEARTBEAT_INTERVAL_MS = 30000" in template, (
+            "heartbeat probe interval must be 30s -- a tighter interval risks "
+            "false positives against legitimately slow operations (e.g. PDF parsing)"
+        )
+        assert "HEARTBEAT_TIMEOUT_MS = 90000" in template, (
+            "heartbeat per-probe timeout must be 90s -- a probe queued behind a "
+            "long-running Python task is indistinguishable from a dead kernel, "
+            "so the timeout must be forgiving"
+        )
+        assert "HEARTBEAT_MISS_THRESHOLD = 2" in template, (
+            "heartbeat must require 2 consecutive timed-out probes before "
+            "reporting anything, not a single miss"
+        )
+
+    def test_heartbeat_never_overlaps_probes(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "heartbeatInFlight" in template, (
+            "deploy/template.html must skip a tick rather than stack a new probe "
+            "while one is already in flight"
+        )
+
+    def test_heartbeat_banner_is_latched(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "heartbeatLatched" in template, (
+            "deploy/template.html must latch the heartbeat banner (show once, "
+            "then stop probing entirely) -- latch variable not found"
+        )
+        assert "__stliteShowBanner" in template, (
+            "the heartbeat must reuse the existing banner mechanism, not build a second one"
+        )
+
+    def test_heartbeat_wording_says_not_responding_not_crashed(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "has stopped responding" in template, (
+            "the heartbeat banner must say the runtime is NOT RESPONDING, not "
+            "that it crashed -- from the main thread a timeout cannot "
+            "distinguish 'busy' from 'dead', so the message must not overclaim"
+        )
+
+    def test_heartbeat_logs_greppable_console_error(self) -> None:
+        template = (REPO_ROOT / "deploy" / "template.html").read_text(encoding="utf-8")
+        assert "[stlite][heartbeat]" in template, (
+            "deploy/template.html must log a console.error with the "
+            "[stlite][heartbeat] prefix, consistent with the existing "
+            "[stlite][wasm-fatal] convention, on latch"
+        )

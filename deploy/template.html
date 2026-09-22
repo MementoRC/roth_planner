@@ -115,6 +115,85 @@
       return originalDebug(...args);
     };
 
+    // ------------------------------------------------------------------
+    // Main-thread liveness heartbeat.
+    //
+    // WHY: stlite's Pyodide worker installs ZERO global fault handlers (no
+    // self.addEventListener("error"/"unhandledrejection"), no onerror), and
+    // its postMessage protocol has no "worker died" message type --
+    // event:loadError is load-time only, and reply.error is scoped to a
+    // single in-flight command. When the worker's own async dispatcher hits
+    // a fatal on an un-awaited await, the rejection lands on the WORKER's
+    // own global scope, which per platform semantics never reaches this
+    // page's window -- so none of the listeners above, PR #507's
+    // dead-channel detector, or PR #508's respawn detector above can ever
+    // fire for it. The worker script is an inlined data: URI baked into
+    // stlite's CDN bundle, so it cannot be patched from here either.
+    //
+    // The only way to detect this failure class is to stop waiting for a
+    // signal that will never arrive and instead actively poll for liveness:
+    // send a trivial round trip through the one API the mounted controller
+    // exposes that requires an actual worker reply (runPython ->
+    // reply:run_python) and treat a timeout as evidence the kernel is
+    // wedged. This also covers the SILENT drop mode described above, which
+    // produces no error of any kind.
+    //
+    // A slow-but-legitimate operation (e.g. a large PDF parse queued ahead
+    // of the probe) is indistinguishable from a dead kernel from the main
+    // thread, so the defaults are deliberately forgiving: 90s per probe, 2
+    // consecutive misses (~3 minutes worst case) before showing anything.
+    // That latency is acceptable because a real wedge is permanent -- there
+    // is no cost to waiting longer before reporting one.
+    const HEARTBEAT_INTERVAL_MS = 30000;
+    const HEARTBEAT_TIMEOUT_MS = 90000;
+    const HEARTBEAT_MISS_THRESHOLD = 2;
+    let heartbeatLatched = false;
+    let heartbeatMisses = 0;
+    let heartbeatInFlight = false;
+    let heartbeatIntervalId = null;
+    function __stopHeartbeat() {
+      if (heartbeatIntervalId !== null) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = null;
+      }
+    }
+    function __heartbeatTick(controller) {
+      if (heartbeatLatched || heartbeatInFlight) return; // never stack probes
+      heartbeatInFlight = true;
+      const timeout = new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error("heartbeat timeout")), HEARTBEAT_TIMEOUT_MS);
+      });
+      Promise.race([controller.runPython("1"), timeout])
+        .then(() => {
+          heartbeatMisses = 0;
+        })
+        .catch(() => {
+          heartbeatMisses += 1;
+          if (!heartbeatLatched && heartbeatMisses >= HEARTBEAT_MISS_THRESHOLD) {
+            heartbeatLatched = true;
+            __stopHeartbeat();
+            console.error(
+              `[stlite][heartbeat] ${heartbeatMisses} consecutive probes timed out; ` +
+                "treating the kernel as unresponsive."
+            );
+            window.__stliteShowBanner(
+              "The planner's Python runtime has stopped responding. Please reload the page."
+            );
+          }
+        })
+        .finally(() => {
+          heartbeatInFlight = false;
+        });
+    }
+    // Armed the same way as __armKernelRespawnDetector above: only once the
+    // loading panel has cleared, so startup itself is never mistaken for a
+    // wedge. Idempotent and a no-op once latched.
+    window.__armHeartbeat = (controller) => {
+      if (heartbeatIntervalId !== null || heartbeatLatched || !controller) return;
+      heartbeatIntervalId = setInterval(() => __heartbeatTick(controller), HEARTBEAT_INTERVAL_MS);
+    };
+    window.addEventListener("pagehide", __stopHeartbeat);
+
     // The loading panel is display:none once Streamlit renders, so any error
     // after that point would be written into an invisible element. Fall back
     // to the banner in that case.
@@ -202,8 +281,9 @@
     const FILES = __FILE_MAP_JSON__;
     const REQUIREMENTS = __REQUIREMENTS_JSON__;
 
+    let controller = null;
     try {
-      mount(
+      controller = mount(
         {
           entrypoint: "app.py",
           requirements: REQUIREMENTS,
@@ -221,6 +301,7 @@
       if (loader && document.querySelector("#root iframe, #root .stApp")) {
         loader.style.display = "none";
         window.__armKernelRespawnDetector?.();
+        window.__armHeartbeat?.(controller);
         return true;
       }
       return false;
