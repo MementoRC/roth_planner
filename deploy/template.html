@@ -20,6 +20,18 @@
     }
     #loading .note { font-size: 0.85rem; color: #888; max-width: 24rem; text-align: center; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    #runtime-banner {
+      /* Streamlit's own stHeader/stToolbar sit at z-index 999990 with an
+         opaque background, so anything lower is painted over. */
+      position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
+      display: none; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
+      background: #ff4b4b; color: #fff;
+      font-family: -apple-system, system-ui, sans-serif; font-size: 0.9rem;
+    }
+    #runtime-banner button {
+      margin-left: auto; cursor: pointer; background: #fff; color: #ff4b4b;
+      border: 0; border-radius: 4px; padding: 0.35rem 0.9rem; font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -32,19 +44,60 @@
     </div>
   </div>
   <div id="root"></div>
+  <div id="runtime-banner" role="alert">
+    <span class="msg"></span>
+    <button type="button" id="runtime-banner-reload">Reload</button>
+  </div>
   <script>
     // Global error surface: any error registered here shows in the loading
     // panel instead of leaving the spinner running with no indication of failure.
+    // stlite can finish booting and paint the entire page while the
+    // JS->Python channel is never wired up. Interactions then die silently:
+    // React still highlights the clicked widget, but no rerun is ever queued,
+    // so the page looks completely healthy and does nothing. Observed on the
+    // public site 2026-09-21 as an intermittent boot race, surfacing only as
+    // "TypeError: P.receive_websocket_from_js is not a function" from stlite's
+    // worker -- an unhandled promise REJECTION, which the "error" listener
+    // below cannot see. Hence the separate rejection handler.
+    let bannerShown = false;
+    window.__stliteShowBanner = (msg) => {
+      if (bannerShown) return; // never stack banners on a wedged page
+      bannerShown = true;
+      const banner = document.getElementById("runtime-banner");
+      if (!banner) return;
+      banner.querySelector(".msg").textContent = msg;
+      banner.style.display = "flex";
+    };
+    document
+      .getElementById("runtime-banner-reload")
+      .addEventListener("click", () => location.reload());
+
+    // The loading panel is display:none once Streamlit renders, so any error
+    // after that point would be written into an invisible element. Fall back
+    // to the banner in that case.
     window.__stliteShowError = (msg) => {
       console.error("[stlite]", msg);
+      const loading = document.getElementById("loading");
       const note = document.querySelector("#loading .note");
-      if (note) {
+      const loadingVisible = loading && loading.style.display !== "none";
+      if (loadingVisible && note) {
         note.textContent = msg;
         note.style.color = "#ff4b4b";
+      } else {
+        window.__stliteShowBanner(msg);
       }
     };
     window.addEventListener("error", (e) => {
       window.__stliteShowError(`Unexpected error: ${e.message || e}. Try reloading the page.`);
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      const reason = String((e.reason && e.reason.message) || e.reason || "");
+      if (/receive_websocket_from_js/.test(reason)) {
+        window.__stliteShowBanner(
+          "The Python runtime did not finish starting, so nothing on this page " +
+            "will respond. Please reload."
+        );
+      }
     });
   </script>
   <script
