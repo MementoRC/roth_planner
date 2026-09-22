@@ -645,6 +645,51 @@ class TestAboveTheLineAdjustmentsCacheRoundtrip:
         assert loaded.deductible_ira_contribution_ytd == 0.0
 
 
+class TestEstimatedPaymentsCacheRoundtrip:
+    """save_ytd_snapshot/load_ytd_snapshot must preserve estimated_payments_ytd,
+    with a backward-compat default for caches predating the field."""
+
+    def test_roundtrip_preserves_estimated_payments_ytd(self, tmp_path, monkeypatch):
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_est.json")
+
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=80_000.0,
+            federal_withholding_ytd=10_000.0,
+            estimated_payments_ytd=12_000.0,
+        )
+        save_ytd_snapshot(ytd)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.estimated_payments_ytd == 12_000.0, (
+            f"Expected estimated_payments_ytd=12000 after round-trip; got {loaded.estimated_payments_ytd}"
+        )
+
+    def test_cache_missing_estimated_payments_key_migrates_to_zero(self, tmp_path, monkeypatch):
+        """Pre-existing caches lacking estimated_payments_ytd must load without raising."""
+        import json
+
+        from engine import portfolio_sync
+        from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from models.ytd_income import YTDSnapshot
+
+        cache_path = tmp_path / "ytd_legacy_est.json"
+        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
+
+        save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
+        data = json.loads(cache_path.read_text())
+        data.pop("estimated_payments_ytd", None)
+        cache_path.write_text(json.dumps(data))
+
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.estimated_payments_ytd == 0.0
+
+
 class TestEstimateYtdFederalTax:
     """Tests for engine.tax.estimate_ytd_federal_tax."""
 
@@ -981,6 +1026,43 @@ class TestYTDToFromDictRoundtrip:
         original = dict(data)
         ytd_from_dict(data)
         assert data == original
+
+    def test_from_dict_drops_unknown_key_keeps_known_fields(self):
+        """Forward compat: a NEWER peer's bundle can carry a field this build
+        doesn't know about yet. It must be dropped, not raise -- and every
+        recognised field alongside it must still land intact."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {
+            "tax_year": 2026,
+            "wages_ytd": 150_000.0,
+            "ltcg_ytd": 50_000.0,
+            "federal_withholding_ytd": 42_000.0,
+            "some_future_field_ytd": 123.45,
+        }
+        snap = ytd_from_dict(data)
+        assert snap.wages_ytd == 150_000.0
+        assert snap.ltcg_ytd == 50_000.0
+        assert snap.federal_withholding_ytd == 42_000.0
+        assert not hasattr(snap, "some_future_field_ytd")
+
+    def test_from_dict_missing_backward_compat_keys_all_default_to_zero(self):
+        """All legacy-cache migrations (nqo_exercise_ytd, federal_withholding_ytd,
+        estimated_payments_ytd, hsa/deductible-IRA, crypto) must still default
+        correctly now that an unknown-key filter runs after them -- the filter
+        must not interfere with keys that are simply absent."""
+        from engine.portfolio_sync.ytd import ytd_from_dict
+
+        data = {"tax_year": 2026, "wages_ytd": 50_000.0}
+        snap = ytd_from_dict(data)
+        assert snap.nqo_exercise_ytd == 0.0
+        assert snap.federal_withholding_ytd == 0.0
+        assert snap.estimated_payments_ytd == 0.0
+        assert snap.hsa_contribution_ytd == 0.0
+        assert snap.deductible_ira_contribution_ytd == 0.0
+        assert snap.crypto_stcg_ytd == 0.0
+        assert snap.crypto_ltcg_ytd == 0.0
+        assert snap.crypto_income_ytd == 0.0
 
 
 class TestQualifiedDividendsNotDoubleCounted:

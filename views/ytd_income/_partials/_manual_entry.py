@@ -86,6 +86,13 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
                 format="%d",
                 help="W-2 federal income tax withheld year-to-date; counts as 'Already paid' toward safe-harbor.",
             )
+            estimated_payments = st.number_input(
+                "Estimated tax payments YTD",
+                value=int(ytd.estimated_payments_ytd),
+                step=1_000,
+                format="%d",
+                help="Quarterly estimated tax payments (Form 1040-ES) made year-to-date; counts as 'Already paid' toward safe-harbor.",
+            )
 
         st.markdown("##### Above-the-line adjustments")
         st.caption(
@@ -170,6 +177,7 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
             ira_distributions_ytd=distributions_done,
             income_events=income_events,
             federal_withholding_ytd=float(federal_withholding),
+            estimated_payments_ytd=float(estimated_payments),
             hsa_contribution_ytd=float(hsa_contribution),
             deductible_ira_contribution_ytd=float(deductible_ira),
             crypto_stcg_ytd=float(crypto_stcg),

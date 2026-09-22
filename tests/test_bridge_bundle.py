@@ -453,6 +453,45 @@ class TestBundleYtdSection:
     def test_non_dict_bundle_returns_none(self):
         assert read_bundle_ytd([1, 2, 3]) is None
 
+    def test_unknown_key_in_section_does_not_lose_the_whole_section(self):
+        """The real regression this guards: before the forward-compat filter
+        in ytd_from_dict, a SINGLE unrecognised key (e.g. from a newer peer's
+        build) raised TypeError inside ytd_from_dict, and read_bundle_ytd's
+        except-tuple turned that into the entire ytd section silently
+        vanishing -- wages, LTCG, STCG, dividends, withholding, everything."""
+        b = {
+            "format_version": 4,
+            "sections": {
+                "ytd": {
+                    "tax_year": 2026,
+                    "wages_ytd": 150_000.0,
+                    "ltcg_ytd": 50_000.0,
+                    "some_future_field_ytd": 123.45,
+                }
+            },
+        }
+        recovered = read_bundle_ytd(b)
+        assert recovered is not None
+        assert recovered.wages_ytd == 150_000.0
+        assert recovered.ltcg_ytd == 50_000.0
+
+    def test_genuinely_malformed_section_still_returns_none(self):
+        """The tolerance must not become "swallow everything": a value of the
+        wrong type that still raises (here, a list where gain_events expects
+        dicts to unpack as RealizedGainEvent kwargs) must still surface as
+        None, not a half-built snapshot."""
+        b = {
+            "format_version": 4,
+            "sections": {
+                "ytd": {
+                    "tax_year": 2026,
+                    "wages_ytd": 150_000.0,
+                    "gain_events": ["not-a-dict"],
+                }
+            },
+        }
+        assert read_bundle_ytd(b) is None
+
 
 class TestBundleGrantsSection:
     """v3 -> v4: the top-level "grants" section. Guards the real-world defect

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -136,6 +136,7 @@ def ytd_to_dict(ytd: YTDSnapshot) -> dict:
         "tax_exempt_interest_ytd": ytd.tax_exempt_interest_ytd,
         "nqo_exercise_ytd": ytd.nqo_exercise_ytd,
         "federal_withholding_ytd": ytd.federal_withholding_ytd,
+        "estimated_payments_ytd": ytd.estimated_payments_ytd,
         "hsa_contribution_ytd": ytd.hsa_contribution_ytd,
         "deductible_ira_contribution_ytd": ytd.deductible_ira_contribution_ytd,
         "crypto_stcg_ytd": ytd.crypto_stcg_ytd,
@@ -170,6 +171,9 @@ def ytd_from_dict(data: dict) -> YTDSnapshot:
     # PU1-M01: migrate old caches that predate federal_withholding_ytd field.
     if "federal_withholding_ytd" not in data:
         data["federal_withholding_ytd"] = 0.0
+    # Migrate old caches that predate estimated_payments_ytd (Form 1040-ES).
+    if "estimated_payments_ytd" not in data:
+        data["estimated_payments_ytd"] = 0.0
     # Migrate old caches that predate the above-the-line HSA/IRA adjustment fields.
     if "hsa_contribution_ytd" not in data:
         data["hsa_contribution_ytd"] = 0.0
@@ -182,6 +186,23 @@ def ytd_from_dict(data: dict) -> YTDSnapshot:
         data["crypto_ltcg_ytd"] = 0.0
     if "crypto_income_ytd" not in data:
         data["crypto_income_ytd"] = 0.0
+    # Forward compatibility: a bundle/cache built by a NEWER peer can carry a
+    # field this build doesn't know about yet (the mirror image of the
+    # backward-compat migrations above, which handle keys going MISSING).
+    # YTDSnapshot(**data, ...) below raises TypeError on any unrecognised
+    # keyword, and bridge_bundle.read_bundle_ytd's `except (TypeError,
+    # ValueError, KeyError): return None` turns that into the ENTIRE ytd
+    # section silently vanishing -- wages, LTCG, STCG, dividends,
+    # withholding, everything -- rather than just the one field it doesn't
+    # understand. Dropping unrecognised keys here means a newer peer's
+    # bundle degrades to losing one unknown field, never the whole section.
+    # Derived from the dataclass itself, not a hand-maintained literal list,
+    # so this can't drift the moment a new field is added -- that drift is
+    # exactly the class of bug being fixed. gain_events/income_events are
+    # excluded from the allow-set: they're already popped above and passed
+    # as separate constructor args, not routed back through **data.
+    valid_field_names = {f.name for f in fields(YTDSnapshot)} - {"gain_events", "income_events"}
+    data = {k: v for k, v in data.items() if k in valid_field_names}
     return YTDSnapshot(**data, gain_events=events, income_events=income_events)
 
 
