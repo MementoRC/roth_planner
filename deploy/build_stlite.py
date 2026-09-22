@@ -81,7 +81,7 @@ VENDORED_PDFPLUMBER_VERSION = "0.11.9"
 # local dev environment — if this constant falls behind, the deployed stlite
 # bundle and the local dev environment diverge and the public site can crash
 # again while local tests stay green.
-DEFAULT_STLITE_VERSION = "0.90.0"
+DEFAULT_STLITE_VERSION = "1.9.1"
 
 
 def _collect_files(repo_root: Path) -> dict[str, str]:
