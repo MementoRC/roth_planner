@@ -57,6 +57,9 @@ Thumbs.db
 .candidate_store.json
 .trust_choices.json
 .committed_household.json
+.instance_owner.json
+.ubs_activity_cache.json
+.account_attribution.json
 .claude/
 .mcp.json
 .locks/
