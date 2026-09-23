@@ -48,7 +48,23 @@ def app_test(clean_command_center_caches, monkeypatch) -> AppTest:
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    at = AppTest.from_file(str(APP_PATH))
+    # default_timeout raised from AppTest's 3s default. This fixture leaves
+    # identity unset (unlike test_setup_shell_characterization's, which
+    # pre-seeds session_state["instance_owner"] before .run()), so it renders
+    # a genuinely cold, auto-defaulting first run of the whole app -- the
+    # most expensive path any test here takes.
+    #
+    # MEASURED, and NOT attributable to any one feature: on the tree BEFORE
+    # the UBS ACTIVITY CSV uploader existed, this test already failed 3 of 5
+    # runs under coverage (setup 2.92-3.52s against the 3.0s limit); with it,
+    # 2.86-3.05s over 5 runs. The two distributions overlap almost entirely.
+    # This is a PRE-EXISTING marginal test sitting on the 3s cliff, so do not
+    # go hunting for a culprit change if it resurfaces -- the cause is the
+    # full-app-boot cost under coverage instrumentation.
+    #
+    # The test asserts "exactly one style block", not a performance budget,
+    # so a longer timeout weakens no assertion here.
+    at = AppTest.from_file(str(APP_PATH), default_timeout=10)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
     assert not at.exception
