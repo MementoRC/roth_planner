@@ -15,6 +15,7 @@ from engine.koinly_report_pdf import (
     _find_page,
     _parse_currency,
     extract_owner_key,
+    is_koinly_report,
     load_koinly_report,
     parse_koinly_text,
     save_koinly_report,
@@ -402,6 +403,43 @@ class _RecordingPages(Sequence[str]):
     def __iter__(self) -> Iterator[str]:
         for i in range(len(self._pages)):
             yield self[i]
+
+
+class _CountingPages(Sequence[str]):
+    """Sequence[str] that records how many page texts were actually read."""
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = list(pages)
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return len(self._pages)
+
+    def __getitem__(self, index):  # type: ignore[override]
+        value = self._pages[index]  # raises IndexError before counting an out-of-range probe
+        self.reads += 1
+        return value
+
+
+class TestIsKoinlyReportShortCircuit:
+    def test_is_koinly_report_stops_after_one_pass_when_not_koinly(self) -> None:
+        """Old two-pass code scanned every page twice -- once for "koinly",
+        once for the TAX YEAR marker -- even when the first scan already
+        found no "koinly" mention anywhere, making the second scan's result
+        moot. This asserts exactly one read per page."""
+        pages = _CountingPages(
+            [
+                "Fidelity Brokerage Statement\nAccount summary\nDividends and interest\n",
+                "Schwab One Account\nPortfolio holdings as of period end\n",
+                "Vanguard Brokerage Account\nRealized gains and losses\n",
+                "TurboTax Form 1040 (2025)\nWages, salaries, tips ... 1 100000\n",
+            ]
+        )
+
+        result = is_koinly_report(pages)
+
+        assert result is False
+        assert pages.reads == len(pages)
 
 
 def _report_sans_captured_at(report: KoinlyReport) -> dict[str, Any]:
