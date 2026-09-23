@@ -1,4 +1,5 @@
 import hashlib
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import streamlit as st
@@ -20,6 +21,14 @@ from engine.pdf_ledger import (
 from engine.pdf_owner import load_owner_map
 from engine.portfolio_sync import save_ytd_snapshot
 from engine.portfolio_sync.ytd import apply_brokerage_totals
+from engine.ubs_activity_csv import (
+    UbsActivityOrder,
+    UbsActivityParseError,
+    federal_withholding,
+    parse_ubs_activity_text,
+)
+from engine.ubs_activity_store import UbsActivityStoreError, load_ubs_orders, save_ubs_orders
+from engine.ubs_exercise_ytd import apply_ubs_exercise_income, correct_ubs_option_basis
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
@@ -76,6 +85,61 @@ def _warn_on_holder_name_mismatch(
         )
         return True
     return False
+
+
+def _load_ubs_orders_safe() -> list[UbsActivityOrder]:
+    """Load persisted UBS activity orders, surfacing a corrupt store as a
+    visible ``st.error`` and treating orders as empty for THIS render --
+    never a silent ``[]``. A silently-swallowed corrupt store here is
+    indistinguishable from "no exercises this year" and would restore the
+    phantom STCG double-count with no signal that anything went wrong (see
+    ``UbsActivityStoreError``'s docstring in ``engine.ubs_activity_store``).
+    """
+    try:
+        return load_ubs_orders()
+    except UbsActivityStoreError as exc:
+        st.error(f"UBS exercise data could not be loaded: {exc}")
+        return []
+
+
+def _apply_ubs_correction(
+    brokerage_totals: dict[str, float], ledger: PdfLedger, snap: YTDSnapshot
+) -> list[str]:
+    """Correct *brokerage_totals*' phantom UBS STCG double-count and land
+    both the corrected totals and NQO exercise income onto *snap* IN PLACE;
+    return warnings (``[]`` when clean).
+
+    Shared by every ``derive_brokerage_totals`` -> ``apply_brokerage_totals``
+    call site (the two brokerage-statement scan paths below, plus the CSV
+    uploader's post-upload recompute) so they cannot drift apart. Correction
+    happens on the TOTALS DICT, BEFORE ``apply_brokerage_totals`` assigns it
+    onto *snap* -- doing this afterwards would be silently undone by that
+    function's plain ``ytd.stcg_ytd = totals["stcg_ytd"]`` assignment (see
+    ``correct_ubs_option_basis``'s docstring for the full rationale).
+    """
+    ubs_orders = _load_ubs_orders_safe()
+    corrected_totals, warnings = correct_ubs_option_basis(brokerage_totals, ledger, ubs_orders)
+    apply_brokerage_totals(snap, corrected_totals)
+    warnings += apply_ubs_exercise_income(snap, ubs_orders)
+    return warnings
+
+
+def _merge_ubs_orders(
+    existing: Sequence[UbsActivityOrder], new: Sequence[UbsActivityOrder]
+) -> list[UbsActivityOrder]:
+    """Merge *new* UBS orders into *existing*, deduped by
+    ``reference_number`` -- never a wholesale replace. Each CSV export holds
+    exactly ONE order, and a browser's repeated re-downloads land as
+    ``name.csv``, ``name (1).csv``, ``name (2).csv``, which parse to
+    DISTINCT orders (see ``engine.ubs_activity_csv``'s module docstring) --
+    losing previously-uploaded orders here would silently understate the
+    STCG correction. A *new* order sharing an *existing* order's
+    ``reference_number`` wins, treated as a corrected re-upload of the same
+    order.
+    """
+    merged = {o.reference_number: o for o in existing}
+    merged.update({o.reference_number: o for o in new})
+    return list(merged.values())
 
 
 def _apply_scan_result(
@@ -148,7 +212,14 @@ def _apply_scan_result(
         save_ledger(ledger)
 
         brokerage_totals = derive_brokerage_totals(ledger)
-        apply_brokerage_totals(_snap, brokerage_totals)
+        # Correct the UBS phantom-STCG double-count and land NQO exercise
+        # income BEFORE recording this as "applied" below -- see
+        # _apply_ubs_correction's docstring for why the totals dict must be
+        # corrected before apply_brokerage_totals assigns it onto the
+        # snapshot.
+        ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, _snap)
+        for warning in ubs_warnings:
+            st.warning(warning)
         applied_bits.append(
             f"{len(stmt_taxable_now)} taxable brokerage account(s) "
             f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
@@ -397,6 +468,103 @@ def _render_pdf_uploader(
     return ledger
 
 
+def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
+    """Upload UBS "ACTIVITY" CSV exports for NQO same-day-sale exercises --
+    siblings with the PDF uploader above by design (same visual pattern,
+    same in-session-only handling, no server round trip).
+
+    Each file holds exactly ONE option-exercise order (see
+    ``engine.ubs_activity_csv``'s module docstring). Parsed orders are
+    MERGED into whatever is already persisted (``_merge_ubs_orders``,
+    deduped on ``reference_number``), never a wholesale replace -- a
+    browser's repeated re-downloads of the same order land as distinct
+    filenames (``name.csv``, ``name (1).csv``, ...) that must all still
+    count.
+
+    After a successful save, immediately recomputes the same
+    derive-correct-apply path a brokerage-statement scan uses
+    (``_apply_ubs_correction``) against the CURRENT ledger, so the
+    correction/exercise-income takes effect without requiring a separate
+    "Scan folder" or "Apply to YTD snapshot" click.
+    """
+    st.markdown("##### Import UBS option-exercise CSVs")
+    st.caption(
+        'Upload UBS "ACTIVITY" CSV exports for NQO same-day-sale exercises -- '
+        "corrects the double-counted short-term capital gain in your brokerage "
+        "statement and records the ordinary exercise income separately. One "
+        "order per file; re-uploading the same order is safe, it replaces "
+        "itself rather than duplicating."
+    )
+    uploaded = st.file_uploader(
+        "UBS ACTIVITY CSV exports",
+        type=["csv"],
+        accept_multiple_files=True,
+        key="ubs_csv_upload",
+    )
+    if not identity_set:
+        st.caption(
+            "Importing is unavailable until this planner instance has an "
+            "owner — set it in **Command Center**, above."
+        )
+    import_clicked = st.button(
+        "Import UBS CSV(s)", key="import_ubs_csv_btn", disabled=not identity_set
+    )
+    if not (import_clicked and uploaded):
+        return
+
+    new_orders: list[UbsActivityOrder] = []
+    failed = 0
+    for f in uploaded:
+        try:
+            new_orders.append(parse_ubs_activity_text(f.getvalue().decode()))
+        except UbsActivityParseError as exc:
+            st.error(f"{f.name}: {exc}")
+            failed += 1
+        except UnicodeDecodeError as exc:
+            st.error(f"{f.name}: could not read as text: {exc}")
+            failed += 1
+
+    if not new_orders:
+        st.warning(f"No valid UBS CSV order parsed (0 of {len(uploaded)} file(s)).")
+        return
+
+    existing = _load_ubs_orders_safe()
+    merged = _merge_ubs_orders(existing, new_orders)
+    save_ubs_orders(merged)
+
+    total_bargain = sum(o.bargain_element for o in merged)
+    total_withholding = sum(federal_withholding(o) for o in merged)
+    st.success(
+        f"Imported {len(new_orders)} of {len(uploaded)} file(s) ({failed} failed). "
+        f"Now storing {len(merged)} UBS exercise order(s): "
+        f"bargain element {fmt_dollars(total_bargain)}, "
+        f"federal withholding {fmt_dollars(total_withholding)}."
+    )
+
+    # Recompute immediately so the correction/exercise-income takes effect
+    # without a separate scan/apply click -- see this function's docstring.
+    snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
+    brokerage_totals = derive_brokerage_totals(ledger)
+    ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, snap)
+    snap.with_snapshot_date()
+    st.session_state.ytd_snapshot = snap
+    _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
+    save_ytd_snapshot(snap)
+    if _manual_entry_kept_explicit:
+        st.caption(
+            "Manual entry stayed ON — you turned it on yourself, so this "
+            "import did not switch you back to synced-data display."
+        )
+    for warning in ubs_warnings:
+        st.warning(warning)
+    # WARN, NEVER BLOCK: the writes above already completed -- this only
+    # withholds the immediate rerun so a fired warning survives to be seen,
+    # same idiom as _warn_on_holder_name_mismatch / _apply_ubs_correction's
+    # other call sites.
+    if not ubs_warnings:
+        st.rerun()
+
+
 def render_sync_scan_partial(hh: Household) -> ScanRenderContext:
     """Render the ways to get statement data IN: FinExtract sync, the
     local-only folder scan, and the uploader.
@@ -583,6 +751,10 @@ def render_sync_scan_partial(hh: Household) -> ScanRenderContext:
         identity_set=identity_set,
     )
 
+    # UBS ACTIVITY CSV uploader -- sibling of the PDF uploader above, its own
+    # store (engine.ubs_activity_store), never touches "statement_by_account".
+    _render_ubs_csv_uploader(ledger=ledger, identity_set=identity_set)
+
     # Section 2 (statement review + Apply-to-YTD-snapshot, Koinly summary) is
     # NOT rendered here -- it is returned to the caller to render, see
     # ScanRenderContext and render_sync_scan_results below.
@@ -766,7 +938,12 @@ def _render_scan_review(
 
             brokerage_totals = derive_brokerage_totals(ledger)
             prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-            apply_brokerage_totals(prev_ytd, brokerage_totals)
+            # Correct the UBS phantom-STCG double-count and land NQO exercise
+            # income BEFORE recording this as applied below -- see
+            # _apply_ubs_correction's docstring for why the totals dict must
+            # be corrected before apply_brokerage_totals assigns it onto the
+            # snapshot.
+            ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
             prev_ytd.with_snapshot_date()
             st.session_state.ytd_snapshot = prev_ytd
             _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
@@ -777,11 +954,16 @@ def _render_scan_review(
                     "Manual entry stayed ON — you turned it on yourself, so this "
                     "apply did not switch you back to synced-data display."
                 )
+            for warning in ubs_warnings:
+                st.warning(warning)
+            if ubs_warnings:
+                _apply_had_mismatch = True
             # WARN, NEVER BLOCK: the write above already completed --
             # this only withholds the immediate rerun so a fired
             # mismatch warning survives to be seen, instead of being
             # wiped by a same-render st.rerun() (see
-            # _warn_on_holder_name_mismatch's docstring).
+            # _warn_on_holder_name_mismatch's docstring). A fired UBS
+            # correction warning withholds the rerun the same way.
             if not _apply_had_mismatch:
                 st.rerun()
 

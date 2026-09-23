@@ -45,6 +45,7 @@ import engine.portfolio_sync.portfolio as _portfolio_mod  # noqa: E402
 import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
 import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
+import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
 import views._shared as _views_shared_mod  # noqa: E402
 import views.option_exercise._partials._helpers as _option_exercise_helpers_mod  # noqa: E402
 import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
@@ -68,6 +69,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
     _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
     _instance_identity_mod.INSTANCE_OWNER_PATH,
+    _ubs_activity_store_mod._UBS_ACTIVITY_CACHE_PATH,
 ]
 
 
@@ -165,6 +167,9 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
     )
     monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
+    monkeypatch.setattr(
+        _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
+    )
 
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these

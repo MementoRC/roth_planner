@@ -84,6 +84,10 @@ EXPECTED_WIDGET_KEYS = frozenset(
         # environments, unlike the folder-path widgets above it.
         "pdf_upload",
         "scan_uploaded_pdfs_btn",
+        # UBS ACTIVITY CSV uploader (stage B wiring): sibling of the PDF
+        # uploader immediately above, same both-environments rendering.
+        "ubs_csv_upload",
+        "import_ubs_csv_btn",
         # Data bridge tab
         "gen_keypair",
         "_v2_privkey_input",
@@ -129,12 +133,13 @@ def setup_app_test(clean_command_center_caches, monkeypatch) -> AppTest:
     # Setup widget-key set, and the Data tab's two import sections only render
     # their bodies once this instance has one (views/shells/domains_shell.py
     # replaces them with a placeholder otherwise -- a first-time user should
-    # not be handed controls that cannot work yet). Without this, 12 keys
+    # not be handed controls that cannot work yet). Without this, 14 keys
     # (bundle_upload, pdf_upload, apply_uploads, gen_keypair, save_v2_privkey,
     # _v2_privkey_input, _export_recipient_pubkey, reset_demo,
     # scan_pdf_folder_btn, scan_uploaded_pdfs_btn, statement_folder_path,
-    # ytd_sync_btn) drop out and this test characterizes the EMPTY first-run
-    # page instead of the working one. The placeholder state has its own
+    # ytd_sync_btn, ubs_csv_upload, import_ubs_csv_btn) drop out and this test
+    # characterizes the EMPTY first-run page instead of the working one. The
+    # placeholder state has its own
     # coverage in tests/test_data_tab_section_order.py, both directions.
     at.session_state["instance_owner"] = "you"
     at.run()
@@ -205,6 +210,8 @@ _IMPORT_SECTION_KEYS = frozenset(
         "scan_uploaded_pdfs_btn",
         "statement_folder_path",
         "ytd_sync_btn",
+        "ubs_csv_upload",
+        "import_ubs_csv_btn",
     }
 )
 
