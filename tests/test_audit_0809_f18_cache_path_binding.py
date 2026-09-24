@@ -42,6 +42,16 @@ and a ``!=`` comparison) that deliberately need the REAL, pre-redirect value
 exempted below rather than "fixed" (converting it to call-time resolution
 would make the identity assertion fail during every redirected test run).
 
+A second such module-level import was added later, by PR #519:
+``tests/test_gitignore_covers_personal_caches.py``'s ``from tests.conftest
+import _WATCHED_CACHE_PATHS``. It is likewise NOT an instance of this
+defect: the paths are consumed only as ``git check-ignore`` arguments
+(read-only, no I/O on the path itself), and the list must exist at
+import time because ``pytest.mark.parametrize`` enumerates it at
+collection. It is therefore exempted below rather than "fixed".
+Operationally, this guard caught it on ``development`` after #519
+merged with a failing test gate -- i.e. the guard did its job.
+
 Sites 1, 2 and 4 are proven here without ever touching a real repo-root
 file: instead of letting the fixture/cleanup code actually call
 ``Path.unlink``, the relevant tests patch ``Path.unlink`` to a no-op
@@ -201,11 +211,15 @@ class TestClassLevelGuardNoTestModuleBindsWatchedCachePathAtImportTime:
     turned out to be a deliberate, read-only, non-destructive use (see the
     module docstring) and is exempted below rather than "fixed".
 
-    Exemptions (both deliberate, both documented, neither destructive):
+    Exemptions (all deliberate, all documented, none destructive):
     - ``tests.conftest._WATCHED_CACHE_PATHS`` -- the guard's own ground truth.
     - ``tests.test_data_sources.{CANDIDATE_STORE_PATH,COMMITTED_PATH,
       TRUST_CHOICES_PATH}`` -- read-only identity assertions against the
       real production defaults; never used for I/O.
+    - ``tests.test_gitignore_covers_personal_caches._WATCHED_CACHE_PATHS``
+      -- re-imported so ``pytest.mark.parametrize`` can enumerate it at
+      collection time; each path is passed only as an argument to
+      ``git check-ignore``, never opened or written.
 
     Scope / what this does NOT cover (documented rather than pretending
     otherwise, per audit-0805's "vacuous guard" lesson): this only inspects
@@ -230,6 +244,7 @@ class TestClassLevelGuardNoTestModuleBindsWatchedCachePathAtImportTime:
             ("tests.test_data_sources", "CANDIDATE_STORE_PATH"),
             ("tests.test_data_sources", "COMMITTED_PATH"),
             ("tests.test_data_sources", "TRUST_CHOICES_PATH"),
+            ("tests.test_gitignore_covers_personal_caches", "_WATCHED_CACHE_PATHS"),
         }
     )
 
