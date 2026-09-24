@@ -43,14 +43,37 @@ _EMPTY_LEDGER: PdfLedger = {"koinly": {}, "brokerage": {}}
 
 
 def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyReport) -> PdfLedger:
-    """Return a NEW ledger with *owner*'s Koinly slot set to *report*'s figures.
+    """Return a NEW ledger with *owner*'s Koinly slot set to *report*'s
+    figures, pruning that SAME report from any OTHER owner slot it was
+    previously (mis)filed under.
 
     Re-writing the same owner with the SAME or a NEWER tax_year replaces that
     owner's prior contribution (idempotent re-scan); a report from an OLDER
     tax_year than what's already stored is skipped (C15 audit-0721) -- a
     multi-year folder scan must keep the latest tax_year's figures rather
     than silently collapsing to whichever Koinly PDF happens to be processed
-    last. A different owner's slot is untouched (additive across owners).
+    last. A different owner's DISTINCT report is untouched (additive across
+    owners, the module's core purpose).
+
+    Koinly reports carry no account number (unlike brokerage statements), so
+    cross-owner report identity is inferred from content: tax_year, source,
+    parser_version, the parsed stcg/ltcg/income figures, provenance, and
+    owner_key -- everything a re-scan of the IDENTICAL PDF reproduces
+    byte-for-byte. captured_at is deliberately excluded from the identity
+    check: it is the one field guaranteed to differ between scans of the same
+    file, so comparing it would make every re-scan look like a "different"
+    report and defeat the prune entirely. Two owners' genuinely distinct
+    reports would have to collide on stcg, ltcg, income, AND provenance
+    (which includes a page count) to be misidentified as the same report --
+    a coincidence real transaction data does not produce.
+
+    Without this, an owner-resolution change (e.g. a scan run before
+    instance identity was set lands under the "household" fallback, then a
+    later re-scan after identity is set writes the identical report under
+    "you") leaves BOTH slots behind, and derive_koinly_totals sums every
+    owner bucket -- doubling crypto_stcg_ytd/crypto_ltcg_ytd/
+    crypto_income_ytd. That OVERSTATES income, which UNDERSTATES remaining
+    Roth conversion headroom -- a silent cost, not an obviously wrong number.
     """
     updated: PdfLedger = {
         "koinly": dict(ledger.get("koinly", {})),
@@ -59,7 +82,7 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
     existing = updated["koinly"].get(owner)
     if existing is not None and int(existing.get("tax_year", report.tax_year)) > report.tax_year:
         return updated
-    updated["koinly"][owner] = {
+    new_slot = {
         "tax_year": report.tax_year,
         "stcg": float(report.crypto_stcg),
         "ltcg": float(report.crypto_ltcg),
@@ -70,6 +93,28 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
         "provenance": report.provenance,
         "owner_key": report.owner_key,
     }
+
+    def _same_report(slot: dict[str, Any]) -> bool:
+        return (
+            slot.get("tax_year") == new_slot["tax_year"]
+            and slot.get("source") == new_slot["source"]
+            and slot.get("parser_version") == new_slot["parser_version"]
+            and slot.get("stcg") == new_slot["stcg"]
+            and slot.get("ltcg") == new_slot["ltcg"]
+            and slot.get("income") == new_slot["income"]
+            and slot.get("provenance") == new_slot["provenance"]
+            and slot.get("owner_key") == new_slot["owner_key"]
+        )
+
+    # Prune the same report from every OTHER owner so a stale owner
+    # assignment (e.g. the "household" fallback later corrected to a named
+    # owner) MOVES the slot rather than leaving a duplicate that
+    # derive_koinly_totals would sum a second time.
+    for other_owner, slot in list(updated["koinly"].items()):
+        if other_owner != owner and _same_report(slot):
+            del updated["koinly"][other_owner]
+
+    updated["koinly"][owner] = new_slot
     return updated
 
 

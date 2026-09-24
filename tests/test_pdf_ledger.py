@@ -26,13 +26,24 @@ from engine.pdf_ledger import (
 )
 
 
-def _koinly(stcg: float, ltcg: float, income: float) -> KoinlyReport:
+def _koinly(
+    stcg: float,
+    ltcg: float,
+    income: float,
+    *,
+    tax_year: int = 2026,
+    captured_at: str = "2026-07-13T00:00:00+00:00",
+    provenance: dict | None = None,
+    owner_key: str | None = None,
+) -> KoinlyReport:
     return KoinlyReport(
-        tax_year=2026,
+        tax_year=tax_year,
         crypto_stcg=stcg,
         crypto_ltcg=ltcg,
         crypto_income=income,
-        captured_at="2026-07-13T00:00:00+00:00",
+        captured_at=captured_at,
+        provenance=provenance or {},
+        owner_key=owner_key,
     )
 
 
@@ -124,6 +135,107 @@ class TestKoinlyProvenancePreservedOnMerge:
 class TestKoinlyEmptyLedger:
     def test_empty_ledger_returns_zeros(self) -> None:
         assert derive_koinly_totals({}) == {"stcg": 0.0, "ltcg": 0.0, "income": 0.0}
+
+
+class TestKoinlyStaleOwnerSlotPruned:
+    """Regression: a Koinly scan landing under a fallback owner (e.g.
+    "household", before instance identity was set) and then re-landing under
+    the corrected owner (e.g. "you") must MOVE the slot, not duplicate it.
+    Before the fix, derive_koinly_totals summed both slots and reported
+    crypto_stcg_ytd/crypto_ltcg_ytd/crypto_income_ytd at exactly 2x."""
+
+    def test_stale_owner_slot_pruned_stops_2x_double_counting(self) -> None:
+        ledger: dict = {}
+        first_scan = _koinly(
+            1000.0,
+            2000.0,
+            500.0,
+            captured_at="2026-08-25T00:00:00+00:00",
+            provenance={"pages": 93},
+            owner_key="you@example.com",
+        )
+        rescan_same_report = _koinly(
+            1000.0,
+            2000.0,
+            500.0,
+            captured_at="2026-09-21T00:00:00+00:00",
+            provenance={"pages": 93},
+            owner_key="you@example.com",
+        )
+        ledger = write_koinly_contribution(ledger, "household", first_scan)
+        ledger = write_koinly_contribution(ledger, "you", rescan_same_report)
+        assert "household" not in ledger["koinly"], (
+            "stale 'household' fallback slot must be pruned once the same "
+            "report re-lands under the corrected owner"
+        )
+        totals = derive_koinly_totals(ledger)
+        assert totals == {"stcg": 1000.0, "ltcg": 2000.0, "income": 500.0}, (
+            "totals must NOT be 2x -- that was the confirmed defect"
+        )
+
+    def test_different_tax_year_under_other_owner_not_pruned(self) -> None:
+        """Anti-over-pruning guard: even with identical stcg/ltcg/income/
+        provenance/owner_key, a DIFFERENT tax_year means a genuinely
+        different report and must survive under its own owner."""
+        ledger: dict = {}
+        older_year_report = _koinly(
+            1000.0,
+            2000.0,
+            500.0,
+            tax_year=2025,
+            captured_at="2025-08-25T00:00:00+00:00",
+            provenance={"pages": 93},
+            owner_key="you@example.com",
+        )
+        newer_year_report = _koinly(
+            1000.0,
+            2000.0,
+            500.0,
+            tax_year=2026,
+            captured_at="2026-09-21T00:00:00+00:00",
+            provenance={"pages": 93},
+            owner_key="you@example.com",
+        )
+        ledger = write_koinly_contribution(ledger, "household", older_year_report)
+        ledger = write_koinly_contribution(ledger, "you", newer_year_report)
+        assert "household" in ledger["koinly"]
+        assert "you" in ledger["koinly"]
+        totals = derive_koinly_totals(ledger)
+        assert totals == {"stcg": 2000.0, "ltcg": 4000.0, "income": 1000.0}
+
+    def test_older_tax_year_write_is_skipped_staleness_guard_preserved(self) -> None:
+        """The pre-existing C15 audit-0721 guard (~:59-61): a report from an
+        OLDER tax_year than what's stored for that owner is skipped. Must
+        survive the pruning change unchanged."""
+        ledger: dict = {}
+        ledger = write_koinly_contribution(
+            ledger, "you", _koinly(100.0, 200.0, 50.0, tax_year=2026)
+        )
+        ledger = write_koinly_contribution(ledger, "you", _koinly(1.0, 2.0, 3.0, tax_year=2025))
+        totals = derive_koinly_totals(ledger)
+        assert totals == {"stcg": 100.0, "ltcg": 200.0, "income": 50.0}
+
+    def test_same_owner_rewrite_still_just_overwrites(self) -> None:
+        """Writing under the same owner twice still replaces that owner's
+        slot only, as today (non-regression of the ordinary re-scan path)."""
+        ledger: dict = {}
+        ledger = write_koinly_contribution(
+            ledger, "you", _koinly(100.0, 200.0, 50.0, owner_key="you@example.com")
+        )
+        ledger = write_koinly_contribution(
+            ledger, "you", _koinly(150.0, 200.0, 50.0, owner_key="you@example.com")
+        )
+        assert derive_koinly_totals(ledger) == {"stcg": 150.0, "ltcg": 200.0, "income": 50.0}
+
+    def test_write_brokerage_contribution_behavior_untouched(self) -> None:
+        """The Koinly-side pruning change must not alter
+        write_brokerage_contribution's own cross-owner move semantics."""
+        ledger: dict = {}
+        ledger = write_brokerage_contribution(ledger, "you", _brokerage("111", interest=10.0))
+        ledger = write_brokerage_contribution(ledger, "spouse", _brokerage("111", interest=10.0))
+        holders = [o for o, accts in ledger["brokerage"].items() if "111" in accts]
+        assert holders == ["spouse"]
+        assert derive_brokerage_totals(ledger)["interest_ytd"] == pytest.approx(10.0)
 
 
 class TestBrokerageAdditive:
