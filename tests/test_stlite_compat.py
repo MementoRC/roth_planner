@@ -28,6 +28,15 @@ VIEWS_DIR = REPO_ROOT / "views"
 # was factually wrong and let a real runtime crash pass this test.
 MIN_STLITE_VERSION = (0, 90, 0)
 
+# Exclusive UPPER bound. stlite 1.9.0+ bundles Streamlit 1.62.0, whose
+# data_editor raises `NameError: name 'arrow_table' is not defined` for any
+# st.data_editor(key=..., num_rows="fixed") call -- the default num_rows. Both
+# grids in views/ use that exact shape, so 1.9.x takes the Conversion Planner
+# and the Option Exercise grid down on the public site while local tests, which
+# run Streamlit 1.58.0, stay green. See deploy/build_stlite.py for the full
+# stlite -> Streamlit bundle map and the live verification.
+MAX_STLITE_VERSION_EXCLUSIVE = (1, 9, 0)
+
 
 def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in v.split("."))
@@ -74,6 +83,19 @@ class TestStliteVersionMinimum:
             f"DEFAULT_STLITE_VERSION={version_str!r} is below minimum "
             f"{min_str} required to bundle Streamlit >=1.50 "
             '(needed for width="stretch" support)'
+        )
+
+    def test_default_stlite_version_below_broken_ceiling(self) -> None:
+        """DEFAULT_STLITE_VERSION must be < 1.9.0 (1.9.x breaks st.data_editor)."""
+        mod = _load_build_stlite_mod()
+        parsed = _parse_version(str(mod.DEFAULT_STLITE_VERSION))
+        assert parsed < MAX_STLITE_VERSION_EXCLUSIVE, (
+            f"DEFAULT_STLITE_VERSION={mod.DEFAULT_STLITE_VERSION} is >= "
+            f"{'.'.join(str(x) for x in MAX_STLITE_VERSION_EXCLUSIVE)}, which bundles "
+            "Streamlit 1.62.0 and raises NameError: name 'arrow_table' is not defined "
+            "on every st.data_editor(key=..., num_rows='fixed') call -- both grids in "
+            "views/ use that shape, so the public site's Conversion Planner and Option "
+            "Exercise grid would be dead on arrival"
         )
 
 

@@ -25,6 +25,12 @@ INCLUDE_DIRS = ["engine", "models", "views", "config", "pages"]
 INCLUDE_ROOT_FILES = ["app.py"]
 # Pyodide-installable runtime requirements
 REQUIREMENTS = [
+    # INERT, and must stay UNPINNED. stlite supplies its own patched Streamlit
+    # wheel; micropip treats this entry as already satisfied and installs
+    # nothing. Verified: mounting with requirements=["pandas"] (no "streamlit")
+    # reproduces byte-identical behaviour. Adding a version pin here would make
+    # micropip fetch the UNPATCHED PyPI wheel over stlite's patched build --
+    # that wheel needs pyarrow, which is not available in this environment.
     "streamlit",
     "plotly",
     "pandas",
@@ -81,7 +87,24 @@ VENDORED_PDFPLUMBER_VERSION = "0.11.9"
 # local dev environment — if this constant falls behind, the deployed stlite
 # bundle and the local dev environment diverge and the public site can crash
 # again while local tests stay green.
-DEFAULT_STLITE_VERSION = "1.9.1"
+# WHY NOT 1.9.x (ceiling, added 2026-09-25): stlite 1.9.0 through at least
+# 1.9.2 bundle streamlit-1.62.0-cp313-none-any.whl, whose data_editor raises
+# `NameError: name 'arrow_table' is not defined` for ANY st.data_editor call
+# that passes key= with the default num_rows="fixed". Both of this app's
+# grids do (views/planner.py:321, views/option_exercise/_partials/_grid.py:44),
+# so the Conversion Planner and the Option Exercise grid were both dead on the
+# public site while every local test stayed green -- local pins Streamlit
+# 1.58.0, which does not contain the offending branch at all.
+#
+# Verified live in the browser against stlite 1.9.1: key= + num_rows="fixed"
+# FAILS, no-key PASSES, key= + num_rows="dynamic" PASSES. Against stlite
+# 1.8.1 (bundles Streamlit 1.57.0) the same keyed+fixed call PASSES, and
+# width="stretch" is still accepted, so the >=0.90.0 floor above still holds.
+#
+# stlite -> bundled Streamlit: 1.9.2/1.9.1 -> 1.62.0 (BROKEN),
+# 1.8.1/1.8.0 -> 1.57.0 (OK), 1.7.x -> 1.56.0, 1.6.1 -> 1.55.0.
+# Upgrading FORWARD does not fix this; 1.9.2 is still broken.
+DEFAULT_STLITE_VERSION = "1.8.1"
 
 
 def _collect_files(repo_root: Path) -> dict[str, str]:
