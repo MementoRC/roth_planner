@@ -1,0 +1,210 @@
+"""Brokerage holdings fetch + dividend derivation + forecast positions + snapshot merge."""
+
+from __future__ import annotations
+
+import warnings
+from collections.abc import Iterable
+from datetime import date
+from typing import TYPE_CHECKING, Any
+
+import requests  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    pass
+
+from .as_of import extract_payload_as_of
+from .client import _flatten_query_rows, _get
+from .shapes import AccountSummary, Holding, HoldingsSnapshot, PortfolioSnapshot
+
+
+def merge_snapshots(
+    existing: PortfolioSnapshot | None,
+    incoming: PortfolioSnapshot,
+    *,
+    as_spouse: bool,
+) -> PortfolioSnapshot:
+    """Merge ``incoming`` into ``existing``, preserving the other party's data.
+
+    Pure function — no I/O, no session state. Used by the upload widget when a
+    spouse uploads their own planner export into the receiver's session.
+
+    Args:
+        existing: The receiver's current snapshot (``None`` means an empty
+            starting state).
+        incoming: The freshly-parsed snapshot from the uploaded file.
+        as_spouse: When ``True``, ``incoming`` represents the SPOUSE's data
+            (their FinExtract export from their own perspective). All incoming
+            accounts have their ``owner`` rewritten from ``"you"`` to
+            ``"spouse"``, the existing your-owned accounts and grants are
+            preserved, and incoming ``equity_grants`` / ``stock_shares_*`` are
+            DROPPED (spouse has no grants in this household model).
+            When ``False``, ``incoming`` represents the receiver's own data;
+            existing spouse-owned accounts are preserved while the receiver's
+            own accounts + grants + employer shares are replaced.
+
+    Returns:
+        A new ``PortfolioSnapshot`` with the merged accounts and metadata.
+    """
+    if as_spouse:
+        # Rewrite incoming account ownership; ignore incoming grants/employer shares.
+        for acc in incoming.accounts:
+            acc.owner = "spouse"
+        spouse_accounts = incoming.accounts
+        if existing is not None:
+            your_accounts = [a for a in existing.accounts if a.owner == "you"]
+            grants = existing.equity_grants
+            stock_held = existing.stock_shares_held
+            stock_val = existing.stock_shares_value
+            server_available = existing.server_available
+            error = existing.error
+            grants_owner = existing.equity_grants_owner
+        else:
+            your_accounts = []
+            grants = []
+            stock_held = 0
+            stock_val = 0.0
+            server_available = False
+            error = None
+            grants_owner = ""
+    else:
+        # Receiver's own data — replace your-accounts + grants + employer shares;
+        # keep spouse accounts.
+        your_accounts = incoming.accounts
+        grants = incoming.equity_grants
+        stock_held = incoming.stock_shares_held
+        stock_val = incoming.stock_shares_value
+        server_available = incoming.server_available
+        error = incoming.error
+        grants_owner = ""  # the receiver's own grants
+        if existing is not None:
+            spouse_accounts = [a for a in existing.accounts if a.owner == "spouse"]
+        else:
+            spouse_accounts = []
+    return PortfolioSnapshot(
+        accounts=list(your_accounts) + list(spouse_accounts),
+        equity_grants=grants,
+        stock_shares_held=stock_held,
+        stock_shares_value=stock_val,
+        server_available=server_available,
+        error=error,
+        equity_grants_owner=grants_owner,
+    )
+
+
+def _derive_ttm_dividends(h: Holding) -> float:
+    """Derive trailing-12-month dividends for a Holding from FinExtract data.
+
+    Strategy:
+    - dividends_by_year + dividends_window present: window-actualized
+      ttm = sum(values) * 365 / window_days
+    - dividends_by_year only: most-recent prior-year value
+    - No data: 0.0 (pre-H2 behavior)
+    """
+    if not h.dividends_by_year:
+        return 0.0
+
+    if h.dividends_window:
+        try:
+            start = date.fromisoformat(h.dividends_window["start"])
+            end = date.fromisoformat(h.dividends_window["end"])
+            days = (end - start).days
+            if days > 0:
+                return sum(h.dividends_by_year.values()) * 365.0 / days
+        except (KeyError, ValueError):
+            pass
+
+    # Audit E-5: use most-recent prior year, not the highest value across all years.
+    # max(prior.values()) overstates yield for declining dividend streams; we want
+    # the value from the highest year-key (i.e. most recent completed year).
+    current_year = str(date.today().year)
+    prior = {k: v for k, v in h.dividends_by_year.items() if k < current_year}
+    return prior[max(prior.keys())] if prior else 0.0
+
+
+def positions_for_forecast(brok_snapshot: AccountSummary) -> list:
+    """Convert brokerage holdings into Position records for dividend forecast.
+
+    Args:
+        brok_snapshot: an AccountSummary for a brokerage account (from
+            PortfolioSnapshot.account_by_type("brokerage")).
+
+    Returns a list of engine.dividend_forecast.Position, one per Holding.
+    Positions with zero market_value are skipped.
+    """
+    from engine.dividend_forecast import Position
+
+    positions = []
+    for h in brok_snapshot.holdings:
+        if h.market_value <= 0:
+            continue
+        if h.dividends_is_stale and h.dividends_by_year:
+            warnings.warn(
+                f"{h.symbol}: dividend data is stale (window {h.dividends_window})",
+                UserWarning,
+                stacklevel=2,
+            )
+        positions.append(
+            Position(
+                ticker=h.symbol,
+                shares=h.quantity,
+                balance=h.market_value,
+                ttm_dividends=_derive_ttm_dividends(h),
+            )
+        )
+    return positions
+
+
+def positions_for_forecast_multi(accounts: Iterable[AccountSummary]) -> list:
+    """Flatten positions across multiple brokerage accounts for the forecast engine.
+
+    Reuses positions_for_forecast per account and concatenates. Used by app.py
+    to feed forecast_portfolio() positions from all brokerage accounts (both
+    owners) rather than just one.
+    """
+    result: list = []
+    for acct in accounts:
+        result.extend(positions_for_forecast(acct))
+    return result
+
+
+def fetch_holdings_snapshot(*, today: date | None = None) -> HoldingsSnapshot:
+    """Fetch brokerage holdings, distinguishing transport failure from "no holdings".
+
+    Mirrors the sibling idiom (:func:`fetch_dividends_rollup`,
+    :func:`fetch_option_exercises`): a non-200, a refused redirect, a transport
+    error or malformed JSON all yield ``server_available=False`` rather than an
+    empty-but-plausible result. See :class:`HoldingsSnapshot` (audit PS-1).
+
+    The snapshot also carries an as-of date: the payload's own date when it
+    has one (per institution where the payload is multi-institution), else
+    the sync day (``today``, defaulting to the local date).
+    """
+    try:
+        resp = _get("/query/brokerage", params={"data_type": "holdings"}, timeout=5)
+        if resp.status_code != 200:
+            return HoldingsSnapshot(server_available=False, error=f"HTTP {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        top, row_dates = extract_payload_as_of(data)
+        if top:
+            as_of, source = top, "finextract"
+        else:
+            as_of, source = (today or date.today()).isoformat(), "sync_time"
+        return HoldingsSnapshot(
+            server_available=True,
+            rows=_flatten_query_rows(data),
+            as_of=as_of,
+            as_of_source=source,
+            row_as_of=row_dates,
+        )
+    except (requests.RequestException, ValueError) as e:
+        return HoldingsSnapshot(server_available=False, error=str(e))
+
+
+def fetch_holdings() -> list[dict[str, Any]]:
+    """Backwards-compatible list view of :func:`fetch_holdings_snapshot`.
+
+    Retained for callers that cannot act on a failure anyway; it keeps the
+    historical safe ``[]`` default. Callers that persist the result MUST use
+    :func:`fetch_holdings_snapshot` and check ``server_available`` first.
+    """
+    return fetch_holdings_snapshot().rows

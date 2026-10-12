@@ -1,0 +1,63 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1400 1000] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 591 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 40 960 Tm
+(Department of the Treasury - Internal Revenue Service) Tj
+1 0 0 1 40 945 Tm
+(Form 1040 \(2025\) U.S. Individual Income Tax Return) Tj
+1 0 0 1 40 930 Tm
+(Filing Status Single Married filing jointly Head of household \(HOH\)) Tj
+1 0 0 1 40 915 Tm
+(2a Tax-exempt interest . . 2a 1,000 b Taxable interest 2b 2,000) Tj
+1 0 0 1 40 900 Tm
+(3a Qualified dividends . . 3a 3,000 b Ordinary dividends 3b 4,000) Tj
+1 0 0 1 40 885 Tm
+(6 Social security benefits 6b 0) Tj
+1 0 0 1 40 870 Tm
+(11 Subtract line 10 from line 9. This is your adjusted gross income 150,000) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1400 1000] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 97 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 40 960 Tm
+(Schedule 1 \(Form 1040\) Additional Income and Adjustments) Tj
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000346 00000 n 
+0000000988 00000 n 
+0000001116 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1263
+%%EOF

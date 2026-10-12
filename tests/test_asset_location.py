@@ -1,0 +1,413 @@
+"""Tests for engine.asset_location — tax-efficient placement."""
+
+import pytest
+
+from models.household import Household
+
+
+def approx(expected, tol=1.0):
+    return pytest.approx(expected, abs=tol)
+
+
+class TestAssetLocation:
+    """Test asset location engine — equity-first vs proportional vs bond-first."""
+
+    def test_equity_first_reduces_ira_growth(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        conv = {2026: 100_000, 2027: 100_000, 2028: 100_000}
+        eq = project_asset_location(hh, conv, strategy="equity_first")
+        prop = project_asset_location(hh, conv, strategy="proportional")
+        # After converting equities, IRA growth rate should be lower
+        assert eq.ira_growth_at_75 < prop.ira_growth_at_75
+
+    def test_equity_first_smaller_ira_at_85(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        conv = dict.fromkeys(range(2026, 2040), 100000)
+        eq = project_asset_location(hh, conv, strategy="equity_first")
+        prop = project_asset_location(hh, conv, strategy="proportional")
+        bd = project_asset_location(hh, conv, strategy="bond_first")
+        # Equity-first should have smallest IRA (slowest remaining growth)
+        assert eq.ira_at_85 < prop.ira_at_85
+        assert prop.ira_at_85 < bd.ira_at_85
+
+    def test_equity_first_larger_roth(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        conv = dict.fromkeys(range(2026, 2035), 100000)
+        eq = project_asset_location(hh, conv, strategy="equity_first")
+        bd = project_asset_location(hh, conv, strategy="bond_first")
+        # Equity-first Roth should be larger (equities grow faster tax-free)
+        eq_roth_85 = next(y for y in eq.years if y.your_age == 85).roth_total
+        bd_roth_85 = next(y for y in bd.years if y.your_age == 85).roth_total
+        assert eq_roth_85 > bd_roth_85
+
+    def test_same_total_converted(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        conv = dict.fromkeys(range(2026, 2040), 80000)
+        eq = project_asset_location(hh, conv, strategy="equity_first")
+        bd = project_asset_location(hh, conv, strategy="bond_first")
+        assert eq.total_converted == approx(bd.total_converted)
+
+    def test_no_conversion_same_for_all(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        eq = project_asset_location(hh, {}, strategy="equity_first")
+        bd = project_asset_location(hh, {}, strategy="bond_first")
+        # With no conversions, IRA trajectory should be identical
+        assert eq.ira_at_85 == approx(bd.ira_at_85)
+
+    def test_rmd_smaller_with_equity_first(self):
+        from engine.asset_location import project_asset_location
+
+        hh = Household()
+        conv = dict.fromkeys(range(2026, 2040), 100000)
+        eq = project_asset_location(hh, conv, strategy="equity_first")
+        bd = project_asset_location(hh, conv, strategy="bond_first")
+        assert eq.rmd_at_85 < bd.rmd_at_85
+
+    def test_spouse_rmd_computed_independently_per_owner(self):
+        """RMD must be computed per-owner, not on pooled IRA balance.
+
+        Proof scenario:
+          primary age 75, your_ira=$1,000,000, your_rmd_start_age=75
+          spouse  age 69, spouse_ira=$1,000,000, spouse_rmd_start_age=75
+          divisor at 75 = 24.6
+
+        Bug:  total_ira=$2,000,000 / 24.6 = $81,300.81 (spouse included)
+        Correct: $1,000,000 / 24.6 = $40,650.41 (primary only; spouse below RMD age)
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            spouse_age=69,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+
+        yr0 = result.years[0]  # base year; primary is 75
+        assert yr0.your_age == 75
+        # Correct RMD = primary only: 1_000_000 / 24.6 ≈ 40_650.41
+        # Bug produces:              2_000_000 / 24.6 ≈ 81_300.81
+        assert yr0.rmd == pytest.approx(40_650.41, abs=1.0), (
+            f"Expected ~$40,650 (primary only), got {yr0.rmd:.2f} — "
+            "spouse IRA is being pooled into a single RMD"
+        )
+
+    def test_single_filer_rmd_unchanged(self):
+        """Single-filer (spouse_ira=0) behaviour must be preserved."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        assert yr0.rmd == pytest.approx(40_650.41, abs=1.0)
+
+    def test_both_spouses_in_rmd_age(self):
+        """When both spouses are at or above RMD age, both IRA balances count."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=75,
+            spouse_age=75,
+            your_ira=1_000_000.0,
+            spouse_ira=1_000_000.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        # Both at 75 → combined RMD = 2 × (1_000_000 / 24.6) ≈ 81_300.81
+        assert yr0.rmd == pytest.approx(81_300.81, abs=1.0)
+
+    def test_rmd_deferral_skips_first_year_and_doubles_second(self):
+        """your_defer_first_rmd=True must zero yr.rmd at start-age and raise it at start-age+1.
+
+        Setup: primary reaches your_rmd_start_age=73 within projection window
+        (your_age=70, so yr_idx=3 is start-age year, yr_idx=4 is doubling year).
+        spouse_ira=0 so combined rmd == primary rmd only.
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh_base = replace(
+            Household(),
+            your_age=70,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=99,  # spouse never reaches RMD in window
+        )
+
+        hh_no_defer = replace(hh_base, your_defer_first_rmd=False)
+        hh_defer = replace(hh_base, your_defer_first_rmd=True)
+
+        res_no = project_asset_location(hh_no_defer, {}, strategy="proportional")
+        res_def = project_asset_location(hh_defer, {}, strategy="proportional")
+
+        yr_start_no = next(y for y in res_no.years if y.your_age == 73)
+        yr_start_def = next(y for y in res_def.years if y.your_age == 73)
+        yr_next_no = next(y for y in res_no.years if y.your_age == 74)
+        yr_next_def = next(y for y in res_def.years if y.your_age == 74)
+
+        # No-defer: first RMD year has positive RMD
+        assert yr_start_no.rmd > 0.0, (
+            f"Expected positive RMD at 73 (no defer), got {yr_start_no.rmd}"
+        )
+        # Defer: first RMD year is zero
+        assert yr_start_def.rmd == pytest.approx(0.0, abs=0.01), (
+            f"Expected zero RMD at 73 (deferred), got {yr_start_def.rmd}"
+        )
+        # Defer: second year is strictly larger than no-defer second year (doubling)
+        assert yr_next_def.rmd > yr_next_no.rmd, (
+            f"Deferred year-2 RMD ({yr_next_def.rmd:.0f}) must exceed "
+            f"no-defer year-2 RMD ({yr_next_no.rmd:.0f})"
+        )
+
+    def test_conversion_does_not_consume_rmd_dollars(self):
+        """When conv >= ira_total - rmd, the RMD must still be fully honoured.
+
+        Build a scenario where the RMD start age is 73 and the requested
+        conversion in the first RMD year is intentionally larger than what
+        remains after the RMD.  The conversion stored on the year result must
+        be capped to ira_total - rmd, not ira_total.
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        # Use a small IRA so RMD is material relative to a large conversion
+        hh = replace(Household(), your_ira=500_000.0, your_rmd_start_age=73)
+        # first RMD year = base year + (73 - your_age)
+        first_rmd_year = 2026 + (73 - hh.your_age)
+        # Request a very large conversion in the first RMD year
+        conv = {first_rmd_year: 1_000_000.0}
+        result = project_asset_location(hh, conv, strategy="proportional")
+
+        yr = next((y for y in result.years if y.year == first_rmd_year), None)
+        assert yr is not None, "RMD year not found in projection"
+        assert yr.rmd > 0, "Sanity: RMD should be positive in first RMD year"
+        # Conversion must leave the full RMD intact
+        assert yr.conversion + yr.rmd <= yr.ira_total + 1.0, (
+            "Conversion + RMD may not exceed opening IRA balance"
+        )
+        assert yr.conversion <= yr.ira_total - yr.rmd + 1.0, (
+            "Conversion must be capped to post-RMD balance"
+        )
+
+    def test_equity_first_realizes_full_rmd_when_sleeve_exhausted(self):
+        """equity_first must not silently floor away part of the RMD.
+
+        Scenario: primary is at RMD age with a conversion sized to consume
+        almost the entire IRA.  Under the old (buggy) code, the conversion was
+        allocated against the FULL equity sleeve first, which could exhaust the
+        sleeve and then `max(ira_eq - conv_eq - rmd_eq, 0)` floored away part
+        of rmd_eq.  The correct invariant is:
+
+            ira_total_end  ≈  ira_total  -  conversion  -  rmd   (before growth)
+
+        i.e. the total outflow must equal conv + rmd, with no flooring of the RMD.
+        We also verify the outflow matches the proportional strategy's pool total
+        for identical inputs (both strategies must realize the same total withdrawal).
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+        from engine.ira import calc_rmd
+
+        # primary at RMD age 73; no spouse IRA so maths are simple
+        hh = replace(
+            Household(),
+            your_age=73,
+            your_ira=500_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=99,
+            your_defer_first_rmd=False,
+        )
+        # Compute the RMD for year 0 so we can size the conversion correctly.
+        # RMD at 73 uses divisor 26.5 (SECURE 2.0 table).
+        expected_rmd = calc_rmd(500_000.0, 73, 73, first_year_deferred=False)
+        assert expected_rmd > 0.0
+
+        # Size conversion to leave only the RMD available — equity sleeve (60 %)
+        # is 300 000; conversion of 280 000 with equity_first exhausts the equity
+        # sleeve (280 000 > 300 000 * (1 - rmd_frac)), creating the flooring risk.
+        # Use a value that is safely larger than the equity sleeve minus its RMD share
+        # but still within the post-RMD cap enforced by the engine.
+        ira_total = 500_000.0
+        equity_pct = 0.60  # default
+        # Conversion covers almost all of the post-RMD equity sleeve:
+        # just under (ira_total - expected_rmd) so the engine cap does not trim it.
+        # At equity_pct=0.60 the equity sleeve is 300_000; a conversion near
+        # (ira_total - rmd) forces equity_first to spill into the bond sleeve,
+        # which is the exact condition that triggered the RMD-flooring bug.
+        conv_amount = round(ira_total - expected_rmd - 1.0)
+        conv = {hh.base_year: conv_amount}
+
+        # Zero out growth so ira_total_end reflects the pure withdrawal outflow
+        # (no blended-rate confound). With equity_return == bond_return == 0:
+        #     ira_total_end == ira_total - conversion - rmd   (full outflow realized)
+        # Under the old bug, equity_first exhausted the equity sleeve and floored
+        # away rmd_eq, leaving ira_total_end too high by exactly that floored amount
+        # (hand-derived: buggy ira_total_end ~= 11321.83 vs fixed ~= 1.08).
+        eq_result = project_asset_location(
+            hh,
+            conv,
+            equity_pct=equity_pct,
+            equity_return=0.0,
+            bond_return=0.0,
+            strategy="equity_first",
+        )
+        yr0 = eq_result.years[0]
+
+        assert yr0.rmd == pytest.approx(expected_rmd, abs=1.0)
+        assert yr0.ira_total_end == pytest.approx(
+            yr0.ira_total - yr0.conversion - yr0.rmd, abs=1.0
+        ), (
+            f"equity_first leaked RMD: ira_total_end={yr0.ira_total_end:.2f} but "
+            f"ira_total-conv-rmd={yr0.ira_total - yr0.conversion - yr0.rmd:.2f} — "
+            "part of the RMD was silently floored away (sleeve-exhaustion bug)."
+        )
+
+
+class TestDeferredFirstRmdSeeding:
+    """audit-0802 F7: prev_your_ira_bal/prev_spouse_ira_bal must seed from
+    hh.your_ira/hh.spouse_ira when your/spouse_defer_first_rmd is elected, so
+    the doubled RMD year (base_year age == rmd_start_age + 1) includes the
+    deferred prior-year RMD term. Without this, the seed stays 0.0 and
+    calc_rmd's prior_year_balance > 0 guard (ira.py) silently suppresses the
+    deferred term, understating the first-year (doubled) RMD by ~48%.
+    Mirrors engine/scenario.py's existing prev_your_ira_begin seeding
+    (ira-rmd-1)."""
+
+    def test_deferred_first_rmd_seeds_prior_year_balance(self) -> None:
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+        from engine.ira import calc_rmd
+
+        hh = replace(
+            Household(),
+            your_age=74,  # base_year age == your_rmd_start_age + 1 (doubled year)
+            your_ira=2_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=73,
+            spouse_rmd_start_age=99,
+            your_defer_first_rmd=True,
+        )
+        result = project_asset_location(hh, {}, strategy="proportional")
+        yr0 = result.years[0]
+        assert yr0.your_age == 74
+
+        # Oracle: calc_rmd fed with the balance correctly seeded (as fixed
+        # engine/asset_location.py must do).
+        expected_rmd = calc_rmd(
+            2_000_000.0, 74, 73, first_year_deferred=True, prior_year_balance=2_000_000.0
+        )
+        # Sanity: the doubled term is present (~153,903, not just the ~78,431
+        # single-year RMD).
+        assert expected_rmd == pytest.approx(153_903.07, abs=1.0)
+
+        assert yr0.rmd == pytest.approx(expected_rmd, abs=1.0), (
+            f"Expected doubled first-year RMD {expected_rmd:.2f} (deferred "
+            f"prior-year term included), got {yr0.rmd:.2f} — prev_your_ira_bal "
+            "not seeded from hh.your_ira when your_defer_first_rmd=True"
+        )
+
+
+class TestIraAtAgeMilestoneUsesEndBalance:
+    """M6: ira_at_75 / ira_at_85 must report the END-of-year IRA balance.
+
+    Before the fix the milestones read yr.ira_total (begin-of-year, pre-RMD /
+    pre-growth) instead of yr.ira_total_end (post-RMD, post-growth).  With zero
+    growth and a non-zero RMD the two values differ by exactly the RMD amount,
+    making the old code over-report the IRA milestone.
+    """
+
+    def test_ira_at_75_uses_end_not_begin(self) -> None:
+        """ira_at_75 equals yr75.ira_total_end, not yr75.ira_total.
+
+        With zero growth the difference equals the RMD withdrawn that year.
+        """
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=65,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=99,
+        )
+        result = project_asset_location(
+            hh, {}, strategy="proportional", equity_return=0.0, bond_return=0.0
+        )
+
+        yr75 = next(y for y in result.years if y.your_age == 75)
+
+        # With zero growth: ira_total_end = ira_total - rmd
+        assert yr75.rmd > 0.0, "Sanity: RMD must be positive at age 75"
+        assert yr75.ira_total_end == pytest.approx(yr75.ira_total - yr75.rmd, abs=1.0)
+
+        # The reported milestone must equal end-of-year, not begin-of-year.
+        assert result.ira_at_75 == pytest.approx(yr75.ira_total_end, abs=0.01), (
+            f"ira_at_75={result.ira_at_75:.0f} should equal ira_total_end="
+            f"{yr75.ira_total_end:.0f}, not ira_total={yr75.ira_total:.0f}"
+        )
+        assert result.ira_at_75 != pytest.approx(yr75.ira_total, abs=1.0), (
+            "ira_at_75 must differ from begin-of-year ira_total (pre-RMD) — "
+            "the old bug returned the begin balance"
+        )
+
+    def test_ira_at_85_uses_end_not_begin(self) -> None:
+        """ira_at_85 equals yr85.ira_total_end, not yr85.ira_total."""
+        from dataclasses import replace
+
+        from engine.asset_location import project_asset_location
+
+        hh = replace(
+            Household(),
+            your_age=65,
+            your_ira=2_000_000.0,
+            spouse_ira=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=99,
+        )
+        result = project_asset_location(
+            hh, {}, strategy="proportional", equity_return=0.0, bond_return=0.0
+        )
+
+        yr85 = next(y for y in result.years if y.your_age == 85)
+        assert yr85.rmd > 0.0
+        assert result.ira_at_85 == pytest.approx(yr85.ira_total_end, abs=0.01)
+        assert result.ira_at_85 != pytest.approx(yr85.ira_total, abs=1.0)

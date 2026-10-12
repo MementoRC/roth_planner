@@ -1,0 +1,180 @@
+"""Tests for ``views/setup/_partials.py:render_accounts_partial`` — IRA/Roth/
+SS-FRA balance widgets.
+
+Task-4 reversal: this partial's inline trust/manual/confirm governance card
+was removed — those cards render exclusively in
+``views/setup/command_center.py``'s generic per-pending-field loop again
+(see that module's docstring; the behavioral tests moved to
+``tests/test_command_center_view.py``). This file keeps a negative
+regression test guarding against a silent re-introduction of the inline
+card, which would raise ``DuplicateWidgetID`` once Command Center's loop
+renders the same field too.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+
+from streamlit.testing.v1 import AppTest
+
+from engine.data_sources.candidate_store import CandidateStore
+from engine.data_sources.choices import ChoiceMap
+from models.sourced import Provenance, Source, SourcedValue
+
+_RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
+
+
+def _seed_pending_your_ira() -> None:
+    """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
+    # audit-0805 W1: re-import at call time (not the module-level binding
+    # frozen at collection) to see tests/conftest.py's per-test redirect.
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+
+    committed_json = {
+        "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
+    }
+    COMMITTED_PATH.write_text(json.dumps(committed_json))
+
+    store = CandidateStore()
+    store.record_candidate(
+        "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
+    )
+    store.save(CANDIDATE_STORE_PATH)
+    ChoiceMap().save(TRUST_CHOICES_PATH)
+
+
+def _render_your_accounts_with_pending_ira() -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    # your_ira/your_ss_fra are read unconditionally (st.session_state.<attr>,
+    # not .get()) by render_accounts_partial's own balance widgets, so both
+    # must be pre-seeded (matching the committed baseline used below) or
+    # Streamlit raises AttributeError before the widgets ever render.
+    # setdefault (not a plain assignment) so a rerun of this same function
+    # doesn't clobber a since-changed value back to the seed.
+    st.session_state.setdefault("your_ira", 1_600_000)
+    st.session_state.setdefault("your_ss_fra", 2_000)
+    st.session_state["_pending_review"] = {"your_ira"}
+    render_accounts_partial(Household(), st, "your")
+
+
+def test_accounts_partial_does_not_render_governance_card_even_when_pending(
+    clean_command_center_caches,
+) -> None:
+    """Task-4 reversal regression: render_accounts_partial must NOT render
+    the your_ira trust/manual/confirm governance card, even though your_ira
+    is pending review. That card renders exclusively in
+    views/setup/command_center.py's generic per-pending-field loop now (see
+    that module's docstring, and
+    tests/test_setup_shell_characterization.py's DuplicateWidgetID
+    regression test for why two renderers of the same widget key cannot
+    coexist).
+    """
+    _seed_pending_your_ira()
+
+    at = AppTest.from_function(_render_your_accounts_with_pending_ira)
+    at.run()
+
+    assert not at.exception
+    assert not any(w.key == "confirm_your_ira" for w in at.button)
+
+
+# --- audit-0823 M3: unclamped value= regression (StreamlitAPIException) -----
+#
+# your_ss_start_age/spouse_ss_start_age read value=hh.your_ss_start_age /
+# value=hh.spouse_ss_start_age directly (not through _clamp), bound [62, 70].
+# Both arrive via engine.upload_merge.SCALAR_KEYS from .user_defaults.json or
+# an uploaded bundle. These must FAIL on unmodified source. your_ira is the
+# representative min-only site (min_value=0) for the six min-only sites in
+# this file (your_ira/your_roth/your_ss_fra/spouse_ira/spouse_roth/
+# spouse_ss_fra) -- a negative persisted value crashes the same way.
+
+
+def _render_accounts_your_ss_start_age(ss_start_age: int) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state.setdefault("your_ira", 1_600_000)
+    st.session_state.setdefault("your_ss_fra", 2_000)
+    render_accounts_partial(Household(your_ss_start_age=ss_start_age), st, "your")
+
+
+def _render_accounts_spouse_ss_start_age(ss_start_age: int) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state.setdefault("filing_status", "MFJ")
+    st.session_state.setdefault("spouse_ira", 1_600_000)
+    st.session_state.setdefault("spouse_ss_fra", 2_000)
+    render_accounts_partial(Household(spouse_ss_start_age=ss_start_age), st, "spouse")
+
+
+def _render_accounts_your_ira(your_ira: float) -> None:
+    import streamlit as st
+
+    from models.household import Household
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state["your_ira"] = your_ira
+    st.session_state.setdefault("your_ss_fra", 2_000)
+    render_accounts_partial(Household(), st, "your")
+
+
+def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 85})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 70
+
+
+def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 10})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 62
+
+
+def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches) -> None:
+    at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 65})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Your SS claim age")
+    assert widget.value == 65
+
+
+def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+    at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 85})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")
+    assert widget.value == 70
+
+
+def test_spouse_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+    at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 10})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if w.label == "Spouse SS claim age")
+    assert widget.value == 62
+
+
+def test_your_ira_negative_persisted_value_does_not_crash(
+    clean_command_center_caches,
+) -> None:
+    """Representative min-only-site regression (min_value=0) for the six
+    balance/SS-FRA widgets in this file."""
+    at = AppTest.from_function(_render_accounts_your_ira, kwargs={"your_ira": -500})
+    at.run()
+    assert not at.exception
+    widget = next(w for w in at.number_input if "Your Trad IRA" in w.label)
+    assert widget.value == 0

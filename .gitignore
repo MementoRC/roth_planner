@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Pixi
+.pixi/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Serena
+.serena/
+
+# Project-specific
+# Personal household data (never commit)
+.user_defaults.py
+.user_defaults.json
+.portfolio_cache.json
+.tax_return_cache.json
+.ytd_cache.json
+.ssa_cache.json
+.ssa_pdf_cache.json
+.dividend_rates.json
+.brokerage_statement_cache.json
+.pdf_owner_map.json
+.ira_account_links.json
+.pdf_import_ledger.json
+.koinly_cache.json
+.statement_folder_config.json
+.statement_account_overrides.json
+.exercise_schedule_cache.json
+.candidate_store.json
+.trust_choices.json
+.committed_household.json
+.instance_owner.json
+.ubs_activity_cache.json
+.account_attribution.json
+.claude/
+.mcp.json
+.locks/
+logs/
+sessions/
+metadata/
+agents/
+
+# Local-only caches and AI scratch (not project code)
+.tax_pdf_cache.json
+ai_docs/
+
+# Deep-audit reports (local-only artifacts, never commit)
+AUDIT_*.md
+
+# Git worktrees (superpowers:using-git-worktrees)
+.worktrees/
+
+# Built stlite bundle (deploy/build_stlite.py output, never commit)
+_site/

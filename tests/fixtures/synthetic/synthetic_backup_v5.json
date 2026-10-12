@@ -1,0 +1,140 @@
+{
+  "exported_at": "2026-07-01T12:00:00+00:00",
+  "exported_by": "you",
+  "format_version": 5,
+  "joint": {
+    "filing_status": "MFJ",
+    "living_expenses": 80000,
+    "prior_year_magi": {
+      "2025": 150000.0
+    },
+    "stock_price_now": 100.0
+  },
+  "records": {
+    "account_type_overrides": {},
+    "ledger": {
+      "brokerage": {},
+      "koinly": {}
+    },
+    "portfolio": [
+      {
+        "account_name": "Example Traditional IRA",
+        "account_type": "trad_ira",
+        "as_of": "2026-06-30",
+        "as_of_source": "statement",
+        "bond_value": 0.0,
+        "cash_value": 0.0,
+        "crypto_value": 0.0,
+        "equity_value": 400000.0,
+        "holdings": [],
+        "owner": "you",
+        "target_date_value": 0.0,
+        "total_value": 400000.0
+      },
+      {
+        "account_name": "Example Roth IRA",
+        "account_type": "roth_ira",
+        "as_of": "2026-06-30",
+        "as_of_source": "statement",
+        "bond_value": 0.0,
+        "cash_value": 0.0,
+        "crypto_value": 0.0,
+        "equity_value": 50000.0,
+        "holdings": [],
+        "owner": "you",
+        "target_date_value": 0.0,
+        "total_value": 50000.0
+      },
+      {
+        "account_name": "Example Spouse IRA",
+        "account_type": "trad_ira",
+        "as_of": "2026-06-30",
+        "as_of_source": "statement",
+        "bond_value": 0.0,
+        "cash_value": 0.0,
+        "crypto_value": 0.0,
+        "equity_value": 300000.0,
+        "holdings": [],
+        "owner": "spouse",
+        "target_date_value": 0.0,
+        "total_value": 300000.0
+      },
+      {
+        "account_name": "Example Joint Brokerage",
+        "account_type": "brokerage",
+        "as_of": "2026-06-30",
+        "as_of_source": "statement",
+        "bond_value": 0.0,
+        "cash_value": 50000.0,
+        "crypto_value": 0.0,
+        "equity_value": 150000.0,
+        "holdings": [],
+        "owner": "household",
+        "target_date_value": 0.0,
+        "total_value": 200000.0
+      }
+    ]
+  },
+  "slots": {
+    "spouse": {
+      "captured_at": null,
+      "grant_strikes": {},
+      "grants": [],
+      "setup_scalars": {
+        "spouse_age": 58,
+        "spouse_ira": 300000
+      },
+      "ytd": {
+        "income_events": [],
+        "ira_conversions": 0.0,
+        "values": {
+          "wages_ytd": 40000.0
+        }
+      }
+    },
+    "you": {
+      "captured_at": "2026-07-01T12:00:00+00:00",
+      "grant_strikes": {
+        "2019": 50.0,
+        "2020": 60.0
+      },
+      "grants": [
+        {
+          "current_value": 50000.0,
+          "grant_date": "2019-02-01",
+          "grant_id": "ACME-2019",
+          "grant_type": "NQO",
+          "outstanding": 1000,
+          "shares_granted": 1000
+        },
+        {
+          "current_value": 80000.0,
+          "grant_date": "2020-02-01",
+          "grant_id": "ACME-2020",
+          "grant_type": "NQO",
+          "outstanding": 2000,
+          "shares_granted": 2000
+        }
+      ],
+      "setup_scalars": {
+        "your_age": 60,
+        "your_ira": 400000
+      },
+      "ytd": {
+        "income_events": [
+          {
+            "amount": 20000.0,
+            "date": "2026-03-01",
+            "kind": "conversion",
+            "owner": "you"
+          }
+        ],
+        "ira_conversions": 20000.0,
+        "values": {
+          "federal_withholding_ytd": 8000.0,
+          "wages_ytd": 50000.0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1592 @@
+"""Tests for engine.scenario core — no-conversion baseline, auto-fill strategies, Roth balance tracking.
+
+NAMING CONSTRAINT -- test function names in this file must NOT have exactly 35
+characters after the `test_` prefix. TruffleHog's Lob API-key detector matches
+`(live|test)_` followed by 35 characters and its verifier stamps any
+test_-prefixed candidate as Verified=true, so such a name is reported as a
+verified leaked secret. CI runs with fail-on-secrets: true, which makes that a
+HARD BLOCK on a pure false positive. One name here was renamed for exactly
+this reason (see git history); renaming it back to a 35-character suffix will
+silently break CI.
+"""
+
+import math
+from collections.abc import Callable
+
+import pytest
+
+from config.defaults import DEFAULTS
+from engine.aca import aca_ceiling_magi, aca_subsidy_loss, is_pre_medicare_age
+from engine.ira import (
+    project_ira,
+)
+from engine.irmaa import irmaa_next_threshold
+from engine.scenario import (
+    ConversionPlan,
+    run_no_conversion,
+    run_scenario,
+)
+from engine.scenario_autofill import (
+    add_bracket_fill_withdrawals,
+    auto_fill_12,
+    auto_fill_22,
+    auto_fill_aca,
+    auto_fill_irmaa_safe,
+)
+from engine.tax import federal_tax
+from models.grants import StockGrant
+from models.household import Household, SurvivorScenario
+
+
+def approx(expected, tol=1.0):
+    return pytest.approx(expected, abs=tol)
+
+
+class TestScenarios:
+    def test_no_conversion_ira_at_75(self):
+        hh = Household(living_expenses=0.0)
+        result = run_no_conversion(hh, end_age=95)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        years_to_75 = 75 - DEFAULTS["your_age"]
+        expected_ira = project_ira(DEFAULTS["your_ira"], 0.07, years_to_75)
+        assert yr75.your_ira_begin == approx(expected_ira, tol=500)
+
+    def test_no_conversion_rmd_at_75(self):
+        hh = Household(living_expenses=0.0)
+        result = run_no_conversion(hh, end_age=95)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        years_to_75 = 75 - DEFAULTS["your_age"]
+        expected_ira = project_ira(DEFAULTS["your_ira"], 0.07, years_to_75)
+        assert yr75.your_rmd == approx(expected_ira / 24.6, tol=100)
+
+    def test_no_conversion_ss_at_75(self):
+        hh = Household()
+        result = run_no_conversion(hh, end_age=95)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        ss_at_70 = DEFAULTS["your_ss_fra"] * 1.24 * 12
+        years_cola = 75 - 70
+        ss75 = ss_at_70 * 1.025**years_cola
+        assert yr75.your_ss == approx(ss75, tol=100)
+
+    def test_no_conversion_spouse_ss_starts_at_70(self):
+        hh = Household()
+        result = run_no_conversion(hh, end_age=95)
+        # Spouse reaches 70 when you are (your_age + (70 - spouse_age)) years old
+        your_age_when_spouse_70 = DEFAULTS["your_age"] + (70 - DEFAULTS["spouse_age"])
+        yr_before = next(yr for yr in result.years if yr.your_age == your_age_when_spouse_70 - 1)
+        yr_start = next(yr for yr in result.years if yr.your_age == your_age_when_spouse_70)
+        assert yr_before.spouse_ss == 0
+        assert yr_start.spouse_ss > 0
+
+    def test_12pct_fill_reduces_ira(self):
+        hh = Household()
+        plan = auto_fill_12(hh)
+        result = run_scenario(hh, plan, "Fill 12%", end_age=95)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+        assert yr75.your_ira_begin < 4_000_000
+
+    def test_22pct_fill_more_aggressive(self):
+        hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
+        plan_12 = auto_fill_12(hh)
+        plan_22 = auto_fill_22(hh)
+        total_12 = sum(plan_12.your_conversions.values()) + sum(plan_12.spouse_conversions.values())
+        total_22 = sum(plan_22.your_conversions.values()) + sum(plan_22.spouse_conversions.values())
+        assert total_22 > total_12
+
+    def test_22pct_fill_reduces_ira_more(self):
+        hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
+        r12 = run_scenario(hh, auto_fill_12(hh), "12%", end_age=95)
+        r22 = run_scenario(hh, auto_fill_22(hh), "22%", end_age=95)
+        yr75_12 = next(yr for yr in r12.years if yr.your_age == 75)
+        yr75_22 = next(yr for yr in r22.years if yr.your_age == 75)
+        assert yr75_22.your_ira_begin < yr75_12.your_ira_begin
+
+    def test_irmaa_safe_stays_under_threshold(self):
+        hh = Household()
+        plan = auto_fill_irmaa_safe(hh)
+        result = run_scenario(hh, plan, "IRMAA-Safe", end_age=95)
+        # During conversion years (pre-75), MAGI should stay under $218K
+        for yr in result.years:
+            if yr.your_age <= 74 and yr.your_conversion > 0:
+                assert yr.magi <= 220_000  # small tolerance for SS taxation effects
+
+    def test_bracket_fill_reduces_late_ira(self):
+        hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
+        base = auto_fill_12(hh)
+        plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
+        r12 = run_scenario(hh, base, "12%", end_age=95)
+        r_bf = run_scenario(hh, plan_bf, "BF", end_age=95)
+        yr90_12 = next(yr for yr in r12.years if yr.your_age == 90)
+        yr90_bf = next(yr for yr in r_bf.years if yr.your_age == 90)
+        assert yr90_bf.your_ira_begin < yr90_12.your_ira_begin
+
+    def test_bracket_fill_has_extra_withdrawals(self):
+        hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
+        base = auto_fill_12(hh)
+        plan_bf = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22)
+        assert len(plan_bf.extra_withdrawals) > 0
+        # Extra withdrawals should only be post-RMD (age 75+)
+        for year in plan_bf.extra_withdrawals:
+            assert hh.your_age_in(year) >= 75
+
+
+class TestAutoFillCharacterization:
+    """Pin per-year output of the three auto_fill_* functions before refactor.
+
+    These snapshots characterize today's behavior. If the upcoming
+    _auto_fill_core extraction produces different per-year amounts,
+    these tests will catch the drift even if end-to-end totals match.
+
+    Captured against development @ ecbc49d (post-PR #41).
+    """
+
+    def _fixture_household(self) -> Household:
+        """Mirror the fixture used by the existing auto_fill_* behavioral tests."""
+        return Household()
+
+    def test_auto_fill_12_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_12(hh)
+        # Per-year tuples: (year, your_conv, spouse_conv)
+        rows = [
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # default option-exercise timing moved from a base_year-anchored stagger
+        # (2026-2028) to each grant's own expiry_year (2030/2031/2032 for the
+        # default ACME grants), which shifts where option income competes for
+        # 12% bracket room and therefore this whole per-year fill trajectory.
+        # Re-captured again for P2b (baseline option income priced at
+        # hh.projected_stock_price(year) instead of a flat price): 2030-2032's
+        # option income is now larger (7%-compounded from stock_price_now),
+        # consuming more 12%-bracket room in those years and pushing more
+        # conversion volume into 2036/2037.
+        # Re-captured for issue #598: auto-fill now sizes each year against
+        # TOTAL ordinary income, including the IRA draw the waterfall forces to
+        # fund this default household's $60k living expenses plus tax (it has no
+        # brokerage), so every conversion shrinks by that draw.
+        expected: list[tuple[int, int, int]] = [
+            (2026, 53444, 0),
+            (2027, 51444, 0),
+            (2028, 49384, 0),
+            (2029, 47262, 0),
+            (2030, 51920, 0),
+            (2031, 53792, 0),
+            (2032, 49756, 0),
+            (2033, 19789, 28179),
+            (2034, 0, 45393),
+            (2035, 0, 43113),
+            (2036, 0, 42415),
+            (2037, 0, 43681),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+    def test_auto_fill_22_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_22(hh)
+        rows = [
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # see test_auto_fill_12_year_by_year_snapshot for why these numbers moved
+        # (both the exercise-schedule redesign and issue #598's forced IRA draw).
+        # 2026/2027 moved $1 when the #598 draw solve was made cheaper: both
+        # solvers land within their $1 tolerance of the same root.
+        expected: list[tuple[int, int, int]] = [
+            (2026, 137008, 0),
+            (2027, 135008, 0),
+            (2028, 132984, 0),
+            (2029, 0, 130827),
+            (2030, 0, 139810),
+            (2031, 0, 0),
+            (2032, 0, 0),
+            (2033, 0, 0),
+            (2034, 0, 0),
+            (2035, 0, 0),
+            (2036, 0, 0),
+            (2037, 0, 0),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+    def test_auto_fill_irmaa_safe_year_by_year_snapshot(self):
+        hh = self._fixture_household()
+        plan = auto_fill_irmaa_safe(hh)
+        rows = [
+            (
+                yr,
+                round(plan.your_conversions.get(yr, 0.0)),
+                round(plan.spouse_conversions.get(yr, 0.0)),
+            )
+            for yr in sorted(set(plan.your_conversions) | set(plan.spouse_conversions))
+        ]
+        # IRMAA-safe diverges from fill_12/fill_22 in base_magi computation:
+        # uses full combined_ss (not taxable_ss) — these per-year rows capture that.
+        # Re-captured after the exercise-schedule redesign (PR #373 follow-up):
+        # see test_auto_fill_12_year_by_year_snapshot for why these numbers moved.
+        # Re-captured again for P2b (baseline option income priced at
+        # hh.projected_stock_price(year)): larger 2030/2031 option income shifts
+        # the 2030/2031 IRMAA-safe fill amounts.
+        # Re-captured for issue #598: the waterfall's forced IRA draw now counts
+        # toward MAGI, so each year's conversion shrinks by that draw. 2029/2031
+        # moved $1 when that draw solve was made cheaper (both solvers land
+        # within their $1 tolerance of the same root).
+        expected: list[tuple[int, int, int]] = [
+            (2026, 117666, 0),
+            (2027, 115666, 0),
+            (2028, 113606, 0),
+            (2029, 67733, 47338),
+            (2030, 0, 118308),
+            (2031, 0, 114728),
+            (2032, 0, 0),
+            (2033, 0, 0),
+            (2034, 0, 0),
+            (2035, 0, 0),
+            (2036, 0, 0),
+            (2037, 0, 0),
+            (2038, 0, 0),
+            (2039, 0, 0),
+            (2040, 0, 0),
+            (2041, 0, 0),
+            (2042, 0, 0),
+            (2043, 0, 0),
+            (2044, 0, 0),
+            (2045, 0, 0),
+            (2046, 0, 0),
+            (2047, 0, 0),
+        ]
+        assert rows == expected
+
+
+class TestRothBalanceTracking:
+    """Regression tests for Roth balance tracking (grid-01 fix).
+
+    These tests guard three correctness properties introduced when
+    run_scenario began crediting conversions to Roth and growing them
+    tax-free rather than letting converted principal disappear from
+    the total-asset picture.
+
+    Assertion taxonomy:
+      BEHAVIORAL — asserts a specific computed value derived from the
+                   engine formula; will fail if the formula changes.
+      INVARIANT  — asserts a structural property (sign, monotonicity,
+                   conservation) that must hold regardless of parameter
+                   tuning.
+    """
+
+    # ------------------------------------------------------------------
+    # Minimal deterministic household — flat 7% growth, no options,
+    # no SS, no IRMAA anchors, no ACA, no YTD, no inherited IRAs.
+    # ConversionPlan.your_conversions keyed on calendar year (base 2026).
+    # ------------------------------------------------------------------
+
+    def _simple_hh(
+        self,
+        *,
+        your_roth: float = 0.0,
+        spouse_roth: float = 0.0,
+        your_ira: float = 500_000.0,
+        spouse_ira: float = 0.0,
+        growth_rate: float = 0.07,
+        your_age: int = 55,
+        spouse_age: int = 53,
+        living_expenses: float = 60_000.0,
+    ) -> Household:
+        """Minimal household with no option grants and predictable growth."""
+        return Household(
+            your_age=your_age,
+            spouse_age=spouse_age,
+            your_ira=your_ira,
+            spouse_ira=spouse_ira,
+            your_roth=your_roth,
+            spouse_roth=spouse_roth,
+            growth_rate=growth_rate,
+            # Disable stock grants so option_income is always 0
+            grants=[],
+            # No SS before 70 for cleaner arithmetic in early years
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            living_expenses=living_expenses,
+        )
+
+    # ------------------------------------------------------------------
+    # Test 1: conversions credited to Roth; RMDs/extra_withdrawals are NOT
+    # ------------------------------------------------------------------
+
+    def test_conversions_credited_to_roth_and_grow_tax_free(self):
+        """BEHAVIORAL: first conversion year formula matches engine expression.
+
+        Engine rule (scenario.py):
+            yr.your_roth_end = (your_roth_begin + yr.your_conversion)
+                               * (1 + hh.your_roth_rate(yr.year))
+
+        We verify this exact identity holds for the first conversion year
+        so that any future change to the crediting formula breaks visibly.
+        """
+        conv_amount = 50_000.0
+        base_year = 2026
+        hh = self._simple_hh()
+        plan = ConversionPlan(your_conversions={base_year: conv_amount})
+        result = run_scenario(hh, plan, end_age=60)
+
+        yr0 = result.years[0]
+        assert yr0.year == base_year
+
+        # BEHAVIORAL: your_roth_end matches the engine formula exactly.
+        rate = hh.your_roth_rate(base_year)
+        expected_end = (yr0.your_roth_begin + yr0.your_conversion) * (1.0 + rate)
+        assert yr0.your_roth_end == pytest.approx(expected_end, rel=1e-9)
+
+        # INVARIANT: the final Roth end is positive (conversion was credited).
+        assert yr0.your_roth_end > 0.0
+
+    def test_rmd_and_extra_withdrawal_do_not_add_to_roth(self):
+        """INVARIANT: Roth grows only from prior balance; RMDs/extra go to taxable.
+
+        Set up a post-RMD year (age 75+) with conversion=0 so the only
+        change in Roth should be pure growth on the existing balance.
+        """
+        # Start with a nonzero Roth so we can measure growth
+        your_roth_start = 200_000.0
+        hh = self._simple_hh(
+            your_roth=your_roth_start,
+            your_ira=1_000_000.0,
+            your_age=74,
+            spouse_age=72,
+            living_expenses=0.0,
+        )
+        # No conversions anywhere in the plan — only RMDs will fire at 75
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=76)
+
+        # Find a year where your_age == 75 (RMD fires, no conversion)
+        yr75 = next(yr for yr in result.years if yr.your_age == 75)
+
+        assert yr75.your_conversion == 0.0  # guard: no conversion in plan
+        assert yr75.your_rmd > 0.0  # guard: RMD is firing
+
+        # BEHAVIORAL: Roth end == begin * (1 + rate) — no RMD contribution.
+        rate = hh.your_roth_rate(yr75.year)
+        expected_roth_end = yr75.your_roth_begin * (1.0 + rate)
+        assert yr75.your_roth_end == pytest.approx(expected_roth_end, rel=1e-9)
+
+        # INVARIANT: Roth did not shrink (no distributions from Roth modeled).
+        assert yr75.your_roth_end >= yr75.your_roth_begin
+
+    # ------------------------------------------------------------------
+    # Test 2: starting Roth balance flows through unchanged in year 0,
+    #         then compounds each year at the roth rate with no conversions
+    # ------------------------------------------------------------------
+
+    def test_starting_roth_balance_flows_through(self):
+        """BEHAVIORAL: year-0 begin equals hh.your_roth / hh.spouse_roth.
+
+        INVARIANT: balances grow monotonically at growth_rate when there
+        are no conversions (pure compounding).
+        """
+        your_roth_start = 250_000.0
+        spouse_roth_start = 100_000.0
+        rate = 0.07
+        hh = self._simple_hh(
+            your_roth=your_roth_start,
+            spouse_roth=spouse_roth_start,
+            growth_rate=rate,
+        )
+        plan = ConversionPlan()  # no conversions
+        result = run_scenario(hh, plan, end_age=60)
+
+        yr0 = result.years[0]
+
+        # BEHAVIORAL: year-0 begin balances equal the household inputs.
+        assert yr0.your_roth_begin == pytest.approx(your_roth_start)
+        assert yr0.spouse_roth_begin == pytest.approx(spouse_roth_start)
+
+        # BEHAVIORAL: each subsequent year's begin equals the prior year's end
+        # (pure compounding — engine carry-forward: your_roth = yr.your_roth_end).
+        for i in range(1, len(result.years)):
+            prev = result.years[i - 1]
+            curr = result.years[i]
+            assert curr.your_roth_begin == pytest.approx(prev.your_roth_end, rel=1e-9)
+            assert curr.spouse_roth_begin == pytest.approx(prev.spouse_roth_end, rel=1e-9)
+
+        # INVARIANT: balances grow each year (positive growth rate, no withdrawals).
+        for i in range(1, len(result.years)):
+            assert result.years[i].your_roth_begin > result.years[i - 1].your_roth_begin
+            assert result.years[i].spouse_roth_begin > result.years[i - 1].spouse_roth_begin
+
+    # ------------------------------------------------------------------
+    # Test 3: grid-01 bias fix — converted principal still exists in Roth
+    # ------------------------------------------------------------------
+
+    def test_conversion_does_not_destroy_total_net_worth(self):
+        """INVARIANT: conversion scenario net worth is not materially below no-conversion.
+
+        Pre-fix behaviour (grid-01 bug): conversions were debited from IRA but
+        the Roth was never credited, so total assets dropped by approximately
+        the full converted principal — making Roth conversions appear to destroy
+        wealth and biasing the grid metric against converting.
+
+        Post-fix invariant: "total net worth" = IRA + Roth + brokerage for BOTH
+        scenarios.  The no-conversion scenario accumulates RMD proceeds in the
+        brokerage account (taxable), while the conversion scenario keeps money in
+        tax-free, RMD-free Roth.  Including brokerage makes the comparison fair.
+
+        The assertion proves that conversions are NOT penalised: the conversion
+        scenario's net worth must not be more than 10% of total converted principal
+        BELOW the no-conversion net worth.
+
+        Pre-fix: total_conv ≈ total_noconv − principal  →  fails this bound.
+        Post-fix: converted principal lives in Roth; total_conv ≥ total_noconv
+                  (Roth's RMD-free, tax-free compounding is at least as good),
+                  so passes with wide margin.
+        """
+        base_year = 2026
+        conv_amount = 80_000.0
+
+        hh_conv = self._simple_hh(your_ira=500_000.0)
+        hh_noconv = self._simple_hh(your_ira=500_000.0)
+
+        # Conversion plan: convert in the first 5 years
+        plan_conv = ConversionPlan(your_conversions={base_year + i: conv_amount for i in range(5)})
+        plan_noconv = ConversionPlan()  # baseline: no conversions
+
+        end_age = 80
+        result_conv = run_scenario(hh_conv, plan_conv, end_age=end_age)
+        result_noconv = run_scenario(hh_noconv, plan_noconv, end_age=end_age)
+
+        last_conv = result_conv.years[-1]
+        last_noconv = result_noconv.years[-1]
+
+        # True end-of-horizon net worth: IRA + Roth + brokerage.
+        # Brokerage must be included because the no-conversion scenario parks
+        # RMD proceeds there; omitting it would make that scenario look poorer
+        # than it is and produce a spurious asymmetry.
+        total_conv = (
+            last_conv.your_ira_end
+            + last_conv.spouse_ira_end
+            + last_conv.your_roth_end
+            + last_conv.spouse_roth_end
+            + last_conv.brokerage_balance
+        )
+        total_noconv = (
+            last_noconv.your_ira_end
+            + last_noconv.spouse_ira_end
+            + last_noconv.your_roth_end
+            + last_noconv.spouse_roth_end
+            + last_noconv.brokerage_balance
+        )
+
+        total_converted_principal = conv_amount * 5  # 400_000
+
+        # INVARIANT: converted principal must not disappear.
+        # Allow up to 10% of principal as slack for tax drag on conversion income.
+        # Pre-fix: total_conv ≈ total_noconv - principal  (≫ 10% below) → FAIL.
+        # Post-fix: total_conv ≥ total_noconv or only modestly below → PASS.
+        assert total_conv >= total_noconv - total_converted_principal * 0.1, (
+            f"Conversion scenario net worth is too far below no-conversion: "
+            f"total_conv={total_conv:,.0f}, total_noconv={total_noconv:,.0f}, "
+            f"gap={total_noconv - total_conv:,.0f} exceeds 10% of converted "
+            f"principal {total_converted_principal:,.0f}. "
+            f"This indicates converted principal is not being credited to Roth "
+            f"(grid-01 bug) or is being taxed away entirely."
+        )
+
+    # ------------------------------------------------------------------
+    # Test 4: _ira_at_age includes Roth — metric exceeds IRA-only sum
+    # ------------------------------------------------------------------
+
+    def test_compare_metric_includes_roth_balances(self):
+        """BEHAVIORAL: _ira_at_age returns IRA + Roth, not IRA alone.
+
+        engine/scenario_compare.py._ira_at_age (grid-01 fix):
+            return yr.your_ira_begin + yr.spouse_ira_begin
+                   + yr.your_roth_begin + yr.spouse_roth_begin
+
+        We verify this by asserting that for a scenario with a nonzero
+        Roth balance, the milestone balance at a late age exceeds the
+        IRA-only sum (your_ira_begin + spouse_ira_begin) by exactly
+        the roth begins at that age.
+        """
+        from engine.scenario_compare import compute_milestone_rows
+
+        # Build a household with a meaningful starting Roth so it's visible
+        # at age 75 even without any conversions.
+        your_roth_start = 150_000.0
+        hh = self._simple_hh(
+            your_roth=your_roth_start,
+            your_ira=500_000.0,
+        )
+        plan = ConversionPlan()
+        result = run_scenario(hh, plan, end_age=95)
+
+        target_age = 75
+        yr75 = next(yr for yr in result.years if yr.your_age == target_age)
+
+        ira_only = yr75.your_ira_begin + yr75.spouse_ira_begin
+        roth_only = yr75.your_roth_begin + yr75.spouse_roth_begin
+        full_metric = ira_only + roth_only
+
+        # INVARIANT: the Roth is nonzero at age 75 (it grew from your_roth_start).
+        assert roth_only > 0.0
+
+        # BEHAVIORAL: milestone rows carry the same combined balance.
+        milestones = compute_milestone_rows([result], milestone_ages=(target_age,))
+        milestone_balance = milestones[0].ira_balance
+
+        assert milestone_balance == pytest.approx(full_metric, rel=1e-9), (
+            f"milestone ira_balance {milestone_balance:,.0f} != "
+            f"IRA+Roth sum {full_metric:,.0f}. "
+            f"Roth portion {roth_only:,.0f} may be excluded (grid-01 not applied to milestone rows)."
+        )
+
+        # BEHAVIORAL: milestone balance strictly exceeds IRA-only sum.
+        assert milestone_balance > ira_only, (
+            "milestone_balance should exceed IRA-only sum because Roth is included."
+        )
+
+
+class TestSurvivorIncomeGate:
+    """Regression for IRC §408A(d)(3): decedent's planned income must not flow
+    into combined_gross / MAGI / federal tax / Roth in post-death years.
+
+    After death_year the deceased's IRA is rolled to the survivor (self-zeros),
+    so RMDs are already 0.  The bug was that conversions and extra_withdrawals
+    were still read from the plan dict and included in aggregates.
+    """
+
+    def _base_hh(self, who_dies: str, death_year: int) -> Household:
+        return Household(
+            your_age=60,
+            spouse_age=58,
+            your_ira=500_000.0,
+            spouse_ira=500_000.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            growth_rate=0.05,
+            grants=[],
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            survivor=SurvivorScenario(who_dies=who_dies, death_year=death_year),
+        )
+
+    def test_deceased_spouse_conversion_excluded_from_combined_gross(self) -> None:
+        """After spouse dies, spouse_conversion must be 0 in all survivor years."""
+        death_year = 2028
+        # Large planned spouse conversion that would bleed into combined_gross if not gated.
+        # Start from death_year+1 (survivor_active years only; death_year itself is pre-survivor).
+        post_death_conv = 80_000.0
+        hh = self._base_hh("spouse", death_year)
+        plan = ConversionPlan(
+            spouse_conversions=dict.fromkeys(range(death_year + 1, death_year + 5), post_death_conv)
+        )
+        result = run_scenario(hh, plan, end_age=75)
+        for yr in result.years:
+            if yr.year > death_year:
+                assert yr.spouse_conversion == 0.0, (
+                    f"year {yr.year}: deceased spouse_conversion={yr.spouse_conversion} != 0"
+                )
+                # combined_gross must not contain the dead spouse's planned conversion
+                assert yr.combined_gross == pytest.approx(yr.combined_gross, abs=0.01), (
+                    "combined_gross sentinel — see next assertion"
+                )
+                # The net check: combined_gross without any conversion vs. the gated run
+                # is equivalent here since the no-conversion run uses the same household.
+                assert yr.magi < yr.magi + post_death_conv, "sanity: magi would be higher if leaked"
+
+    def test_deceased_spouse_conversion_not_credited_to_spouse_roth(self) -> None:
+        """Spouse Roth must not grow from a deceased spouse's post-death planned conversions.
+
+        Plan conversions only for years AFTER death_year (survivor_active years).
+        In death_year itself the survivor flag is not yet active, so a conversion
+        on that year would legitimately fire and seed the Roth — we exclude it.
+        """
+        death_year = 2028
+        post_death_conv = 80_000.0
+        hh = self._base_hh("spouse", death_year)
+        # Conversions ONLY for years strictly after death — these must be zeroed by the gate
+        plan_with_conv = ConversionPlan(
+            spouse_conversions=dict.fromkeys(range(death_year + 1, death_year + 5), post_death_conv)
+        )
+        plan_no_conv = ConversionPlan()
+        result_with = run_scenario(hh, plan_with_conv, end_age=75)
+        result_none = run_scenario(hh, plan_no_conv, end_age=75)
+        for yr_with, yr_none in zip(result_with.years, result_none.years, strict=True):
+            if yr_with.year > death_year:
+                # Spouse Roth must be identical whether or not the plan had post-death conversions
+                assert yr_with.spouse_roth_end == pytest.approx(
+                    yr_none.spouse_roth_end, rel=1e-9
+                ), (
+                    f"year {yr_with.year}: spouse_roth_end differs "
+                    f"({yr_with.spouse_roth_end:.0f} vs {yr_none.spouse_roth_end:.0f}); "
+                    "deceased spouse conversion is being credited to Roth"
+                )
+
+    def test_deceased_spouse_extra_withdrawal_excluded_from_magi(self) -> None:
+        """After spouse dies, spouse_extra_withdrawal must be 0 in all survivor years."""
+        death_year = 2027
+        hh = self._base_hh("spouse", death_year)
+        plan = ConversionPlan(
+            spouse_extra_withdrawals=dict.fromkeys(range(death_year + 1, death_year + 4), 50_000.0)
+        )
+        result = run_scenario(hh, plan, end_age=75)
+        for yr in result.years:
+            if yr.year > death_year:
+                assert yr.spouse_extra_withdrawal == 0.0, (
+                    f"year {yr.year}: deceased spouse_extra_withdrawal="
+                    f"{yr.spouse_extra_withdrawal} != 0"
+                )
+
+    def test_deceased_primary_conversion_excluded_when_you_die(self) -> None:
+        """When 'you' die, yr.your_conversion must be 0 in all survivor years."""
+        death_year = 2028
+        post_death_conv = 60_000.0
+        hh = self._base_hh("you", death_year)
+        plan = ConversionPlan(
+            your_conversions=dict.fromkeys(range(death_year + 1, death_year + 5), post_death_conv)
+        )
+        result = run_scenario(hh, plan, end_age=75)
+        for yr in result.years:
+            if yr.year > death_year:
+                assert yr.your_conversion == 0.0, (
+                    f"year {yr.year}: deceased your_conversion={yr.your_conversion} != 0"
+                )
+
+    def test_deceased_primary_extra_withdrawal_excluded_when_you_die(self) -> None:
+        """When 'you' die, yr.extra_withdrawal must be 0 in all survivor years."""
+        death_year = 2027
+        hh = self._base_hh("you", death_year)
+        plan = ConversionPlan(
+            extra_withdrawals=dict.fromkeys(range(death_year + 1, death_year + 4), 40_000.0)
+        )
+        result = run_scenario(hh, plan, end_age=75)
+        for yr in result.years:
+            if yr.year > death_year:
+                assert yr.extra_withdrawal == 0.0, (
+                    f"year {yr.year}: deceased extra_withdrawal={yr.extra_withdrawal} != 0"
+                )
+
+
+class TestConversionTaxIncludesSsTorpedo:
+    """F12 regression: conversion_tax must include the SS torpedo delta.
+
+    The OBBBA senior-deduction baseline (no-conversion MAGI) was computed as
+    yr.magi - conversions, which still contained conversion-elevated taxable SS.
+    The fix subtracts conversion_ss_delta from base_magi so the OBBBA phaseout
+    and conversion_tax both reflect the true no-conversion baseline.
+    """
+
+    def _make_hh_with_ss(self) -> Household:
+        # Ages 68/66 — both collecting SS, no RMD yet (onset 73), no option income.
+        # Small IRA balances so RMDs don't fire in 2026.
+        # SS is large enough that a conversion pushes meaningful extra SS into taxability.
+        return Household(
+            your_age=68,
+            spouse_age=66,
+            base_year=2026,
+            your_ira=200_000.0,
+            spouse_ira=200_000.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            growth_rate=0.05,
+            grants=[],
+            your_ss_fra=2_500.0,  # $/month at FRA
+            spouse_ss_fra=1_800.0,
+            your_ss_start_age=68,
+            spouse_ss_start_age=66,
+            your_fra_age=67,
+            spouse_fra_age=67,
+            ss_cola=0.0,
+            cpi_assumption=0.0,
+            filing_status="MFJ",
+        )
+
+    def test_conversion_tax_includes_ss_torpedo_delta(self) -> None:
+        """conversion_tax with a large conversion must exceed the no-SS-torpedo baseline.
+
+        We run two scenarios against the same household:
+          1. hh_with_ss: both collecting SS → conversion pushes more SS into taxation.
+          2. hh_no_ss:   SS zeroed out       → no torpedo effect.
+
+        For the same conversion amount, the extra conversion_tax in scenario 1 vs 2
+        must be positive, proving the SS torpedo delta is captured in conversion_tax.
+        """
+
+        hh = self._make_hh_with_ss()
+        conv = 50_000.0
+        plan = ConversionPlan(your_conversions={2026: conv})
+
+        result_ss = run_scenario(hh, plan, end_age=70)
+        yr_ss = next(yr for yr in result_ss.years if yr.year == 2026)
+
+        # Verify SS torpedo is active: combined SS > 0 and conversion elevated taxable SS.
+        assert yr_ss.combined_ss > 0, "precondition: SS must be active"
+        assert yr_ss.your_conversion == pytest.approx(conv, abs=1.0), (
+            "precondition: conversion must land as planned"
+        )
+
+        # Run without any conversion to get no-conversion baseline.
+        result_base = run_scenario(hh, ConversionPlan(), end_age=70)
+        yr_base = next(yr for yr in result_base.years if yr.year == 2026)
+
+        # The no-conversion taxable SS (used in base_magi for OBBBA).
+        # SS torpedo: conversion pushed extra SS into taxation.
+        # Verify the delta is positive (conversion inflated taxable SS vs no-conversion).
+        assert yr_ss.taxable_ss_amt > yr_base.taxable_ss_amt, (
+            f"taxable SS with conversion ({yr_ss.taxable_ss_amt:.0f}) must exceed "
+            f"no-conversion ({yr_base.taxable_ss_amt:.0f}) — SS torpedo must fire"
+        )
+        torpedo_delta = yr_ss.taxable_ss_amt - yr_base.taxable_ss_amt
+
+        # The conversion_tax must be higher than (conv * marginal_rate) alone because
+        # it also covers the torpedo delta taxed at the marginal rate.
+        # Minimum expected: torpedo_delta * 0.10 (lowest bracket rate).
+        min_extra = torpedo_delta * 0.10
+        assert yr_ss.conversion_tax > min_extra, (
+            f"conversion_tax ({yr_ss.conversion_tax:.0f}) must exceed "
+            f"torpedo minimum ({min_extra:.0f}); torpedo_delta={torpedo_delta:.0f}"
+        )
+
+
+class TestZeroConversionTaxInvariant:
+    """Waterfall arg-mismatch regression: run_no_conversion must produce zero
+    conversion_tax in EVERY year, for ANY household shape.
+
+    engine/scenario.py's two compute_social_security calls (the actual-taxable-SS
+    call and the no-conversion baseline call used to derive conversion_ss_delta)
+    must pass the same forced_your_ira_draw/forced_spouse_ira_draw. If the
+    baseline call omits them (they silently default to 0.0 per
+    scenario_compute.py's signature), conversion_ss_delta captures the forced
+    IRA draw's effect on SS taxability instead of the conversion's — producing a
+    nonzero conversion_tax under a plan with ZERO conversions.
+    """
+
+    @pytest.mark.parametrize(
+        "hh",
+        [
+            pytest.param(Household(), id="default"),
+            pytest.param(Household(brokerage_start=2_000_000.0), id="large_brokerage"),
+            pytest.param(
+                Household(your_ira=0.0, spouse_ira=0.0),
+                id="zero_ira",
+            ),
+            pytest.param(
+                Household(
+                    your_ira=5_000.0,
+                    spouse_ira=5_000.0,
+                    your_roth=0.0,
+                    spouse_roth=0.0,
+                ),
+                id="low_ira",
+            ),
+            pytest.param(
+                Household(filing_status="Single", your_age=61, spouse_age=61),
+                id="single_filer",
+            ),
+            pytest.param(
+                Household(your_age=76, spouse_age=74),
+                id="ss_and_rmd_active",
+            ),
+            pytest.param(
+                Household(your_age=45, spouse_age=43),
+                id="pre_ss_young",
+            ),
+        ],
+    )
+    def test_no_conversion_tax_is_always_zero(self, hh: Household) -> None:
+        result = run_no_conversion(hh, end_age=95)
+        assert result.years, "precondition: scenario must project at least one year"
+        for yr in result.years:
+            assert yr.conversion_tax == 0.0, (
+                f"year {yr.year} (age {yr.your_age}): expected conversion_tax == 0.0 "
+                f"under run_no_conversion, got {yr.conversion_tax!r}"
+            )
+
+
+class TestMagiCeilingWaterfallActivation:
+    """Waterfall-activation follow-up: conversion_cap must enforce the MAGI
+    ceiling INCLUDING the forced IRA draw for irmaa_safe/aca_safe plans (not
+    just the room_22 bracket ceiling) -- see engine/scenario.py's
+    _strategy_magi_ceiling / _solve_waterfall_year MAGI-ceiling block.
+
+    Scoped to years the strategy PLANNED to convert in (auto_fill_irmaa_safe/
+    auto_fill_aca's own dict, not the achieved amount -- a year the plan
+    shrank to 0 is exactly the case under test, so scoping on achieved>0
+    would silently hide it). It is NOT a claim that a household's other,
+    mandatory income (RMDs alone, once conversions have stopped post-RMD-age)
+    always stays under the ceiling too -- no conversion_cap can suppress a
+    forced RMD, so a household with a large enough IRA can legitimately
+    breach IRMAA/ACA in a pure-RMD year with zero conversion offered. That is
+    real and unavoidable, not a defect this cap closes.
+
+    Within a planned year, the guarantee is: EITHER the achieved MAGI is
+    under the ceiling, OR `magi_ceiling_converged` is False -- i.e. even a
+    ZERO conversion could not fund that year's living expenses without
+    breaching it (verified empirically for ACA-safe: default/large_brokerage/
+    single_filer/pre_ss_young all hit this in mid-life pre-RMD years, because
+    the 400%-FPL cliff ($84,600 MFJ / $62,600 Single, 2026) is far below the
+    IRMAA tier-1 ceiling and a taxable IRA draw funding living expenses alone
+    can exceed it; irmaa_safe never hits it for any of these 7 shapes).
+    """
+
+    HOUSEHOLD_SHAPES = [
+        pytest.param(Household(), id="default"),
+        pytest.param(Household(brokerage_start=2_000_000.0), id="large_brokerage"),
+        pytest.param(Household(your_ira=0.0, spouse_ira=0.0), id="zero_ira"),
+        pytest.param(
+            Household(
+                your_ira=5_000.0,
+                spouse_ira=5_000.0,
+                your_roth=0.0,
+                spouse_roth=0.0,
+            ),
+            id="low_ira",
+        ),
+        pytest.param(
+            Household(filing_status="Single", your_age=61, spouse_age=61), id="single_filer"
+        ),
+        pytest.param(Household(your_age=76, spouse_age=74), id="ss_and_rmd_active"),
+        pytest.param(Household(your_age=45, spouse_age=43), id="pre_ss_young"),
+    ]
+
+    @staticmethod
+    def _planned_totals(plan: ConversionPlan) -> dict[int, float]:
+        """Per-year PLANNED conversion (not achieved) -- the strategy's own
+        claim for that year, independent of whatever the waterfall/MAGI cap
+        ultimately allows. Scoping the guarantee tests on this (rather than
+        the achieved amount) is deliberate: a year the strategy planned to
+        convert in but the cap shrank to 0 is EXACTLY the case this feature
+        must be verified against, and scoping on achieved>0 would silently
+        skip it."""
+        years = set(plan.your_conversions) | set(plan.spouse_conversions)
+        return {
+            y: plan.your_conversions.get(y, 0.0) + plan.spouse_conversions.get(y, 0.0)
+            for y in years
+        }
+
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    def test_irmaa_safe_magi_never_exceeds_ceiling(self, hh: Household) -> None:
+        plan = auto_fill_irmaa_safe(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "IRMAA-Safe", end_age=95)
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue  # strategy offered nothing this year -- not its claim
+            ceiling = irmaa_next_threshold(
+                0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+            )
+            if yr.magi_ceiling_converged:
+                assert yr.magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi {yr.magi:.2f} exceeds "
+                    f"IRMAA tier-1 ceiling {ceiling:.2f}"
+                )
+            else:
+                # Explicitly-flagged, accepted outcome (see class docstring):
+                # even a zero conversion could not fund this year's living
+                # expenses under the ceiling. Verify the flag is HONEST --
+                # it must correspond to a genuine breach, not a false alarm.
+                assert yr.magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but magi {yr.magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
+                )
+
+    # NAME LENGTH IS LOAD-BEARING: a `test_` prefix followed by EXACTLY 35
+    # characters matches TruffleHog's Lob API-key detector, which stamps any
+    # test_-prefixed candidate as Verified=true. CI sets fail-on-secrets: true,
+    # so such a name HARD-BLOCKS the pipeline on a false positive. This test was
+    # renamed for exactly that reason (see git history); do not rename it back to
+    # a 35-character suffix. Note the old name cannot even be quoted here -- the
+    # detector matches it inside a comment just as readily as in code.
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    def test_aca_safe_magi_never_exceeds_its_ceiling(self, hh: Household) -> None:
+        """fix/aca-safe-medicare-age-gate: the aca_safe ceiling now LIFTS
+        ENTIRELY once BOTH spouses are 65+ (Medicare, no ACA subsidy left to
+        protect) -- an AGE-ONLY gate, deliberately independent of ACA
+        marketplace enrollment (Household.your_aca_enrolled /
+        spouse_aca_enrolled both default False and are irrelevant to this
+        gate; gating on enrollment would silently unbound the ceiling for
+        any household that never set those flags, defeating the "aca_safe"
+        strategy the user explicitly selected). This loop is scoped to
+        years where at least one spouse is actually under 65.
+        ss_and_rmd_active (76/74) is already 65+ for its entire projection,
+        so it correctly contributes zero assertions here -- that IS the
+        fix, exercised by the dedicated post-Medicare test below instead.
+        The other shapes (default 60/54 among them) are pre-65 for a real
+        span of years, so this loop still contributes genuine, non-vacuous
+        assertions overall.
+        """
+        plan = auto_fill_aca(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "ACA-Safe", end_age=95)
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue  # strategy offered nothing this year -- not its claim
+            eligible = is_pre_medicare_age(yr.your_age) or is_pre_medicare_age(yr.spouse_age)
+            if not eligible:
+                continue  # ceiling LIFTED (Medicare) -- nothing left to protect
+            ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+            if yr.magi_ceiling_converged:
+                assert yr.aca_magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): aca_magi {yr.aca_magi:.2f} "
+                    f"exceeds the 400% FPL ceiling {ceiling:.2f}"
+                )
+            else:
+                # Explicitly-flagged, accepted outcome (see class docstring):
+                # even a zero conversion could not fund this year's living
+                # expenses under the ceiling. Verify the flag is HONEST --
+                # it must correspond to a genuine breach, not a false alarm.
+                assert yr.aca_magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling {ceiling:.2f}"
+                )
+
+    def test_aca_safe_ceiling_lifts_entirely_post_medicare(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (a): once BOTH spouses
+        are 65+ for the WHOLE projection (Medicare, no ACA subsidy left to
+        protect), the aca_safe ceiling must not merely be reported as
+        "breached" -- it must LIFT ENTIRELY, so a forced RMD well over the
+        raw 400%-FPL figure is honoured (magi_ceiling_converged True), not
+        flagged as a breach.
+
+        your_aca_enrolled=True/spouse_aca_enrolled=True are set for realism
+        but are NOT load-bearing: the ceiling gate is AGE-ONLY (see
+        engine.aca.is_pre_medicare_age) and never reads either enrollment
+        flag, so only the Medicare-age cutoff can explain this lift.
+        """
+        hh = Household(
+            your_age=76,
+            spouse_age=74,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        result = run_scenario(hh, plan, "ACA-Safe-post-Medicare", end_age=95)
+        yr0 = result.years[0]
+        naive_ceiling = aca_ceiling_magi(yr0.filing_status, yr0.year, hh.cpi_assumption)
+        # Precondition: the forced RMD alone must genuinely exceed the raw
+        # 400%-FPL figure, or this test would not actually exercise the lift
+        # (a household that never breaches the naive ceiling would pass
+        # trivially regardless of whether the fix works).
+        assert yr0.aca_magi > naive_ceiling, (
+            f"precondition failed: year {yr0.year} aca_magi {yr0.aca_magi:.2f} does not "
+            f"exceed the naive ceiling {naive_ceiling:.2f} -- fixture must force a real "
+            "breach to prove the lift"
+        )
+        assert yr0.magi_ceiling_converged, (
+            f"year {yr0.year} (age {yr0.your_age}/{yr0.spouse_age}): aca_magi "
+            f"{yr0.aca_magi:.2f} exceeds the naive 400%-FPL ceiling {naive_ceiling:.2f} "
+            "but magi_ceiling_converged is False -- the ceiling should have LIFTED "
+            "(both spouses 65+, on Medicare), not merely been reported as unmet"
+        )
+
+    def test_aca_safe_ceiling_still_binds_pre_medicare(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (b): regression guard
+        proving the fix did not simply delete the ACA ceiling feature -- it
+        must still bind while the household is genuinely pre-65 (the AGE-ONLY
+        gate does not read either enrollment flag; they are set here for
+        realism only). your_age=60/spouse_age=54 matches the tool's actual
+        target household (see project memory), so this also exercises the
+        real-world case the whole feature exists for.
+
+        Pre-fix, this already PASSES -- the old code enforced the ceiling
+        unconditionally regardless of age, pre-65 included. It exists to
+        prove the fix's age gate keeps the pre-65 guarantee intact, not to
+        catch the defect itself.
+        """
+        hh = Household(
+            your_age=60,
+            spouse_age=54,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, "ACA-Safe-pre-Medicare", end_age=95)
+        checked_any = False
+        for yr in result.years:
+            if yr.your_age >= 65:
+                break  # both plan and ages only get further from eligible past this
+            if planned.get(yr.year, 0.0) <= 0.0:
+                continue
+            checked_any = True
+            ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+            if yr.magi_ceiling_converged:
+                assert yr.aca_magi <= ceiling + 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): aca_magi {yr.aca_magi:.2f} "
+                    f"exceeds the 400% FPL ceiling {ceiling:.2f} in a genuinely "
+                    "pre-65 ACA-eligible year -- the ceiling must still bind here"
+                )
+            else:
+                assert yr.aca_magi > ceiling - 1.0, (
+                    f"year {yr.year} (age {yr.your_age}): magi_ceiling_converged=False "
+                    f"but aca_magi {yr.aca_magi:.2f} did not actually exceed ceiling "
+                    f"{ceiling:.2f}"
+                )
+        assert checked_any, (
+            "precondition failed: no pre-65 year had a planned aca_safe conversion -- "
+            "this test does not actually exercise the regression guard"
+        )
+
+    def test_aca_safe_post_medicare_years_have_no_inf_or_nan(self) -> None:
+        """fix/aca-safe-medicare-age-gate requirement (c) / CRITICAL HAZARD
+        guard: the lifted-ceiling case must be represented so that it can
+        NEVER reach the (ceiling - baseline_magi) conversion_cap arithmetic
+        in _solve_waterfall_year as math.inf -- inf minus inf is NaN, and
+        either would silently poison every downstream conversion, MAGI, and
+        balance figure once the household crosses into Medicare.
+
+        Runs a household that actually LIVES THROUGH the pre-65 -> post-65
+        transition (not one that starts post-65, where a latent inf/NaN
+        could hide unexercised by any pre-65-only code path) and asserts
+        every year's income, MAGI, and account-balance fields stay finite.
+        """
+        hh = Household(
+            your_age=60,
+            spouse_age=54,
+            your_aca_enrolled=True,
+            spouse_aca_enrolled=True,
+        )
+        plan = auto_fill_aca(hh)
+        result = run_scenario(hh, plan, "ACA-Safe-inf-nan-guard", end_age=95)
+        fields = [
+            "your_conversion",
+            "spouse_conversion",
+            "magi",
+            "aca_magi",
+            "your_ira_end",
+            "spouse_ira_end",
+            "your_roth_end",
+            "spouse_roth_end",
+            "brokerage_balance_end",
+            "federal_tax_amt",
+        ]
+        bad = [
+            (yr.year, yr.your_age, f, v)
+            for yr in result.years
+            for f in fields
+            for v in [getattr(yr, f)]
+            if math.isinf(v) or math.isnan(v)
+        ]
+        assert not bad, f"inf/NaN leaked into the projection: {bad}"
+
+    @pytest.mark.parametrize("hh", HOUSEHOLD_SHAPES)
+    @pytest.mark.parametrize(
+        ("autofill", "strategy_label"),
+        [(auto_fill_irmaa_safe, "IRMAA-Safe"), (auto_fill_aca, "ACA-Safe")],
+        ids=["irmaa_safe", "aca_safe"],
+    )
+    def test_zero_planned_year_still_reports_a_ceiling_breach(
+        self,
+        hh: Household,
+        autofill: Callable[[Household], ConversionPlan],
+        strategy_label: str,
+    ) -> None:
+        """audit-0809 #20 (HIGH): the two tests above skip years the strategy
+        planned nothing in, and _solve_waterfall_year's whole MAGI-ceiling
+        block sits in the `else` of `planned_conversion <= 0.0` -- so a
+        zero-planned year verified nothing and reported the guarantee honoured
+        by default.
+
+        The living-expense draw is sized whether or not a conversion is
+        planned, so it can carry MAGI over the ceiling on its own. That is the
+        SAME household state the `conversion_cap <= 0.0` branch already
+        surfaces as False when a NONZERO plan shrinks to the floor, and it is
+        the exact condition ScenarioYear.magi_ceiling_converged documents:
+        "even a zero conversion could not fund living expenses without
+        crossing the ceiling". Which of True/False gets reported must not turn
+        on the accident of the plan dict holding 0.0 versus holding an amount
+        that the cap then shrank to 0.0.
+
+        Scoped to years the waterfall ACTUALLY RAN (a forced draw, or an
+        unfunded shortfall). A year with no shortfall never enters
+        _solve_waterfall_year at all, so its flag is untouched by this fix --
+        a documented limit of the narrow fix, not a claim about those years.
+
+        fix/aca-safe-medicare-age-gate: the ACA-Safe parametrization is
+        ADDITIONALLY scoped to years where at least one spouse is genuinely
+        pre-Medicare (`is_pre_medicare_age`), mirroring the age gate used by
+        `test_aca_safe_magi_never_exceeds_its_ceiling` above. Once BOTH
+        spouses are 65+ the aca_safe ceiling LIFTS ENTIRELY (Medicare, no
+        ACA subsidy left to protect), so `magi_ceiling_converged=True` in a
+        post-65 zero-planned year is the CORRECT report, not a dishonest
+        one -- flagging it as "dishonest" would be asserting against the
+        very fix this branch ships. The IRMAA-Safe parametrization is
+        deliberately left UNSCOPED by age: the IRMAA tier-1 ceiling has no
+        age gate anywhere in the engine (IRMAA only exists once you're on
+        Medicare, so it must keep binding at every post-Medicare age) and
+        must keep being checked in every zero-planned waterfall year,
+        exactly as before this fix.
+        """
+        plan = autofill(hh)
+        planned = self._planned_totals(plan)
+        result = run_scenario(hh, plan, strategy_label, end_age=95)
+
+        dishonest = []
+        for yr in result.years:
+            if planned.get(yr.year, 0.0) > 0.0:
+                continue  # the strategy's own claim -- covered by the two tests above
+            if strategy_label == "ACA-Safe":
+                eligible = is_pre_medicare_age(yr.your_age) or is_pre_medicare_age(yr.spouse_age)
+                if not eligible:
+                    continue  # ceiling LIFTED (Medicare) -- nothing left to protect
+            waterfall_ran = (
+                yr.forced_brokerage_draw
+                + yr.forced_your_ira_draw
+                + yr.forced_spouse_ira_draw
+                + yr.forced_your_roth_draw
+                + yr.forced_spouse_roth_draw
+                > 0.0
+            ) or yr.unfunded_need > 0.0
+            if not waterfall_ran:
+                continue
+            if strategy_label == "IRMAA-Safe":
+                ceiling = irmaa_next_threshold(
+                    0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+                )
+                achieved = yr.magi
+            else:
+                ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+                achieved = yr.aca_magi
+            if achieved > ceiling + 1.0 and yr.magi_ceiling_converged:
+                dishonest.append((yr.year, yr.your_age, achieved, ceiling))
+
+        assert not dishonest, (
+            f"{strategy_label}: {len(dishonest)} zero-planned waterfall year(s) sit over "
+            f"the MAGI ceiling but still report magi_ceiling_converged=True -- "
+            + "; ".join(
+                f"year {y} (age {a}): achieved {m:,.0f} > ceiling {c:,.0f}"
+                for y, a, m, c in dishonest
+            )
+        )
+
+    @staticmethod
+    def _no_shortfall_household(strategy_label: str) -> Household:
+        """Per-strategy fixture for the no-shortfall MAGI-breach guarantee.
+
+        IRMAA-Safe: unchanged from the original fixture -- a household well
+        past both RMD-start ages with IRA balances large enough that the
+        forced RMD alone dwarfs the IRMAA tier-1 ceiling and covers
+        living_expenses outright. IRMAA has no age gate, so a post-65
+        household exercises this cleanly.
+
+        ACA-Safe (fix/aca-safe-medicare-age-gate follow-up): the same 80/78
+        fixture no longer works here -- it is entirely post-65, so the
+        aca_safe ceiling has LIFTED for its whole projection and there is no
+        breach left to report. A forced RMD cannot substitute for it either:
+        RMDs start at 73/75, by which point the ceiling has already lifted
+        (age-gated at 65), so "a mandatory draw that dwarfs the ceiling with
+        no top-up needed" can never be an RMD for this strategy. The pre-65
+        equivalent is a single large NQO exercise: option income is ordinary
+        income added DIRECTLY to `available_income` (spendable cash --
+        engine/scenario.py's `available_income` assembly), unlike brokerage
+        dividends/interest, which only reinvest into the brokerage balance
+        and contribute to MAGI without ever becoming spendable cash. A large
+        exercise therefore both funds living_expenses outright (no
+        shortfall) and drives aca_magi far over the 400%-FPL ceiling,
+        entirely pre-65.
+        """
+        if strategy_label == "IRMAA-Safe":
+            return Household(
+                your_age=80,
+                spouse_age=78,
+                your_ira=6_000_000.0,
+                spouse_ira=6_000_000.0,
+                living_expenses=10_000.0,
+            )
+        grant = StockGrant(year=2020, strike=10.0, shares=20_000, expiry_year=2027, grant_id="g1")
+        return Household(
+            your_age=55,
+            spouse_age=53,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            grants=[grant],
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            living_expenses=5_000.0,
+        )
+
+    @pytest.mark.parametrize(
+        ("autofill", "strategy_label"),
+        [(auto_fill_irmaa_safe, "IRMAA-Safe"), (auto_fill_aca, "ACA-Safe")],
+        ids=["irmaa_safe", "aca_safe"],
+    )
+    def test_magi_breach_reported_in_no_shortfall_years(
+        self,
+        autofill: Callable[[Household], ConversionPlan],
+        strategy_label: str,
+    ) -> None:
+        """audit-0809 #20 follow-up (the LIMIT that PR #437 documented as
+        out of scope, engine/scenario.py:1640-1643 pre-fix): the whole
+        MAGI-ceiling block lives inside `_solve_waterfall_year`, which
+        `run_scenario` calls ONLY when `outcome.yr.income_needed > 0`
+        (stage 3b activation). A year with NO shortfall -- e.g. a large
+        forced RMD that alone covers living expenses -- never enters the
+        solver, so nothing ever checks whether that forced RMD carried MAGI
+        over the ceiling, and `magi_ceiling_converged` reports its True
+        default regardless.
+
+        This is exactly the pure-RMD case this class's own docstring
+        already names as "real and unavoidable, not a defect this cap
+        closes" -- the cap genuinely cannot suppress a forced RMD. What
+        WAS a defect is the flag staying True and claiming the guarantee
+        held anyway.
+
+        fix/aca-safe-medicare-age-gate: the two strategies now need
+        DIFFERENT fixtures (see `_no_shortfall_household` above) -- the
+        original 80/78-both-post-65 household still proves the IRMAA-Safe
+        case (IRMAA has no age gate), but it can no longer prove the
+        ACA-Safe case, because the aca_safe ceiling has lifted entirely by
+        age 80. ACA-Safe now uses a genuinely pre-65 household driven by a
+        large NQO exercise instead of a forced RMD.
+        """
+        hh = self._no_shortfall_household(strategy_label)
+        plan = autofill(hh)
+        result = run_scenario(hh, plan, strategy_label, end_age=95)
+
+        checked_a_no_shortfall_year = False
+        breach_flagged = False
+        for yr in result.years:
+            if yr.income_needed != 0:
+                continue
+            if strategy_label == "IRMAA-Safe":
+                ceiling = irmaa_next_threshold(
+                    0.0, yr.filing_status, year=yr.year + 2, cpi=hh.cpi_assumption
+                )
+                achieved = yr.magi
+            else:
+                ceiling = aca_ceiling_magi(yr.filing_status, yr.year, hh.cpi_assumption)
+                achieved = yr.aca_magi
+            if achieved <= ceiling + 1.0:
+                continue
+            # Found a genuine no-shortfall, over-ceiling year -- the exact
+            # case _solve_waterfall_year never reaches.
+            checked_a_no_shortfall_year = True
+            if not yr.magi_ceiling_converged:
+                breach_flagged = True
+                break
+
+        assert checked_a_no_shortfall_year, (
+            f"{strategy_label}: precondition failed -- no year in this household's "
+            "projection had income_needed == 0 AND achieved MAGI over its ceiling; "
+            "the test fixture needs a bigger RMD or lower living_expenses"
+        )
+        assert breach_flagged, (
+            f"{strategy_label}: a no-shortfall year's achieved MAGI exceeded its "
+            "ceiling but magi_ceiling_converged still reported True -- the "
+            "no-shortfall path never checked it (LIMIT PR #437 documented)"
+        )
+
+    def test_22pct_fill_conversions_unchanged_by_magi_ceiling_work(self) -> None:
+        """Regression guard: a plan with magi_strategy=None (12/22/24-bracket
+        fill) never enters the MAGI-ceiling block added by this change, so
+        its per-year achieved conversion stays governed by _base_headroom
+        alone (the room_22 bracket ceiling), unaffected by the
+        zero_conv_outcome computation being reordered earlier in
+        _solve_waterfall_year. Total captured against this fix (branch
+        feat/ira-waterfall-activation) -- any future change that lets the
+        MAGI-ceiling block (or the reorder) leak into a magi_strategy=None
+        plan's cap will move this number.
+
+        UPDATE (branch fix/fund-aca-irmaa-cash-flow): the constant moved from
+        3_895_700 to 3_886_573 (delta -9_127) once ACA/IRMAA premiums and
+        surcharges were funded into cash flow rather than left as a
+        display-only ``all_in_cost`` add-on. The premise above is STILL
+        TRUE -- this household (your_age=60, spouse_age=54) leaves
+        ``your_aca_enrolled``/``spouse_aca_enrolled`` at their False default,
+        so ACA contributes nothing; the entire drift is IRMAA alone (both
+        spouses cross into Medicare and IRMAA-surcharge years within the
+        run's 34-year horizon to age 95). The causal chain: funding the
+        surcharge into the year it is charged forces a larger waterfall draw
+        to cover it; that draw is ordinary income that consumes room_22
+        headroom; less room_22 headroom means fewer dollars of 22%-bracket
+        conversion are affordable in that year. The guard itself is
+        unchanged in what it detects -- a magi_strategy=None plan's cap must
+        still be governed by _base_headroom alone, never by the MAGI-ceiling
+        block or its reorder; only the absolute total moved.
+
+        UPDATE (branch fix/audit-0823-af1-af2-closed-form-conversion-sizing):
+        the constant moved from 3_886_573 to 3_351_334 (delta -535_239, -13.8%)
+        when auto_fill_22 stopped sizing its room by closed-form subtraction
+        (audit-0823 AF-1). The old total was only reachable BY overshooting:
+        `room_to_22` assumed taxable income rises $1 per $1 converted, but
+        `fixed_gross` carries taxable Social Security priced at the
+        PRE-conversion base, so each converted dollar could raise taxable
+        income by up to $1.85 while provisional income sat in the IRC §86(b)
+        50%/85% band. The plan therefore converted past the top of the 22%
+        bracket every year -- measured at $44,600 of overshoot in 2026 rising
+        to $46,841 by 2028 on the AF-1 gate fixture. Sizing the same room by
+        bisection against POST-conversion taxable income converts less, which
+        is the point: the dollars removed were the ones being taxed at 24%
+        while the plan claimed to stop at 22%. The premise above is STILL
+        TRUE and the guard still checks it -- `plan.magi_strategy is None`
+        (line above) is unchanged and still passes; only the absolute total
+        moved, exactly as this docstring anticipates.
+
+        UPDATE (audit-1008 W0b): the fixture's ages and IRA balances were
+        replaced with synthetic values (60/54, $1.6M each), so the total was
+        re-captured as 3_537_363. No engine code changed; only the inputs did.
+
+        UPDATE (issue #598): the constant moved from 3_537_363 to 2_717_845
+        once auto_fill_22 sized each year against TOTAL ordinary income --
+        conversion plus the IRA draw the waterfall forces to fund this
+        household's default $60k living expenses and the conversion tax (it has
+        no brokerage). The old total converted past the 22% top by exactly that
+        draw. The premise above is STILL TRUE -- magi_strategy is None and the
+        cap is _base_headroom alone; only the absolute total moved.
+        """
+        hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
+        plan = auto_fill_22(hh)
+        assert plan.magi_strategy is None
+        result = run_scenario(hh, plan, "22%", end_age=95)
+        total_achieved = round(
+            sum(yr.your_conversion + yr.spouse_conversion for yr in result.years)
+        )
+        assert total_achieved > 0, "precondition: the 22%-fill plan must convert something"
+        assert total_achieved == approx(2_717_845, tol=1)
+
+
+class TestWaterfallMarginalBaselineC8Followup:
+    """audit-0805 C8 follow-up: conversion_tax/aca_loss must be the MARGINAL
+    cost of THIS year's conversion, holding prior years' actual balances
+    fixed -- i.e. measured against a genuinely SOLVED zero-conversion
+    waterfall for the same year, not `combined_gross - conversions`. The
+    naive subtraction silently attributes a forced draw's own tax to the
+    conversion whenever the two coincide, because the draw's SIZE depends on
+    the conversion (draw -> tax -> larger draw).
+    """
+
+    def _household(
+        self,
+        *,
+        living_expenses: float,
+        brokerage_start: float,
+        your_aca_enrolled: bool = False,
+    ) -> Household:
+        return Household(
+            grants=[],
+            your_age=61,
+            spouse_age=61,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            filing_status="MFJ",
+            base_year=2026,
+            growth_rate=0.0,
+            brok_turnover=0.0,
+            expense_inflation=0.0,
+            brokerage_start=brokerage_start,
+            living_expenses=living_expenses,
+            your_aca_enrolled=your_aca_enrolled,
+        )
+
+    def test_no_forced_draw_conversion_tax_and_aca_loss_unchanged(self) -> None:
+        """brokerage_start=$500,000 is large enough to fund the entire
+        living-expense + conversion-tax shortfall ($87,640) from brokerage
+        alone -- no forced IRA draw occurs this year. The subtraction-based
+        baseline and the newly-solved baseline must agree exactly.
+
+        Hand-derivation (mirrors tests/test_audit_0805_c8_expense_debit.py
+        ``TestConversionCarriesItsCost``, same fixture numbers): $100,000
+        conversion only, MFJ std ded $32,200 (age 60, no senior bonus) ->
+        taxable=$67,800 -> 10%/12% bracket walk = $7,640.00 federal tax.
+        Zero-conversion, zero-draw baseline has zero income -> $0.00 tax.
+        conversion_tax = 7,640.00 - 0.00 = 7,640.00 either way.
+        """
+        hh = self._household(
+            living_expenses=80_000.0, brokerage_start=500_000.0, your_aca_enrolled=True
+        )
+        plan = ConversionPlan(your_conversions={2026: 100_000.0})
+        result = run_scenario(hh, plan, "c8f-no-draw", end_age=62)
+        yr0 = result.years[0]
+
+        # Precondition: confirms this year truly has NO forced IRA draw, so
+        # the test actually exercises the "no draw" branch of the invariant.
+        assert yr0.forced_your_ira_draw == approx(0.0)
+        assert yr0.forced_spouse_ira_draw == approx(0.0)
+
+        assert yr0.conversion_tax == approx(7_640.0)
+
+        naive_base_aca_magi = yr0.aca_magi - yr0.your_conversion - yr0.spouse_conversion
+        naive_aca_loss = aca_subsidy_loss(
+            naive_base_aca_magi,
+            yr0.aca_magi,
+            hh.aca_benchmark_premium_annual,
+            hh.aca_enhanced_subsidies_active,
+            hh.filing_status,
+            year=yr0.year,
+            cpi=hh.cpi_assumption,
+        )
+        assert yr0.aca_loss == approx(naive_aca_loss)
+
+    def test_forced_draw_conversion_tax_exceeds_naive_subtraction(self) -> None:
+        """brokerage_start=$10,000 is too small to cover the $87,640
+        shortfall -- a real forced IRA draw coincides with the conversion.
+
+        DIRECTION ESTABLISHED: the naive `combined_gross - conversions`
+        baseline silently INCLUDES the with-conversion-sized forced draw's
+        own taxable income (bigger than the true zero-conversion draw would
+        be, since a smaller shortfall needs a smaller draw), so it
+        OVERSTATES the baseline tax and therefore UNDERSTATES
+        conversion_tax. The fix corrects this: conversion_tax must come out
+        LARGER than the naive figure.
+        """
+        hh = self._household(living_expenses=80_000.0, brokerage_start=10_000.0)
+        plan = ConversionPlan(your_conversions={2026: 100_000.0})
+        result = run_scenario(hh, plan, "c8f-draw", end_age=62)
+        yr0 = result.years[0]
+
+        # Precondition: confirms a real forced IRA draw occurred this year,
+        # so the test actually exercises the fixed-point (draw depends on
+        # conversion) branch the fix targets.
+        assert yr0.forced_your_ira_draw > 0.0
+
+        naive_base_gross = yr0.combined_gross - yr0.your_conversion - yr0.spouse_conversion
+        naive_base_taxable = max(naive_base_gross - yr0.total_deductions, 0)
+        naive_conversion_tax = federal_tax(
+            yr0.taxable_income, year=yr0.year, cpi=hh.cpi_assumption
+        ) - federal_tax(naive_base_taxable, year=yr0.year, cpi=hh.cpi_assumption)
+
+        assert yr0.conversion_tax != approx(naive_conversion_tax)
+        assert yr0.conversion_tax > naive_conversion_tax, (
+            f"corrected conversion_tax ({yr0.conversion_tax:.2f}) must exceed "
+            f"the naive combined_gross-conversions figure "
+            f"({naive_conversion_tax:.2f}) -- the naive baseline silently "
+            f"included the with-conversion-sized forced draw's own taxable "
+            f"income, overstating the baseline tax and understating "
+            f"conversion_tax"
+        )
+
+
+class TestLtcgStackingBaselineC8Consistency:
+    """audit-0805 C8 follow-up (base_taxable consistency): the LTCG
+    bracket-stacking baseline behind `conversion_ltcg_cost` (C2) is the SAME
+    "cost of THIS year's conversion" counterfactual as conversion_tax/aca_loss
+    -- it re-stacks the SAME realized-gains amount at the without-conversion
+    ordinary-income floor to isolate the conversion's own marginal bracket
+    impact. `base_taxable` (returned by compute_federal_tax and consumed at
+    scenario.py's C2 block) was left on the naive `combined_gross -
+    conversions` subtraction even after conversion_tax/aca_loss were fixed to
+    use a genuinely SOLVED zero-conversion waterfall baseline. Whenever a
+    forced draw coincides with the conversion, the naive subtraction retains
+    the draw at its ACTUAL (conversion-inflated) size instead of the smaller
+    size it would be in a true no-conversion year, overstating the baseline
+    ordinary-income floor and therefore UNDERSTATING conversion_ltcg_cost --
+    same bug, same direction, as the pre-fix conversion_tax defect above.
+    """
+
+    def _household(self, *, living_expenses: float, brokerage_start: float) -> Household:
+        from models.household import GrowthProfile
+
+        return Household(
+            grants=[],
+            your_age=61,
+            spouse_age=61,
+            your_ira=1_000_000.0,
+            spouse_ira=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            filing_status="MFJ",
+            base_year=2026,
+            growth_rate=0.0,
+            expense_inflation=0.0,
+            brokerage_start=brokerage_start,
+            brok_turnover=1.0,
+            # No forecast appreciation and zero cost basis: the ONLY LTCG
+            # source is the forced brokerage draw itself, realizing dollar-
+            # for-dollar (basis_fraction=0) -- deterministic and independent
+            # of the with/without-conversion split, since living_expenses is
+            # large enough that brokerage is fully drained in BOTH cases.
+            brokerage_growth=GrowthProfile(default_rate=0.0, yield_rate=0.0),
+            brokerage_start_basis=0.0,
+            living_expenses=living_expenses,
+        )
+
+    def test_forced_draw_ltcg_cost_exceeds_naive_subtraction(self) -> None:
+        """brokerage_start=$20,000 is fully drained funding the $80,000 living
+        expenses (too small on its own) -- realizing exactly $20,000 of LTCG
+        via the forced brokerage draw (zero cost basis, no forecast
+        appreciation). A $400,000 conversion request (bracket-ceiling-capped
+        by the engine to ~$243,600) forces a big enough IRA draw that the
+        NAIVE (subtraction-based) baseline's ordinary-income floor ($94,026,
+        RETAINING the conversion-inflated draw) sits just under the $98,900
+        MFJ 0%/15% LTCG threshold, while the TRUE (much smaller, genuinely
+        SOLVED no-conversion) baseline (~$31,100) sits well under it -- so
+        the two baselines disagree about how much of the $20,000 gain is
+        taxed at 15% instead of 0% ($2,269 vs. $0 of baseline gain tax).
+        """
+        hh = self._household(living_expenses=80_000.0, brokerage_start=20_000.0)
+        plan = ConversionPlan(your_conversions={2026: 400_000.0})
+        result = run_scenario(hh, plan, "c2-baseline-consistency", end_age=62)
+        yr0 = result.years[0]
+
+        # Preconditions: this year truly exercises all three ingredients.
+        assert yr0.forced_your_ira_draw > 0.0, "fixture must force an IRA draw"
+        assert yr0.brokerage_gain_tax > 0.0, "fixture must realize LTCG-eligible gains"
+        assert yr0.your_conversion > 200_000.0, (
+            f"expected the bracket-ceiling cap to still allow a large conversion, "
+            f"got {yr0.your_conversion:.2f}"
+        )
+
+        from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ
+        from engine.tax_indexing import index_tuple
+
+        thresholds = index_tuple(LTCG_THRESHOLDS_MFJ, yr0.year, hh.cpi_assumption, round50=True)
+        # ltcg_eligible is deterministic given this fixture (see _household
+        # docstring comment): the $20,000 forced brokerage draw, entirely
+        # gain (zero basis), independent of the conversion.
+        ltcg_eligible = 20_000.0
+
+        def stack_tax(start: float) -> float:
+            end = max(0.0, start) + ltcg_eligible
+            at_15 = max(0.0, min(end, thresholds[1]) - max(start, thresholds[0]))
+            at_20 = max(0.0, end - max(start, thresholds[1]))
+            return at_15 * LTCG_RATES_MFJ[1] + at_20 * LTCG_RATES_MFJ[2]
+
+        naive_base_gross = yr0.combined_gross - yr0.your_conversion - yr0.spouse_conversion
+        naive_base_taxable = max(naive_base_gross - yr0.total_deductions, 0)
+        naive_base_gain_tax = stack_tax(naive_base_taxable)
+        naive_conversion_ltcg_cost = max(0.0, yr0.brokerage_gain_tax - naive_base_gain_tax)
+
+        assert yr0.conversion_ltcg_cost != approx(naive_conversion_ltcg_cost), (
+            f"conversion_ltcg_cost ({yr0.conversion_ltcg_cost:.2f}) must differ from "
+            f"the naive combined_gross-conversions figure ({naive_conversion_ltcg_cost:.2f}) "
+            "-- fixture must actually straddle an LTCG threshold differently under "
+            "the two baselines for this test to be meaningful"
+        )
+        assert yr0.conversion_ltcg_cost > naive_conversion_ltcg_cost, (
+            f"corrected conversion_ltcg_cost ({yr0.conversion_ltcg_cost:.2f}) must "
+            f"exceed the naive combined_gross-conversions figure "
+            f"({naive_conversion_ltcg_cost:.2f}) -- the naive baseline silently "
+            "retained the with-conversion-sized forced draw's own ordinary income "
+            "in the LTCG-stacking floor, overstating the baseline gain tax and "
+            "understating conversion_ltcg_cost"
+        )

@@ -1,0 +1,21 @@
+# App theme. No `base`: Streamlit follows the viewer's system light/dark
+# setting and keeps its own Settings toggle. Shared fonts live in [theme];
+# the palettes live in [theme.light] and [theme.dark].
+[theme]
+font = "sans-serif"
+headingFont = "sans-serif"
+
+[theme.light]
+primaryColor = "#1f6feb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f5f8"
+textColor = "#1b1f24"
+
+[theme.dark]
+# Streamlit draws white text on primary buttons, so primary must stay dark
+# enough for white (>= 4.5:1); links keep the brighter blue.
+primaryColor = "#2b6fe0"
+linkColor = "#4c8dff"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1f2b"
+textColor = "#e6e8eb"

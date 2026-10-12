@@ -1,0 +1,1491 @@
+"""Tests for engine.brokerage_statement_pdf -- fixtures reproduce the LAYOUT of
+each broker's pdfplumber extract_text() output (trimmed to the pages holding
+the anchors this parser reads). Every name, account id and amount is
+synthetic."""
+
+from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from engine.brokerage_statement_pdf import (
+    BrokerageStatementRecord,
+    StatementParseError,
+    extract_owner_key,
+    parse_statement_text,
+)
+
+_DOWNLOADS = pathlib.Path.home() / "Downloads"
+SCHWAB_SAMPLE = _DOWNLOADS / "Brokerage Statement_2026-06-30_001.PDF"
+VANGUARD_TAXABLE_SAMPLE = _DOWNLOADS / "2026-06 VG Statement x0001.pdf"
+VANGUARD_ROTH_SAMPLE = _DOWNLOADS / "2026-06 VG Statement Roth IRA x0002.pdf"
+
+# --- Synthetic Schwab page (layout modelled on page 1 of a Schwab One
+# statement: account identity, Income Summary, Gain or (Loss) Summary).
+# Schwab's extract_text() strips spaces from labels -- the fixture keeps that
+# no-space form deliberately. All figures invented; allocation and holdings
+# rows sum to the stated total. ---
+SCHWAB_PAGE_TEXT = """Schwab One® Account of
+AccountNumber StatementPeriod
+JOHNSAMPLE
+DESIGNATEDBENEPLAN/TOD ****-*001 June1-30,2026
+i
+Asset Allocation Income Summary
+Current
+3
+ThisPeriod Allocation
+2.4
+CashandCashInvestments 412,500.00 45% 1.87
+ExchangeTradedFunds 504,180.40 55% 1.8
+$916.68K
+1.2
+Total $916,680.40 100%
+0.6
+InvestmentObjective:
+Growth 0
+Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec
+i
+Top Account Holdings This Period
+SYMBOL Market %of
+CUSIP Description Value Accounts
+TDBANKUSANA 210,000.00 23%
+TDBANKNA 202,500.00 22%
+VWO VANGUARDFTSEEMERGING 58,240.00 6%
+EFA ISHARESMSCIEAFEETF 51,360.00 6%
+SCHI SCHWAB5-10YEAR 38,800.00 4%
+.
+Gain or (Loss) Summary
+Short-Term(ST) Long-Term(LT)
+Gain (Loss) Net Gain (Loss) Net
+This 0.00 0.00 0.00 0.00 0.00 0.00
+Period
+YTD 12.50 185,000.00
+Unrealized $120,450.00
+Valuesmaynotreflectallofyourgains/lossesandmayberoundeduptothenearestdollar;Schwabhas
+providedaccurategainandlossinformationwhereverpossibleformostinvestments.Costbasismaybe
+incompleteorunavailableforsomeofyourholdingsandmaychangeorbeadjustedincertaincases.
+PleaselogintoyouraccountatSchwab.comforreal-timegain/lossinformation.Statementinformation
+shouldnotbeusedfortaxpreparation,insteadrefertoofficialtaxdocuments.Foradditionalinformation
+refertoTermsandConditions.
+2of12
+)$(sdnasuohT
+ThisPeriod YTD
+FederalTaxStatus Tax-Exempt1 Taxable Tax-Exempt1 Taxable
+BankSweepInterest 0.00 3.50 0.00 21.00
+CashDividends 12.40 1,850.00 64.80 4,410.25
+TotalIncome $12.40 $1,853.50 $64.80 $4,431.25
+1Certainincomeinthiscategorymayqualifyforstatetaxexemption;consultyourtaxadvisor
+i
+Margin Loan Information
+"""
+
+# --- Synthetic Vanguard taxable-account pages (layout modelled on a Vanguard
+# quarterly statement -- page 2: account overview header; page 4: Income
+# summary table). Invented figures; the activity summary reconciles (opening
+# + deposits/withdrawals + change in value + income = closing). ---
+VANGUARD_TAXABLE_OVERVIEW_TEXT = """CDDLRREG
+Individual brokerage account—XXXX0001 Vanguard Personal Investor
+John Q Sample 877-662-7447
+Account overview $115,350.00
+Total account value as of June 30, 2026
+June 30, 2026, quarter-to-date statement
+20260701
+000001STMT00000000000000000000001
+C
+Activity summary for statement period Cost basis summary (all investments)
+Value on March 31, 2026 $105,000.00 Realized gain/loss
+Deposits and withdrawals* -50.00 June short-term -
+June long-term -
+Change in value** 9,800.00
+Unrealized gain/loss 32,500.00
+Dividends, interest, and capital gains 600.00
+Value on June 30, 2026 $115,350.00
+Year-to-date income
+Taxable income $1,020.00
+Nontaxable income 0.00
+Total $1,020.00
+Balances and holdings for Vanguard Brokerage Account—XXXX0001
+"""
+
+VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT = """Individual brokerage account—XXXX0001 Vanguard Personal Investor
+John Q Sample 877-662-7447
+June 30, 2026, quarter-to-date statement Page 5 of10
+Account activity for Vanguard Brokerage Account—XXXX0001
+This section shows transactions that have settled by June 30, 2026.
+Income summary
+Dividends Interest Tax-exempt interest Short-term capital gains Long-term capital gains Other income
+June $400.00 $0.00 $0.00 $0.00 $0.00 $0.00
+Year-to-date 1,020.00 0.00 0.00 0.00 0.00 0.00
+"""
+
+# --- Synthetic Vanguard Roth-account pages (same layout, invented figures). ---
+VANGUARD_ROTH_OVERVIEW_TEXT = """CDDLRREG
+Roth IRA brokerage account—XXXX0002 Vanguard Personal Investor
+John Q. Sample 877-662-7447
+Account overview $44,900.00
+Total account value as of June 30, 2026
+June 30, 2026, quarter-to-date statement
+20260701
+000002STMT00000000000000000000002
+C
+Activity summary for statement period Retirement summary
+Value on March 31, 2026 $40,500.00 2026 contributions $0.00
+Deposits and withdrawals* 0.00 2026 distributions $0.00
+Change in value** 4,250.00
+Dividends, interest, and capital gains 150.00
+Value on June 30, 2026 $44,900.00
+Year-to-date income
+Taxable income $0.00
+Nontaxable income 290.00
+Total $290.00
+Balances and holdings for Vanguard Brokerage Account—XXXX0002
+"""
+
+VANGUARD_ROTH_INCOME_SUMMARY_TEXT = """Roth IRA brokerage account—XXXX0002 Vanguard Personal Investor
+John Q. Sample 877-662-7447
+June 30, 2026, quarter-to-date statement Page 5 of8
+Account activity for Vanguard Brokerage Account—XXXX0002
+This section shows transactions that have settled by June 30, 2026.
+Income summary
+Dividends Interest Tax-exempt interest Short-term capital gains Long-term capital gains Other income
+June $100.00 $0.00 $0.00 $0.00 $0.00 $0.00
+Year-to-date 290.00 0.00 0.00 0.00 0.00 0.00
+"""
+
+
+class TestParseSchwab:
+    def test_account_number(self):
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_number == "****-*001"
+        assert rec.broker == "schwab"
+
+    def test_account_type_is_unknown(self):
+        # Schwab statements never state account type -- must default to
+        # unknown, NOT be inferred as taxable just because no IRA label was found.
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_type == "unknown"
+
+    def test_interest_ytd_split(self):
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.interest_taxable_ytd == 21.00
+        assert rec.interest_tax_exempt_ytd == 0.0
+
+    def test_dividends_ytd_split(self):
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.dividends_taxable_ytd == 4410.25
+        assert rec.dividends_tax_exempt_ytd == 64.80
+
+    def test_gain_loss_ytd(self):
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.stcg_net_ytd == 12.50
+        assert rec.ltcg_net_ytd == 185000.00
+
+    def test_statement_period_end(self):
+        recs = parse_statement_text([SCHWAB_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-06-30"
+
+
+class TestParseVanguardTaxable:
+    def test_account_type_taxable(self):
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_type == "taxable"
+        assert rec.account_number == "XXXX0001"
+        assert rec.broker == "vanguard"
+
+    def test_dividends_ytd(self):
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.dividends_taxable_ytd == 1020.00
+        assert rec.dividends_tax_exempt_ytd == 0.0
+
+    def test_no_gains_or_interest(self):
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.interest_taxable_ytd == 0.0
+        assert rec.stcg_net_ytd == 0.0
+        assert rec.ltcg_net_ytd == 0.0
+
+    def test_statement_period_end(self):
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-06-30"
+
+
+class TestParseVanguardRoth:
+    def test_account_type_roth(self):
+        recs = parse_statement_text(
+            [VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_type == "roth_ira"
+        assert rec.account_number == "XXXX0002"
+
+    def test_dividends_ytd(self):
+        recs = parse_statement_text(
+            [VANGUARD_ROTH_OVERVIEW_TEXT, VANGUARD_ROTH_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        rec = recs[0]
+        # Note: "dividends_taxable_ytd" is just the dataclass field name inherited
+        # from the taxable-column source; downstream aggregation must still
+        # exclude this record entirely via account_type, regardless of which
+        # dollar figure lives in which field.
+        assert rec.dividends_taxable_ytd == 290.00
+
+
+@pytest.mark.skipif(
+    not SCHWAB_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
+def test_parse_real_schwab_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(SCHWAB_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec.account_type == "unknown"
+    assert rec.dividends_taxable_ytd > 0
+
+
+@pytest.mark.skipif(
+    not VANGUARD_TAXABLE_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
+def test_parse_real_vanguard_taxable_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(VANGUARD_TAXABLE_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec.account_type == "taxable"
+    assert rec.dividends_taxable_ytd > 0
+
+
+@pytest.mark.skipif(
+    not VANGUARD_ROTH_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
+def test_parse_real_vanguard_roth_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(VANGUARD_ROTH_SAMPLE.read_bytes())
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec.account_type == "roth_ira"
+
+
+# --- Synthetic IBKR "Account Information" tables (layout modelled on a
+# 3-account consolidated Activity Statement as pdfplumber flattens it).
+# Note the deliberate absence of a colon after "Customer Type" -- pdfplumber
+# flattens it to plain space-separated text, same lesson as Schwab. Also
+# note the unrelated "Account Type Individual" line present on ALL THREE
+# accounts (IBKR account-structure field, not tax treatment) -- a genuine
+# trap the Customer Type detector must not fall into. ---
+IBKR_ACCOUNT_1_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE
+Account Alias Broker
+Account U00000001
+Account Type Individual
+Customer Type Individual
+Account Capabilities Margin
+"""
+
+IBKR_ACCOUNT_2_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE Rollover IRA, Interactive Brokers LLC Custodian
+Account Alias IRA
+Account U00000002
+Account Type Individual
+Customer Type IRA-Traditional Rollover
+Account Capabilities Margin
+"""
+
+IBKR_ACCOUNT_3_TEXT = """Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE Roth IRA, Interactive Brokers LLC Custodian
+Account Alias Roth
+Account U00000003
+Account Type Individual
+Customer Type IRA-Roth New
+Account Capabilities Margin
+"""
+
+
+class TestDetectIbkrAccountType:
+    def test_individual_is_taxable(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_1_TEXT)
+        assert account_number == "U00000001"
+        assert account_type == "taxable"
+
+    def test_traditional_ira_rollover(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_2_TEXT)
+        assert account_number == "U00000002"
+        assert account_type == "traditional_ira"
+
+    def test_roth_ira_new(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_3_TEXT)
+        assert account_number == "U00000003"
+        assert account_type == "roth_ira"
+
+    def test_unrecognized_customer_type_falls_back_to_unknown(self):
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        text = "Account Information\nAccount U99999999\nCustomer Type SEP-IRA\n"
+        account_number, account_type = _detect_ibkr_account(text)
+        assert account_number == "U99999999"
+        assert account_type == "unknown"
+
+    def test_account_type_individual_line_does_not_false_positive(self):
+        # Regression test: every IBKR account has an unrelated "Account Type
+        # Individual" line (account structure, not tax treatment) -- the
+        # Customer Type detector must not confuse the two fields.
+        from engine.brokerage_statement_pdf import _detect_ibkr_account
+
+        _account_number, account_type = _detect_ibkr_account(IBKR_ACCOUNT_2_TEXT)
+        assert (
+            account_type == "traditional_ira"
+        )  # not "taxable" despite "Account Type Individual" also present
+
+
+class TestSplitIbkrSections:
+    def test_splits_into_one_section_per_account(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        full_text = IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT + IBKR_ACCOUNT_3_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert len(sections) == 3
+
+    def test_each_section_contains_its_own_account_number(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        full_text = IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT + IBKR_ACCOUNT_3_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert "U00000001" in sections[0]
+        assert "U00000002" in sections[1]
+        assert "U00000003" in sections[2]
+
+    def test_roster_page_precedes_first_section_and_is_excluded(self):
+        # The page-0 roster table (listing all accounts by NAV) has no
+        # "Account Information" table of its own -- true of the 3-account
+        # layout -- so text before the first "Account Information"
+        # match must not become a bogus extra section.
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        roster = "Account Summary\nU00000001 Broker John Q SAMPLE 5,000.00 5,002.00 0.04%\n"
+        full_text = roster + IBKR_ACCOUNT_1_TEXT + IBKR_ACCOUNT_2_TEXT
+        sections = _split_ibkr_sections(full_text)
+        assert len(sections) == 2
+
+    def test_no_account_information_raises(self):
+        from engine.brokerage_statement_pdf import _split_ibkr_sections
+
+        with pytest.raises(StatementParseError):
+            _split_ibkr_sections("no account sections here")
+
+
+class TestDetectBrokerIbkrOrdering:
+    def test_ibkr_detected_even_with_vanguard_branded_holding(self):
+        # Regression test: an IBKR Roth account can hold a Vanguard-branded
+        # fund (e.g. VIMAX) -- IBKR must be
+        # checked before Vanguard in _detect_broker or this would misdetect.
+        from engine.brokerage_statement_pdf import _detect_broker
+
+        text = IBKR_ACCOUNT_3_TEXT + "\nVWO Vanguard Vanguard Mid-Cap Index Fund Admiral\n"
+        assert _detect_broker(text) == "ibkr"
+
+
+# --- Synthetic IBKR per-account full-text fixtures (Account Information +
+# Month & Year to Date Performance Summary + Cash Report), same layout and
+# document order per account section as the statement: Account Information,
+# then Performance Summary, then Cash Report. Invented figures; each Cash
+# Report's YTD flows reconcile to its month's starting cash. ---
+IBKR_ACCOUNT_1_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 1 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE
+Account Alias Broker
+Account U00000001
+Account Type Individual
+Customer Type Individual
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+VHT VANGUARD HEALTH CARE ETF 150.00 600.00 0.00 0.00 0.00 0.00
+Total Stocks 150.00 600.00 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Cash Detail
+Starting Cash 500.00 500.00 0.00
+Deposits 0.00 0.00 0.00 0.00 460.00
+Withdrawals 0.00 0.00 0.00 0.00 -0.10
+Dividends 0.00 0.00 0.00 0.00 40.00
+Broker Interest Paid and Received 0.00 0.00 0.00 0.03 0.13
+Ending Cash 500.03 500.03 0.00
+Ending Settled Cash 500.03 500.03 0.00
+"""
+
+IBKR_ACCOUNT_2_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 2 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE Rollover IRA, Interactive Brokers LLC Custodian
+Account Alias IRA
+Account U00000002
+Account Type Individual
+Customer Type IRA-Traditional Rollover
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+XYZ SOME STOCK 12,000.00 -18,500.00 0.00 0.00 0.00 0.00
+Total Stocks 12,000.00 -18,500.00 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Starting Cash 0.00 0.00 0.00
+Ending Cash 0.00 0.00 0.00
+Ending Settled Cash 0.00 0.00 0.00
+"""
+
+IBKR_ACCOUNT_3_FULL_TEXT = """Activity Statement - July 9, 2026 Page: 3 of 5
+Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830
+Account Information
+Name John Q SAMPLE Roth IRA, Interactive Brokers LLC Custodian
+Account Alias Roth
+Account U00000003
+Account Type Individual
+Customer Type IRA-Roth New
+Account Capabilities Margin
+Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Mutual Funds
+ABC SOME MUTUAL FUND 50.00 2,100.00 0.00 0.00 0.00 0.00
+Total Mutual Funds 50.00 2,100.00 0.00 0.00 0.00 0.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Base Currency Summary
+Starting Cash 6.00 6.00 0.00
+Dividends 0.00 0.00 0.00 0.00 120.00
+Trades (Purchase) 0.00 0.00 0.00 0.00 -114.00
+Ending Cash 6.00 6.00 0.00
+Ending Settled Cash 6.00 6.00 0.00
+"""
+
+
+class TestExtractIbkrCashReport:
+    def test_dividends_and_interest_ytd_take_last_column_not_first(self):
+        # Regression test for the exact bug the grounding step caught: a
+        # naive "first number after the label" match would capture the Total
+        # column (0.00), not the YTD figure (last column).
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert dividends == 40.00
+        assert interest == 0.13
+
+    def test_missing_rows_fall_back_to_zero(self):
+        # The Traditional IRA account has zero cash flow of either type this
+        # period, so neither row appears at all -- IBKR omits empty rows.
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_2_FULL_TEXT)
+        assert dividends == 0.0
+        assert interest == 0.0
+
+    def test_dividends_present_without_interest_row(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_cash_report
+
+        dividends, interest = _extract_ibkr_cash_report(IBKR_ACCOUNT_3_FULL_TEXT)
+        assert dividends == 120.00
+        assert interest == 0.0
+
+
+class TestExtractIbkrGains:
+    def test_zero_realized_gains(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        stcg, ltcg = _extract_ibkr_gains(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert stcg == 0.0
+        assert ltcg == 0.0
+
+    def test_handles_comma_formatted_and_negative_numbers(self):
+        # Account 2's Performance Summary row uses comma-grouped and negative
+        # figures (12,000.00 / -18,500.00 in the MTM columns) -- confirms the
+        # extraction doesn't choke on either, even though the realized S/T/L/T
+        # columns themselves are zero in this sample.
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        stcg, ltcg = _extract_ibkr_gains(IBKR_ACCOUNT_2_FULL_TEXT)
+        assert stcg == 0.0
+        assert ltcg == 0.0
+
+    def test_sums_across_multiple_asset_classes(self):
+        # Synthetic test: no sampled account happens to hold >1 asset class
+        # with nonzero realized gains, so this exercises the summing logic
+        # itself (Bug #2 from grounding: there is no single "Total (All
+        # Assets)" row in this table -- every asset-class row must be summed).
+        from engine.brokerage_statement_pdf import _extract_ibkr_gains
+
+        section = """Month & Year to Date Performance Summary
+Mark-to-Market Realized S/T Realized L/T
+Symbol Description MTD YTD MTD YTD MTD YTD
+Stocks
+ABC SOME STOCK 10.00 20.00 5.00 15.00 0.00 0.00
+Total Stocks 10.00 20.00 5.00 15.00 0.00 0.00
+Mutual Funds
+XYZ SOME FUND 1.00 2.00 0.00 0.00 3.00 40.00
+Total Mutual Funds 1.00 2.00 0.00 0.00 3.00 40.00
+Cash Report
+Total Securities Futures Month to Date Year to Date
+Starting Cash 0.00 0.00 0.00
+"""
+        stcg, ltcg = _extract_ibkr_gains(section)
+        assert stcg == 15.00
+        assert ltcg == 40.00
+
+
+class TestExtractIbkrPeriodEnd:
+    def test_extracts_statement_date(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_period_end
+
+        assert _extract_ibkr_period_end(IBKR_ACCOUNT_1_FULL_TEXT) == "2026-07-09"
+
+    def test_missing_date_raises(self):
+        from engine.brokerage_statement_pdf import _extract_ibkr_period_end
+
+        with pytest.raises(StatementParseError):
+            _extract_ibkr_period_end("no date here")
+
+
+class TestParseIbkr:
+    def test_returns_one_record_per_account(self):
+        recs = parse_statement_text(
+            [IBKR_ACCOUNT_1_FULL_TEXT, IBKR_ACCOUNT_2_FULL_TEXT, IBKR_ACCOUNT_3_FULL_TEXT]
+        )
+        assert len(recs) == 3
+        assert {r.account_number for r in recs} == {"U00000001", "U00000002", "U00000003"}
+        assert all(r.broker == "ibkr" for r in recs)
+        assert all(r.statement_period_end == "2026-07-09" for r in recs)
+
+    def test_individual_account_dividends_and_interest(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_1_FULL_TEXT)
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.broker == "ibkr"
+        assert rec.account_type == "taxable"
+        assert rec.dividends_taxable_ytd == 40.00
+        assert rec.interest_taxable_ytd == 0.13
+        assert rec.dividends_tax_exempt_ytd == 0.0  # IBKR gives no split -- see module docstring
+        assert rec.interest_tax_exempt_ytd == 0.0
+        assert rec.stcg_net_ytd == 0.0
+        assert rec.ltcg_net_ytd == 0.0
+
+    def test_traditional_ira_account_zero_dividends(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_2_FULL_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "traditional_ira"
+        assert rec.dividends_taxable_ytd == 0.0
+        assert rec.interest_taxable_ytd == 0.0
+
+    def test_roth_account_dividends(self):
+        from engine.brokerage_statement_pdf import _parse_ibkr
+
+        recs = _parse_ibkr(IBKR_ACCOUNT_3_FULL_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "roth_ira"
+        assert rec.dividends_taxable_ytd == 120.00
+
+
+IBKR_SAMPLE = _DOWNLOADS / "MULTI_20260709.pdf"
+
+
+@pytest.mark.skipif(not IBKR_SAMPLE.exists(), reason="Sample statement not present on this machine")
+def test_parse_real_ibkr_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(IBKR_SAMPLE.read_bytes())
+    assert len(recs) == 3
+    account_types = {r.account_type for r in recs}
+    assert account_types == {"taxable", "traditional_ira", "roth_ira"}
+    # Every account number must be unique -- if the splitter double-counted a
+    # section or missed a boundary, this catches it.
+    assert len({r.account_number for r in recs}) == 3
+
+
+# --- Synthetic Fidelity per-account pages (layout modelled on a 2-account
+# consolidated Investment Report as pdfplumber flattens it). Each begins with
+# its "Accounts Included in This Report" roster-line (informational only,
+# not used by the splitter) followed by the per-account detail header,
+# Account Summary, and Income Summary. Invented figures; the roster's
+# beginning/ending values differ by the stated change in account value. ---
+FIDELITY_ROLLOVER_IRA_TEXT = """4 FIDELITY ROLLOVER IRA JOHN Q SAMPLE - ROLLOVER IRA - FIDELITY 999-000002 $1,150,000.00 $1,153,250.00
+INVESTMENT REPORT
+June 1, 2026 - June 30, 2026
+Account # 999-000002
+Account Summary
+JOHN Q SAMPLE - ROLLOVER IRA
+Account Value: $1,153,250.00 Account Holdings
+Change in Account Value $3,250.00
+Income Summary
+This Period Year-to-Date
+Tax-deferred $3,400.00 $16,200.00
+Total $3,400.00 $16,200.00
+Contributions and Distributions
+This Period Year-to-Date
+2026 Contributions $500.00 $3,000.00
+"""
+
+FIDELITY_HSA_TEXT = """9 FIDELITY HEALTH SAVINGS ACCOUNT JOHN Q SAMPLE HEALTH SAVINGS ACCOUNT FIDELITY PERSONAL TRUST CO - CUSTODIAN 999-000001 $60,000.00 $60,420.00
+INVESTMENT REPORT
+June 1, 2026 - June 30, 2026
+Account # 999-000001
+Account Summary
+JOHN Q SAMPLE - HEALTH SAVINGS ACCOUNT
+Account Value: $60,420.00 Account Holdings
+Change in Account Value $420.00
+Income Summary
+This Period Year-to-Date
+Tax-free $110.00 $450.00
+Total $110.00 $450.00
+Contributions and Distributions
+This Period Year-to-Date
+2026 Partic. $500.00 $3,000.00
+"""
+
+
+class TestDetectFidelityAccountType:
+    def test_rollover_ira_is_traditional_ira(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        account_number, account_type = _detect_fidelity_account(FIDELITY_ROLLOVER_IRA_TEXT)
+        assert account_number == "999-000002"
+        assert account_type == "traditional_ira"
+
+    def test_hsa_is_hsa(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        account_number, account_type = _detect_fidelity_account(FIDELITY_HSA_TEXT)
+        assert account_number == "999-000001"
+        assert account_type == "hsa"
+
+    def test_unrecognized_fidelity_account_falls_back_to_unknown(self):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        text = "Account # 999-999999\nAccount Summary\nSOME OTHER ACCOUNT TYPE\n"
+        account_number, account_type = _detect_fidelity_account(text)
+        assert account_number == "999-999999"
+        assert (
+            account_type == "unknown"
+        )  # never guess -- same safety rule as Vanguard/IBKR fallbacks
+
+
+class TestSplitFidelitySections:
+    def test_splits_into_one_section_per_account(self):
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        full_text = FIDELITY_ROLLOVER_IRA_TEXT + FIDELITY_HSA_TEXT
+        sections = _split_fidelity_sections(full_text)
+        assert len(sections) == 2
+
+    def test_bare_account_hash_repeat_does_not_oversplit(self):
+        # Regression test: a bare "Account # <number>" repeats on every page
+        # of that account's section (Holdings, Activity, Cash Flow all
+        # restate it) -- only the "Account # <number>\nAccount Summary" combo
+        # should count as a section start, or this would over-split.
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        text = (
+            FIDELITY_ROLLOVER_IRA_TEXT
+            + "Account # 999-000002\nHoldings\nJOHN Q SAMPLE - ROLLOVER IRA\n"
+            + FIDELITY_HSA_TEXT
+        )
+        sections = _split_fidelity_sections(text)
+        assert len(sections) == 2
+
+    def test_no_account_summary_marker_raises(self):
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        with pytest.raises(StatementParseError):
+            _split_fidelity_sections("no account sections here")
+
+
+class TestExtractFidelityIncomeYtd:
+    def test_rollover_ira_tax_deferred_total(self):
+        from engine.brokerage_statement_pdf import _extract_fidelity_income_ytd
+
+        assert _extract_fidelity_income_ytd(FIDELITY_ROLLOVER_IRA_TEXT) == 16200.00
+
+    def test_hsa_tax_free_total(self):
+        from engine.brokerage_statement_pdf import _extract_fidelity_income_ytd
+
+        assert _extract_fidelity_income_ytd(FIDELITY_HSA_TEXT) == 450.00
+
+
+class TestParseFidelity:
+    def test_returns_one_record_per_account(self):
+        recs = parse_statement_text([FIDELITY_ROLLOVER_IRA_TEXT, FIDELITY_HSA_TEXT])
+        assert len(recs) == 2
+        assert {r.broker for r in recs} == {"fidelity"}
+        assert {r.account_type for r in recs} == {"traditional_ira", "hsa"}
+        assert all(r.statement_period_end == "2026-06-30" for r in recs)
+
+    def test_rollover_ira_income(self):
+        from engine.brokerage_statement_pdf import _parse_fidelity
+
+        recs = _parse_fidelity(FIDELITY_ROLLOVER_IRA_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "traditional_ira"
+        assert rec.dividends_taxable_ytd == 16200.00
+        assert rec.dividends_tax_exempt_ytd == 0.0
+
+    def test_hsa_income(self):
+        from engine.brokerage_statement_pdf import _parse_fidelity
+
+        recs = _parse_fidelity(FIDELITY_HSA_TEXT)
+        rec = recs[0]
+        assert rec.account_type == "hsa"
+        assert rec.dividends_taxable_ytd == 450.00
+
+
+FIDELITY_SAMPLE = _DOWNLOADS / "FidelityStatement06302026.pdf"
+
+
+@pytest.mark.skipif(
+    not FIDELITY_SAMPLE.exists(), reason="Sample statement not present on this machine"
+)
+def test_parse_real_fidelity_sample():
+    from engine.brokerage_statement_pdf import parse_statement_pdf
+
+    recs = parse_statement_pdf(FIDELITY_SAMPLE.read_bytes())
+    assert len(recs) == 2
+    account_types = {r.account_type for r in recs}
+    assert account_types == {"traditional_ira", "hsa"}
+    assert len({r.account_number for r in recs}) == 2
+
+
+# --- SYNTHETIC Fidelity taxable brokerage statement (fake holder, fake
+# account number, fake amounts), modelled on the consolidated Investment
+# Report layout above. Taxable Fidelity brokerage account numbers carry a
+# letter prefix (e.g. "Z99-000001"), unlike the all-digit IRA/HSA numbers
+# above -- the shape that made a taxable statement fail with
+# "No Fidelity account sections found". The holder/title line sits BETWEEN
+# "Account #" and "Account Summary" here, and the holdings name a
+# Vanguard-branded fund, so this fixture exercises all three gaps at once. ---
+FIDELITY_TAXABLE_TOD_TEXT = """INVESTMENT REPORT
+July 1, 2026 - July 31, 2026
+Account # Z99-000001
+JANE Q SAMPLE - INDIVIDUAL - TOD
+Account Summary
+Account Value: $123,456.78 Account Holdings
+Change in Account Value $1,234.56
+Income Summary
+This Period Year-to-Date
+Taxable $210.00 $1,470.00
+Total $210.00 $1,470.00
+Holdings
+VTI VANGUARD TOTAL STOCK MARKET ETF 50,000.00
+Vanguard Total Bond Market Index Fund 20,000.00
+Brokerage services provided by Fidelity Brokerage Services LLC (FBS), Member NYSE, SIPC.
+"""
+
+
+class TestFidelityTaxableBrokerage:
+    def test_letter_prefixed_account_number_parses(self):
+        recs = parse_statement_text([FIDELITY_TAXABLE_TOD_TEXT])
+        assert len(recs) == 1
+        assert recs[0].account_number == "Z99-000001"
+        assert recs[0].broker == "fidelity"
+
+    def test_individual_tod_is_taxable(self):
+        recs = parse_statement_text([FIDELITY_TAXABLE_TOD_TEXT])
+        assert recs[0].account_type == "taxable"
+
+    def test_income_and_period(self):
+        recs = parse_statement_text([FIDELITY_TAXABLE_TOD_TEXT])
+        assert recs[0].dividends_taxable_ytd == 1470.00
+        assert recs[0].statement_period_end == "2026-07-31"
+
+    def test_vanguard_holdings_do_not_misroute_fidelity_statement(self):
+        from engine.brokerage_statement_pdf import detect_broker
+
+        assert detect_broker(FIDELITY_TAXABLE_TOD_TEXT) == "fidelity"
+
+    def test_real_vanguard_text_still_routes_to_vanguard(self):
+        from engine.brokerage_statement_pdf import detect_broker
+
+        text = VANGUARD_TAXABLE_OVERVIEW_TEXT + VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT
+        assert detect_broker(text) == "vanguard"
+
+    def test_taxable_record_flags_realized_gains_as_not_read(self):
+        # Fidelity's Realized Gain/Loss section is not parsed. A zero ST/LT on
+        # a TAXABLE account must not pass silently as "no gains" -- it is
+        # reported as missing so the record is held for manual confirmation.
+        rec = parse_statement_text([FIDELITY_TAXABLE_TOD_TEXT])[0]
+        assert "stcg_net_ytd" in rec.missing_fields
+        assert "ltcg_net_ytd" in rec.missing_fields
+
+    def test_ira_records_do_not_flag_gains(self):
+        # Gains inside an IRA/HSA are never taxable events -- no warning.
+        recs = parse_statement_text([FIDELITY_ROLLOVER_IRA_TEXT, FIDELITY_HSA_TEXT])
+        for rec in recs:
+            assert rec.missing_fields == ()
+
+
+class TestDetectFidelityAccountTypeLabels:
+    @pytest.mark.parametrize(
+        ("title", "expected"),
+        [
+            ("JANE Q SAMPLE - INDIVIDUAL", "taxable"),
+            ("JANE Q SAMPLE - INDIVIDUAL - TOD", "taxable"),
+            ("JANE Q SAMPLE AND JOHN Q SAMPLE - JOINT WROS", "taxable"),
+            ("JANE Q SAMPLE AND JOHN Q SAMPLE - JOINT WROS - TOD", "taxable"),
+            ("JANE Q SAMPLE - ROTH IRA", "roth_ira"),
+            ("JANE Q SAMPLE - TRADITIONAL IRA", "traditional_ira"),
+            ("JANE Q SAMPLE - ROLLOVER IRA", "traditional_ira"),
+            ("JANE Q SAMPLE - HEALTH SAVINGS ACCOUNT", "hsa"),
+        ],
+    )
+    def test_title_maps_to_account_type(self, title, expected):
+        from engine.brokerage_statement_pdf import _detect_fidelity_account
+
+        text = f"Account # Y12-345678\nAccount Summary\n{title}\n"
+        assert _detect_fidelity_account(text) == ("Y12-345678", expected)
+
+
+class TestFidelityNoSectionsDiagnostic:
+    TEXT = (
+        "INVESTMENT REPORT\n"
+        "Fidelity Brokerage Services LLC\n"
+        "Your Portfolio Summary 2026\n"
+        "Acct Z99-000001 Statement for JANE Q SAMPLE\n"
+    )
+
+    def test_error_names_missing_anchor_and_redacts_digits(self):
+        with pytest.raises(StatementParseError) as exc:
+            parse_statement_text([self.TEXT])
+        msg = str(exc.value)
+        assert "Account # <number>" in msg
+        assert "Account Summary" in msg
+        assert "Your Portfolio Summary ####" in msg
+        assert "Z##-######" in msg
+        assert not any(ch.isdigit() for ch in msg)
+
+    def test_lists_at_most_eight_header_lines_of_80_chars(self):
+        from engine.brokerage_statement_pdf import _split_fidelity_sections
+
+        lines = [f"Account line {i} " + "x" * 120 for i in range(20)]
+        with pytest.raises(StatementParseError) as exc:
+            _split_fidelity_sections("\n".join(lines))
+        listed = [ln for ln in str(exc.value).splitlines() if ln.startswith("  ")]
+        assert len(listed) == 8
+        assert all(len(ln.strip()) <= 80 for ln in listed)
+
+
+class TestParseErrors:
+    def test_unrecognized_broker_raises(self):
+        with pytest.raises(StatementParseError):
+            parse_statement_text(["no recognizable broker header anywhere in this text"])
+
+    def test_invalid_account_type_rejected_by_dataclass(self):
+        with pytest.raises(ValueError, match="Invalid account_type"):
+            BrokerageStatementRecord(
+                account_number="XXXX0000",
+                broker="vanguard",
+                account_type="not_a_real_type",
+                statement_period_end="2026-06-30",
+                interest_taxable_ytd=0.0,
+                interest_tax_exempt_ytd=0.0,
+                dividends_taxable_ytd=0.0,
+                dividends_tax_exempt_ytd=0.0,
+                stcg_net_ytd=0.0,
+                ltcg_net_ytd=0.0,
+                captured_at="2026-07-10T00:00:00+00:00",
+            )
+
+
+class TestScanStatementFolder:
+    def test_skips_non_pdf_files(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("irrelevant")
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        records, errors = scan_statement_folder(tmp_path)
+        assert records == []
+        assert errors == []
+
+    def test_collects_parse_errors_without_raising(self, tmp_path):
+        (tmp_path / "corrupt.pdf").write_bytes(b"not a real pdf")
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        records, errors = scan_statement_folder(tmp_path)
+        assert records == []
+        assert len(errors) == 1
+        assert "corrupt.pdf" in errors[0]
+
+    @pytest.mark.skipif(
+        not (SCHWAB_SAMPLE.exists() and VANGUARD_TAXABLE_SAMPLE.exists()),
+        reason="Sample statements not present on this machine",
+    )
+    def test_parses_real_pdfs_in_folder(self, tmp_path):
+        import shutil
+
+        from engine.brokerage_statement_pdf import scan_statement_folder
+
+        shutil.copy(SCHWAB_SAMPLE, tmp_path / "schwab.pdf")
+        shutil.copy(VANGUARD_TAXABLE_SAMPLE, tmp_path / "vanguard_taxable.pdf")
+        records, errors = scan_statement_folder(tmp_path)
+        assert errors == []
+        assert len(records) == 2
+        assert {r.broker for r in records} == {"schwab", "vanguard"}
+
+
+def _rec(
+    account: str, period_end: str, account_type: str = "taxable", **overrides
+) -> BrokerageStatementRecord:
+    base = {
+        "account_number": account,
+        "broker": "schwab",
+        "account_type": account_type,
+        "statement_period_end": period_end,
+        "interest_taxable_ytd": 0.0,
+        "interest_tax_exempt_ytd": 0.0,
+        "dividends_taxable_ytd": 0.0,
+        "dividends_tax_exempt_ytd": 0.0,
+        "stcg_net_ytd": 0.0,
+        "ltcg_net_ytd": 0.0,
+        "captured_at": "2026-07-10T00:00:00+00:00",
+    }
+    base.update(overrides)
+    return BrokerageStatementRecord(**base)
+
+
+class TestPickLatestPerAccount:
+    def test_keeps_latest_period_end_per_account(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        older = _rec("111-1111", "2026-05-31", dividends_taxable_ytd=100.0)
+        newer = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=200.0)
+        result = pick_latest_per_account([older, newer])
+        assert result["111-1111"].dividends_taxable_ytd == 200.0
+
+    def test_keeps_separate_accounts_independent(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        acct_a = _rec("111-1111", "2026-06-30")
+        acct_b = _rec("222-2222", "2026-06-30")
+        result = pick_latest_per_account([acct_a, acct_b])
+        assert set(result.keys()) == {"111-1111", "222-2222"}
+
+
+class TestPartitionByAccountType:
+    def test_roth_ira_excluded_from_taxable(self):
+        # Regression test for the exact bug that motivated this whole feature:
+        # Roth/IRA income must never land in taxable YTD sums.
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        taxable_acct = _rec(
+            "XXXX0001", "2026-06-30", account_type="taxable", dividends_taxable_ytd=1020.00
+        )
+        roth_acct = _rec(
+            "XXXX0002", "2026-06-30", account_type="roth_ira", dividends_taxable_ytd=290.00
+        )
+        by_account = {"XXXX0001": taxable_acct, "XXXX0002": roth_acct}
+
+        taxable, excluded, unknown = partition_by_account_type(by_account)
+        assert set(taxable.keys()) == {"XXXX0001"}
+        assert set(excluded.keys()) == {"XXXX0002"}
+        assert unknown == {}
+
+    def test_unknown_is_excluded_by_default_not_summed(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        unknown_acct = _rec(
+            "9999-0001", "2026-06-30", account_type="unknown", dividends_taxable_ytd=4410.25
+        )
+        taxable, excluded, unknown = partition_by_account_type({"9999-0001": unknown_acct})
+        assert taxable == {}
+        assert excluded == {}
+        assert set(unknown.keys()) == {"9999-0001"}
+
+    def test_hsa_is_valid_account_type(self):
+        rec = _rec("999-000001", "2026-06-30", account_type="hsa")
+        assert rec.account_type == "hsa"
+
+    def test_hsa_excluded_from_taxable_partition(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        hsa_acct = _rec("999-000001", "2026-06-30", account_type="hsa", dividends_taxable_ytd=100.0)
+        taxable, excluded, unknown = partition_by_account_type({"999-000001": hsa_acct})
+        assert taxable == {}
+        assert set(excluded.keys()) == {"999-000001"}
+        assert unknown == {}
+
+
+class TestAggregateToYtdFields:
+    def test_sums_across_taxable_accounts_only(self):
+        from engine.brokerage_statement_pdf import aggregate_to_ytd_fields
+
+        taxable = {
+            "111-1111": _rec(
+                "111-1111", "2026-06-30", dividends_taxable_ytd=100.0, interest_taxable_ytd=10.0
+            ),
+            "222-2222": _rec(
+                "222-2222", "2026-06-30", dividends_taxable_ytd=50.0, dividends_tax_exempt_ytd=5.0
+            ),
+        }
+        totals = aggregate_to_ytd_fields(taxable)
+        assert totals["ordinary_dividends_ytd"] == 150.0
+        assert totals["interest_ytd"] == 10.0
+        assert totals["tax_exempt_interest_ytd"] == 5.0
+
+
+class TestCacheRoundTrip:
+    def test_save_and_load(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "cache.json")
+        rec = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0)
+        mod.save_statement_records({"111-1111": rec})
+        loaded = mod.load_statement_records()
+        assert loaded["111-1111"].dividends_taxable_ytd == 100.0
+
+    def test_load_missing_file_returns_empty(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "missing.json")
+        assert mod.load_statement_records() == {}
+
+    def test_empty_scan_does_not_wipe_existing_cache(self, tmp_path, monkeypatch):
+        """C101 (audit-0805, LOW-but-real): save_statement_records is a
+        full-file overwrite, so scanning a folder with no brokerage PDFs
+        (by_account={}) silently wipes every previously confirmed account."""
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_STATEMENT_CACHE_PATH", tmp_path / "cache.json")
+        rec = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=100.0)
+        mod.save_statement_records({"111-1111": rec})
+
+        # A later scan of a folder with no brokerage PDFs produces {}.
+        mod.save_statement_records({})
+
+        loaded = mod.load_statement_records()
+        assert "111-1111" in loaded, (
+            "An empty-dict save_statement_records() call wiped the confirmed "
+            f"account cache; loaded={loaded}"
+        )
+
+
+class TestFolderPathConfig:
+    def test_save_and_load_folder_path(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "folder.json")
+        mod.save_statement_folder_path("/home/user/Statements")
+        assert mod.load_statement_folder_path() == "/home/user/Statements"
+
+    def test_load_folder_path_missing_returns_none(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "missing.json")
+        assert mod.load_statement_folder_path() is None
+
+    def test_save_and_load_empty_folder_path_roundtrips_as_empty_string(
+        self, tmp_path, monkeypatch
+    ):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_FOLDER_CONFIG_PATH", tmp_path / "folder.json")
+        mod.save_statement_folder_path("")
+        assert mod.load_statement_folder_path() == ""
+
+
+class TestExtractOwnerKeySchwab:
+    def test_extracts_account_holder_name(self) -> None:
+        # Schwab's extract_text() strips spaces from labels but NOT from the
+        # holder's own name line ("JOHNSAMPLE" has no space because Schwab
+        # renders it as one run -- see SCHWAB_PAGE_TEXT).
+        assert extract_owner_key(SCHWAB_PAGE_TEXT) == "JOHNSAMPLE"
+
+
+class TestExtractOwnerKeyVanguard:
+    def test_extracts_account_holder_name(self) -> None:
+        assert extract_owner_key(VANGUARD_TAXABLE_OVERVIEW_TEXT) == "John Q Sample"
+
+
+# --- Partial records: a missing period date must not destroy parsed income ---
+#
+# Minimal, statement-shaped UBS text. UBS tests proper live elsewhere; this
+# fixture exists only to exercise _parse_ubs's degradation path, because
+# _parse_ubs uniquely invoked EVERY helper inside its record constructor, so a
+# single field failure used to discard all of them.
+UBS_MINIMAL_TEXT = """UBS Financial Services Inc.
+Account number: XY 12345 AB
+Dividend and interest income
+June 2026 ($) Year to date
+Taxable dividends 100.00 250.00
+Taxable interest 10.00 25.00
+Summary of gains and losses
+Short term 0.00 15.00 0.00
+Long term 0.00 40.00 380,000.00
+"""
+
+# Breaks ONLY the period marker, leaving identity and income intact.
+#
+# This mangles the DATE SHAPE rather than the descriptor. The descriptor is
+# matched as a bounded class, so ", monthly statement" -- the original break
+# string here -- is a form the parser legitimately ACCEPTS, and breaking the
+# descriptor no longer yields an unparseable period. Mangling the date is the
+# stronger test anyway: it pins the "<Month> <D>, <YYYY>," anchor rather than
+# merely the presence of the word "statement".
+_VG_PERIOD_BREAK = (
+    "June 30, 2026, quarter-to-date statement",
+    "2026-06-30, quarter-to-date statement",
+)
+_UBS_PERIOD_BREAK = ("June 2026 ($)", "2026-06 ($)")
+
+
+def _vanguard_pages_without_period() -> list[str]:
+    return [
+        VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(*_VG_PERIOD_BREAK),
+        VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_PERIOD_BREAK),
+    ]
+
+
+# Vanguard's MONTHLY header form. Only the trailing descriptor differs from
+# the quarterly form -- the date shape is identical.
+_VG_MONTHLY = (
+    "June 30, 2026, quarter-to-date statement",
+    "July 31, 2026, monthly transaction statement",
+)
+
+
+def _vanguard_pages_monthly() -> list[str]:
+    return [
+        VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(*_VG_MONTHLY),
+        VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_MONTHLY),
+    ]
+
+
+class TestPeriodEndDegradesToMissingField:
+    """An unparseable statement period yields a PARTIAL record, not a dropped
+    file. Previously the raise unwound through pdf_import's `except Exception`
+    and the whole statement -- dividends, interest, gains -- was discarded."""
+
+    def test_vanguard_keeps_income_when_period_unparseable(self):
+        recs = parse_statement_text(_vanguard_pages_without_period())
+        assert len(recs) == 1
+        rec = recs[0]
+        # The data that DID parse must survive.
+        assert rec.account_number == "XXXX0001"
+        assert rec.account_type == "taxable"
+        assert rec.dividends_taxable_ytd == 1020.00
+        # ...and the gap is recorded explicitly, with "" (never None) so the
+        # record can never outrank a real dated one in a string comparison.
+        assert rec.statement_period_end == ""
+        assert rec.missing_fields == ("statement_period_end",)
+
+    def test_ubs_baseline_parses_with_period(self):
+        # Guards the negative test below: if this fixture stopped parsing for
+        # an unrelated reason, the degradation test would pass vacuously.
+        recs = parse_statement_text([UBS_MINIMAL_TEXT])
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == "2026-06-30"
+        assert recs[0].missing_fields == ()
+
+    def test_ubs_keeps_income_when_period_unparseable(self):
+        recs = parse_statement_text([UBS_MINIMAL_TEXT.replace(*_UBS_PERIOD_BREAK)])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.account_number == "XY 12345 AB"
+        assert rec.dividends_taxable_ytd == 250.0
+        assert rec.interest_taxable_ytd == 25.0
+        assert rec.stcg_net_ytd == 15.0
+        assert rec.ltcg_net_ytd == 40.0
+        assert rec.statement_period_end == ""
+        assert rec.missing_fields == ("statement_period_end",)
+
+
+class TestPartialRecordNeverShadowsComplete:
+    """Proves the "" sentinel is safe at the comparison site WITHOUT changing
+    it: `"2026-06-30" > ""` is True, so a real record always wins. A None
+    sentinel would instead raise TypeError here, and a JSON round-trip would
+    turn it into the string "None", which sorts ABOVE every ISO date."""
+
+    def test_real_dated_record_wins_regardless_of_order(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        real = _rec("111-1111", "2026-06-30", dividends_taxable_ytd=200.0)
+        partial = _rec(
+            "111-1111",
+            "",
+            dividends_taxable_ytd=99.0,
+            missing_fields=("statement_period_end",),
+        )
+
+        assert pick_latest_per_account([real, partial])["111-1111"].dividends_taxable_ytd == 200.0
+        assert pick_latest_per_account([partial, real])["111-1111"].dividends_taxable_ytd == 200.0
+
+    def test_partial_survives_when_it_is_the_only_record(self):
+        from engine.brokerage_statement_pdf import pick_latest_per_account
+
+        partial = _rec(
+            "222-2222",
+            "",
+            dividends_taxable_ytd=99.0,
+            missing_fields=("statement_period_end",),
+        )
+        result = pick_latest_per_account([partial])
+        assert set(result) == {"222-2222"}
+        assert result["222-2222"].dividends_taxable_ytd == 99.0
+
+
+class TestPartialRecordHeldForConfirmation:
+    """A partial record must never be auto-summed into YTD totals, even when
+    its account_type IS confirmed taxable -- it routes to the existing
+    needs-confirmation bucket instead."""
+
+    def test_taxable_but_partial_routes_to_needs_confirmation(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        partial = _rec(
+            "XXXX0001",
+            "",
+            account_type="taxable",
+            dividends_taxable_ytd=1020.00,
+            missing_fields=("statement_period_end",),
+        )
+        taxable, excluded, unknown = partition_by_account_type({"XXXX0001": partial})
+        assert taxable == {}
+        assert excluded == {}
+        assert set(unknown) == {"XXXX0001"}
+
+    def test_complete_taxable_record_still_auto_applies(self):
+        from engine.brokerage_statement_pdf import partition_by_account_type
+
+        complete = _rec("XXXX0001", "2026-06-30", account_type="taxable")
+        taxable, excluded, unknown = partition_by_account_type({"XXXX0001": complete})
+        assert set(taxable) == {"XXXX0001"}
+        assert unknown == {}
+
+
+class TestMissingFieldsRoundTrip:
+    def test_round_trip_preserves_missing_fields(self):
+        rec = _rec("111-1111", "", missing_fields=("statement_period_end",))
+        restored = BrokerageStatementRecord.from_dict(rec.to_dict())
+        assert restored.missing_fields == ("statement_period_end",)
+        assert restored.statement_period_end == ""
+
+    def test_legacy_dict_without_the_key_yields_empty_tuple(self):
+        # Cached statement JSON written before this field existed must load.
+        data = _rec("111-1111", "2026-06-30").to_dict()
+        data.pop("missing_fields", None)
+        assert BrokerageStatementRecord.from_dict(data).missing_fields == ()
+
+
+class TestIdentityFailureStillRaises:
+    """Degradation must NOT leak into identity. Without (broker,
+    account_number) a record cannot be keyed or deduped, so aborting is
+    correct -- only payload/metadata degrades."""
+
+    def test_vanguard_without_account_number_still_raises(self):
+        text = VANGUARD_TAXABLE_OVERVIEW_TEXT.replace("account—XXXX0001", "account—REDACTED")
+        with pytest.raises(StatementParseError):
+            parse_statement_text([text])
+
+    def test_ubs_without_account_number_still_raises(self):
+        text = UBS_MINIMAL_TEXT.replace("Account number: XY 12345 AB", "Account number omitted")
+        with pytest.raises(StatementParseError):
+            parse_statement_text([text])
+
+
+class TestVanguardPeriodDescriptor:
+    """Vanguard templates the header as "<Month> <D>, <YYYY>, <descriptor>
+    statement". The descriptor varies by statement cadence -- "quarter-to-date"
+    on a quarterly, "monthly transaction" on a monthly -- so it is matched as a
+    bounded character class rather than an enumeration of known values."""
+
+    def test_monthly_transaction_statement_parses(self):
+        recs = parse_statement_text(_vanguard_pages_monthly())
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-07-31"
+        assert rec.missing_fields == ()
+        # The income must come through as a complete record, not a held partial.
+        assert rec.dividends_taxable_ytd == 1020.00
+
+    def test_quarterly_statement_still_parses(self):
+        # Regression guard: generalising the descriptor must not lose the
+        # original form.
+        recs = parse_statement_text(
+            [VANGUARD_TAXABLE_OVERVIEW_TEXT, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT]
+        )
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == "2026-06-30"
+        assert recs[0].missing_fields == ()
+
+    def test_descriptor_never_spans_a_newline_to_a_later_statement_word(self):
+        """THE reason the descriptor class excludes whitespace.
+
+        Here the date line's descriptor is gone, but the word "statement"
+        still occurs further down the page. A class built from `\\s` (or a
+        sloppy `.+`) would run across the newline, reach that later
+        "statement", and invent a period date from an unrelated line. The
+        record must instead degrade to a held partial.
+        """
+        broken = VANGUARD_TAXABLE_OVERVIEW_TEXT.replace(
+            "June 30, 2026, quarter-to-date statement",
+            "June 30, 2026, \nview your recent statements and statement archive",
+        )
+        # Guard the guard: the replacement must actually have happened.
+        assert "quarter-to-date statement" not in broken
+        assert "statement archive" in broken
+
+        recs = parse_statement_text(
+            [broken, VANGUARD_TAXABLE_INCOME_SUMMARY_TEXT.replace(*_VG_PERIOD_BREAK)]
+        )
+        assert len(recs) == 1
+        assert recs[0].statement_period_end == ""
+        assert recs[0].missing_fields == ("statement_period_end",)
+
+
+class TestExtractOwnerKeyAbsent:
+    def test_returns_none_when_no_name_found(self) -> None:
+        assert extract_owner_key("Some Broker Statement\nNo holder name here\n") is None
+
+
+# --- Synthetic UBS page 3 (layout modelled on a UBS statement: pdfplumber
+# extract_text() interleaves four side-by-side panels line-by-line with no
+# column awareness, and the fixture keeps that interleaving exactly).
+# Prepended with the detection anchor and the account-identity lines (which
+# UBS repeats identically on every page, not just page 3). Invented figures;
+# dividends + interest add up to the income totals. ---
+UBS_PAGE_TEXT = """UBS Financial Services Inc.
+Account number: FA XXXXX XX
+Account type: Company Sponsored Stock Plan
+Change in the value of your account Summary of gains and losses
+July 2026 ($) Year to date ($)
+Realized gains and losses Unrealized
+Opening account value $600,000.00 $420,000.00
+July 2026 ($) Year to date ($) gains and losses ($)
+Deposits, including investments
+transferred in 0.00 45,000.00 Short term 0.00 21,500.00 0.00
+Withdrawals and fees, Long term 0.00 0.00 380,000.00
+Total $0.00 $21,500.00 $380,000.00
+Dividend and interest income 3.50 4,600.00
+Closing account value $575,000.00 $575,000.00
+
+Dividend and interest income earned
+July 2026 ($) Year to date ($)
+Taxable dividends 0.00 4,575.00
+Taxable interest 3.50 25.00
+Total current year $3.50 $4,600.00
+Total dividend & interest $3.50 $4,600.00
+"""
+
+
+class TestDetectBrokerUbs:
+    def test_detects_ubs_full_legal_name(self):
+        from engine.brokerage_statement_pdf import _detect_broker
+
+        assert _detect_broker(UBS_PAGE_TEXT) == "ubs"
+
+
+class TestParseUbs:
+    def test_account_identity(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.broker == "ubs"
+        assert rec.account_number == "FA XXXXX XX"
+        # UBS never states "taxable" about the account itself -- must default
+        # to unknown, same safety rule as Schwab.
+        assert rec.account_type == "unknown"
+
+    def test_taxable_income_ytd(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.interest_taxable_ytd == 25.00
+        assert rec.dividends_taxable_ytd == 4575.00
+
+    def test_tax_exempt_fields_are_always_zero(self):
+        # UBS gives no tax-exempt split anywhere in the document -- same
+        # limitation as IBKR.
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.interest_tax_exempt_ytd == 0.0
+        assert rec.dividends_tax_exempt_ytd == 0.0
+
+    def test_stcg_ytd_from_interleaved_panel(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.stcg_net_ytd == 21500.00
+
+    def test_ltcg_ytd_is_realized_not_unrealized(self):
+        # Regression test for the panel-interleaving trap: the third column
+        # on the "Long term" row (380,000.00) is UNREALIZED gain/loss, not
+        # realized YTD -- confusing them would overstate realized LTCG by
+        # six figures. Realized YTD long-term is $0.00 on this statement.
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.ltcg_net_ytd == 0.0
+        assert rec.ltcg_net_ytd != 380000.00
+
+    def test_statement_period_end(self):
+        recs = parse_statement_text([UBS_PAGE_TEXT])
+        rec = recs[0]
+        assert rec.statement_period_end == "2026-07-31"
+
+
+class TestAccountTypeOverrides:
+    def test_save_and_apply_override(self, tmp_path, monkeypatch):
+        import engine.brokerage_statement_pdf as mod
+
+        monkeypatch.setattr(mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", tmp_path / "overrides.json")
+        mod.save_account_type_override("9999-0001", "taxable")
+        overrides = mod.load_account_type_overrides()
+        assert overrides["9999-0001"] == "taxable"
+
+    def test_apply_overrides_reclassifies_unknown(self, tmp_path):
+        from engine.brokerage_statement_pdf import apply_account_type_overrides
+
+        unknown_acct = _rec("9999-0001", "2026-06-30", account_type="unknown")
+        result = apply_account_type_overrides({"9999-0001": unknown_acct}, {"9999-0001": "taxable"})
+        assert result["9999-0001"].account_type == "taxable"

@@ -1,0 +1,169 @@
+# Deploy infrastructure
+
+## stlite + GitHub Pages
+
+The Roth Planner runs as a static site via [stlite](https://github.com/whitphx/stlite) — Streamlit in WebAssembly via Pyodide. No server required.
+
+### Local preview
+
+```bash
+python deploy/build_stlite.py --out-dir _site
+python -m http.server --directory _site 8000
+# open http://localhost:8000
+```
+
+Or via pixi: `pixi run build-stlite` runs the same command and writes a
+self-contained `_site/index.html` you can open directly in a browser — no
+web server needed. **Do this before merging to `development`**: the deployed
+site pins its own stlite/Streamlit version (see Caveats below), which can
+differ from the local pixi env, so a Streamlit API that works in `pixi run
+app` can still crash on the deployed bundle. Building and opening it locally
+catches that before it ships.
+
+### Production deploy
+
+`.github/workflows/deploy-stlite.yml` runs on every push to `development`, regenerates `index.html`, and publishes to GitHub Pages. Enable Pages in repo settings → Pages → Source: "GitHub Actions".
+
+### Caveats
+
+- **First load is slow** (~10-30s) — Pyodide + streamlit + pandas + plotly download once, then cache in the browser.
+- **FinExtract sync fails publicly** — the planner tries `http://127.0.0.1:7890` which the browser cannot reach. Existing graceful degradation shows cached data or a "no data" message.
+- **Personal data stays local** — public demo runs on synthetic `Acme Corp` defaults (config/defaults.py); your real values live in gitignored `.user_defaults.py` and never enter the deployed bundle.
+- **stlite version** — pin via `--stlite-version <N>` in the workflow if upstream breaks compat. Default: `0.80.0`. Note: the npm package was renamed from `@stlite/mountable` to `@stlite/browser` at v0.76.0 (`@stlite/mountable` never published past 0.75.0) — `deploy/template.html` references `@stlite/browser`.
+
+## Personal mode
+
+The deployed demo runs on synthetic Acme Corp defaults. For your real
+numbers, two paths:
+
+### Local
+
+Drop `.user_defaults.json` and (optionally) `.portfolio_cache.json` next
+to the app. `pixi run streamlit run app.py` picks them up at startup.
+
+### Deployed (stlite)
+
+Use the "🔓 Use my real data" expander on the ⚙️ Setup page → 🔗 Data Bridge tab to upload both
+files. Values stay in your browser session; refresh = back to demo.
+
+### .user_defaults.json schema
+
+```json
+{
+  "your_age": 55,
+  "spouse_age": 53,
+  "your_ss_fra": 2500,
+  "spouse_ss_fra": 2500,
+  "living_expenses": 60000,
+  "employer_name": "Acme Corp",
+  "stock_ticker": "ACME",
+  "grant_strikes": {
+    "2020": 50.00,
+    "2021": 60.00,
+    "2022": 75.00
+  }
+}
+```
+
+The values above are illustrative (they match the built-in demo household).
+All keys optional. Balances, outstanding grants, and the stock's current price
+come from `.portfolio_cache.json` or FinExtract sync — don't duplicate
+them in `.user_defaults.json`.
+
+## V2 data bridge keypair
+
+The V2 data bridge encrypts every payload that crosses the air-gap between
+your local FinExtract host and the public Streamlit site. Crypto is
+`crypto_box_seal` (X25519 + XChaCha20-Poly1305-Ietf, via PyNaCl), and the
+file format is the 4-byte magic `FX1\0` followed by the sealed-box
+ciphertext.
+
+### One-time setup on your primary host
+
+```bash
+pixi run gen-data-bridge-keypair
+```
+
+Writes `~/.finextract/data-bridge.pub` (0644, distributable) and
+`~/.finextract/data-bridge.priv` (0600, keep secret).
+
+### Adding an encrypt-only host
+
+Copy only the public key over:
+
+```bash
+scp ~/.finextract/data-bridge.pub other-host:~/.finextract/
+```
+
+That host can now encrypt exports to you but cannot decrypt anything.
+
+### Auto-activation in the sidebar export
+
+When `~/.finextract/data-bridge.pub` (or the `ROTH_PLANNER_DATA_BRIDGE_PUBKEY`
+env var) is present, the "📦 Export my data" expander (⚙️ Setup → 🔗 Data Bridge tab) auto-switches
+to V2: download buttons emit `.user_defaults.json.enc` and
+`.portfolio_cache.json.enc`, sealed for your private key. Delete the public
+key file to fall back to V1 plaintext export (with a deprecation warning).
+
+### Browser side
+
+The public Streamlit site shows a "🔑 V2 private key" widget on the ⚙️ Setup → 🔗 Data Bridge tab
+on first use. Paste your data-bridge private key (base64). The key lives
+only in the Streamlit session (`st.session_state`) — it is **not** persisted
+to `localStorage` or disk, so you must re-paste it after a page reload.
+Click "Clear" in the widget to drop it immediately.
+
+Encrypted `.json.enc` uploads are auto-decrypted with the pasted private
+key. Encrypted exports for **yourself** use a public key derived from that
+same private key on the fly — no separate paste needed. To encrypt for
+**someone else**, use the "Recipient public key" field instead (see
+"Sending data to a third party" below).
+
+The public site refuses to produce V1 plaintext exports: with no V2 key
+configured, the "📦 Export my data" widget shows a "🔒 Paste your
+private key first" hint instead of any download button.
+
+### Sending data to a third party
+
+The data bridge is not limited to moving *your own* data between hosts —
+`crypto_box_seal` lets you encrypt an export for any recipient, and only
+their private key can open it. Use this to hand your planner data to a
+financial advisor, family member, or co-planner over an untrusted channel.
+
+1. **Recipient generates a keypair.** On a local host, run:
+
+   ```bash
+   pixi run gen-data-bridge-keypair
+   ```
+
+   On the public site (no shell), use the **"🆕 Generate a data-bridge
+   keypair"** expander on ⚙️ Setup → 🔗 Data Bridge instead. Either way the
+   recipient keeps their private key secret and sends you their **public**
+   key — safe to share over any channel, plain email is fine.
+
+2. **You seal the export for them.** On ⚙️ Setup → 🔗 Data Bridge →
+   "📦 Export my data", paste their public key (base64 or hex) into the
+   **"Recipient public key"** field. The download is now sealed for that
+   recipient (a 🔐 caption confirms it is *not* encrypted for yourself).
+   You do **not** need a keypair of your own to send — the recipient's
+   public key is all that is required.
+
+3. **Send the `.json.enc` file** over your channel of choice. Because it is
+   sealed for the recipient, the transport does not need to be trusted
+   (encrypted email is a sensible belt-and-suspenders).
+
+4. **Recipient decrypts.** They paste their *private* key into the
+   "🔑 V2 private key" widget, then upload the `.json.enc` via
+   "🔓 Use my real data" — it is auto-decrypted by magic-prefix sniff.
+
+> **Confidentiality, not authentication.** A sealed box proves only that the
+> file was encrypted for the recipient — it does **not** prove who sent it.
+> Anyone holding the recipient's public key can produce a valid sealed file.
+>
+> In practice, **sender identity is established by your transport**: if the
+> `.json.enc` arrives as an attachment in an encrypted email from a person
+> you know, the channel already tells you who sent it. Cryptographic origin
+> proof (a signed-payload scheme — e.g. a detached Ed25519 signature the
+> recipient verifies against the sender's known key) is **not currently
+> built**; rely on the channel for authentication, and treat an unexpected
+> or out-of-band file with suspicion.

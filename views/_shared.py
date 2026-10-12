@@ -1,0 +1,475 @@
+"""Shared view primitives for the Command Center input-consolidation migration.
+
+Reusable pieces every later wave depends on:
+
+1. ``command_center_button`` — a button that navigates to the Setup / Command
+   Center page on the next rerun by setting the sidebar navigation's session
+   key. Uses ``on_click`` so the nav key is mutated before the sidebar
+   re-renders (callbacks fire before the script reruns, so the new page is
+   drawn on that same rerun).
+
+2. ``render_canonical_field`` — a read-only display of a canonical ``Household``
+   value with a provenance chip (when the value carries one) plus a jump button
+   to the Household & Accounts page that edits it. Replaces the old "editable
+   local copy that silently writes nowhere" widgets.
+
+2a. ``edit_link_button`` — the generic form of ``command_center_button``: a
+   button that jumps to any page (by page id) on the next rerun.
+
+2b. ``render_readonly_input`` — a read-only display (label, pre-formatted
+   value with ``$`` escaped, source caption) of an input whose one editable
+   home is another page, plus an ``edit_link_button`` to that home.
+
+3.``run_folder_scan`` — the SINGLE view-layer writer of
+   ``st.session_state["_pdf_1040_scanned"]``. Wraps
+   ``engine.data_sources.scan_ingest.scan_and_record`` (which does the actual
+   scan + candidate-record + cache-persist) and writes one canonical session
+   shape (W2 Part A — kills the ``_pdf_1040_scanned`` dual-writer between
+   ``views/ytd_income.py`` and ``views/setup/parameters.py``).
+
+   ``run_uploaded_scan`` is its bytes-based sibling for the public (Pyodide)
+   site, which has no filesystem and can only hand over uploaded PDF bytes —
+   wraps ``scan_documents_and_record`` instead, writes the identical session
+   shape, so the two entry points cannot silently diverge.
+
+4. ``sync_everything`` — the Command Center's "Sync everything" action (W2
+   Part B). Fans out to the four already-candidate-based ingestion paths
+   (FinExtract portfolio, FinExtract SS, unified PDF folder scan, Yahoo
+   employer-stock quote), independently error-isolated so one unreachable
+   source never blocks the others. Every produced value lands PENDING via
+   the existing candidate paths (``record_snapshot_candidates``,
+   ``record_ss_fra_candidate`` via ``_sync_ssa_for``, ``run_folder_scan``,
+   ``handle_stock_quote_fetch``) — the freeze-until-confirm gate is untouched,
+   nothing here ever commits.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import streamlit as st
+
+from config.loader import load_defaults
+from config.scalar_registry import scalar_default
+from engine.data_sources.candidate_store import CandidateStore
+from engine.data_sources.paths import CANDIDATE_STORE_PATH
+from engine.data_sources.resolver import GRANTS_KEY
+from engine.data_sources.scan_ingest import (
+    ScanIngestResult,
+    scan_and_record,
+    scan_documents_and_record,
+)
+from engine.data_sources.snapshot_ingest import record_snapshot_candidates
+from engine.data_status import (
+    SETUP_STEP_GROUPS,
+    compute_data_completeness,
+    governed_fields_for_step,
+)
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
+from models.household import Household
+from models.sourced import Source
+
+# The sidebar navigation's session key (see views/navigation.py). Kept here so
+# views never hardcode it. It holds a page ID, not a label.
+NAV_KEY = "nav_page"
+# Page id of Review Changes (Command Center) in views/navigation.PAGES.
+REVIEW_PAGE = "review"
+
+
+def operator_slot() -> str:
+    """The person-slot ("you"/"spouse") of whoever is operating this instance.
+
+    Used to attribute owner-less YTD writes (manual entry, NQO exercise sync)
+    to one person's ``YTDSnapshot.by_owner`` slot (issue #496). Defaults to
+    "you" when identity is unset or corrupt -- the public site never persists
+    identity, and a YTD write must not block on it.
+    """
+    owner = st.session_state.get("instance_owner")
+    if owner is None:
+        try:
+            owner = load_instance_owner()
+        except CorruptInstanceOwnerError:
+            owner = None
+    return owner if owner in ("you", "spouse") else "you"
+
+
+def _go_to(page_id: str) -> Callable[[], None]:
+    def _cb() -> None:
+        st.session_state[NAV_KEY] = page_id
+
+    return _cb
+
+
+def command_center_button(*, key: str, label: str = "Edit in Command Center →") -> None:
+    """A button that navigates to the Review Changes / Command Center page on next rerun.
+
+    Uses ``on_click`` so the nav key is set before the sidebar re-renders.
+    """
+    edit_link_button(key=key, page=REVIEW_PAGE, label=label)
+
+
+def edit_link_button(*, key: str, page: str, label: str) -> None:
+    """A button that jumps to *page* (a page id from views/navigation) on the next rerun."""
+    st.button(label, key=key, on_click=_go_to(page))
+
+
+def render_readonly_input(
+    label: str, shown: str, *, key: str, page: str, where: str, stacked: bool = False
+) -> None:
+    """Read-only view of an input whose one editable home is elsewhere.
+
+    *shown* is pre-formatted text. ``$`` is escaped because two unescaped
+    dollar signs in one markdown call render as LaTeX. The button key is
+    ``edit_<key>``; *key* must be unique on the page.
+
+    *stacked* puts the button under the value instead of in a side column.
+    Use it when the caller is already in a narrow column: a side column there
+    is too thin and the button label wraps one character per line.
+    """
+    escaped = shown.replace("$", "\\$")
+    if stacked:
+        st.caption(label)
+        st.markdown(f"**{escaped}**")
+        st.caption(f"set in {where}")
+        edit_link_button(key=f"edit_{key}", page=page, label=f"Edit in {where} →")
+        return
+    left, right = st.columns([3, 1])
+    with left:
+        st.caption(label)
+        st.markdown(f"**{escaped}**")
+        st.caption(f"set in {where}")
+    with right:
+        edit_link_button(key=f"edit_{key}", page=page, label=f"Edit in {where} →")
+
+
+# Page id + name of Household & Accounts, the one editable home of filing
+# status, ages, workplace-plan flags and IRA/Roth balances (redesign PR 2).
+HOUSEHOLD_PAGE = "household"
+HOUSEHOLD_PAGE_NAME = "Household & Accounts"
+
+
+def render_canonical_field(
+    caption: str, value: Any, *, key: str, fmt: Callable | None = None
+) -> None:
+    """Read-only display of a canonical ``Household`` value.
+
+    Shows a provenance chip when *value* carries one (``SourcedValue`` has
+    ``.prov``; a plain float/int/str does not), plus a jump button to the
+    Household & Accounts page, where every field shown this way is edited.
+    ``getattr(value, "prov", None)`` is mandatory: ages and filing status are
+    plain values (never wrapped), only balances are ``SourcedValue`` after
+    ``resolve_for_app``.
+    """
+    prov = getattr(value, "prov", None)
+    shown = fmt(value) if fmt else str(value)
+    left, right = st.columns([3, 1])
+    with left:
+        st.caption(caption)
+        st.markdown(f"### {shown}")
+        if prov is not None:
+            st.caption(f"source: **{prov.source}** · {prov.detail or 'no detail'}")
+        else:
+            st.caption(f"set in {HOUSEHOLD_PAGE_NAME}")
+    with right:
+        edit_link_button(
+            key=f"nav_{key}", page=HOUSEHOLD_PAGE, label=f"Edit in {HOUSEHOLD_PAGE_NAME} →"
+        )
+
+
+def run_folder_scan(folder_path: Path, *, recorded_at: datetime | None = None) -> ScanIngestResult:
+    """Scan *folder_path* and write the single canonical ``_pdf_1040_scanned``.
+
+    Delegates the scan + 1040-candidate-record + cache-persist work entirely
+    to ``scan_and_record`` (no streamlit there) and only writes
+    ``st.session_state["_pdf_1040_scanned"]`` here — the one place that key is
+    ever written. Only writes it when the scan found at least one Form 1040
+    this pass, matching the prior per-view handlers' behavior (a scan with no
+    new 1040s leaves whatever was already in session state untouched).
+    """
+    result = scan_and_record(folder_path, recorded_at=recorded_at)
+    if result.form_1040_count:
+        st.session_state["_pdf_1040_scanned"] = result.pdf_cache
+    return result
+
+
+def auto_deselect_manual_entry(session_state: Any) -> bool:
+    """Switch the page to synced-data display after a successful sync/scan,
+    UNLESS the user explicitly chose the manual-entry setting themselves.
+
+    The "Manual entry" checkbox (``views/ytd_income/_partials/_manual_entry.py``,
+    key ``ytd_manual_entry``) attaches an ``on_change`` callback that sets
+    ``st.session_state["ytd_manual_entry_explicit"]`` the moment a user touches
+    it directly. A prior sync/scan/import unconditionally forcing the checkbox
+    back off overrode that deliberate choice with no explanation — the real
+    scenario being a PDF that will not parse, so the user switches to manual
+    entry on purpose, only to have the next scan silently flip it back.
+
+    Shared by every sync/scan/import call site (``views/ytd_income/_partials/
+    _sync_scan.py`` and ``views/setup/data_bridge.py``) so the "did the user
+    choose this" check cannot drift between them. Lives here rather than in
+    ``_manual_entry.py`` because ``data_bridge.py`` (``views/setup/``) has no
+    import path to ``views/ytd_income/`` without a circular import risk;
+    ``views/_shared.py`` imports nothing from either package and is already a
+    dependency of both.
+
+    Takes *session_state* as a parameter (the caller's own ``st.session_state``)
+    rather than reaching for a module-level ``st`` here -- every call site
+    already has its own ``st`` bound (and, in tests, its own patched mock), so
+    this stays reachable through whichever ``st`` the caller is using without
+    a second, easy-to-forget patch target of its own.
+
+    Returns whether it actually deselected manual entry, so the caller can
+    surface a short note when it did NOT (the explicit-choice case) --  when
+    it DID, the caller's existing success message already covers it.
+    """
+    if session_state.get("ytd_manual_entry_explicit"):
+        return False
+    session_state["ytd_manual_entry"] = False
+    return True
+
+
+def run_uploaded_scan(
+    documents: list[tuple[str, bytes]], *, recorded_at: datetime | None = None
+) -> ScanIngestResult:
+    """Scan uploaded PDF bytes and write the single canonical ``_pdf_1040_scanned``.
+
+    Bytes-based sibling of :func:`run_folder_scan` for the public (Pyodide)
+    site, which has no filesystem and can only hand over uploaded bytes.
+    Delegates to :func:`~engine.data_sources.scan_ingest.scan_documents_and_record`
+    (the bytes-based sibling of ``scan_and_record``) so the 1040-cache-merge
+    and MAGI-candidate recording cannot drift from the folder path -- same
+    session-state write, same only-when-a-1040-was-found condition.
+    """
+    result = scan_documents_and_record(documents, recorded_at=recorded_at)
+    if result.form_1040_count:
+        st.session_state["_pdf_1040_scanned"] = result.pdf_cache
+    return result
+
+
+# Portfolio-sourced scalar/list fields that ``record_snapshot_candidates`` may
+# record (SS fields are a separate source in "Sync everything" — see
+# ``_sync_ss_source`` — so they're excluded here).
+_PORTFOLIO_CANDIDATE_FIELDS = [
+    "your_ira",
+    "spouse_ira",
+    "your_roth",
+    "spouse_roth",
+    "stock_price_now",
+    GRANTS_KEY,
+]
+
+
+def _count_candidates_from(store: CandidateStore, field_keys: list[str], source: Source) -> int:
+    """Count how many of *field_keys* now carry a candidate from *source*."""
+    return sum(
+        1 for key in field_keys if any(c.prov.source == source for c in store.candidates_for(key))
+    )
+
+
+@dataclass(frozen=True)
+class PortfolioSyncSummary:
+    """One leg of ``sync_everything`` — the FinExtract portfolio + MAGI sync."""
+
+    candidates_recorded: int
+    server_available: bool
+    error: str | None
+
+
+def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
+    """Run the FinExtract portfolio sync core and record its candidates immediately.
+
+    Reuses ``views.setup.portfolio.sync_portfolio_from_finextract`` (the same
+    core the "Sync from FinExtract" button calls) then, unlike the button
+    (which relies on the NEXT ``app.get_household()`` render to record
+    candidates), calls ``record_snapshot_candidates`` here so the values are
+    pending right away — required for "Sync everything" to report an
+    accurate count in the same pass.
+    """
+    from views.setup.portfolio import sync_portfolio_from_finextract
+
+    try:
+        outcome = sync_portfolio_from_finextract(hh)
+    except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
+        return PortfolioSyncSummary(candidates_recorded=0, server_available=False, error=str(exc))
+
+    if not outcome.snap.server_available:
+        return PortfolioSyncSummary(
+            candidates_recorded=0, server_available=False, error=outcome.snap.error
+        )
+
+    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
+        "grant_strikes", {}
+    )
+    record_snapshot_candidates(store, outcome.snap, strikes, datetime.now())
+    store.save(CANDIDATE_STORE_PATH)
+
+    scalar_recorded = _count_candidates_from(
+        store, _PORTFOLIO_CANDIDATE_FIELDS, Source.FINEXTRACT_LIVE
+    )
+    return PortfolioSyncSummary(
+        candidates_recorded=scalar_recorded + outcome.magi_candidates_recorded,
+        server_available=True,
+        error=None,
+    )
+
+
+@dataclass(frozen=True)
+class SsSyncSummary:
+    """One leg of ``sync_everything`` — the FinExtract SS-at-FRA sync (per person)."""
+
+    candidates_recorded: int
+    warnings: list[str]
+
+
+def _sync_ss_source() -> SsSyncSummary:
+    """Sync SS-at-FRA for both people (skipping spouse when filing Single).
+
+    Reuses ``views.setup._partials._sync_ssa_for`` — the same per-person
+    callable each owner's inline "Sync SS from FinExtract" button
+    (``render_accounts_partial``, Task 4 of the ui-shell-theme-toggle plan)
+    calls — which already records through ``record_ss_fra_candidate`` (W2
+    Part C).
+    """
+    from views.setup._partials import _sync_ssa_for
+
+    warnings: list[str] = []
+    recorded = 0
+    is_single = st.session_state.get("filing_status", scalar_default("filing_status")) == "Single"
+    people = [("you", "your_fra_age")] + ([] if is_single else [("spouse", "spouse_fra_age")])
+    for owner, fra_key in people:
+        fra_age = st.session_state.get(fra_key, scalar_default(fra_key))
+        try:
+            warning = _sync_ssa_for(owner, fra_age)
+        except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
+            warning = f"SS sync ({owner}) failed: {exc}"
+        if warning:
+            warnings.append(warning)
+        else:
+            recorded += 1
+    return SsSyncSummary(candidates_recorded=recorded, warnings=warnings)
+
+
+@dataclass(frozen=True)
+class ScanSyncSummary:
+    """One leg of ``sync_everything`` — the unified PDF-folder scan."""
+
+    result: ScanIngestResult | None
+    error: str | None
+
+
+def _sync_scan_source() -> ScanSyncSummary:
+    """Scan the canonical statement folder via ``run_folder_scan``, if configured."""
+    from engine.brokerage_statement_pdf import load_statement_folder_path
+
+    folder = load_statement_folder_path()
+    if not folder:
+        return ScanSyncSummary(result=None, error="no folder configured")
+    try:
+        result = run_folder_scan(Path(folder))
+    except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
+        return ScanSyncSummary(result=None, error=str(exc))
+    return ScanSyncSummary(result=result, error=None)
+
+
+@dataclass(frozen=True)
+class MarketQuoteSyncSummary:
+    """One leg of ``sync_everything`` — the Yahoo Finance employer-stock quote refresh."""
+
+    candidates_recorded: int
+    error: str | None
+
+
+def _sync_market_quote_source() -> MarketQuoteSyncSummary:
+    """Fetch a live quote for the configured ticker via Yahoo Finance and
+    record it as a candidate.
+
+    Reuses ``handle_stock_quote_fetch`` (the same call the option-exercise
+    page's "Fetch <ticker> quote (Yahoo)" button makes), so the fetch + candidate
+    -record logic lives in exactly one place. A Yahoo failure (network error,
+    bad payload, non-200) must not abort the rest of "Sync everything" —
+    it degrades to a reported error, matching the portfolio/ss/scan legs'
+    error-isolation pattern (this source never raises out of here).
+    """
+    from views.option_exercise._partials._helpers import handle_stock_quote_fetch
+
+    try:
+        result = handle_stock_quote_fetch()
+    except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
+        return MarketQuoteSyncSummary(candidates_recorded=0, error=str(exc))
+
+    if not result.ok:
+        return MarketQuoteSyncSummary(candidates_recorded=0, error=result.error)
+    return MarketQuoteSyncSummary(candidates_recorded=1, error=None)
+
+
+@dataclass(frozen=True)
+class SyncEverythingResult:
+    """Combined summary of the Command Center's "Sync everything" action.
+
+    Every produced value lands PENDING via the existing candidate paths —
+    the freeze-until-confirm gate is unchanged and nothing here ever commits.
+    """
+
+    portfolio: PortfolioSyncSummary
+    ss: SsSyncSummary
+    scan: ScanSyncSummary
+    market_quote: MarketQuoteSyncSummary
+
+
+def sync_everything(hh: Household) -> SyncEverythingResult:
+    """Fan out to the portfolio/SS/scan/market-quote sources, independently
+    error-isolated.
+
+    Each source is wrapped so a failure in one (e.g. FinExtract or Yahoo
+    unreachable) never prevents the others from running. Records everything
+    through the existing candidate paths only — never commits, never writes
+    ``Household`` directly.
+    """
+    return SyncEverythingResult(
+        portfolio=_sync_portfolio_source(hh),
+        ss=_sync_ss_source(),
+        scan=_sync_scan_source(),
+        market_quote=_sync_market_quote_source(),
+    )
+
+
+def _all_governed_fields(hh: Household) -> list[str]:
+    """Every governed field across all 5 Setup steps (the same universe
+    Dashboard's original badge iterated) -- not step-scoped, since this
+    badge is a whole-household completeness signal, not a per-step one.
+    """
+    fields: list[str] = []
+    for step_key, _label, _f in SETUP_STEP_GROUPS:
+        fields.extend(governed_fields_for_step(hh, step_key))
+    return fields
+
+
+def render_completeness_badge(hh: Household) -> None:
+    """Caption-only data-completeness badge, reusing the Setup validator.
+
+    Byte-for-byte the same caption shape as Dashboard's original inline
+    badge (see the Phase 4 design spec's Track 1 architecture section):
+    a percent-complete line when fully populated, an issue-count line
+    otherwise. MVP simplification carried over unchanged from Dashboard's
+    original: pending Command Center candidates are not surfaced here
+    (only missing/stale) -- the Contextual shell's status bar already
+    covers pending conflicts separately.
+    """
+    completeness = compute_data_completeness(
+        hh,
+        _all_governed_fields(hh),
+        pending_candidates=set(),
+        now=datetime.now(),
+    )
+    pct = round(completeness.fraction * 100)
+    if completeness.is_complete:
+        st.caption(f"Data completeness: {pct}% -- all key inputs present")
+    else:
+        st.caption(
+            f"Data completeness: {pct}% -- {len(completeness.issues)} item(s) need attention"
+        )

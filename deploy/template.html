@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roth Planner — Live Demo</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@__STLITE_VERSION__/build/stlite.css" />
+  <style>
+    html, body, #root { margin: 0; padding: 0; height: 100%; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; flex-direction: column; gap: 1rem;
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #0e1117; color: #fafafa; z-index: 9999;
+    }
+    #loading .spinner {
+      width: 36px; height: 36px; border: 3px solid #444;
+      border-top-color: #ff4b4b; border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    #loading .note { font-size: 0.85rem; color: #888; max-width: 24rem; text-align: center; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #runtime-banner {
+      /* Streamlit's own stHeader/stToolbar sit at z-index 999990 with an
+         opaque background, so anything lower is painted over. */
+      position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
+      display: none; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
+      background: #ff4b4b; color: #fff;
+      font-family: -apple-system, system-ui, sans-serif; font-size: 0.9rem;
+    }
+    #runtime-banner button {
+      margin-left: auto; cursor: pointer; background: #fff; color: #ff4b4b;
+      border: 0; border-radius: 4px; padding: 0.35rem 0.9rem; font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Loading Roth Planner…</div>
+    <div class="note">
+      First load takes ~10-30s while Python and dependencies download to your browser.
+      Subsequent loads are cached and near-instant. All computation runs locally — no data leaves your device.
+    </div>
+  </div>
+  <div id="root"></div>
+  <div id="runtime-banner" role="alert">
+    <span class="msg"></span>
+    <button type="button" id="runtime-banner-reload">Reload</button>
+  </div>
+  <script>
+    // Global error surface: any error registered here shows in the loading
+    // panel instead of leaving the spinner running with no indication of failure.
+    // stlite can finish booting and paint the entire page while the
+    // JS->Python channel is never wired up. Interactions then die silently:
+    // React still highlights the clicked widget, but no rerun is ever queued,
+    // so the page looks completely healthy and does nothing. Observed on the
+    // public site 2026-09-21 as an intermittent boot race, surfacing only as
+    // "TypeError: P.receive_websocket_from_js is not a function" from stlite's
+    // worker -- an unhandled promise REJECTION, which the "error" listener
+    // below cannot see. Hence the separate rejection handler.
+    // Banner priority: a more severe banner must be able to supersede a less
+    // severe one already on screen, and a less severe one must never
+    // overwrite a more severe one. All four banner classes below share this
+    // one element, so a boolean "first one wins forever" latch let a benign
+    // false-positive respawn banner (see kernelRespawnArmed below) permanently
+    // hide the accurate heartbeat/WASM-fatal banners behind it.
+    const BANNER_LEVEL_RESPAWN = 1; // "restarted unexpectedly" -- page may still work
+    const BANNER_LEVEL_GENERIC = 2; // startup/generic errors
+    const BANNER_LEVEL_HEARTBEAT = 3; // "has stopped responding"
+    const BANNER_LEVEL_WASM_FATAL = 4; // "has crashed and cannot recover"
+    let bannerLevelShown = 0;
+    window.__stliteShowBanner = (msg, level = BANNER_LEVEL_GENERIC) => {
+      if (level <= bannerLevelShown) return; // never downgrade or duplicate
+      bannerLevelShown = level;
+      const banner = document.getElementById("runtime-banner");
+      if (!banner) return;
+      banner.querySelector(".msg").textContent = msg;
+      banner.style.display = "flex";
+    };
+    document
+      .getElementById("runtime-banner-reload")
+      .addEventListener("click", () => location.reload());
+
+    // Both known failure variants share one cause: stlite spawns an extra
+    // kernel mid-session, which re-binds the JS side while the Python instance
+    // that is actually rendering stops receiving messages. A stale binding
+    // throws "P.receive_websocket_from_js is not a function"; a live-but-wrong
+    // worker swallows the message in complete silence, raising nothing at all
+    // -- so the rejection listener below cannot see that half of it.
+    //
+    // The count alone is NOT a usable signal: stlite legitimately creates more
+    // than one kernel while booting (measured 2026-09-21: stlite 1.9.1 logs
+    // this line TWICE on a perfectly healthy load, 0.90.0 once). Alarming on
+    // the second would fire on every single visit.
+    //
+    // What is never normal is a NEW kernel appearing once the app is already
+    // up. Direct instrumentation of THIS console.debug patch (not
+    // browser-devtools console-scraping, which was proven this session to
+    // duplicate and lag entries) measured exactly ONE kernel-load event per
+    // boot on stlite 1.8.1, on both a healthy boot and a boot that displayed
+    // the false respawn banner -- the banner was never caused by extra
+    // kernel loads. So the detector arms only after the loading panel
+    // clears, plus a grace period for late boot activity.
+    // Re-keyed to the FIRST KERNEL-LOAD EVENT, not to hideLoader(): boot
+    // duration varies (loader hides ~4.7s post-nav; stlite's real first "The
+    // kernel has been loaded" log lands ~20-22s on the live app), so a
+    // loader-anchored 15s grace timer armed at ~19.7s -- BEFORE the
+    // legitimate first load -- and misreported it as a respawn every single
+    // time. Anchoring the same 15s grace to the first load itself makes boot
+    // duration irrelevant, while still exempting stlite 1.9.x's benign
+    // same-second double log (comfortably inside the 15s grace).
+    const RESPAWN_ARM_DELAY_MS = 15000;
+    let kernelRespawnArmed = false;
+    let kernelLoadCount = 0;
+    window.__armKernelRespawnDetector = () => {
+      // No longer starts the grace timer -- see the console.debug patch
+      // below, which arms from the first kernel-load event instead. Kept as
+      // a no-op so the existing hideLoader() call site does not need to
+      // change.
+    };
+    const originalDebug = console.debug ? console.debug.bind(console) : () => {};
+    console.debug = function (...args) {
+      try {
+        const sawKernelLoad = args.some(
+          (a) => typeof a === "string" && a.includes("The kernel has been loaded")
+        );
+        if (sawKernelLoad) {
+          kernelLoadCount += 1;
+          if (kernelLoadCount === 1) {
+            setTimeout(() => {
+              kernelRespawnArmed = true;
+            }, RESPAWN_ARM_DELAY_MS);
+          } else if (kernelRespawnArmed) {
+            window.__stliteShowBanner(
+              "The Python runtime restarted unexpectedly, so this page has " +
+                "stopped responding. Please reload.",
+              BANNER_LEVEL_RESPAWN
+            );
+          }
+        }
+      } catch (err) {
+        // Instrumentation must never break logging.
+      }
+      return originalDebug(...args);
+    };
+
+    // ------------------------------------------------------------------
+    // Main-thread liveness heartbeat.
+    //
+    // WHY: stlite's Pyodide worker installs ZERO global fault handlers (no
+    // self.addEventListener("error"/"unhandledrejection"), no onerror), and
+    // its postMessage protocol has no "worker died" message type --
+    // event:loadError is load-time only, and reply.error is scoped to a
+    // single in-flight command. When the worker's own async dispatcher hits
+    // a fatal on an un-awaited await, the rejection lands on the WORKER's
+    // own global scope, which per platform semantics never reaches this
+    // page's window -- so none of the listeners above, PR #507's
+    // dead-channel detector, or PR #508's respawn detector above can ever
+    // fire for it. The worker script is an inlined data: URI baked into
+    // stlite's CDN bundle, so it cannot be patched from here either.
+    //
+    // The only way to detect this failure class is to stop waiting for a
+    // signal that will never arrive and instead actively poll for liveness:
+    // send a trivial round trip through the one API the mounted controller
+    // exposes that requires an actual worker reply (runPython ->
+    // reply:run_python) and treat a timeout as evidence the kernel is
+    // wedged. This also covers the SILENT drop mode described above, which
+    // produces no error of any kind.
+    //
+    // A slow-but-legitimate operation (e.g. a large PDF parse queued ahead
+    // of the probe) is indistinguishable from a dead kernel from the main
+    // thread, so the defaults are deliberately forgiving: 90s per probe, 2
+    // consecutive misses (~3 minutes worst case) before showing anything.
+    // That latency is acceptable because a real wedge is permanent -- there
+    // is no cost to waiting longer before reporting one.
+    const HEARTBEAT_INTERVAL_MS = 30000;
+    const HEARTBEAT_TIMEOUT_MS = 90000;
+    const HEARTBEAT_MISS_THRESHOLD = 2;
+    let heartbeatLatched = false;
+    let heartbeatMisses = 0;
+    let heartbeatInFlight = false;
+    let heartbeatIntervalId = null;
+    function __stopHeartbeat() {
+      if (heartbeatIntervalId !== null) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = null;
+      }
+    }
+    function __heartbeatTick(controller) {
+      if (heartbeatLatched || heartbeatInFlight) return; // never stack probes
+      heartbeatInFlight = true;
+      const timeout = new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error("heartbeat timeout")), HEARTBEAT_TIMEOUT_MS);
+      });
+      Promise.race([controller.runPython("1"), timeout])
+        .then(() => {
+          heartbeatMisses = 0;
+        })
+        // The rejection reason is a `reply.error` originating inside the
+        // Pyodide worker -- the only diagnostic channel that crosses the
+        // worker boundary. Discarding it (as this used to do) hid the real
+        // root cause for three sessions: it reads "Pyodide already fatally
+        // failed and can no longer be used."
+        .catch((err) => {
+          heartbeatMisses += 1;
+          if (!heartbeatLatched && heartbeatMisses >= HEARTBEAT_MISS_THRESHOLD) {
+            heartbeatLatched = true;
+            __stopHeartbeat();
+            console.error(
+              `[stlite][heartbeat] ${heartbeatMisses} consecutive probes timed out; ` +
+                `treating the kernel as unresponsive; last rejection: ${String((err && err.message) || err)}`
+            );
+            window.__stliteShowBanner(
+              "The planner's Python runtime has stopped responding. Please reload the page.",
+              BANNER_LEVEL_HEARTBEAT
+            );
+          }
+        })
+        .finally(() => {
+          heartbeatInFlight = false;
+        });
+    }
+    // Arming is anchored to the loader clearing (hideLoader(), ~1.1-1.8s
+    // post-nav), which happens well before stlite reports its kernel loaded
+    // (~21s) -- so the first probe or two DO overlap startup (measured: probe
+    // 1 fired at 11.1s and resolved at 12.2s against a not-yet-loaded
+    // kernel). It is the forgiving 90s per-probe timeout above -- not the
+    // arming point -- that keeps a slow boot from being misreported as a
+    // wedge. __armKernelRespawnDetector is now a no-op, so this is no longer
+    // armed "the same way" as anything else. Idempotent and a no-op once
+    // latched.
+    window.__armHeartbeat = (controller) => {
+      if (heartbeatIntervalId !== null || heartbeatLatched || !controller) return;
+      heartbeatIntervalId = setInterval(() => __heartbeatTick(controller), HEARTBEAT_INTERVAL_MS);
+    };
+    window.addEventListener("pagehide", __stopHeartbeat);
+
+    // The loading panel is display:none once Streamlit renders, so any error
+    // after that point would be written into an invisible element. Fall back
+    // to the banner in that case.
+    window.__stliteShowError = (msg) => {
+      console.error("[stlite]", msg);
+      const loading = document.getElementById("loading");
+      const note = document.querySelector("#loading .note");
+      const loadingVisible = loading && loading.style.display !== "none";
+      if (loadingVisible && note) {
+        note.textContent = msg;
+        note.style.color = "#ff4b4b";
+      } else {
+        window.__stliteShowBanner(msg, BANNER_LEVEL_GENERIC);
+      }
+    };
+    // Loud Pyodide/WASM fatal detector -- distinct from the SILENT
+    // worker-swallow mode described above. Observed in production on stlite
+    // 1.9.1: Pyodide's WASM runtime throws "RuntimeError: memory access out
+    // of bounds" (or "table index is out of bounds" / "Recursive call to
+    // fatal_error" / "unreachable executed"), firing repeatedly as BOTH
+    // uncaught errors and unhandled promise rejections -- dozens of times in
+    // a single freeze. The existing unhandledrejection listener below
+    // receives these, but its receive_websocket_from_js filter is too narrow
+    // to match them, so they were silently discarded and the page stayed
+    // frozen with no banner: the user had to open devtools to learn anything.
+    // This classifier catches that case and shows a banner exactly once,
+    // without changing the dead-channel path's own behavior.
+    const WASM_FATAL_PATTERNS = [
+      /memory access out of bounds/,
+      /table index is out of bounds/,
+      /Recursive call to fatal_error/,
+      /unreachable executed/,
+    ];
+    function __isPyodideWasmFatal(errOrReason) {
+      try {
+        const message = String((errOrReason && errOrReason.message) || errOrReason || "");
+        const stack = String((errOrReason && errOrReason.stack) || "");
+        const text = `${message}\n${stack}`;
+        if (WASM_FATAL_PATTERNS.some((re) => re.test(text))) return true;
+        if (/RuntimeError/.test(text) && /pyodide\.asm\.(wasm|js)/.test(text)) return true;
+        return false;
+      } catch (err) {
+        return false; // this classifier must never itself throw
+      }
+    }
+    let wasmFatalShown = false;
+    function __handlePyodideWasmFatal(errOrReason) {
+      if (wasmFatalShown) return; // storms dozens of times per freeze -- latch to one banner
+      wasmFatalShown = true;
+      console.error(
+        "[stlite][wasm-fatal]",
+        String((errOrReason && errOrReason.message) || errOrReason)
+      );
+      window.__stliteShowBanner(
+        "The planner's Python runtime has crashed and cannot recover. Please reload the page.",
+        BANNER_LEVEL_WASM_FATAL
+      );
+    }
+    window.addEventListener("error", (e) => {
+      if (__isPyodideWasmFatal(e.error || e)) {
+        __handlePyodideWasmFatal(e.error || e);
+        return;
+      }
+      window.__stliteShowError(`Unexpected error: ${e.message || e}. Try reloading the page.`);
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      const reason = String((e.reason && e.reason.message) || e.reason || "");
+      if (/receive_websocket_from_js/.test(reason)) {
+        window.__stliteShowBanner(
+          "The Python runtime did not finish starting, so nothing on this page " +
+            "will respond. Please reload.",
+          BANNER_LEVEL_GENERIC
+        );
+        return;
+      }
+      if (__isPyodideWasmFatal(e.reason)) {
+        __handlePyodideWasmFatal(e.reason);
+      }
+    });
+  </script>
+  <script
+    type="module"
+    onerror="window.__stliteShowError('Failed to load the stlite runtime from the CDN. Check your network connection, or try reloading.')"
+  >
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@__STLITE_VERSION__/build/stlite.js";
+
+    const FILES = __FILE_MAP_JSON__;
+    const REQUIREMENTS = __REQUIREMENTS_JSON__;
+
+    let controller = null;
+    try {
+      controller = mount(
+        {
+          entrypoint: "app.py",
+          requirements: REQUIREMENTS,
+          files: FILES,
+        },
+        document.getElementById("root"),
+      );
+    } catch (err) {
+      window.__stliteShowError(`Failed to start: ${err.message}. Try reloading the page.`);
+    }
+
+    // Hide loader once Streamlit renders (poll for the iframe/canvas)
+    const hideLoader = () => {
+      const loader = document.getElementById("loading");
+      if (loader && document.querySelector("#root iframe, #root .stApp")) {
+        loader.style.display = "none";
+        window.__armKernelRespawnDetector?.();
+        window.__armHeartbeat?.(controller);
+        return true;
+      }
+      return false;
+    };
+    const interval = setInterval(() => { if (hideLoader()) clearInterval(interval); }, 500);
+    setTimeout(() => {
+      clearInterval(interval);
+      if (document.getElementById("loading")?.style.display !== "none") {
+        window.__stliteShowError("Still loading after 60s — this may indicate a load failure. Check the browser console, or try reloading.");
+      }
+    }, 60000); // give up after 60s
+  </script>
+</body>
+</html>

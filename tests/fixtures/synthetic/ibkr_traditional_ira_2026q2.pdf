@@ -1,0 +1,88 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1400 1000] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1628 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 40 960 Tm
+(Activity Statement - June 30, 2026 Page: 1 of 1) Tj
+1 0 0 1 40 945 Tm
+(Interactive Brokers LLC, Two Pickwick Plaza, Greenwich, CT 06830) Tj
+1 0 0 1 40 930 Tm
+(Account Information) Tj
+1 0 0 1 40 915 Tm
+(Name Pat EXAMPLE Rollover IRA, Interactive Brokers LLC Custodian) Tj
+1 0 0 1 40 900 Tm
+(Account Alias IRA) Tj
+1 0 0 1 40 885 Tm
+(Account U00000001) Tj
+1 0 0 1 40 870 Tm
+(Account Type Individual) Tj
+1 0 0 1 40 855 Tm
+(Customer Type IRA-Traditional Rollover) Tj
+1 0 0 1 40 840 Tm
+(Account Capabilities Margin) Tj
+1 0 0 1 40 825 Tm
+(Net Asset Value) Tj
+1 0 0 1 40 810 Tm
+(Asset Class Prior Total Current Long Current Short Current Total Change) Tj
+1 0 0 1 40 795 Tm
+(Stocks 98,000.00 100,000.00 0.00 100,000.00 2,000.00) Tj
+1 0 0 1 40 780 Tm
+(Total 98,000.00 100,000.00 0.00 100,000.00 2,000.00) Tj
+1 0 0 1 40 765 Tm
+(Ending Value 100,000.00) Tj
+1 0 0 1 40 750 Tm
+(Month & Year to Date Performance Summary) Tj
+1 0 0 1 40 735 Tm
+(Mark-to-Market Realized S/T Realized L/T) Tj
+1 0 0 1 40 720 Tm
+(Symbol Description MTD YTD MTD YTD MTD YTD) Tj
+1 0 0 1 40 705 Tm
+(Stocks) Tj
+1 0 0 1 40 690 Tm
+(ACME ACME CORP 2,000.00 5,000.00 0.00 0.00 0.00 0.00) Tj
+1 0 0 1 40 675 Tm
+(Total Stocks 2,000.00 5,000.00 0.00 0.00 0.00 0.00) Tj
+1 0 0 1 40 660 Tm
+(Cash Report) Tj
+1 0 0 1 40 645 Tm
+(Total Securities Futures Month to Date Year to Date) Tj
+1 0 0 1 40 630 Tm
+(Base Currency Summary) Tj
+1 0 0 1 40 615 Tm
+(Starting Cash 0.00 0.00 0.00) Tj
+1 0 0 1 40 600 Tm
+(Dividends 0.00 0.00 0.00 0.00 400.00) Tj
+1 0 0 1 40 585 Tm
+(Ending Cash 0.00 0.00 0.00) Tj
+1 0 0 1 40 570 Tm
+(Ending Settled Cash 0.00 0.00 0.00) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000000340 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2020
+%%EOF

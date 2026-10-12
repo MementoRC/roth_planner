@@ -1,0 +1,2558 @@
+"""Smoke tests for views/ytd_income.py — NQO exercises display (PR3)."""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import views.ytd_income as ytd_income_mod
+from engine.brokerage_statement_pdf import BrokerageStatementRecord
+from engine.koinly_report_pdf import KoinlyReport
+from engine.pdf_import import PdfImportResult
+from models.grants import StockGrant
+from models.household import Household
+from models.ytd_income import YTDSnapshot
+from views.ytd_income._partials import _analysis as analysis_mod
+from views.ytd_income._partials import _event_log as event_log_mod
+from views.ytd_income._partials import _manual_entry as manual_entry_mod
+from views.ytd_income._partials import _sync_scan as sync_scan_mod
+
+
+def _stub_hh(**kwargs) -> Household:
+    return Household(
+        your_age=60,
+        spouse_age=54,
+        your_ira=500_000,
+        spouse_ira=500_000,
+        **kwargs,
+    )
+
+
+def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
+    """Build a streamlit mock whose session_state returns the given YTDSnapshot."""
+    mock_st = MagicMock()
+    # session_state needs .get() like a dict AND supports attribute assignment.
+    session_state = MagicMock()
+    _state: dict = {"ytd_snapshot": ytd, "apply_ytd_to_projection": False}
+    session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+    mock_st.session_state = session_state
+    # number_input returns 0 so manual-entry YTDSnapshot construction is numeric
+    mock_st.number_input.return_value = 0
+    # checkbox returns False so the manual-entry block is skipped
+    mock_st.checkbox.return_value = False
+
+    # columns returns MagicMocks that support context-manager and attribute access
+    def _columns_side_effect(arg):
+        n = arg if isinstance(arg, int) else len(arg)
+        return [MagicMock() for _ in range(n)]
+
+    mock_st.columns.side_effect = _columns_side_effect
+    mock_st.expander.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
+    mock_st.form.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_st.form.return_value.__exit__ = MagicMock(return_value=False)
+    mock_st.form_submit_button.return_value = False
+    mock_st.button.return_value = False
+    # views/ytd_income/__init__.py:_render_tabs unpacks st.tabs(...) into two
+    # tab objects and uses each as a `with tab:` context manager.
+    mock_st.tabs.return_value = (MagicMock(), MagicMock())
+    return mock_st
+
+
+class TestM1UnconditionalSaveGuard:
+    """audit-0823 M1 regression: render()'s final save_ytd_snapshot(ytd) must
+    run ONLY when session_state actually held a real "ytd_snapshot" going
+    into/through this render -- never for the blank YTDSnapshot() default
+    that render_manual_entry_partial's ``st.session_state.get("ytd_snapshot",
+    YTDSnapshot())`` substitutes when the key was never seeded (e.g. after
+    "Reset to demo", or any session that never loaded/synced one). An
+    unconditional save there overwrites a real .ytd_cache.json on disk with
+    blanks on the very first render.
+
+    Patches ``save_ytd_snapshot`` where it is LOOKED UP (``views.ytd_income``'s
+    own module-level binding from its ``from engine.portfolio_sync import
+    save_ytd_snapshot``), not at its definition site in
+    ``engine.portfolio_sync.ytd`` -- monkeypatch cannot reach a name via its
+    origin module once another module has already imported its own reference
+    to the same function object.
+    """
+
+    def _mock_st(self, *, seed_ytd_snapshot: YTDSnapshot | None) -> MagicMock:
+        """Minimal harness (checkbox/button both OFF, so nothing writes a
+        fresh value into session_state["ytd_snapshot"] during this render):
+        unlike the module-level ``_make_mock_st``, this one can represent
+        "the key is genuinely absent" via a real ``__contains__``."""
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state: dict = {"apply_ytd_to_projection": False}
+        if seed_ytd_snapshot is not None:
+            _state["ytd_snapshot"] = seed_ytd_snapshot
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        session_state.__contains__.side_effect = lambda key: key in _state
+        mock_st.session_state = session_state
+        mock_st.number_input.return_value = 0
+        mock_st.checkbox.return_value = False  # "Manual entry" OFF
+        mock_st.button.return_value = False  # "Sync"/"Scan folder" OFF
+
+        def _columns_side_effect(arg):
+            n = arg if isinstance(arg, int) else len(arg)
+            return [MagicMock() for _ in range(n)]
+
+        mock_st.columns.side_effect = _columns_side_effect
+        mock_st.expander.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.form.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_st.form.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.form_submit_button.return_value = False
+        # views/ytd_income/__init__.py:_render_tabs unpacks st.tabs(...) into
+        # two tab objects and uses each as a `with tab:` context manager.
+        mock_st.tabs.return_value = (MagicMock(), MagicMock())
+        return mock_st
+
+    def test_no_snapshot_in_session_state_skips_save(self):
+        hh = _stub_hh()
+        mock_st = self._mock_st(seed_ytd_snapshot=None)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save,
+        ):
+            ytd_income_mod.render(hh)
+
+        mock_save.assert_not_called()
+
+    def test_real_snapshot_in_session_state_triggers_save(self):
+        hh = _stub_hh()
+        real_ytd = YTDSnapshot(wages_ytd=80_000.0)
+        mock_st = self._mock_st(seed_ytd_snapshot=real_ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(ytd_income_mod, "save_ytd_snapshot") as mock_save,
+        ):
+            ytd_income_mod.render(hh)
+
+        mock_save.assert_called_once()
+
+
+class TestYtdIncomeNqoDisplay:
+    """View-layer smoke tests for NQO exercises metric and per-grant breakdown."""
+
+    def test_renders_with_nqo_exercises(self):
+        """Render with nqo_exercise_ytd set — should not raise; NQO metric present."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0)
+        ytd._option_exercises_by_grant = {"GR-2019": 96_000.0}  # noqa: SLF001
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in mock_st.metric.call_args_list
+        ]
+        assert any("NQO" in lbl for lbl in metric_labels), (
+            f"Expected st.metric call with 'NQO' label; got: {metric_labels}"
+        )
+
+    def test_renders_empty_no_nqo_section(self):
+        """Render with nqo_exercise_ytd=0 — should not raise; NQO metric absent."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(nqo_exercise_ytd=0.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in mock_st.metric.call_args_list
+        ]
+        assert not any("NQO" in lbl for lbl in metric_labels), (
+            "NQO metric should not appear when nqo_exercise_ytd=0"
+        )
+
+    def test_per_grant_table_with_household_grants(self):
+        """Render with by_grant breakdown and grants without grant_id — single table, all unmatched."""
+        grants = [
+            StockGrant(year=2019, strike=98.0, shares=1000, expiry_year=2029),
+            StockGrant(year=2020, strike=124.0, shares=500, expiry_year=2030),
+            StockGrant(year=2021, strike=163.0, shares=300, expiry_year=2031),
+        ]
+        hh = _stub_hh(grants=grants)
+        ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0)
+        ytd._option_exercises_by_grant = {  # noqa: SLF001
+            "GR-2019": 80_000.0,
+            "GR-2020": 16_000.0,
+        }
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        # Now a single st.dataframe call (joined table) instead of two separate tables
+        # All rows show Year="—" since grants have no grant_id to match
+        dataframe_calls = mock_st.dataframe.call_args_list
+        joined_call = next(
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
+            None,
+        )
+        assert joined_call is not None, (
+            "Expected at least one st.dataframe call with a list of rows"
+        )
+        rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
+        assert all(r["Year"] == "—" for r in rows), (
+            f"All rows should be unmatched (Year='—') since grants have no grant_id; got: {rows}"
+        )
+
+    def test_per_grant_table_joins_when_grant_id_matches(self):
+        """Single joined table uses grant data when grant_id matches."""
+        grants = [
+            StockGrant(year=2019, strike=98.0, shares=1000, expiry_year=2029, grant_id="GR-2019"),
+        ]
+        hh = _stub_hh(grants=grants)
+        ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0)
+        ytd._option_exercises_by_grant = {"GR-2019": 96_000.0}  # noqa: SLF001
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        dataframe_calls = mock_st.dataframe.call_args_list
+        joined_call = next(
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
+            None,
+        )
+        assert joined_call is not None, "Expected st.dataframe call with list of rows"
+        rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
+        assert len(rows) == 1
+        assert rows[0]["Year"] == "2019", (
+            f"Matched row should show Year='2019' (str); got: {rows[0]}"
+        )
+        assert rows[0]["Strike"] == "$98.00"
+        assert rows[0]["Grant #"] == "GR-2019"
+
+    def test_per_grant_table_year_column_is_string(self):
+        """Year/Shares/Expiry columns must be strings to avoid PyArrow ArrowTypeError."""
+        grants = [
+            StockGrant(year=2019, strike=98.0, shares=1000, expiry_year=2029, grant_id="GR-2019"),
+        ]
+        hh = _stub_hh(grants=grants)
+        ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0)
+        ytd._option_exercises_by_grant = {"GR-2019": 96_000.0}  # noqa: SLF001
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        dataframe_calls = mock_st.dataframe.call_args_list
+        joined_call = next(
+            (
+                c
+                for c in dataframe_calls
+                if isinstance(c.args[0] if c.args else c.kwargs.get("data"), list)
+            ),
+            None,
+        )
+        assert joined_call is not None
+        rows = joined_call.args[0] if joined_call.args else joined_call.kwargs["data"]
+        assert len(rows) == 1
+        row = rows[0]
+        # Verify Year, Shares, Expiry are all strings (not int)
+        assert isinstance(row["Year"], str), (
+            f"Year should be str, got {type(row['Year'])}: {row['Year']}"
+        )
+        assert isinstance(row["Shares"], str), (
+            f"Shares should be str, got {type(row['Shares'])}: {row['Shares']}"
+        )
+        assert isinstance(row["Expiry"], str), (
+            f"Expiry should be str, got {type(row['Expiry'])}: {row['Expiry']}"
+        )
+        assert row["Year"] == "2019"
+        assert row["Shares"] == "1000"
+        assert row["Expiry"] == "2029"
+
+
+class TestInvestmentIncomeDisplay:
+    """View-layer smoke tests for dividend/interest metrics in the YTD Position block."""
+
+    def test_renders_dividend_interest_metrics_when_nonzero(self):
+        """All three investment-income metrics appear when any value is non-zero."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            qualified_dividends_ytd=5_000.0,
+            ordinary_dividends_ytd=2_000.0,
+            interest_ytd=1_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+        # Track every column mock returned so we can inspect .metric calls on them
+        col_mocks: list[MagicMock] = []
+        _orig_columns = mock_st.columns.side_effect
+
+        def _tracking_columns(arg):
+            cols = _orig_columns(arg)
+            col_mocks.extend(cols)
+            return cols
+
+        mock_st.columns.side_effect = _tracking_columns
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        # Collect all metric labels: direct st.metric + column.metric calls
+        all_metric_calls = list(mock_st.metric.call_args_list)
+        for col in col_mocks:
+            all_metric_calls.extend(col.metric.call_args_list)
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in all_metric_calls
+        ]
+        assert any("Qualified dividends" in lbl for lbl in metric_labels), (
+            f"Expected 'Qualified dividends (YTD)' metric; got: {metric_labels}"
+        )
+        assert any("Ordinary dividends" in lbl for lbl in metric_labels), (
+            f"Expected 'Ordinary dividends (YTD)' metric; got: {metric_labels}"
+        )
+        assert any("Interest" in lbl for lbl in metric_labels), (
+            f"Expected 'Interest (YTD)' metric; got: {metric_labels}"
+        )
+        caption_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.caption.call_args_list
+        ]
+        assert any("Investment income impacting headroom" in c for c in caption_calls), (
+            f"Expected caption 'Investment income impacting headroom'; got: {caption_calls}"
+        )
+
+    def test_skips_dividend_interest_block_when_all_zero(self):
+        """No dividend/interest metrics rendered when all three fields are 0.0."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            qualified_dividends_ytd=0.0,
+            ordinary_dividends_ytd=0.0,
+            interest_ytd=0.0,
+        )
+        mock_st = _make_mock_st(ytd)
+        col_mocks: list[MagicMock] = []
+        _orig_columns = mock_st.columns.side_effect
+
+        def _tracking_columns(arg):
+            cols = _orig_columns(arg)
+            col_mocks.extend(cols)
+            return cols
+
+        mock_st.columns.side_effect = _tracking_columns
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        all_metric_calls = list(mock_st.metric.call_args_list)
+        for col in col_mocks:
+            all_metric_calls.extend(col.metric.call_args_list)
+        metric_labels = [
+            (call.args[0] if call.args else call.kwargs.get("label", ""))
+            for call in all_metric_calls
+        ]
+        assert not any("Qualified dividends" in lbl for lbl in metric_labels), (
+            "Qualified dividends metric should not appear when value is 0"
+        )
+        assert not any("Ordinary dividends" in lbl for lbl in metric_labels), (
+            "Ordinary dividends metric should not appear when value is 0"
+        )
+        assert not any("Interest" in lbl for lbl in metric_labels), (
+            "Interest metric should not appear when value is 0"
+        )
+
+
+class TestManualEntryAutoDeselect:
+    """Tests for auto-deselect of manual-entry checkbox on successful YTD sync."""
+
+    def test_successful_sync_clears_manual_entry_state(self):
+        """On successful YTD sync, manual entry is auto-deselected and page reruns."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+
+        # Setup: sync button clicked, checkbox initially checked
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        # Create synced snapshot with data
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            ltcg_ytd=50_000.0,
+            snapshot_date="2026-06-12",  # Mark as synced
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            # Mock fetch_option_exercises to return unavailable result
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        # Assert: session_state["ytd_manual_entry"] was set to False
+        # MagicMock tracks __setitem__ calls automatically
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry set to False; got calls: {setitem_calls}"
+        )
+        # Assert: rerun was called
+        assert mock_st.rerun.called, "Expected st.rerun() to be called on successful sync"
+
+    def test_failed_sync_does_not_clear_manual_entry(self):
+        """On failed YTD sync, manual entry remains unchanged and page does not rerun."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+
+        # Setup: sync button clicked
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        # Create failed snapshot (no snapshot_date)
+        failed_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=0.0,
+        )
+        # snapshot_date stays empty (falsy)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=failed_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            # Mock fetch_option_exercises
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        # Assert: ytd_manual_entry was NOT set to False in the success branch
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry" and call[0][1] is False
+        ]
+        assert not setitem_calls, "On failed sync, ytd_manual_entry should not be set to False"
+        # Assert: rerun was NOT called
+        assert not mock_st.rerun.called, "On failed sync, st.rerun() should not be called"
+
+    def test_explicit_choice_preserves_manual_entry_on_sync(self):
+        """A user who deliberately turned manual entry ON (recorded via the
+        checkbox's on_change callback as ytd_manual_entry_explicit=True) keeps
+        it ON through a successful FinExtract sync -- the fix's core case."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+        _state = {
+            "ytd_snapshot": ytd_empty,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            ltcg_ytd=50_000.0,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            "Expected ytd_manual_entry NOT to be forced off when the user chose "
+            f"it explicitly; got calls: {setitem_calls}"
+        )
+        # A successful sync still reruns -- only the checkbox override is skipped.
+        assert mock_st.rerun.called, "Expected st.rerun() still called on successful sync"
+
+    def test_explicit_choice_surfaces_note_on_sync(self):
+        """When the auto-deselect is skipped for an explicit choice, the user
+        must see a short note explaining data was synced but manual entry was
+        left on -- otherwise the skip is invisible."""
+        hh = _stub_hh()
+        ytd_empty = YTDSnapshot()
+        mock_st = _make_mock_st(ytd_empty)
+        _state = {
+            "ytd_snapshot": ytd_empty,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = True
+
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=150_000.0,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        caption_texts = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Manual entry stayed ON" in c for c in caption_texts), (
+            f"Expected an explanatory caption for the explicit-choice skip; got {caption_texts}"
+        )
+
+    def test_explicit_choice_preserves_manual_entry_on_brokerage_apply(self, tmp_path):
+        """The brokerage 'Apply to YTD snapshot' button (_sync_scan.py's
+        _render_scan_review, ~:760) must also honour an explicit user choice,
+        not just the FinExtract sync button above."""
+        import engine.pdf_ledger as ledger_mod
+
+        rec = BrokerageStatementRecord(
+            account_number="XXXX9999",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=20.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "ytd_manual_entry_explicit": True,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.button.side_effect = lambda label, **kw: label == "Apply to YTD snapshot"
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save_snapshot,
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+        ):
+            sync_scan_mod._render_scan_review(
+                {"XXXX9999": rec},
+                ledger,
+                account_overrides={},
+                owner_map={},
+                instance_owner="household",
+                identity_set=True,
+            )
+
+        assert mock_save_snapshot.called, "Expected the Apply button to save the YTD snapshot"
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry NOT forced off when chosen explicitly; got {setitem_calls}"
+        )
+        caption_texts = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Manual entry stayed ON" in c for c in caption_texts), (
+            f"Expected an explanatory caption; got {caption_texts}"
+        )
+
+    def test_data_bridge_rederive_preserves_explicit_choice(self):
+        """The .enc import path (views/setup/data_bridge.py's
+        _rederive_ytd_from_ledger) must also honour an explicit user choice,
+        not just the YTD-page sync/scan/apply paths."""
+        import views._shared as shared_mod
+        import views.setup.data_bridge as data_bridge_mod
+
+        ytd = YTDSnapshot(tax_year=2026)
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state = {"ytd_snapshot": ytd, "ytd_manual_entry_explicit": True}
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.session_state = session_state
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(data_bridge_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+            patch.object(data_bridge_mod, "save_ytd_snapshot"),
+        ):
+            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+
+        assert note_needed is True, "Expected the explicit-choice note flag to be True"
+        setitem_calls = [
+            call
+            for call in session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert not any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry NOT forced off when chosen explicitly; got {setitem_calls}"
+        )
+
+    def test_data_bridge_rederive_default_auto_deselects(self):
+        """Preserve prior behavior: without an explicit choice, the .enc
+        import path still auto-deselects manual entry."""
+        import views._shared as shared_mod
+        import views.setup.data_bridge as data_bridge_mod
+
+        ytd = YTDSnapshot(tax_year=2026)
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state: dict = {"ytd_snapshot": ytd}
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.session_state = session_state
+
+        ledger: dict = {"koinly": {}, "brokerage": {}}
+
+        with (
+            patch.object(data_bridge_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+            patch.object(data_bridge_mod, "save_ytd_snapshot"),
+        ):
+            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+
+        assert note_needed is False, "Expected no explicit-choice note in the default case"
+        setitem_calls = [
+            call
+            for call in session_state.__setitem__.call_args_list
+            if call[0][0] == "ytd_manual_entry"
+        ]
+        assert any(call[0][1] is False for call in setitem_calls), (
+            f"Expected ytd_manual_entry forced off by default; got {setitem_calls}"
+        )
+
+    def test_data_bridge_rederive_keeps_a_newer_hand_entry_and_warns(self):
+        import views._shared as shared_mod
+        import views.setup.data_bridge as data_bridge_mod
+        from models.ytd_income import ManualMark
+
+        ytd = YTDSnapshot(
+            by_owner={"you": {}},
+            crypto_income_ytd=999.0,
+            manual_marks={"household.crypto_income_ytd": ManualMark(999.0, "2026-10-01", "typed")},
+        )
+        mock_st = MagicMock()
+        session_state = MagicMock()
+        _state = {"ytd_snapshot": ytd}
+        session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+        mock_st.session_state = session_state
+        ledger = {
+            "koinly": {
+                "you": {"stcg": 1.0, "ltcg": 2.0, "income": 3.0, "captured_at": "2026-09-20"}
+            },
+            "brokerage": {},
+        }
+
+        with (
+            patch.object(data_bridge_mod, "st", mock_st),
+            patch.object(shared_mod, "st", mock_st),
+            patch.object(data_bridge_mod, "save_ytd_snapshot"),
+        ):
+            data_bridge_mod._rederive_ytd_from_ledger(ledger)
+
+        assert ytd.crypto_income_ytd == 999.0
+        assert ytd.crypto_stcg_ytd == 1.0
+        warnings = [str(c.args[0]) for c in mock_st.warning.call_args_list]
+        assert any("crypto income" in w for w in warnings)
+
+    def test_sync_preserves_manual_only_fields_not_zeroed(self):
+        """The FinExtract sync button is NQO-exercises-only now — investment income
+        (interest/dividends/gains) comes from brokerage statement PDFs instead, and
+        the manual-entry-only fields were always FinExtract-independent. Neither
+        category may be zeroed out by an NQO-only sync."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            qualified_dividends_ytd=2_000.0,
+            nec_income_ytd=5_000.0,
+            ira_conversions_ytd=25_000.0,
+            spouse_ira_conversions_ytd=7_500.0,
+            ira_distributions_ytd=10_000.0,
+            tax_exempt_interest_ytd=1_500.0,
+            ltcg_ytd=50_000.0,
+            stcg_ytd=4_000.0,
+            ordinary_dividends_ytd=3_000.0,
+            interest_ytd=600.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        # Manual entry off: this mock harness runs render() in a single pass with no
+        # real rerun, so leaving checkbox truthy would fall through into the manual
+        # entry block afterward and re-clobber session_state.ytd_snapshot from
+        # (mocked, zero-valued) widget inputs — unlike production, where st.rerun()
+        # halts execution immediately after a successful sync.
+        mock_st.checkbox.return_value = False
+
+        # Fresh sync — fetch_ytd_snapshot no longer supplies ANY investment-income
+        # field (that's brokerage-statement-sourced now); a real sync only ever sets
+        # manually_entered/snapshot_date, so the fresh snapshot has none of the
+        # fields above populated.
+        synced_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            snapshot_date="2026-06-12",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.wages_ytd == 80_000.0
+        assert result.qualified_dividends_ytd == 2_000.0
+        assert result.nec_income_ytd == 5_000.0
+        assert result.ira_conversions_ytd == 25_000.0
+        assert result.spouse_ira_conversions_ytd == 7_500.0
+        assert result.ira_distributions_ytd == 10_000.0
+        assert result.tax_exempt_interest_ytd == 1_500.0
+        # Investment-income fields are statement-sourced now, not FinExtract-sourced
+        # -- an NQO-only sync must preserve them from the prior snapshot too.
+        assert result.ltcg_ytd == 50_000.0
+        assert result.stcg_ytd == 4_000.0
+        assert result.ordinary_dividends_ytd == 3_000.0
+        assert result.interest_ytd == 600.0
+
+    def test_federal_withholding_survives_sync(self):
+        """C96 (audit-0805): the sync-button preserve allowlist omits
+        federal_withholding_ytd, silently zeroing it on every FinExtract sync."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            federal_withholding_ytd=42_000.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = False
+
+        synced_ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-12")
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.federal_withholding_ytd == 42_000.0, (
+            "Expected federal_withholding_ytd=42000 preserved through NQO-only "
+            f"sync; got {result.federal_withholding_ytd}"
+        )
+
+    def test_estimated_payments_survives_sync(self):
+        """Manually-entered estimated_payments_ytd must not be wiped by an
+        NQO-only FinExtract sync, mirroring federal_withholding_ytd (C96)."""
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(
+            tax_year=hh.base_year,
+            wages_ytd=80_000.0,
+            estimated_payments_ytd=9_000.0,
+        )
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.button.return_value = True
+        mock_st.checkbox.return_value = False
+
+        synced_ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-12")
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=synced_ytd),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_exercises = MagicMock()
+            mock_exercises.server_available = False
+            mock_fetch_ex.return_value = mock_exercises
+
+            sync_scan_mod.render_ytd_finextract_sync(hh)
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.estimated_payments_ytd == 9_000.0, (
+            "Expected estimated_payments_ytd=9000 preserved through NQO-only "
+            f"sync; got {result.estimated_payments_ytd}"
+        )
+
+
+class TestManualEntryPreservesNqoExerciseYtd:
+    """C42 (audit-0805, HIGH): _manual_entry.py's fresh-YTDSnapshot rebuild
+    omits nqo_exercise_ytd -- the ONLY true field omission (tax_year is
+    intentionally re-derived). Merely loading the YTD page with the Manual
+    entry checkbox on (default checked) destroys a synced NQO exercise."""
+
+    def test_nqo_exercise_ytd_survives_manual_entry_render(self):
+        hh = _stub_hh()
+        prior_ytd = YTDSnapshot(nqo_exercise_ytd=96_000.0, wages_ytd=50_000.0)
+        mock_st = _make_mock_st(prior_ytd)
+        mock_st.checkbox.return_value = True  # manual entry ON (the default)
+        mock_st.number_input.return_value = 0
+        mock_st.button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        result = mock_st.session_state.ytd_snapshot
+        assert result.nqo_exercise_ytd == 96_000.0, (
+            "Expected nqo_exercise_ytd=96000 preserved through manual-entry "
+            f"render; got {result.nqo_exercise_ytd}"
+        )
+
+
+class TestTaxBracketAndSafeHarborSections:
+    """Smoke tests for the new tax-bracket, estimated-tax, and safe-harbor sections."""
+
+    def test_renders_tax_bracket_section(self):
+        """Tax Bracket Position section renders without exception."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=120_000.0, ltcg_ytd=15_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        # At least one subheader call with bracket-related text
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Tax Bracket" in s for s in subheader_calls), (
+            f"Expected 'Tax Bracket Position' subheader; got: {subheader_calls}"
+        )
+
+    def test_renders_estimated_tax_section(self):
+        """Estimated YTD Federal Tax section renders without exception."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=200_000.0, ltcg_ytd=20_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Federal Tax" in s for s in subheader_calls), (
+            f"Expected 'Estimated YTD Federal Tax' subheader; got: {subheader_calls}"
+        )
+
+    def test_renders_safe_harbor_warning_when_no_prior_year(self):
+        """Safe-harbor section shows warning when prior year tax is unknown (returns 0)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(wages_ytd=180_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax", return_value=0.0
+            ),
+        ):
+            ytd_income_mod.render(hh)
+
+        # st.warning should have been called (prior year unknown)
+        assert mock_st.warning.called, "Expected st.warning() when prior year tax is unknown"
+        warning_msgs = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.warning.call_args_list
+        ]
+        assert any("Prior year tax unknown" in m for m in warning_msgs), (
+            f"Expected 'Prior year tax unknown' warning; got: {warning_msgs}"
+        )
+
+    def test_safe_harbor_call_threads_filing_status_and_prior_agi(self):
+        """Caller passes hh.filing_status and prior-year AGI (from hh.prior_year_magi) into safe_harbor_payment."""
+        from datetime import date
+
+        from engine.tax import SafeHarborGuidance
+
+        prior_year = date.today().year - 1
+        hh = _stub_hh(filing_status="Single", prior_year_magi={prior_year: 120_000.0})
+        ytd = YTDSnapshot(wages_ytd=180_000.0)
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
+            patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("filing_status") == "Single"
+        assert captured.get("prior_year_agi") == 120_000.0
+
+    def test_already_paid_includes_withholding_and_estimated_payments(self):
+        """Already-paid YTD must sum W-2 withholding AND Form 1040-ES estimated
+        payments -- a quarterly-estimated-tax payer must not see $0 already-paid."""
+        from engine.tax import SafeHarborGuidance
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            wages_ytd=180_000.0,
+            federal_withholding_ytd=15_000.0,
+            estimated_payments_ytd=9_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
+            patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("already_paid_ytd") == 24_000.0, (
+            f"Expected 15000 withholding + 9000 estimated = 24000; got {captured.get('already_paid_ytd')}"
+        )
+
+    def test_estimated_payments_alone_reduce_already_paid(self):
+        """A pure estimated-tax payer (no W-2 withholding) must still show
+        already-paid > 0, not the pre-fix $0."""
+        from engine.tax import SafeHarborGuidance
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot(
+            wages_ytd=0.0,
+            federal_withholding_ytd=0.0,
+            estimated_payments_ytd=11_000.0,
+        )
+        mock_st = _make_mock_st(ytd)
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return SafeHarborGuidance()
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch(
+                "views.ytd_income._partials._analysis.load_prior_year_federal_tax",
+                return_value=50_000.0,
+            ),
+            patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+        ):
+            ytd_income_mod.render(hh)
+
+        assert captured.get("already_paid_ytd") == 11_000.0, (
+            f"Expected estimated-payments-only already_paid_ytd=11000; got {captured.get('already_paid_ytd')}"
+        )
+
+    def test_renders_capital_gains_section_with_events(self):
+        """Realized Capital Gains section renders breakdown when gain_events present."""
+        from models.ytd_income import RealizedGainEvent
+
+        hh = _stub_hh()
+        events = [
+            RealizedGainEvent(
+                date="2026-03-15",
+                description="AAPL sale",
+                proceeds=15_000.0,
+                cost_basis=10_000.0,
+                holding_period="long",
+                account_name="Brokerage",
+            )
+        ]
+        ytd = YTDSnapshot(ltcg_ytd=5_000.0, gain_events=events)
+        mock_st = _make_mock_st(ytd)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        subheader_calls = [
+            (call.args[0] if call.args else call.kwargs.get("body", ""))
+            for call in mock_st.subheader.call_args_list
+        ]
+        assert any("Capital Gains" in s for s in subheader_calls), (
+            f"Expected 'Realized Capital Gains' subheader; got: {subheader_calls}"
+        )
+
+
+class TestManualEntryFieldCoverage:
+    """Regression: manual entry must not silently drop fields with no dedicated widget.
+
+    Note: `ira_distributions_ytd` is intentionally NOT asserted here. As of this task
+    (Task 3 of the ytd-manual-entry-coverage plan), `views/ytd_income.py` has no widget
+    or passthrough for `ira_distributions_ytd` in the manual-entry `YTDSnapshot(...)`
+    reconstruction at all — it is dropped regardless of this fix. That field gets full
+    treatment as part of the income-event log in Task 4 (separate, later dispatch).
+    Task 3 is narrowly scoped to `nec_income_ytd` only.
+    """
+
+    def test_manual_entry_preserves_nec_income(self):
+        """Covers nec_income_ytd only; ira_distributions_ytd deferred to Task 4."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(nec_income_ytd=5_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        # Echo back whatever `value=` kwarg each number_input was pre-filled with,
+        # simulating a user who hasn't touched a given widget yet.
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.nec_income_ytd == 5_000.0
+
+    def test_manual_entry_preserves_negative_ltcg_loss(self):
+        """Stored ltcg_ytd=-3000 (a real net realized capital LOSS) must not be
+        clamped to 0 by the manual-entry LTCG widget -- unlike the sibling STCG
+        field, the LTCG widget used to force its displayed/default value to 0
+        whenever ltcg_ytd <= 0, silently discarding a legitimate loss that the
+        unconditional save_ytd_snapshot() call would then persist as 0.0."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(ltcg_ytd=-3_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        # Echo back whatever `value=` kwarg each number_input was pre-filled with,
+        # simulating a user who hasn't touched a given widget yet.
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.ltcg_ytd == -3_000.0, (
+            f"Expected the stored -3000 LTCG loss to survive manual-entry render "
+            f"unclamped; got {saved.ltcg_ytd}"
+        )
+
+    def test_manual_entry_preserves_estimated_payments_ytd(self):
+        """Quarterly estimated tax payments (Form 1040-ES) entered manually must
+        survive a manual-entry render, mirroring federal_withholding_ytd."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot(estimated_payments_ytd=8_000.0)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.number_input.side_effect = lambda *a, **kw: kw.get("value", 0)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.estimated_payments_ytd == 8_000.0
+
+
+class TestIncomeEventLog:
+    """Tests for the income event log UI (replaces flat conversion/distribution inputs)."""
+
+    def test_owner_options_include_spouse_for_mfj(self):
+        """Manual entry ON, MFJ household: owner selectbox options include 'Spouse'."""
+        hh = _stub_hh()  # default filing_status == "MFJ"
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        found_spouse_options = False
+        for call in mock_st.selectbox.call_args_list:
+            options = call.args[1] if len(call.args) > 1 else call.kwargs.get("options")
+            if options and "Spouse" in options:
+                found_spouse_options = True
+                break
+        assert found_spouse_options, (
+            f"Expected a selectbox with 'Spouse' in options for MFJ; "
+            f"calls: {mock_st.selectbox.call_args_list}"
+        )
+
+    def test_owner_options_exclude_spouse_for_single(self):
+        """Manual entry ON, Single household: no selectbox options include 'Spouse'."""
+        hh = _stub_hh(filing_status="Single")
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        for call in mock_st.selectbox.call_args_list:
+            options = call.args[1] if len(call.args) > 1 else call.kwargs.get("options")
+            if options:
+                assert "Spouse" not in options, (
+                    f"Did not expect 'Spouse' in any selectbox options for Single filer; "
+                    f"got: {options}"
+                )
+
+    def test_existing_entries_display_in_dataframe(self):
+        """Seeded income_events render as rows in an st.dataframe call."""
+        from models.ytd_income import IncomeEvent
+
+        hh = _stub_hh()
+        events = [
+            IncomeEvent(date="2026-02-01", amount=10_000.0, kind="conversion", owner="you"),
+            IncomeEvent(date="2026-03-15", amount=4_000.0, kind="distribution", owner="spouse"),
+        ]
+        ytd = YTDSnapshot(income_events=events)
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.form_submit_button.return_value = False
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        found = None
+        for call in mock_st.dataframe.call_args_list:
+            data = call.args[0] if call.args else call.kwargs.get("data")
+            try:
+                import pandas as pd
+
+                if isinstance(data, pd.DataFrame) and len(data) == 2:
+                    found = data
+                    break
+            except ImportError:
+                pass
+        assert found is not None, (
+            f"Expected an st.dataframe call with 2 rows reflecting the seeded income_events; "
+            f"calls: {mock_st.dataframe.call_args_list}"
+        )
+
+    def test_add_entry_updates_conversions_done(self):
+        """Submitting the add-entry form with a conversion for 'You' updates ira_conversions_ytd."""
+        from datetime import date as _dt_date
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = True  # "Manual entry" ON
+        mock_st.number_input.return_value = 25_000
+        mock_st.form_submit_button.return_value = True
+        mock_st.date_input.return_value = _dt_date(2026, 3, 1)
+        # Form selectboxes (Type, Whose) return these; the post-add "Remove an entry"
+        # selectbox (a third selectbox call, since income_events is now non-empty)
+        # gets None so the "if del_idx is not None" branch is skipped.
+        mock_st.selectbox.side_effect = ["Conversion", "You", None]
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            ytd_income_mod.render(hh)
+
+        saved = mock_st.session_state.ytd_snapshot
+        assert saved.ira_conversions_ytd == 25_000.0
+
+
+class TestBrokerageStatementSync:
+    """Tests for the 'Sync from Brokerage Statements (PDF)' section — the account-type
+    safety property this whole feature exists for: a Roth/IRA statement scanned
+    alongside a taxable one must never contribute to taxable YTD income."""
+
+    def test_scan_stores_parsed_accounts_in_session_state(self, tmp_path, monkeypatch):
+        """Clicking 'Scan statement folder' stores the parsed-and-latest-per-account
+        dict in session_state under 'statement_by_account' (verified via the same
+        __setitem__ call-tracking pattern used elsewhere in this file, since the
+        session_state mock's .get() is not linked to bracket-assignment)."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX0001",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1020.00,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, (
+            "Expected statement_by_account to be stored in session_state after a scan"
+        )
+        stored = setitem_calls[-1][0][1]
+        assert stored["XXXX0001"].account_type == "taxable"
+
+    def test_scan_auto_applies_taxable_statement_to_ytd_snapshot(self, tmp_path, monkeypatch):
+        """Clicking 'Scan folder' must auto-apply a taxable account's parsed
+        interest/dividends straight into the YTD snapshot and persist it via
+        save_ytd_snapshot — no separate 'Apply to YTD snapshot' click required."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX0001",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=500.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1020.00,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch.object(ytd_income_mod, "save_ytd_snapshot"),
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save_snapshot,
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_save_snapshot.called, (
+            "Expected save_ytd_snapshot to be called during scan (auto-apply)"
+        )
+        saved_snapshot = mock_save_snapshot.call_args[0][0]
+        assert saved_snapshot.interest_ytd == 500.0
+        assert saved_snapshot.ordinary_dividends_ytd == 1020.00
+
+    def test_roth_ira_statement_excluded_from_taxable_partition(self, tmp_path, monkeypatch):
+        """Regression test for the exact bug that motivated this whole feature: a
+        Roth IRA statement scanned into session_state must partition to 'excluded',
+        never to 'taxable' — verified by re-running the same partition function the
+        view uses on whatever it actually stored."""
+        from engine.brokerage_statement_pdf import (
+            BrokerageStatementRecord,
+            partition_by_account_type,
+        )
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        roth_rec = BrokerageStatementRecord(
+            account_number="XXXX0002",
+            broker="vanguard",
+            account_type="roth_ira",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=290.00,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[roth_rec]),
+            ),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls
+        stored = setitem_calls[-1][0][1]
+        taxable, excluded, unknown = partition_by_account_type(stored)
+        assert "XXXX0002" not in taxable
+        assert "XXXX0002" in excluded
+        assert unknown == {}
+
+    def test_blank_folder_input_rejected_without_crashing(self):
+        """Empty/blank statement-folder input must produce a clear st.error,
+        not a Path()/glob() crash — regression test for the CodeQL path-injection
+        finding on PR #348 (validate-before-construct)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = "   "  # blank/whitespace-only
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for blank statement-folder input"
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_control_char_in_folder_input_rejected(self):
+        """A statement-folder input containing a control character (e.g. an
+        embedded NUL byte) must be rejected with a clear st.error before a
+        Path object is ever constructed — defensive validation requested on
+        PR #348 (reject ord(ch) < 32 in user-provided text)."""
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = "\x00/some/path"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, (
+            "Expected st.error for a control character in statement-folder input"
+        )
+        error_msg = mock_st.error.call_args[0][0]
+        assert "invalid characters" in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_traversal_input_is_rejected_before_path_construction(self, tmp_path, monkeypatch):
+        """A folder path containing a literal '..' segment must be rejected
+        with a clear st.error BEFORE any Path object is ever constructed —
+        this is now the earliest possible rejection point (ahead of
+        .expanduser()/.resolve()), per the CodeQL py/path-injection query,
+        which flags the Path() construction line itself as the taint sink.
+        Silently normalizing '..' away downstream is no longer acceptable;
+        traversal-shaped input must never reach Path() at all."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        real_dir = tmp_path / "Statements"
+        real_dir.mkdir()
+        traversal_input = str(tmp_path / "Statements" / "sub" / "..")
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = traversal_input
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder path containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_double_dot_substring_rejected_before_scan(self, tmp_path, monkeypatch):
+        """A statement-folder input containing '..' as a substring (classic
+        path-traversal shape, e.g. '../../etc' or 'foo/../bar') must be
+        rejected with a clear st.error before scan_statement_folder or
+        save_statement_folder_path is ever called — regression test for the
+        persistent CodeQL py/path-injection alert on PR #348, which flags the
+        Path() construction line itself as the taint sink. The guard must
+        run strictly before any Path()-based operation."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = "../../etc"
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder input containing '..'"
+        error_msg = mock_st.error.call_args[0][0]
+        assert ".." in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_folder_outside_home_is_rejected(self, tmp_path, monkeypatch):
+        """A resolved statement-folder path outside the user's home directory must
+        be rejected with a clear st.error and must never reach scan_statement_folder
+        — the real containment boundary behind the CodeQL 'uncontrolled data used in
+        path expression' fix, not just normalization."""
+        fake_home = tmp_path / "home_dir"
+        fake_home.mkdir()
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False
+        mock_st.text_input.return_value = str(outside_dir)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.pdf_import.scan_pdf_folder") as mock_scan,
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path") as mock_save,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        assert mock_st.error.called, "Expected st.error for a folder outside the home directory"
+        error_msg = mock_st.error.call_args[0][0]
+        assert "home directory" in error_msg
+        mock_scan.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_scan_persists_to_cache_via_save_statement_records(self, tmp_path, monkeypatch):
+        """After a successful scan, save_statement_records is called with the
+        parsed-and-latest-per-account dict so the scan survives an app restart."""
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = str(tmp_path)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.selectbox.return_value = "household"  # no owner_key -> manual confirm
+
+        taxable_rec = BrokerageStatementRecord(
+            account_number="XXXX0001",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=1020.00,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch(
+                "engine.pdf_import.scan_pdf_folder",
+                return_value=PdfImportResult(brokerage_records=[taxable_rec]),
+            ),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch("engine.brokerage_statement_pdf.save_statement_folder_path"),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.brokerage_statement_pdf.save_statement_records") as mock_save_records,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json"),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        mock_save_records.assert_called_once()
+        (saved_by_account,), _ = mock_save_records.call_args
+        assert saved_by_account["XXXX0001"].account_type == "taxable"
+
+    def test_hydrates_statement_by_account_from_cache_on_page_load(self, monkeypatch):
+        """With no prior scan this run (no 'statement_by_account' key in
+        session_state), the view must hydrate it from load_statement_records()
+        and re-apply saved overrides via apply_account_type_overrides, so a
+        scan survives an app restart."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False  # scan button not clicked this run
+
+        cached_rec = BrokerageStatementRecord(
+            account_number="XXXX1234",
+            broker="schwab",
+            account_type="taxable",
+            statement_period_end="2026-05-31",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=200.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-06-01T00:00:00+00:00",
+        )
+        cached_by_account = {"XXXX1234": cached_rec}
+
+        # session_state.get() must report "not present" so the hydration guard fires,
+        # matching this file's established pattern of a session_state mock whose
+        # .get() is not linked to bracket-assignment.
+        mock_st.session_state.__contains__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch(
+                "engine.brokerage_statement_pdf.load_statement_records",
+                return_value=cached_by_account,
+            ),
+            patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
+            patch("engine.brokerage_statement_pdf.apply_account_type_overrides") as mock_apply,
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_apply.return_value = cached_by_account
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+        mock_apply.assert_called_once_with(cached_by_account, {})
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, "Expected statement_by_account to be hydrated into session_state"
+        assert setitem_calls[-1][0][1] == cached_by_account
+
+    def test_confirm_account_override_refreshes_statement_cache(self, tmp_path, monkeypatch):
+        """Confirming an account's tax status must refresh
+        session_state['statement_by_account'] within the same render pass, so the
+        confirmed classification survives st.rerun() instead of the stale cached
+        'unknown' classification being reused (regression: previously only
+        save_account_type_override() persisted to disk, and the in-memory cache
+        was never re-hydrated until a fresh 'Scan folder' click)."""
+        from engine.brokerage_statement_pdf import BrokerageStatementRecord
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.checkbox.return_value = False  # manual entry off
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False  # "Scan folder" not clicked this run
+        mock_st.selectbox.return_value = "taxable"  # user confirms the unknown account
+
+        unknown_rec = BrokerageStatementRecord(
+            account_number="XXXX5555",
+            broker="schwab",
+            account_type="unknown",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=0.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=0.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        by_account = {"XXXX5555": unknown_rec}
+
+        # statement_by_account already present in session_state this run (skip
+        # the hydration branch, matching a rerun-after-scan scenario).
+        mock_st.session_state.__contains__ = MagicMock(return_value=True)
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "statement_by_account": by_account,
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch("engine.brokerage_statement_pdf.load_statement_folder_path", return_value=None),
+            patch(
+                "engine.brokerage_statement_pdf.save_account_type_override"
+            ) as mock_save_override,
+            patch(
+                "engine.brokerage_statement_pdf.load_account_type_overrides",
+                return_value={"XXXX5555": "taxable"},
+            ),
+            patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+        ):
+            mock_fetch_ex.return_value = MagicMock(server_available=False)
+            # Both halves, mirroring the Data tab: the tax-status selectbox and
+            # its save_account_type_override call live in _render_scan_review,
+            # which moved into render_sync_scan_results when the partial was
+            # split so the results could render full width (2026-09).
+            sync_scan_mod.render_sync_scan_results(sync_scan_mod.render_sync_scan_partial(hh))
+            ytd_income_mod.render(hh)
+
+        mock_save_override.assert_called_once_with("XXXX5555", "taxable")
+        setitem_calls = [
+            call
+            for call in mock_st.session_state.__setitem__.call_args_list
+            if call[0][0] == "statement_by_account"
+        ]
+        assert setitem_calls, (
+            "Expected statement_by_account to be refreshed in session_state after "
+            "confirming an account override"
+        )
+        refreshed = setitem_calls[-1][0][1]
+        assert refreshed["XXXX5555"].account_type == "taxable", (
+            "Confirmed account must be reclassified as 'taxable' in the refreshed "
+            f"cache, not left stale as 'unknown'; got {refreshed['XXXX5555'].account_type!r}"
+        )
+
+
+def _koinly_report(owner_key: str | None, stcg: float, ltcg: float, income: float) -> KoinlyReport:
+    return KoinlyReport(
+        tax_year=2026,
+        crypto_stcg=stcg,
+        crypto_ltcg=ltcg,
+        crypto_income=income,
+        captured_at="2026-07-13T00:00:00+00:00",
+        owner_key=owner_key,
+    )
+
+
+class TestOwnerAttributionScanFlow:
+    """Regression coverage for the Koinly override bug (docs/superpowers/specs/
+    2026-07-13-spouse-pdf-owner-attribution-design.md): scanning a second
+    owner's Koinly report must ADD to crypto_stcg_ytd/crypto_ltcg_ytd/
+    crypto_income_ytd, not overwrite them.
+
+    Owner attribution here is driven by engine.instance_identity's
+    instance_owner (via save_instance_owner) rather than the 2026-07-13
+    manual owner-confirm selectbox, which the instance-identity plan's
+    Task 6 retired -- resolve_account_owner (engine/account_attribution.py)
+    is now the sole non-interactive attribution authority."""
+
+    def _run_scan(
+        self, hh, mock_st, canned_result, ledger_path, owner_map_path, tmp_path, monkeypatch
+    ):
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        # validate_local_folder requires the scanned folder to be under
+        # Path.home(); pytest's tmp_path lives under /tmp, so home must be
+        # repointed here (mirrors the pattern used by TestBrokerageStatementSync
+        # elsewhere in this file).
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+        ):
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+    def test_two_owner_koinly_scan_sums_not_overrides(self, tmp_path, monkeypatch):
+        """Core regression: scan under instance_owner 'you', then scan under
+        instance_owner 'spouse' in a SEPARATE render call -- final
+        crypto_*_ytd must be the SUM, matching the design's derive-sum
+        contract, not the second report's raw value. Neither report's
+        owner_key has an account override, so resolve_account_owner falls
+        back to instance_owner each time -- this is the automatic-attribution
+        equivalent of the retired "scan as you / scan as spouse" selectbox
+        flow."""
+        from engine.instance_identity import save_instance_owner
+
+        hh = _stub_hh()
+
+        # First render: this instance is "you".
+        save_instance_owner("you")
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        result1 = PdfImportResult(
+            koinly_reports=[_koinly_report("john q sample", 100.0, 200.0, 50.0)]
+        )
+        self._run_scan(
+            hh,
+            mock_st1,
+            result1,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+
+        # Second render: this instance is now "spouse" (a second household
+        # member's session on the same machine). Ledger persists on disk
+        # between renders (same tmp_path), same as two separate Streamlit
+        # sessions.
+        save_instance_owner("spouse")
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        result2 = PdfImportResult(koinly_reports=[_koinly_report("jane r sample", 10.0, 20.0, 5.0)])
+        self._run_scan(
+            hh,
+            mock_st2,
+            result2,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+
+        # Read back via direct attribute access to match test file's established pattern
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(110.0)
+        assert final_snap.crypto_ltcg_ytd == pytest.approx(220.0)
+        assert final_snap.crypto_income_ytd == pytest.approx(55.0)
+
+    def test_koinly_scan_keeps_a_newer_hand_entered_crypto_income(self, tmp_path, monkeypatch):
+        from engine.instance_identity import save_instance_owner
+        from models.ytd_income import ManualMark
+
+        hh = _stub_hh()
+        save_instance_owner("you")
+        ytd = YTDSnapshot(
+            by_owner={"you": {}},
+            crypto_income_ytd=999.0,
+            manual_marks={"household.crypto_income_ytd": ManualMark(999.0, "2026-10-01", "typed")},
+        )
+        mock_st = _make_mock_st(ytd)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.text_input.return_value = str(tmp_path)
+        result = PdfImportResult(
+            koinly_reports=[_koinly_report("john q sample", 100.0, 200.0, 50.0)]
+        )
+        self._run_scan(
+            hh,
+            mock_st,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+        final_snap = mock_st.session_state.ytd_snapshot
+        assert final_snap.crypto_income_ytd == pytest.approx(999.0)  # report captured 2026-07-13
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+        warnings = [str(c.args[0]) for c in mock_st.warning.call_args_list]
+        assert any("crypto income" in w and "2026-10-01" in w for w in warnings)
+
+    def test_idempotent_rescan_same_owner_unchanged_total(self, tmp_path, monkeypatch):
+        hh = _stub_hh()
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result = PdfImportResult(
+            koinly_reports=[_koinly_report("john q sample", 100.0, 200.0, 50.0)]
+        )
+        self._run_scan(
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "you"
+        self._run_scan(
+            hh,
+            mock_st2,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+        # Read back via direct attribute access to match test file's established pattern
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+
+    def test_no_owner_key_falls_back_to_instance_owner(self, tmp_path, monkeypatch):
+        """A Koinly report with owner_key=None has no per-account override
+        (broker='koinly', account_number='unknown' -- see
+        views/ytd_income/_partials/_sync_scan.py's `report.owner_key or
+        "unknown"`) -- resolve_account_owner must fall back to
+        instance_owner rather than defaulting to "household" or prompting.
+        Replaces the retired manual-confirm selectbox path; asserting
+        against "spouse" (not the "household" default) proves the fallback
+        actually engaged instance_owner rather than passing by coincidence."""
+        from engine.instance_identity import save_instance_owner
+        from engine.pdf_ledger import load_ledger
+
+        hh = _stub_hh()
+        save_instance_owner("spouse")
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        result = PdfImportResult(koinly_reports=[_koinly_report(None, 100.0, 200.0, 50.0)])
+        ledger_path = tmp_path / ".pdf_import_ledger.json"
+        self._run_scan(
+            hh,
+            mock_st1,
+            result,
+            ledger_path,
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path,
+            monkeypatch,
+        )
+
+        # Resolved owner fell back to instance_owner ("spouse") -- confirmed
+        # via the persisted ledger, since the UI itself never surfaces the
+        # resolved owner directly.
+        import engine.pdf_ledger as ledger_mod
+
+        with patch.object(ledger_mod, "_LEDGER_PATH", ledger_path):
+            persisted_ledger = load_ledger()
+        assert set(persisted_ledger["koinly"].keys()) == {"spouse"}
+        final_snap = mock_st1.session_state.ytd_snapshot
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+
+
+def _brokerage_record(
+    account_number: str,
+    owner_key: str | None,
+    interest: float = 0.0,
+    dividends: float = 0.0,
+) -> BrokerageStatementRecord:
+    return BrokerageStatementRecord(
+        account_number=account_number,
+        broker="schwab",
+        account_type="taxable",
+        statement_period_end="2026-06-30",
+        interest_taxable_ytd=interest,
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=dividends,
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=0.0,
+        ltcg_net_ytd=0.0,
+        captured_at="2026-07-13T00:00:00+00:00",
+        owner_key=owner_key,
+    )
+
+
+class TestBrokerageOwnerAttributionScanFlow:
+    """Regression coverage for the brokerage override bug (Task 7 of the
+    spouse-pdf-owner-attribution plan): scanning a second owner's brokerage
+    statements must ADD to interest_ytd/ordinary_dividends_ytd/etc., not
+    overwrite them -- the same fix already proven for Koinly in Task 6."""
+
+    def _run_scan(
+        self,
+        hh,
+        mock_st,
+        canned_result,
+        ledger_path,
+        owner_map_path,
+        overrides_path,
+        tmp_path,
+        monkeypatch,
+    ):
+        import engine.brokerage_statement_pdf as stmt_mod
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
+            patch.object(
+                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
+            ),
+        ):
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+    def test_two_owner_brokerage_scan_sums_not_overrides(self, tmp_path, monkeypatch):
+        """Core regression: scan owner A's accounts, then owner B's accounts
+        in a SEPARATE render -- final interest_ytd/ordinary_dividends_ytd must
+        be the SUM of both owners' accounts, not just B's (today's bug)."""
+        hh = _stub_hh()
+
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        result1 = PdfImportResult(
+            brokerage_records=[
+                _brokerage_record("A1", "john q sample", interest=10.0, dividends=5.0)
+            ]
+        )
+        self._run_scan(
+            hh,
+            mock_st1,
+            result1,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
+        )
+
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "spouse"
+        result2 = PdfImportResult(
+            brokerage_records=[
+                _brokerage_record("B1", "jane r sample", interest=20.0, dividends=8.0)
+            ]
+        )
+        self._run_scan(
+            hh,
+            mock_st2,
+            result2,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
+        )
+
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(30.0)
+        assert final_snap.ordinary_dividends_ytd == pytest.approx(13.0)
+
+    def test_idempotent_rescan_same_owner_same_account_unchanged(self, tmp_path, monkeypatch):
+        hh = _stub_hh()
+        result = PdfImportResult(
+            brokerage_records=[_brokerage_record("A1", "john q sample", interest=10.0)]
+        )
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
+        )
+        ytd2 = YTDSnapshot()
+        mock_st2 = _make_mock_st(ytd2)
+        mock_st2.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st2.text_input.return_value = str(tmp_path)
+        mock_st2.selectbox.return_value = "you"
+        self._run_scan(
+            hh,
+            mock_st2,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
+        )
+        final_snap = mock_st2.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(10.0)
+
+    def test_unstated_account_does_not_contribute_until_confirmed(self, tmp_path, monkeypatch):
+        """account_type='unknown' must NOT reach the ledger -- it stays gated
+        behind the existing stmt_unknown confirm-loop (unchanged by Task 7)."""
+        hh = _stub_hh()
+        from dataclasses import replace
+
+        base = _brokerage_record("A1", "john q sample", interest=10.0)
+        unstated = replace(base, account_type="unknown")
+        result = PdfImportResult(brokerage_records=[unstated])
+        ytd1 = YTDSnapshot()
+        mock_st1 = _make_mock_st(ytd1)
+        mock_st1.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st1.text_input.return_value = str(tmp_path)
+        mock_st1.selectbox.return_value = "you"
+        self._run_scan(
+            hh,
+            mock_st1,
+            result,
+            tmp_path / ".pdf_import_ledger.json",
+            tmp_path / ".pdf_owner_map.json",
+            tmp_path / ".statement_account_overrides.json",
+            tmp_path,
+            monkeypatch,
+        )
+        # An unstated (unknown tax-status) account contributes nothing, so
+        # applied_bits stays empty and st.session_state.ytd_snapshot is never
+        # reassigned this render -- ytd1 itself is the load-bearing check,
+        # not the mock's auto-generated attribute (which was never set).
+        assert ytd1.interest_ytd == pytest.approx(0.0)
+
+
+class TestCombinedKoinlyAndBrokerageScanFlow:
+    """Regression coverage for the shared ledger threading across the
+    brokerage loop (runs first) and the Koinly loop (runs second) within a
+    SINGLE render, per the spouse-pdf-owner-attribution design. Neither loop
+    may clobber the other's ledger writes when both doc types appear in one
+    scan_pdf_folder result.
+
+    Owner attribution is automatic (engine.account_attribution's
+    resolve_account_owner: account override -> instance_owner fallback),
+    per the instance-identity plan's Task 6, which retired the 2026-07-13
+    manual owner-confirm selectbox this class previously drove."""
+
+    def _run_scan(
+        self,
+        hh,
+        mock_st,
+        canned_result,
+        ledger_path,
+        owner_map_path,
+        overrides_path,
+        tmp_path,
+        monkeypatch,
+    ):
+        import engine.brokerage_statement_pdf as stmt_mod
+        import engine.pdf_ledger as ledger_mod
+        import engine.pdf_owner as owner_mod
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with (
+            patch.object(ytd_income_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(manual_entry_mod, "st", mock_st),
+            patch.object(event_log_mod, "st", mock_st),
+            patch.object(analysis_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "is_pyodide", return_value=False),
+            patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
+            patch("engine.portfolio_sync.save_ytd_snapshot"),
+            patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
+            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
+            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
+            patch.object(
+                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
+            ),
+        ):
+            sync_scan_mod.render_sync_scan_partial(hh)
+            ytd_income_mod.render(hh)
+
+    def test_combined_koinly_and_brokerage_scan_resolves_both_owners(self, tmp_path, monkeypatch):
+        """One scan_pdf_folder result containing BOTH a Koinly report and a
+        taxable brokerage record -- both must resolve to DIFFERENT owners
+        via automatic attribution within the SAME render, both must apply
+        to the snapshot, and both must persist to the ledger without the
+        brokerage loop (which runs first) being overwritten by the later
+        Koinly loop, or vice versa."""
+        from engine.account_attribution import save_account_override
+        from engine.instance_identity import save_instance_owner
+
+        hh = _stub_hh()
+        # instance_owner is a single value for the whole render, so the two
+        # loops are split via an explicit per-account override for the
+        # brokerage account ("spouse") plus the instance_owner fallback for
+        # the Koinly report, which has no override ("you").
+        save_instance_owner("you")
+        save_account_override("schwab", "A1", "spouse")
+
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        mock_st.button.side_effect = lambda label, **kw: label == "Scan folder"
+        mock_st.text_input.return_value = str(tmp_path)
+
+        result = PdfImportResult(
+            brokerage_records=[
+                _brokerage_record("A1", "jane r sample", interest=20.0, dividends=8.0)
+            ],
+            koinly_reports=[_koinly_report("john q sample", 100.0, 200.0, 50.0)],
+        )
+        ledger_path = tmp_path / ".pdf_import_ledger.json"
+        owner_map_path = tmp_path / ".pdf_owner_map.json"
+        overrides_path = tmp_path / ".statement_account_overrides.json"
+        self._run_scan(
+            hh, mock_st, result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
+        )
+
+        # Both loops applied their fields to the SAME snapshot in one render.
+        final_snap = mock_st.session_state.ytd_snapshot
+        assert final_snap.interest_ytd == pytest.approx(20.0)
+        assert final_snap.ordinary_dividends_ytd == pytest.approx(8.0)
+        assert final_snap.crypto_stcg_ytd == pytest.approx(100.0)
+        assert final_snap.crypto_ltcg_ytd == pytest.approx(200.0)
+        assert final_snap.crypto_income_ytd == pytest.approx(50.0)
+
+        # Both owners persisted to the on-disk ledger -- neither loop
+        # clobbered the other's writes (brokerage under "spouse", Koinly
+        # under "you").
+        import engine.pdf_ledger as ledger_mod
+
+        with patch.object(ledger_mod, "_LEDGER_PATH", ledger_path):
+            persisted_ledger = ledger_mod.load_ledger()
+
+        assert set(persisted_ledger["brokerage"].keys()) == {"spouse"}
+        assert set(persisted_ledger["koinly"].keys()) == {"you"}
+
+
+class TestScanReviewReachableUnderPyodide:
+    """feat/public-pdf-upload Step 1: render_sync_scan_partial's per-account
+    review table + Apply-to-YTD-snapshot flow (extracted as module-level
+    ``_render_scan_review``) must render whenever "statement_by_account"
+    already holds scan results in session_state, REGARDLESS of
+    is_pyodide() -- only the FinExtract sync button and the "Scan folder"
+    SOURCE controls stay is_pyodide()-gated. Today nothing writes that
+    session_state key under Pyodide (both writers -- the "Scan folder"
+    handler and its on-disk cache fallback -- live inside the local-only
+    ``else:`` branch), so this test seeds the key directly to simulate what
+    Step 2's browser uploader will do."""
+
+    def test_review_table_renders_under_pyodide_with_scan_results_present(self):
+        rec = BrokerageStatementRecord(
+            account_number="XXXX9999",
+            broker="vanguard",
+            account_type="taxable",
+            statement_period_end="2026-06-30",
+            interest_taxable_ytd=10.0,
+            interest_tax_exempt_ytd=0.0,
+            dividends_taxable_ytd=20.0,
+            dividends_tax_exempt_ytd=0.0,
+            stcg_net_ytd=0.0,
+            ltcg_net_ytd=0.0,
+            captured_at="2026-07-10T00:00:00+00:00",
+        )
+        hh = _stub_hh()
+        ytd = YTDSnapshot()
+        mock_st = _make_mock_st(ytd)
+        # Seed EXACTLY the session_state key the local scan (or its on-disk
+        # cache fallback) would normally write -- proves reachability from
+        # session_state alone, independent of how the key got populated.
+        _state = {
+            "ytd_snapshot": ytd,
+            "apply_ytd_to_projection": False,
+            "statement_by_account": {"XXXX9999": rec},
+        }
+        mock_st.session_state.get.side_effect = lambda key, default=None: _state.get(key, default)
+
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "is_pyodide", return_value=True),
+        ):
+            # _render_scan_review moved into render_sync_scan_results when the
+            # partial was split (2026-09). The point of this test is unchanged
+            # and still load-bearing: the review half must stay OUTSIDE the
+            # is_pyodide() gate, so it renders in the browser too.
+            sync_scan_mod.render_sync_scan_results(sync_scan_mod.render_sync_scan_partial(hh))
+
+        rendered_captions = [str(c.args[0]) for c in mock_st.caption.call_args_list]
+        assert any("Counted toward YTD income" in c for c in rendered_captions), (
+            "Expected _render_scan_review's per-account review table to render "
+            "even under is_pyodide()=True once statement_by_account already "
+            f"holds scan results in session_state; captions seen: {rendered_captions}"
+        )

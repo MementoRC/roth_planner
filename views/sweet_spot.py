@@ -1,0 +1,487 @@
+"""Sweet Spot Finder -- find the optimal Roth conversion amount per year.
+
+Sweeps conversion amounts from $0 to bracket ceiling and plots:
+- Marginal all-in cost per additional $1,000 converted
+- Cumulative all-in cost (tax + IRMAA + ACA loss + NIIT)
+- Bracket boundaries, IRMAA thresholds, ACA cliff, NIIT threshold
+- Recommended "sweet spot" zones
+"""
+
+import plotly.graph_objects as go
+import streamlit as st
+
+from config.scalar_registry import scalar_default
+from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers
+from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.sweet_spot_compute import (
+    STEP,
+    all_in_at_conversion,
+    base_income_for_year,
+    bracket_boundary_conversion,
+    compute_marginal_costs,
+    compute_multi_year_summary,
+    estimate_ltcg_eligible,
+    fill_conversions_for_year,
+    find_sweet_spots,
+    irmaa_safe_max,
+    magi_boundary_conversion,
+    sweet_spot_conversion_window,
+    zero_conversion_ira_draws,
+)
+from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
+from engine.tax_indexing import index_bracket_list as _index_brackets
+from models.household import Household
+from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct, md_dollars
+from views._shared import render_completeness_badge, render_readonly_input
+from views._style import render_page_header
+
+
+def render(hh: Household) -> None:
+    render_page_header("sweet")
+    st.caption(
+        "Find the optimal Roth conversion amount where marginal cost jumps. "
+        "The sweet spot is just before a bracket boundary, IRMAA tier, or ACA cliff."
+    )
+    st.caption(FORM_8606_CAPTION)
+    render_completeness_badge(hh)
+
+    # Filing-status-aware constants for chart annotations (indexed for selected year)
+    _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
+    niit_threshold = NIIT_THRESHOLD_SINGLE if hh.filing_status == "Single" else NIIT_THRESHOLD_MFJ
+    # irmaa_tiers resolved after year selection below
+
+    # --- Year selector ---
+    conv_window = sweet_spot_conversion_window(hh)
+    conv_years = list(range(hh.base_year, hh.base_year + conv_window))
+    if not conv_years:
+        st.warning("No conversion window remaining.")
+        return
+
+    def _year_label(y: int) -> str:
+        if hh.filing_status == "Single":
+            return f"{y} (age {hh.your_age_in(y)})"
+        return f"{y} (age {hh.your_age_in(y)}/{hh.spouse_age_in(y)})"
+
+    col_yr, col_inv = st.columns(2)
+    with col_yr:
+        selected_year = st.selectbox("Analysis Year", conv_years, format_func=_year_label)
+    with col_inv:
+        net_inv_income = int(
+            st.session_state.get("net_inv_income", scalar_default("net_inv_income"))
+        )
+        render_readonly_input(
+            "Additional net investment income (NIIT estimate)",
+            f"${net_inv_income:,.0f}/yr",
+            key="nii",
+            page="assumptions",
+            where="Profile › Assumptions",
+        )
+
+    # Index IRMAA tiers and brackets for the selected year.
+    # IRMAA: this year's MAGI is measured against payment-year (selected_year + 2) thresholds.
+    # Ordinary brackets: no lookback -- index to the income year itself.
+    _cpi = hh.cpi_assumption
+    irmaa_tiers = _index_irmaa_tiers(
+        _base_irmaa_tiers, selected_year + 2, _cpi
+    )  # +2: payment-year indexing
+    _base_brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    # round50=True per IRC 1(f)(6): ordinary bracket ceilings are statutorily
+    # rounded to the nearest $50, and every bracket-indexing call in engine/tax.py
+    # passes it. Without it this page's ceilings drift up to $25 from the engine's
+    # in any post-base-year, putting the chart's bracket guide-lines a little off
+    # the cards and the multi-year table (which derive theirs via
+    # fill_conversions_for_year). A no-op at base_year, where index_value returns
+    # the unscaled 2026 constant.
+    indexed_brackets = _index_brackets(_base_brackets, selected_year, _cpi, round50=True)
+
+    # --- Compute base income ---
+    # Inject base-year realized YTD income into MAGI when the user opted in (niit-5).
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    # audit-0809 #08: the traditional-IRA withdrawal that funds living expenses,
+    # IRMAA surcharges and ACA premiums belongs in every base this page computes
+    # -- without it the whole page priced a household that pays its bills from
+    # thin air. Derived ONCE here (one zero-conversion projection) and handed to
+    # compute_multi_year_summary below, which would otherwise run a second
+    # identical projection of its own.
+    _ira_draws = zero_conversion_ira_draws(hh, ytd=_ytd, net_inv_income=net_inv_income)
+    _selected_draw = _ira_draws.get(selected_year, 0.0)
+    base = base_income_for_year(
+        hh,
+        selected_year,
+        ytd=_ytd if selected_year == hh.base_year else None,
+        ira_draw=_selected_draw,
+    )
+
+    # --- Info bar ---
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Option Income", fmt_dollars(base.opt))
+    c2.metric("Combined SS", fmt_dollars(base.combined_ss))
+    c3.metric("Deductions", fmt_dollars(base.total_ded))
+
+    _ltcg_eligible = estimate_ltcg_eligible(
+        hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
+    )
+    c4.metric("Base MAGI", fmt_dollars(base.base_magi))
+    if _selected_draw > 0:
+        st.caption(
+            f"Base MAGI includes {fmt_dollars(_selected_draw)} of traditional-IRA "
+            "withdrawal needed to fund living expenses, IRMAA surcharges and ACA "
+            "premiums this year -- every zone below is measured on top of it."
+        )
+
+    # Prior-year MAGI anchor for IRMAA 2-year lookback
+    prior_magi = st.session_state.get("prior_year_magi") or {}
+    if prior_magi:
+        sorted_years = sorted(prior_magi.keys(), reverse=True)
+        most_recent = sorted_years[0]
+        st.caption(
+            f"Prior-year MAGI anchor ({most_recent}): {fmt_dollars(prior_magi[most_recent])}"
+            " -- used for IRMAA 2-year lookback"
+        )
+
+    # --- Sweep conversion amounts ---
+    max_conv = int(
+        min(
+            base.total_ded + indexed_brackets[-2][0],  # up to 35% bracket
+            hh.your_ira + hh.spouse_ira,
+        )
+    )
+    max_conv = min(max_conv, 800_000)  # cap at $800K for performance
+
+    convs = list(range(0, max_conv + STEP, STEP))
+    results = [
+        all_in_at_conversion(hh, base, c, net_inv_income, ltcg_eligible=_ltcg_eligible)
+        for c in convs
+    ]
+
+    # --- Marginal cost chart ---
+    st.markdown("### Marginal All-In Cost per $1,000 Converted")
+    st.caption(
+        "Shows the cost of converting one more $1,000. "
+        "Flat sections are sweet zones; jumps indicate bracket/tier boundaries."
+    )
+
+    marginal_data = compute_marginal_costs(results)
+
+    fig_m = go.Figure()
+    fig_m.add_trace(
+        go.Scatter(
+            x=convs,
+            y=marginal_data.marginal_tax,
+            name="Fed Tax",
+            stackgroup="one",
+            line={"color": "#3b82f6"},
+            hovertemplate="Fed Tax: $%{y:.0f} per $1K<extra></extra>",
+        )
+    )
+    fig_m.add_trace(
+        go.Scatter(
+            x=convs,
+            y=marginal_data.marginal_irmaa,
+            name="IRMAA",
+            stackgroup="one",
+            line={"color": "#ef4444"},
+            hovertemplate="IRMAA: $%{y:.0f} per $1K<extra></extra>",
+        )
+    )
+    if any(v > 0 for v in marginal_data.marginal_aca):
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_aca,
+                name="ACA Loss",
+                stackgroup="one",
+                line={"color": "#f59e0b"},
+                hovertemplate="ACA Loss: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
+    if any(v > 0 for v in marginal_data.marginal_niit):
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_niit,
+                name="NIIT",
+                stackgroup="one",
+                line={"color": "#8b5cf6"},
+                hovertemplate="NIIT: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
+    # audit-1008 F-67: all_in (and find_sweet_spots) includes the LTCG-stacking
+    # cost; without this trace the stacked top sat below the true marginal.
+    if any(v > 0 for v in marginal_data.marginal_ltcg):
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_ltcg,
+                name="LTCG Stacking",
+                stackgroup="one",
+                line={"color": "#06b6d4"},
+                hovertemplate="LTCG Stacking: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
+
+    # Add bracket boundary lines
+    bracket_boundaries = []
+    for ceil, rate in indexed_brackets[:-1]:
+        # SS-taxability nonlinearity is folded in via binary search inside
+        # bracket_boundary_conversion (audit finding 1 fix).
+        boundary_conv = bracket_boundary_conversion(hh, base, ceil)
+        if 0 < boundary_conv < max_conv:
+            bracket_boundaries.append((boundary_conv, rate))
+            fig_m.add_vline(
+                x=boundary_conv,
+                line_dash="dot",
+                line_color="#94a3b8",
+                annotation_text=f"{fmt_pct(rate, 0)} bracket",
+                annotation_position="top",
+            )
+
+    # IRMAA threshold lines
+    for threshold, _, _ in irmaa_tiers:
+        # audit-0809 Class B: this was `threshold - base.base_magi`, which
+        # assumes MAGI rises $1 per $1 converted and so drew every tier marker
+        # too far right -- by the whole additional taxable SS a conversion
+        # drags in (up to 85% of benefits). The bracket guide-lines just above
+        # already bisect via bracket_boundary_conversion, and the IRMAA-Safe
+        # Max card below binary-searches via irmaa_safe_max; only these lines
+        # still used the closed form, so one chart answered one question three
+        # different ways.
+        irmaa_conv = magi_boundary_conversion(hh, base, threshold, net_inv_income, _ltcg_eligible)
+        if 0 < irmaa_conv < max_conv:
+            fig_m.add_vline(
+                x=irmaa_conv,
+                line_dash="dash",
+                line_color="#ef4444",
+                annotation_text=f"IRMAA ${threshold / 1000:.0f}K",
+                annotation_position="bottom",
+            )
+
+    # NIIT threshold line
+    # Same Class B defect as the IRMAA lines above -- not named in the audit
+    # bullet, but the identical closed form on the same chart.
+    #
+    # audit-0823 differential/X2: magi_kind="niit". This bisected on .magi (the
+    # IRMAA-compatible figure) while NIIT is charged on .niit_magi, which adds
+    # the manual net_inv_income below and drops muni interest. The draw guard
+    # on the next line only shows this marker when net_inv_income > 0 -- i.e.
+    # exactly when niit_magi EXCEEDS magi -- so every visible instance of this
+    # line sat too far RIGHT and under-warned. The shaded NIIT band on this same
+    # chart already used .niit_magi via niit_delta, so the band began before the
+    # line marking its own onset.
+    niit_conv = magi_boundary_conversion(
+        hh, base, niit_threshold, net_inv_income, _ltcg_eligible, magi_kind="niit"
+    )
+    if 0 < niit_conv < max_conv and net_inv_income > 0:
+        fig_m.add_vline(
+            x=niit_conv,
+            line_dash="dash",
+            line_color="#8b5cf6",
+            annotation_text=f"NIIT ${niit_threshold // 1000:.0f}K",
+            annotation_position="top",
+        )
+
+    fig_m.update_layout(
+        xaxis_title="Conversion Amount ($)",
+        yaxis_title="Marginal Cost per $1,000",
+        xaxis_tickformat="$,.0s",
+        yaxis_tickformat="$,.0f",
+        height=450,
+        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
+    )
+    st.plotly_chart(fig_m, width="stretch")
+
+    # --- Sweet spots ---
+    sweet_spots = find_sweet_spots(results)
+
+    # audit-0809 #01 (HIGH, Class B): these cards rendered base_result.room_12 /
+    # .room_22 -- GROSS-INCOME room at zero conversion, documented on
+    # ConversionResult as valid only when taxable SS is conversion-invariant --
+    # as the recommended CONVERSION amount. C23 (audit-0805) fixed the multi-year
+    # table below and left these cards, so one page showed two answers to one
+    # question, and the cards disagreed with the bracket guide-lines drawn just
+    # above them (which already bisect via bracket_boundary_conversion). Both the
+    # table and these cards now read one shared derivation.
+    fill_12, fill_22 = fill_conversions_for_year(hh, base)
+
+    st.markdown("### Recommended Conversion Zones")
+
+    z1, z2, z3 = st.columns(3)
+    with z1:
+        st.markdown("#### Fill to 12%")
+        st.metric("Conversion", fmt_dollars(fill_12))
+        r12_result = all_in_at_conversion(
+            hh, base, fill_12, net_inv_income, ltcg_eligible=_ltcg_eligible
+        )
+        avg_rate = r12_result.all_in / max(fill_12, 1)
+        st.metric("All-In Cost", fmt_dollars(r12_result.all_in), f"Avg {fmt_pct(avg_rate)}")
+
+    with z2:
+        st.markdown("#### Fill to 22%")
+        st.metric("Conversion", fmt_dollars(fill_22))
+        r22_result = all_in_at_conversion(
+            hh, base, fill_22, net_inv_income, ltcg_eligible=_ltcg_eligible
+        )
+        avg_rate_22 = r22_result.all_in / max(fill_22, 1)
+        st.metric("All-In Cost", fmt_dollars(r22_result.all_in), f"Avg {fmt_pct(avg_rate_22)}")
+
+    with z3:
+        st.markdown("#### IRMAA-Safe Max")
+        # Binary-search for the largest conversion that keeps magi at/under the tier-1
+        # threshold. The naive subtraction (threshold - base_magi) overstates the safe
+        # amount when SS provisional income is in the partial-taxability zone ($32K-$44K
+        # MFJ / $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
+        irmaa_safe = irmaa_safe_max(hh, base, irmaa_tiers[0][0], net_inv_income, _ltcg_eligible)
+        st.metric("Conversion", fmt_dollars(irmaa_safe))
+        if irmaa_safe > 0:
+            irmaa_result = all_in_at_conversion(
+                hh, base, irmaa_safe, net_inv_income, ltcg_eligible=_ltcg_eligible
+            )
+            avg_rate_i = irmaa_result.all_in / max(irmaa_safe, 1)
+            st.metric("All-In Cost", fmt_dollars(irmaa_result.all_in), f"Avg {fmt_pct(avg_rate_i)}")
+        else:
+            st.metric("All-In Cost", "N/A", "Base MAGI exceeds tier 1")
+
+    # --- Sweet spot alerts ---
+    if sweet_spots:
+        st.markdown("### Cost Jump Points")
+        st.caption("Converting beyond these amounts triggers a significant cost increase.")
+        for sp in sweet_spots:
+            # The label and the "$1K" are both dollar amounts; escape them or
+            # markdown reads the text between them as LaTeX.
+            st.warning(
+                md_dollars(
+                    f"**{sp.label}** -- marginal cost jumps from "
+                    f"{sp.marginal_before:.0f}% to {sp.marginal_after:.0f}% of each $1K converted "
+                    f"({sp.reason})"
+                )
+            )
+
+    # --- Cumulative all-in cost chart ---
+    st.markdown("### Cumulative All-In Cost")
+    st.caption("Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking) at each conversion level.")
+
+    fig_c = go.Figure()
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=[r.conv_tax for r in results],
+            name="Federal Tax",
+            stackgroup="one",
+            line={"color": "#3b82f6"},
+        )
+    )
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=[r.irmaa_delta for r in results],
+            name="IRMAA",
+            stackgroup="one",
+            line={"color": "#ef4444"},
+        )
+    )
+    if any(r.aca_loss > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.aca_loss for r in results],
+                name="ACA Loss",
+                stackgroup="one",
+                line={"color": "#f59e0b"},
+            )
+        )
+    if any(r.niit_delta > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.niit_delta for r in results],
+                name="NIIT",
+                stackgroup="one",
+                line={"color": "#8b5cf6"},
+            )
+        )
+    if any(r.ltcg_delta > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.ltcg_delta for r in results],
+                name="LTCG Stacking",
+                stackgroup="one",
+                line={"color": "#06b6d4"},
+            )
+        )
+
+    # Effective rate overlay
+    eff_rates = [r.all_in / max(r.conv, 1) * 100 if r.conv > 0 else 0 for r in results]
+    fig_c.add_trace(
+        go.Scatter(
+            x=convs,
+            y=eff_rates,
+            name="Avg Eff Rate %",
+            yaxis="y2",
+            line={"color": "#10b981", "width": 2, "dash": "dot"},
+            hovertemplate="Eff Rate: %{y:.1f}%<extra></extra>",
+        )
+    )
+
+    fig_c.update_layout(
+        xaxis_title="Conversion Amount ($)",
+        yaxis_title="Cumulative Cost ($)",
+        yaxis2={
+            "title": "Effective Rate (%)",
+            "overlaying": "y",
+            "side": "right",
+            "range": [0, 40],
+        },
+        xaxis_tickformat="$,.0s",
+        yaxis_tickformat="$,.0s",
+        height=450,
+        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
+    )
+    st.plotly_chart(fig_c, width="stretch")
+
+    # --- Multi-year comparison ---
+    st.markdown("### Multi-Year Sweet Spot Summary")
+    st.caption("Quick comparison of recommended zones across all conversion years.")
+
+    summary_rows = compute_multi_year_summary(
+        hh,
+        net_inv_income=net_inv_income,
+        ytd=_ytd,
+        include_ltcg_stacking=True,
+        ira_draws=_ira_draws,
+    )
+
+    import pandas as pd
+
+    rows_fmt = []
+    for s in summary_rows:
+        row = {
+            "Year": str(s.year),
+            "You/Sp": f"{s.you_age}/{s.spouse_age}",
+            "Base MAGI": fmt_dollars(s.base_magi),
+            "Fill 12%": fmt_dollars(s.fill_12),
+            "12% Cost": fmt_dollars(s.cost_12) if s.fill_12 > 0 else "---",
+            "12% Rate": fmt_pct(s.rate_12) if s.fill_12 > 0 else "---",
+            "Fill 22%": fmt_dollars(s.fill_22),
+            "22% Cost": fmt_dollars(s.cost_22) if s.fill_22 > 0 else "---",
+            "22% Rate": fmt_pct(s.rate_22) if s.fill_22 > 0 else "---",
+            "IRMAA Safe": fmt_dollars(s.irmaa_safe) if s.irmaa_safe is not None else fmt_dollars(0),
+        }
+        rows_fmt.append(row)
+
+    df = pd.DataFrame(rows_fmt)
+    st.dataframe(df, hide_index=True, width="stretch")
+
+    # --- Guidance ---
+    st.markdown("---")
+    st.markdown("### How to Use This")
+    st.markdown("""
+- **Flat sections** in the marginal chart are "sweet zones" -- low marginal cost per dollar converted
+- **Jumps** indicate bracket boundaries, IRMAA tier crossings, ACA cliffs, or NIIT thresholds
+- **Fill to 12%** is typically the safest conversion -- low tax rate with no hidden costs
+- **Fill to 22%** converts more aggressively but may trigger IRMAA in 2 years
+- **IRMAA-Safe Max** is the most you can convert without triggering Medicare surcharges
+- Compare the **average effective rate** against your expected RMD-era marginal rate (often 22-24%)
+- If the all-in rate is **below your future marginal rate**, the conversion saves money long-term
+""")

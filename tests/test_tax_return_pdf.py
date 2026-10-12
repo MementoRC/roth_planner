@@ -1,0 +1,867 @@
+"""Tests for engine/tax_return_pdf.py — TurboTax 1040 PDF parser."""
+
+from __future__ import annotations
+
+import inspect
+import json
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+from typing import Any, overload
+
+import pytest
+
+from engine.irmaa import irmaa_surcharge
+from engine.tax_return_pdf import (
+    ANCHORS,
+    Form1040ParseError,
+    Form1040Record,
+    compute_irmaa_magi,
+    compute_magi,
+    load_pdf_tax_records,
+    parse_form_1040_text,
+    save_pdf_tax_records,
+)
+
+# ---------------------------------------------------------------------------
+# Synthetic page-text fixtures
+# ---------------------------------------------------------------------------
+
+# Minimal 1040 page text that satisfies all required anchors for 2023.
+_F1040_2023 = """\
+Department of the Treasury — Internal Revenue Service
+Form 1040 (2023)         U.S. Individual Income Tax Return
+Filing Status  Single  Married filing jointly  Head of household (HOH)
+
+2a  Tax-exempt interest . .  2a  2,400   b  Taxable interest  2b  1,000
+3a  Qualified dividends . .  3a     500   b  Ordinary dividends  3b  1,200
+6   Social security benefits  6b  12,000
+11  Subtract line 10 from line 9. This is your adjusted gross income  158,400
+"""
+
+# Schedule 1 page text with a FEIE entry.
+_SCH1_2023 = """\
+SCHEDULE 1 (Form 1040)
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+8d  Foreign earned income exclusion  8d  3,000
+"""
+
+# 1040 page for 2024 with comma-formatted numbers.
+_F1040_2024 = """\
+Form 1040 (2024)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  3,000   b  Taxable interest  2b  500
+3a  Qualified dividends . .  3a  1,000   b  Ordinary dividends  3b  2,000
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income  200,000
+"""
+
+# Schedule 1 for 2024 — no FEIE.
+_SCH1_2024 = """\
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+"""
+
+# 1040 page for 2025 with comma-formatted numbers.
+_F1040_2025 = """\
+Form 1040 (2025)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  4,000   b  Taxable interest  2b  600
+3a  Qualified dividends . .  3a  1,500   b  Ordinary dividends  3b  2,500
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income  210,000
+"""
+
+# Schedule 1 for 2025 — no FEIE.
+_SCH1_2025 = """\
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+"""
+
+# 1040 page with no Schedule 1 in the bundle.
+_F1040_NO_SCH1 = _F1040_2023  # reuse 2023 page
+
+# A filler page that contains no useful markers.
+_FILLER_PAGE = "This is a worksheet page with no 1040 content."
+
+
+def _pages_2023_with_feie() -> list[str]:
+    """Synthetic bundle: filler, Form 1040 (2023), another filler, Schedule 1."""
+    return [_FILLER_PAGE, _F1040_2023, _FILLER_PAGE, _SCH1_2023]
+
+
+def _pages_2023_no_sch1() -> list[str]:
+    """Synthetic bundle: only Form 1040 (2023), no Schedule 1 page."""
+    return [_FILLER_PAGE, _F1040_NO_SCH1, _FILLER_PAGE]
+
+
+def _pages_2024() -> list[str]:
+    """Synthetic bundle: Form 1040 (2024) + Schedule 1."""
+    return [_F1040_2024, _SCH1_2024, _FILLER_PAGE]
+
+
+def _pages_2025() -> list[str]:
+    """Synthetic bundle: Form 1040 (2025) + Schedule 1."""
+    return [_F1040_2025, _SCH1_2025, _FILLER_PAGE]
+
+
+def _pages_no_1040() -> list[str]:
+    """Bundle with no Form 1040 marker at all."""
+    return [_FILLER_PAGE, _FILLER_PAGE]
+
+
+def _pages_unsupported_year() -> list[str]:
+    """Bundle with a Form 1040 for an unsupported year (2019)."""
+    return ["Form 1040 (2019)  U.S. Individual Income Tax Return\n11  100,000"]
+
+
+# ---------------------------------------------------------------------------
+# TestComputeMagi
+# ---------------------------------------------------------------------------
+
+
+class TestComputeMagi:
+    def test_basic_addition(self) -> None:
+        assert compute_magi(100_000.0, 2_000.0, 0.0) == 102_000.0
+
+    def test_feie_added(self) -> None:
+        assert compute_magi(100_000.0, 0.0, 5_000.0) == 105_000.0
+
+    def test_all_components(self) -> None:
+        assert compute_magi(158_400.0, 2_400.0, 3_000.0) == pytest.approx(163_800.0)
+
+    def test_taxable_ss_not_double_counted(self) -> None:
+        # SS is already in AGI — compute_magi does not take it as input
+        # Confirm the signature has 3 params, not 4
+        sig = inspect.signature(compute_magi)
+        assert list(sig.parameters) == ["agi", "tax_exempt_interest", "feie"]
+
+    def test_zero_adds(self) -> None:
+        assert compute_magi(50_000.0, 0.0, 0.0) == 50_000.0
+
+
+# ---------------------------------------------------------------------------
+# TestComputeIrmaaMagi — 42 U.S.C. §1395r(i)(4)(A): IRMAA MAGI is AGI
+# determined without regard to §911 (FEIE), plus tax-exempt interest.
+# Audit-1008 F-59 reversed an earlier fix that dropped the FEIE add-back.
+# ---------------------------------------------------------------------------
+
+
+class TestComputeIrmaaMagi:
+    def test_feie_defaults_to_zero(self) -> None:
+        assert compute_irmaa_magi(100_000.0, 0.0) == 100_000.0
+
+    def test_signature_takes_feie(self) -> None:
+        sig = inspect.signature(compute_irmaa_magi)
+        assert list(sig.parameters) == ["agi", "tax_exempt_interest", "feie"]
+
+    def test_tax_exempt_interest_still_added(self) -> None:
+        assert compute_irmaa_magi(100_000.0, 2_000.0) == 102_000.0
+
+    def test_feie_added_back_like_compute_magi(self) -> None:
+        agi, tei, feie = 200_000.0, 0.0, 20_000.0
+        assert compute_magi(agi, tei, feie) == 220_000.0
+        assert compute_irmaa_magi(agi, tei, feie) == 220_000.0
+
+    def test_feie_reaches_tier_1_surcharge(self) -> None:
+        """AGI $200,000 + FEIE $20,000 (MFJ) is IRMAA MAGI $220,000, over the
+        2026 Tier-1 threshold ($218,000): the $2,296.80/yr surcharge is real."""
+        magi = compute_irmaa_magi(200_000.0, 0.0, 20_000.0)
+        assert irmaa_surcharge(magi) == pytest.approx(2_296.80, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# TestParsedForm2023
+# ---------------------------------------------------------------------------
+
+
+class TestParsedForm2023:
+    def test_happy_path_values(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.tax_year == 2023
+        assert rec.agi == pytest.approx(158_400.0)
+        assert rec.tax_exempt_interest == pytest.approx(2_400.0)
+        assert rec.feie == pytest.approx(3_000.0)
+        assert rec.magi == pytest.approx(158_400.0 + 2_400.0 + 3_000.0)
+
+    def test_qualified_dividends(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.qualified_dividends == pytest.approx(500.0)
+
+    def test_ordinary_dividends(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.ordinary_dividends == pytest.approx(1_200.0)
+
+    def test_taxable_ss(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.taxable_ss == pytest.approx(12_000.0)
+
+    def test_filing_status_none(self) -> None:
+        # Parser leaves filing_status=None; UI confirms later
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.filing_status is None
+
+    def test_source_and_version(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.source == "pdf"
+        assert rec.parser_version == "1.1.0"
+
+    def test_provenance_page_indices(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        # Filler page is index 0; 1040 is index 1; Schedule 1 is index 3
+        assert rec.provenance["f1040_page_index"] == 1
+        assert rec.provenance["sch1_page_index"] == 3
+
+    def test_provenance_form_revision(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.provenance["form_revision"] == "Form 1040 (2023)"
+
+    def test_provenance_pages_total(self) -> None:
+        pages = _pages_2023_with_feie()
+        rec = parse_form_1040_text(pages)
+        assert rec.provenance["pdf_pages_total"] == len(pages)
+
+    def test_captured_at_is_iso(self) -> None:
+        from datetime import datetime
+
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        # Should parse without error
+        dt = datetime.fromisoformat(rec.captured_at)
+        assert dt.year >= 2026
+
+    def test_pdf_creator_forwarded(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie(), pdf_creator="Intuit FPS Engine v4")
+        assert rec.provenance["pdf_creator"] == "Intuit FPS Engine v4"
+
+    def test_comma_formatted_agi(self) -> None:
+        # 158,400 parsed correctly to float
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.agi == 158_400.0
+
+
+# ---------------------------------------------------------------------------
+# TestParsedForm2024
+# ---------------------------------------------------------------------------
+
+
+class TestParsedForm2024:
+    def test_agi_2024(self) -> None:
+        rec = parse_form_1040_text(_pages_2024())
+        assert rec.tax_year == 2024
+        assert rec.agi == pytest.approx(200_000.0)
+
+    def test_tax_exempt_interest_2024(self) -> None:
+        rec = parse_form_1040_text(_pages_2024())
+        assert rec.tax_exempt_interest == pytest.approx(3_000.0)
+
+    def test_feie_zero_when_sch1_has_no_entry(self) -> None:
+        # Schedule 1 present but no 8d line → feie = 0.0
+        rec = parse_form_1040_text(_pages_2024())
+        assert rec.feie == 0.0
+
+    def test_magi_2024(self) -> None:
+        rec = parse_form_1040_text(_pages_2024())
+        assert rec.magi == pytest.approx(200_000.0 + 3_000.0 + 0.0)
+
+    def test_year_2024_anchors_present(self) -> None:
+        assert 2024 in ANCHORS
+
+
+# ---------------------------------------------------------------------------
+# TestParsedForm2025
+# ---------------------------------------------------------------------------
+
+
+class TestParsedForm2025:
+    def test_agi_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.tax_year == 2025
+        assert rec.agi == pytest.approx(210_000.0)
+
+    def test_tax_exempt_interest_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.tax_exempt_interest == pytest.approx(4_000.0)
+
+    def test_feie_zero_when_sch1_has_no_entry_2025(self) -> None:
+        # Schedule 1 present but no 8d line → feie = 0.0
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.feie == 0.0
+
+    def test_magi_2025(self) -> None:
+        rec = parse_form_1040_text(_pages_2025())
+        assert rec.magi == pytest.approx(210_000.0 + 4_000.0 + 0.0)
+
+    def test_year_2025_anchors_present(self) -> None:
+        assert 2025 in ANCHORS
+
+
+# ---------------------------------------------------------------------------
+# TestMissingSchedule1
+# ---------------------------------------------------------------------------
+
+
+class TestMissingSchedule1:
+    def test_feie_zero_no_error(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_no_sch1())
+        assert rec.feie == 0.0
+
+    def test_sch1_page_index_none(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_no_sch1())
+        assert rec.provenance["sch1_page_index"] is None
+
+    def test_other_fields_still_parsed(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_no_sch1())
+        assert rec.agi == pytest.approx(158_400.0)
+        assert rec.tax_exempt_interest == pytest.approx(2_400.0)
+
+
+# ---------------------------------------------------------------------------
+# TestTotalFederalTaxLine24 — issue #525: Line 24 (Total tax) lives on 1040
+# page 2 and was never parsed. The text shape is identical in the
+# 2023/2024/2025 TurboTax layouts (see engine/tax_return_pdf.py module comment).
+# ---------------------------------------------------------------------------
+
+_LINE_24_TEMPLATE = (
+    "24 Add lines 22 and 23. This is your total tax . . . . . . . . . . . . . . . . . 24 {amount}."
+)
+# TRAP: this line immediately precedes Line 24 on the form and ends in a
+# literal "0." — a loose anchor could silently capture this instead.
+_TRAP_LINE_23 = (
+    "23 Other taxes, including self-employment tax, from Schedule 2, line 21 "
+    ". . . . . . . . . 23 0."
+)
+
+_F1040_PAGE1_BY_YEAR = {2023: _F1040_2023, 2024: _F1040_2024, 2025: _F1040_2025}
+
+
+def _f1040_page2(year: int, amount: str, *, include_trap: bool = True) -> str:
+    """Synthetic 1040 page-2 text with the verified Line 24 shape."""
+    lines = [f"Form 1040 ({year}) Page 2"]
+    if include_trap:
+        lines.append(_TRAP_LINE_23)
+    lines.append(_LINE_24_TEMPLATE.format(amount=amount))
+    return "\n".join(lines) + "\n"
+
+
+class TestTotalFederalTaxLine24:
+    @pytest.mark.parametrize("year", [2023, 2024, 2025])
+    def test_page2_present_parses_total_federal_tax(self, year: int) -> None:
+        pages = [_F1040_PAGE1_BY_YEAR[year], _f1040_page2(year, "36,500")]
+        rec = parse_form_1040_text(pages)
+        assert rec.total_federal_tax == pytest.approx(36_500.0)
+
+    def test_trap_line_23_zero_not_captured(self) -> None:
+        """Regression: Line 23's trailing '0.' must never be mistaken for Line 24."""
+        page2 = _f1040_page2(2024, "52,900", include_trap=True)
+        assert "23 0." in page2  # confirm the trap line is genuinely present
+        rec = parse_form_1040_text([_F1040_2024, page2])
+        assert rec.total_federal_tax == pytest.approx(52_900.0)
+        assert rec.total_federal_tax != 0.0
+
+    def test_page2_absent_defaults_to_zero_no_exception(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.total_federal_tax == 0.0
+        # Other fields still parse fine
+        assert rec.agi == pytest.approx(158_400.0)
+        assert rec.feie == pytest.approx(3_000.0)
+
+    def test_page2_absent_provenance_index_none(self) -> None:
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        assert rec.provenance["f1040_p2_page_index"] is None
+
+    def test_page2_present_provenance_index_set(self) -> None:
+        page2 = _f1040_page2(2024, "10,000")
+        rec = parse_form_1040_text([_F1040_2024, page2, _SCH1_2024])
+        assert rec.provenance["f1040_p2_page_index"] == 1
+
+    def test_round_trip_preserves_total_federal_tax(self) -> None:
+        page2 = _f1040_page2(2024, "15,500")
+        rec = parse_form_1040_text([_F1040_2024, page2, _SCH1_2024])
+        restored = Form1040Record.from_dict(rec.to_dict())
+        assert restored.total_federal_tax == rec.total_federal_tax == pytest.approx(15_500.0)
+
+    def test_from_dict_legacy_missing_key_defaults_zero(self) -> None:
+        """A cache record written before this change lacks the key entirely."""
+        d: dict[str, Any] = {
+            "tax_year": 2023,
+            "agi": 100_000.0,
+            "tax_exempt_interest": 0.0,
+            "taxable_ss": 0.0,
+            "qualified_dividends": 0.0,
+            "ordinary_dividends": 0.0,
+            "feie": 0.0,
+            "magi": 100_000.0,
+            "filing_status": None,
+            "captured_at": "2026-06-09T12:00:00+00:00",
+        }
+        rec = Form1040Record.from_dict(d)
+        assert rec.total_federal_tax == 0.0
+
+    def test_from_dict_null_total_federal_tax_defaults_zero(self) -> None:
+        """A stored JSON null must also yield 0.0 (the `or` guard, not bare .get)."""
+        d: dict[str, Any] = {
+            "tax_year": 2023,
+            "agi": 100_000.0,
+            "tax_exempt_interest": 0.0,
+            "taxable_ss": 0.0,
+            "qualified_dividends": 0.0,
+            "ordinary_dividends": 0.0,
+            "feie": 0.0,
+            "magi": 100_000.0,
+            "filing_status": None,
+            "captured_at": "2026-06-09T12:00:00+00:00",
+            "total_federal_tax": None,
+        }
+        rec = Form1040Record.from_dict(d)
+        assert rec.total_federal_tax == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestParseErrors
+# ---------------------------------------------------------------------------
+
+
+class TestParseErrors:
+    def test_no_form_1040_raises(self) -> None:
+        with pytest.raises(Form1040ParseError, match="No 'Form 1040"):
+            parse_form_1040_text(_pages_no_1040())
+
+    def test_unsupported_year_raises(self) -> None:
+        with pytest.raises(Form1040ParseError, match="2019.*not supported"):
+            parse_form_1040_text(_pages_unsupported_year())
+
+    def test_empty_pages_raises(self) -> None:
+        with pytest.raises(Form1040ParseError):
+            parse_form_1040_text([])
+
+    def test_missing_required_agi_raises(self) -> None:
+        # A 1040 page that has the year marker but is missing the AGI line
+        broken = ["Form 1040 (2023)\n2a  Tax-exempt interest . .  2a  100\n"]
+        with pytest.raises(Form1040ParseError, match="agi"):
+            parse_form_1040_text(broken)
+
+
+# ---------------------------------------------------------------------------
+# TestToFromDict
+# ---------------------------------------------------------------------------
+
+
+class TestToFromDict:
+    def _make_record(self) -> Form1040Record:
+        return parse_form_1040_text(_pages_2023_with_feie())
+
+    def test_round_trip_fields(self) -> None:
+        rec = self._make_record()
+        restored = Form1040Record.from_dict(rec.to_dict())
+        assert restored.tax_year == rec.tax_year
+        assert restored.agi == rec.agi
+        assert restored.tax_exempt_interest == rec.tax_exempt_interest
+        assert restored.feie == rec.feie
+        assert restored.magi == rec.magi
+        assert restored.taxable_ss == rec.taxable_ss
+        assert restored.qualified_dividends == rec.qualified_dividends
+        assert restored.ordinary_dividends == rec.ordinary_dividends
+        assert restored.filing_status == rec.filing_status
+        assert restored.captured_at == rec.captured_at
+        assert restored.source == rec.source
+        assert restored.parser_version == rec.parser_version
+
+    def test_provenance_preserved(self) -> None:
+        rec = self._make_record()
+        restored = Form1040Record.from_dict(rec.to_dict())
+        assert restored.provenance == rec.provenance
+
+    def test_to_dict_is_json_serialisable(self) -> None:
+        rec = self._make_record()
+        # Should not raise
+        serialised = json.dumps(rec.to_dict())
+        assert '"tax_year": 2023' in serialised
+
+    def test_from_dict_handles_missing_optional_keys(self) -> None:
+        d: dict[str, Any] = {
+            "tax_year": 2023,
+            "agi": 100_000.0,
+            "tax_exempt_interest": 0.0,
+            "taxable_ss": 0.0,
+            "qualified_dividends": 0.0,
+            "ordinary_dividends": 0.0,
+            "feie": 0.0,
+            "magi": 100_000.0,
+            "filing_status": None,
+            "captured_at": "2026-06-09T12:00:00+00:00",
+        }
+        rec = Form1040Record.from_dict(d)
+        assert rec.source == "pdf"
+        assert rec.parser_version == "1.0.0"
+        assert rec.provenance == {}
+        assert rec.total_federal_tax == 0.0
+
+    def test_from_dict_explicit_parser_version_wins_over_default(self) -> None:
+        d: dict[str, Any] = {
+            "tax_year": 2023,
+            "agi": 100_000.0,
+            "tax_exempt_interest": 0.0,
+            "taxable_ss": 0.0,
+            "qualified_dividends": 0.0,
+            "ordinary_dividends": 0.0,
+            "feie": 0.0,
+            "magi": 100_000.0,
+            "filing_status": None,
+            "captured_at": "2026-06-09T12:00:00+00:00",
+            "parser_version": "1.0.0",
+        }
+        rec = Form1040Record.from_dict(d)
+        assert rec.parser_version == "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# TestCacheRoundTrip
+# ---------------------------------------------------------------------------
+
+
+class TestCacheRoundTrip:
+    def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cache_file = tmp_path / "test_pdf_cache.json"
+        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        save_pdf_tax_records({2023: rec})
+        loaded = load_pdf_tax_records()
+        assert 2023 in loaded
+        assert loaded[2023].agi == rec.agi
+        assert loaded[2023].magi == rec.magi
+        assert loaded[2023].provenance == rec.provenance
+
+    def test_load_missing_file_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "engine.tax_return_pdf._PDF_TAX_CACHE_PATH",
+            tmp_path / "nonexistent.json",
+        )
+        assert load_pdf_tax_records() == {}
+
+    def test_load_corrupt_file_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache_file = tmp_path / "corrupt.json"
+        cache_file.write_text("not valid json {{{")
+        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+        assert load_pdf_tax_records() == {}
+
+    def test_keys_stored_as_strings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cache_file = tmp_path / "str_keys.json"
+        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+        rec = parse_form_1040_text(_pages_2023_with_feie())
+        save_pdf_tax_records({2023: rec})
+        raw: dict[str, Any] = json.loads(cache_file.read_text())
+        assert "2023" in raw
+        assert isinstance(list(raw.keys())[0], str)
+
+    def test_multiple_years_round_trip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache_file = tmp_path / "multi.json"
+        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+        rec2023 = parse_form_1040_text(_pages_2023_with_feie())
+        rec2024 = parse_form_1040_text(_pages_2024())
+        save_pdf_tax_records({2023: rec2023, 2024: rec2024})
+        loaded = load_pdf_tax_records()
+        assert set(loaded.keys()) == {2023, 2024}
+        assert loaded[2024].agi == pytest.approx(200_000.0)
+
+
+# ---------------------------------------------------------------------------
+# TestRealisticTurboTaxLineLayout
+# Regression fixtures that mirror actual TurboTax PDF text layout:
+#   <n>  <label> ......dots...... <n>  <value>
+# The repeated line-number token must NOT be captured as the value.
+# ---------------------------------------------------------------------------
+
+# Realistic TurboTax 1040 page: every labeled line has the line number repeated
+# after the dot leaders before the value, matching the layout pdfplumber
+# extracts from a TurboTax export (figures synthetic).
+_F1040_REALISTIC = """\
+Department of the Treasury — Internal Revenue Service
+Form 1040 (2023)         U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest ..........................  2a          4,200
+    b  Taxable interest ..........................  2b          1,800
+3a  Qualified dividends ..........................  3a          8,750
+    b  Ordinary dividends ........................  3b         15,300
+6   Social security benefits .....................  6b         18,000
+11  Subtract line 10 from line 9. This is your adjusted gross income ......  11    287,654
+"""
+
+# Schedule 1 realistic: line label then dots then repeated line id then value.
+_SCH1_REALISTIC = """\
+SCHEDULE 1 (Form 1040)
+Schedule 1  (Form 1040)   Additional Income and Adjustments
+
+8d  Foreign earned income exclusion .............  8d          6,500
+"""
+
+
+def _pages_realistic() -> list[str]:
+    """Bundle with realistic TurboTax dot-leader + repeated-line-number layout."""
+    return [_F1040_REALISTIC, _SCH1_REALISTIC]
+
+
+class TestRealisticTurboTaxLineLayout:
+    """Guard against capturing the repeated line-number token instead of the value."""
+
+    def test_agi_skips_repeated_11(self) -> None:
+        # "...adjusted gross income ...... 11    287,654" — must NOT return 11
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.agi == pytest.approx(287_654.0)
+
+    def test_agi_not_captured_as_line_number(self) -> None:
+        # Explicit guard: value must be far larger than any line number
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.agi > 100, "AGI parsed as line number (11) instead of actual value"
+
+    def test_tax_exempt_interest_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.tax_exempt_interest == pytest.approx(4_200.0)
+
+    def test_qualified_dividends_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.qualified_dividends == pytest.approx(8_750.0)
+
+    def test_ordinary_dividends_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.ordinary_dividends == pytest.approx(15_300.0)
+
+    def test_taxable_ss_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.taxable_ss == pytest.approx(18_000.0)
+
+    def test_feie_realistic(self) -> None:
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.feie == pytest.approx(6_500.0)
+
+    def test_magi_realistic(self) -> None:
+        # MAGI = AGI + tax_exempt_interest + feie
+        rec = parse_form_1040_text(_pages_realistic())
+        assert rec.magi == pytest.approx(287_654.0 + 4_200.0 + 6_500.0)
+
+
+# ---------------------------------------------------------------------------
+# TestParseCurrency — security-2: negative / parenthesized AGI support
+# ---------------------------------------------------------------------------
+
+
+class TestParseCurrency:
+    """Unit tests for _parse_currency sign/paren handling."""
+
+    def test_positive(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("5,000") == pytest.approx(5000.0)
+
+    def test_negative_dash(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("-5,000") == pytest.approx(-5000.0)
+
+    def test_negative_parens(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("(5,000)") == pytest.approx(-5000.0)
+
+    def test_dollar_sign_stripped(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("$1,234") == pytest.approx(1234.0)
+
+    def test_trailing_dot_stripped(self) -> None:
+        from engine.tax_return_pdf import _parse_currency
+
+        assert _parse_currency("1000.") == pytest.approx(1000.0)
+
+
+class TestLine11ReletteredTo11a:
+    """Regression: IRS relettered Form 1040 line 11 to "11a" for tax year 2025.
+
+    Before the fix, the optional ``(?:11\\s+)?`` skip fails to match "11a"
+    (no whitespace right after "11"), backtracks to zero-width, and the
+    capture group then grabs the digits "11" off the front of "11a" itself
+    instead of the real dollar amount that follows.
+    """
+
+    _F1040_2025_RELETTERED = """\
+Form 1040 (2025)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  1,250   b  Taxable interest  2b  600
+3a  Qualified dividends . .  3a  41,000   b  Ordinary dividends  3b  78,500
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income . . . . . . . . . . 11a 198,450.
+"""
+
+    def _pages(self) -> list[str]:
+        return [self._F1040_2025_RELETTERED, _SCH1_2025]
+
+    def test_agi_not_captured_as_line_number_11a(self) -> None:
+        rec = parse_form_1040_text(self._pages())
+        assert rec.agi == pytest.approx(198_450.0)
+
+
+class TestUnrecognisedLineTokenShapeNeverPartiallyCaptured:
+    """Design guard: a line-number token shape the skip doesn't recognise
+    (e.g. two trailing letters, not the tolerated single-letter suffix)
+    must produce NO MATCH — never a truncated digit-prefix of the token.
+
+    This is what the atomic group in ``_AMOUNT`` plus the trailing
+    ``(?![a-zA-Z])`` lookahead guarantee: no backtracking means the capture
+    can't retry a shorter digit run once the full-length attempt is
+    rejected by the lookahead.
+    """
+
+    _F1040_UNRECOGNISED_SHAPE = """\
+Form 1040 (2024)  U.S. Individual Income Tax Return
+
+2a  Tax-exempt interest . .  2a  3,000   b  Taxable interest  2b  500
+3a  Qualified dividends . .  3a  1,000   b  Ordinary dividends  3b  2,000
+6   Social security benefits  6b  0
+11  Subtract line 10 from line 9. This is your adjusted gross income . . . . . . . . . . 11xy 300.
+"""
+
+    def test_agi_raises_instead_of_partial_capture(self) -> None:
+        # "11xy" is not "<numeral><=1 letter>" — required field must raise,
+        # never silently return 11.0 or any other truncated prefix.
+        pages = [self._F1040_UNRECOGNISED_SHAPE, _SCH1_2024]
+        with pytest.raises(Form1040ParseError, match="agi"):
+            parse_form_1040_text(pages)
+
+    def test_optional_field_unrecognised_shape_defaults_to_zero(self) -> None:
+        # Same principle on an optional field: "2ab" (two-letter suffix) must
+        # not yield a truncated capture — it must no-match -> 0.0.
+        text = "Tax-exempt interest . . 2ab 500.\n"
+        pages = [
+            "Form 1040 (2024)\n"
+            + text
+            + "3a  Qualified dividends . .  3a  1,000   b  Ordinary dividends  3b  2,000\n"
+            "6   Social security benefits  6b  0\n"
+            "11  This is your adjusted gross income . . 11 200,000.\n",
+            _SCH1_2024,
+        ]
+        rec = parse_form_1040_text(pages)
+        assert rec.tax_exempt_interest == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestLazyPageAccess — parse_form_1040_text must work over any Sequence[str]
+# (not just list[str]) and only touch the pages it actually needs.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPages(Sequence[str]):
+    """Wraps a plain list[str]; logs every index accessed via __getitem__.
+
+    A real ``Sequence[str]`` (not just a duck-typed stand-in) that reports
+    exactly which indices were touched, so tests can assert on laziness
+    directly without pulling in pdfplumber/LazyPageTexts itself.
+    """
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = pages
+        self.accessed: list[int] = []
+
+    def __len__(self) -> int:
+        return len(self._pages)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            indices = range(*index.indices(len(self._pages)))
+            self.accessed.extend(indices)
+            return [self._pages[i] for i in indices]
+        normalized = index + len(self._pages) if index < 0 else index
+        self.accessed.append(normalized)
+        return self._pages[normalized]
+
+    def __iter__(self) -> Iterator[str]:
+        for i in range(len(self._pages)):
+            yield self[i]
+
+
+def _record_sans_captured_at(rec: Form1040Record) -> dict[str, Any]:
+    d = rec.to_dict()
+    d.pop("captured_at", None)
+    return d
+
+
+class TestLazyPageAccess:
+    def test_only_accesses_pages_up_to_last_needed_index(self) -> None:
+        # 50-page bundle: Form 1040 at index 0, Schedule 1 at index 2, the
+        # remaining 47 pages are filler that must never be touched.
+        pages = [_FILLER_PAGE] * 50
+        pages[0] = _F1040_2023
+        pages[2] = _SCH1_2023
+        recording = _RecordingPages(pages)
+
+        result = parse_form_1040_text(recording)
+        expected = parse_form_1040_text(pages)
+
+        assert _record_sans_captured_at(result) == _record_sans_captured_at(expected)
+        assert max(recording.accessed) <= 2
+
+
+# ---------------------------------------------------------------------------
+# TestParseForm1040PdfWrapper — the pdfplumber-facing wrapper must extract
+# text lazily (via LazyPageTexts) and produce identical results to the pure
+# parser over the same page texts.
+# ---------------------------------------------------------------------------
+
+
+class _FakePdfPage:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.extract_calls = 0
+
+    def extract_text(self) -> str:
+        self.extract_calls += 1
+        return self._text
+
+    def close(self) -> None:
+        pass
+
+
+class _FakePdf:
+    def __init__(self, pages: list[_FakePdfPage], metadata: dict[str, Any]) -> None:
+        self.pages = pages
+        self.metadata = metadata
+
+    def __enter__(self) -> _FakePdf:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class TestParseForm1040PdfWrapper:
+    def test_wrapper_matches_pure_parse_and_only_reads_needed_pages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Form 1040 at index 0, Schedule 1 at index 2 — only pages 0..2 should
+        # ever be extracted, regardless of the 10 filler pages after them.
+        texts = [_F1040_2023, _FILLER_PAGE, _SCH1_2023] + [_FILLER_PAGE] * 10
+        fake_pages = [_FakePdfPage(t) for t in texts]
+        fake_pdf = _FakePdf(fake_pages, {"Creator": "Intuit FPS Engine v4"})
+
+        def fake_open(_stream: object) -> _FakePdf:
+            return fake_pdf
+
+        monkeypatch.setattr("pdfplumber.open", fake_open)
+
+        from engine.tax_return_pdf import parse_form_1040_pdf
+
+        result = parse_form_1040_pdf(b"irrelevant-bytes")
+        expected = parse_form_1040_text(texts, pdf_creator="Intuit FPS Engine v4")
+
+        assert _record_sans_captured_at(result) == _record_sans_captured_at(expected)
+        accessed = [i for i, p in enumerate(fake_pages) if p.extract_calls > 0]
+        assert accessed
+        assert max(accessed) <= 2
+        assert all(p.extract_calls <= 1 for p in fake_pages)
