@@ -54,18 +54,18 @@ def _scenario_room(
     hh: Household, plan: OptimizedPlan, level: int, ytd: YTDSnapshot | None = None
 ) -> float:
     """Unclamped room to bracket ``level``'s top after ``plan``, on the
-    scenario's pre-forced-draw basis -- computed independently of this_year."""
+    scenario's total-income basis (forced IRA draws included, issue #1) --
+    computed independently of this_year."""
     from engine.scenario import run_scenario
     from engine.tax import indexed_bracket_ceiling
 
     h = copy.deepcopy(hh)
     h.exercise_schedule = plan.schedule
     y = run_scenario(h, plan.conversions, ytd=ytd).years[0]
-    ordinary = y.combined_gross - y.forced_your_ira_draw - y.forced_spouse_ira_draw
     top = indexed_bracket_ceiling(
         level, year=2026, cpi=hh.cpi_assumption, filing_status=y.filing_status
     )
-    return top - (ordinary - y.total_deductions)
+    return top - (y.combined_gross - y.total_deductions)
 
 
 def _scenario_base(hh: Household, plan: OptimizedPlan, ytd: YTDSnapshot | None = None):
@@ -408,35 +408,22 @@ class TestReasons:
         )
         assert ReasonCode.GRANT_EXPIRES not in self._codes(only_g1)
 
-    @staticmethod
-    def _room_to_top(level: int) -> float:
-        """Room to bracket ``level``'s top for _hh() with no conversion, on the
-        engine's pre-forced-draw basis (taxable income without the waterfall's
-        living-expense IRA draws)."""
-        from engine.scenario import run_scenario
-        from engine.tax import indexed_bracket_ceiling
-
-        hh = _hh()
-        y = run_scenario(hh, ConversionPlan()).years[0]
-        ordinary = y.combined_gross - y.forced_your_ira_draw - y.forced_spouse_ira_draw
-        top = indexed_bracket_ceiling(level, year=2026, cpi=hh.cpi_assumption, filing_status="MFJ")
-        return top - (ordinary - y.total_deductions)
-
-    # top-of-22 / top-of-24: the scenario caps a bracket-fill conversion at its
-    # bracket top (bracket_target 2/3), so asking for more converts exactly to
-    # the top. top-of-12 cannot use that mechanism: in a waterfall year the
-    # scenario caps targets other than 3 at room_22, so a 12% request is sized
-    # exactly instead (deductions don't move with the conversion at 60/54).
+    # Issue #1: the room counts the waterfall's forced IRA draw, so the split
+    # that "fills" a bracket is the conversion "Fill X%" solves jointly with
+    # that draw (auto_fill_12/22/24), not the draw-blind room (which converts
+    # past the top by the draw). The scenario's own cap stays draw-blind and
+    # does not bind on that smaller conversion, so exactly the ask is converted.
     # The cap comes from the CURRENT plan's bracket_target (the base year is
     # projected as Apply writes it), so the current plan carries the target.
     @pytest.mark.parametrize(
-        ("label", "target", "ask"),
-        [("top-of-12", 1, None), ("top-of-22", 2, 900_000.0), ("top-of-24", 3, 900_000.0)],
+        ("label", "target"), [("top-of-12", 1), ("top-of-22", 2), ("top-of-24", 3)]
     )
-    def test_fills_bracket_when_the_split_reaches_the_top(self, label, target, ask) -> None:
+    def test_fills_bracket_when_the_split_reaches_the_top(self, label, target) -> None:
+        from engine.scenario_autofill import auto_fill_12, auto_fill_22, auto_fill_24
         from engine.this_year import FILL_TOLERANCE, ReasonCode, summarize_this_year
 
-        you = ask if ask is not None else self._room_to_top(1)
+        fill = {1: auto_fill_12, 2: auto_fill_22, 3: auto_fill_24}[target](_hh(), None)
+        you = fill.your_conversions[2026] + fill.spouse_conversions.get(2026, 0.0)
         split = summarize_this_year(
             _hh(),
             None,
@@ -447,9 +434,7 @@ class TestReasons:
         assert reason.data["ceiling_label"] == label
         assert abs(reason.data["room_after"]) <= FILL_TOLERANCE
         assert ReasonCode.EXCEEDS_CEILING not in self._codes(split)
-        if ask is None:
-            # Pin the mechanism: exactly the requested amount converted.
-            assert split.conversions[0].year_total == pytest.approx(you)
+        assert split.conversions[0].year_total == pytest.approx(you)
 
     def test_overshoot_from_options_is_exceeds_ceiling(self) -> None:
         # 5,000 shares x $100 spread = $500K of option income against an empty

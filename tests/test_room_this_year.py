@@ -77,7 +77,7 @@ def test_reason_text_grant_expires():
 
 def test_reason_text_fills_bracket():
     r = Reason(ReasonCode.FILLS_BRACKET, {"ceiling_label": "top-of-22", "room_after": 120.0})
-    assert reason_text(r) == "Fills to the 22% bracket top before living-expense IRA draws."
+    assert reason_text(r) == "Fills to the 22% bracket top, counting living-expense IRA draws."
 
 
 def test_reason_text_exceeds_ceiling_uses_the_reason_overshoot():

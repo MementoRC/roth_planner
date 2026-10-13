@@ -27,6 +27,7 @@ from engine.this_year import (
     ThisYearSplit,
     apply_split_conversions,
     apply_split_schedule,
+    draw_aware_bracket_rooms,
     rmd_lookahead,
     summarize_this_year,
 )
@@ -43,7 +44,11 @@ SIG_KEY = "_room_sig"
 FLASH_KEY = "_room_flash"
 
 # The tiles and the card's room-after are on different bases; say which.
-TILES_LABEL = "So far this year (actuals only)"
+TILES_LABEL = "So far this year (actuals; 12% / 22% rooms count living-expense IRA draws)"
+BRACKET_TILE_HELP = (
+    "The conversion that lands total taxable income on this bracket top, counting "
+    "any IRA draw the plan needs for living expenses."
+)
 ROOM_AFTER_LABEL = (
     "Room left after the split — full-year projection, incl. IRA draws for living expenses"
 )
@@ -102,10 +107,10 @@ def reason_text(reason: Reason) -> str:
     if code is ReasonCode.GRANT_EXPIRES:
         return f"Grant {d['grant_key']} expires in {d['expiry_year']} — exercise before it lapses."
     if code is ReasonCode.FILLS_BRACKET:
-        # Bracket rooms are on the pre-forced-draw basis (engine/this_year.py).
+        # Bracket rooms count the forced living-expense IRA draws (engine/this_year.py).
         return (
-            f"Fills to the {ceiling_text(str(d['ceiling_label']))} top "
-            "before living-expense IRA draws."
+            f"Fills to the {ceiling_text(str(d['ceiling_label']))} top, "
+            "counting living-expense IRA draws."
         )
     if code is ReasonCode.EXCEEDS_CEILING:
         return (
@@ -292,12 +297,15 @@ def _apply_split(hh: Household, result: RoomResult) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _render_tiles(hh: Household, headroom: HeadroomResult) -> None:
+def _render_tiles(
+    hh: Household, headroom: HeadroomResult, bracket_rooms: tuple[float, float]
+) -> None:
     year = hh.base_year
+    room_12, room_22 = bracket_rooms
     tiles = [
         ("Locked income", fmt_dollars(headroom.locked_magi), "MAGI already realized this year."),
-        ("Room to 12% top", room_text(headroom.room_to_12pct), None),
-        ("Room to 22% top", room_text(headroom.room_to_22pct), None),
+        ("Room to 12% top", room_text(room_12), BRACKET_TILE_HELP),
+        ("Room to 22% top", room_text(room_22), BRACKET_TILE_HELP),
         ("Room to IRMAA tier 1", room_text(headroom.room_to_irmaa_t1), None),
         ("Room to NIIT", room_text(headroom.room_to_niit), None),
     ]
@@ -455,7 +463,9 @@ def render(hh: Household) -> None:
         ytd if ytd is not None else YTDSnapshot(tax_year=hh.base_year),
         filing_status=hh.filing_status,
     )
-    _render_tiles(hh, headroom)
+    _render_tiles(
+        hh, headroom, draw_aware_bracket_rooms(hh, ytd, headroom, optimizer_panel.manual_nii())
+    )
 
     st.markdown("---")
     flash_slot = st.empty()  # filled after the button, which may clear the flash

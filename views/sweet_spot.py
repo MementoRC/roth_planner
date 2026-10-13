@@ -21,8 +21,9 @@ from engine.sweet_spot_compute import (
     compute_marginal_costs,
     compute_multi_year_summary,
     estimate_ltcg_eligible,
-    fill_conversions_for_year,
+    fills_for_year,
     find_sweet_spots,
+    forced_draw_fills,
     irmaa_safe_max,
     magi_boundary_conversion,
     sweet_spot_conversion_window,
@@ -106,6 +107,9 @@ def render(hh: Household) -> None:
     # identical projection of its own.
     _ira_draws = zero_conversion_ira_draws(hh, ytd=_ytd, net_inv_income=net_inv_income)
     _selected_draw = _ira_draws.get(selected_year, 0.0)
+    # Issue #1: in a forced-draw year the Fill cards / table read what "Fill X%"
+    # converts (the auto-fill's joint solve), so they equal the Planner's Fill.
+    _fills = forced_draw_fills(hh, ytd=_ytd, net_inv_income=net_inv_income, ira_draws=_ira_draws)
     base = base_income_for_year(
         hh,
         selected_year,
@@ -302,7 +306,7 @@ def render(hh: Household) -> None:
     # question, and the cards disagreed with the bracket guide-lines drawn just
     # above them (which already bisect via bracket_boundary_conversion). Both the
     # table and these cards now read one shared derivation.
-    fill_12, fill_22 = fill_conversions_for_year(hh, base)
+    fill_12, fill_22 = fills_for_year(hh, base, _fills)
 
     st.markdown("### Recommended Conversion Zones")
 
@@ -450,6 +454,7 @@ def render(hh: Household) -> None:
         ytd=_ytd,
         include_ltcg_stacking=True,
         ira_draws=_ira_draws,
+        fills=_fills,
     )
 
     import pandas as pd

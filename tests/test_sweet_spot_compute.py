@@ -185,7 +185,9 @@ class TestComputeMultiYearSummaryFillBoundarySsTorpedo:
         b = base_income_for_year(hh, year, ira_draw=draws.get(year, 0.0))
         assert b.combined_ss > 0, "precondition: SS must be active"
 
-        rows = compute_multi_year_summary(hh, ira_draws=draws)
+        # fills={}: issue #1 reads the auto-fill in forced-draw years; this test
+        # pins the SS-torpedo-aware bracket-boundary derivation on this base.
+        rows = compute_multi_year_summary(hh, ira_draws=draws, fills={})
         row = next(r for r in rows if r.year == year)
 
         ceiling_12 = 100_800.0  # BRACKETS_MFJ[1][0], unindexed at base_year 2026

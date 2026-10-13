@@ -5,11 +5,12 @@ Everything here is derived from the exercise optimizer's winning plan; wording
 lives in the view (PR 4b) -- the engine returns numbers and reason codes.
 NO Streamlit imports (engine purity).
 
-Bracket rooms here are on the engine's deliberate pre-forced-draw basis (see
-the _base_headroom docstring in engine/scenario.py): taxable income WITHOUT the
-withdrawal waterfall's living-expense IRA draws. So FILLS_BRACKET means the
-split fills TO the bracket top before those draws -- not that total taxable
-income stays inside the bracket once the draws are added.
+Bracket rooms here account for the withdrawal waterfall's forced living-expense
+IRA draws (issue #1): they are measured on the scenario's TOTAL taxable income,
+draws included, the same basis "Fill X%" sizes against. So FILLS_BRACKET means
+total taxable income lands on the bracket top. (run_scenario's own conversion
+cap stays draw-blind on purpose -- see the _base_headroom docstring in
+engine/scenario.py -- so a manual plan can still carry income past the top.)
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from engine.headroom import HeadroomResult, compute_headroom
 from engine.irmaa import irmaa_payment_year, irmaa_tier, irmaa_tier1_threshold
 from engine.niit import niit_threshold
 from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario_autofill import bracket_fill_conversions
 from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
 from engine.tax import indexed_bracket_ceiling
 from models.exercise_schedule import ExerciseSchedule, rebalance_schedule
@@ -89,11 +91,11 @@ class PersonConversion:
 class IncomeStack:
     """The bar, on the same scenario basis as RoomAfter's bracket rooms and the
     bracket reason codes: TAXABLE income (after deductions) in the base year,
-    without the withdrawal waterfall's forced IRA draws.
+    including the withdrawal waterfall's forced IRA draws.
 
     roth / options: year totals (done + still to come). locked: everything
-    else in that taxable income (wages, RMDs, dividends, ... minus
-    deductions); it can be negative when deductions exceed that other income
+    else in that taxable income (wages, RMDs, forced IRA draws, dividends, ...
+    minus deductions); it can be negative when deductions exceed that other income
     (part of the roth/options amount is then sheltered). top_of_12 / top_of_22:
     the indexed bracket tops for the scenario's filing status. So
     locked + roth + options + room_after == top whenever the room is positive.
@@ -110,12 +112,13 @@ class IncomeStack:
 class RoomAfter:
     """Room left once the split is carried out, never negative.
 
-    to_12pct / to_22pct: the scenario's base year on the pre-forced-draw basis
-    (_bracket_room_after), clamped at 0 -- the same basis as the bracket
-    reason codes, so tiles and reasons agree. to_irmaa_t1 / to_niit: the
-    scenario's base-year MAGI / NIIT MAGI against the tier-1 / NIIT threshold
-    for the scenario's filing status (_magi_rooms_after). Forced IRA draws
-    stay IN here: IRMAA and NIIT are cliffs on real MAGI.
+    to_12pct / to_22pct: the scenario's base year with the forced IRA draws
+    counted (_bracket_room_after), clamped at 0 -- the same basis as the
+    bracket reason codes, so tiles and reasons agree, and ~0 once "Fill X%"
+    is carried out. to_irmaa_t1 / to_niit: the scenario's base-year MAGI /
+    NIIT MAGI against the tier-1 / NIIT threshold for the scenario's filing
+    status (_magi_rooms_after); forced IRA draws are IN here too, as IRMAA and
+    NIIT are cliffs on real MAGI.
     """
 
     to_12pct: float
@@ -179,21 +182,44 @@ def _bracket_room_after(hh: Household, base: YearResult, level: int) -> float:
 
     compute_headroom's rooms are clamped at 0, so they cannot show an
     overshoot; this can. The waterfall's forced IRA draws (funding living
-    expenses and tax) are left out -- the basis the scenario's conversion cap
-    is measured on. It approximates the scenario's zero-conversion, no-draw
-    room: taxable SS induced by a draw and a post-draw senior-bonus phase-out
-    are not backed out, so the true room can be slightly lower. The brackets
-    follow the scenario's own filing status for the year (survivor handling
-    included), not the caller's.
+    expenses and tax) are IN ``combined_gross``, so this is the room under
+    total taxable ordinary income -- the quantity "Fill X%" sizes against
+    (issue #1) -- with the draw-induced taxable SS and the post-draw
+    senior-bonus phase-out already priced by the scenario. It is the
+    scenario's own cap (_base_headroom) that stays draw-blind, not this room.
+    The brackets follow the scenario's own filing status for the year
+    (survivor handling included), not the caller's.
     """
-    ordinary = base.combined_gross - base.forced_your_ira_draw - base.forced_spouse_ira_draw
-    return _bracket_top(hh, base, level) - (ordinary - base.total_deductions)
+    return _bracket_top(hh, base, level) - (base.combined_gross - base.total_deductions)
+
+
+def draw_aware_bracket_rooms(
+    hh: Household,
+    ytd: YTDSnapshot | None,
+    headroom: HeadroomResult,
+    net_inv_income: float = 0.0,
+) -> tuple[float, float]:
+    """(room to the 12% top, room to the 22% top) before any split, as the
+    conversion "Fill X%" lands on for the base year (issue #1).
+
+    ``headroom``'s rooms are draw-blind. In a base year where the waterfall
+    forces an IRA draw at zero conversion they overstate the Fill by about the
+    draw, so those years read the auto-fill (bracket_fill_conversions) instead;
+    every other year keeps headroom's own rooms unchanged.
+    """
+    year = hh.base_year
+    base = run_no_conversion(
+        copy.deepcopy(hh), end_age=hh.your_age, ytd=ytd, net_inv_income=net_inv_income
+    ).years[0]
+    if base.forced_your_ira_draw + base.forced_spouse_ira_draw <= 0.0:
+        return headroom.room_to_12pct, headroom.room_to_22pct
+    return bracket_fill_conversions(hh, ytd, net_inv_income).get(year, (0.0, 0.0))
 
 
 def _magi_rooms_after(hh: Household, base: YearResult) -> tuple[float, float]:
     """(IRMAA tier-1 room, NIIT room) after the split, UNCLAMPED, from the
-    scenario's base-year MAGI / NIIT MAGI. Forced IRA draws stay in: these
-    are cliffs on real MAGI, unlike the bracket rooms' pre-draw basis."""
+    scenario's base-year MAGI / NIIT MAGI. Forced IRA draws are in, like the
+    bracket rooms: these are cliffs on real MAGI."""
     niit = niit_threshold(base.filing_status)
     irmaa = irmaa_tier1_threshold(hh.base_year, base.filing_status, hh.cpi_assumption)
     return irmaa - base.magi, niit - base.niit_magi
@@ -251,7 +277,7 @@ def _income_stack(
     options_total: float,
 ) -> IncomeStack:
     top_of_22 = _bracket_top(hh, base, 2)
-    taxable_after = top_of_22 - bracket_room[2]  # pre-forced-draw taxable income
+    taxable_after = top_of_22 - bracket_room[2]  # total taxable income, draws included
     return IncomeStack(
         locked=taxable_after - roth - options_total,
         roth=roth,
