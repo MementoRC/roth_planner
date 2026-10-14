@@ -359,6 +359,7 @@ def summarize_this_year(
     filing_status: str | None = None,
     *,
     current_plan: ConversionPlan,
+    net_inv_income: float = 0.0,
 ) -> ThisYearSplit:
     """The base-year slice of ``plan`` (normally ``optimize_exercises(...).best``,
     run with the same ``ytd``), with what is already done netted out, the room
@@ -378,6 +379,9 @@ def summarize_this_year(
     (None means ``hh.filing_status``) on the YTD-only basis: the aca-safe "already passed"
     check (gated on ACA enrollment) and the IRMAA "counts from" year
     (``irmaa_first_relevant_year``).
+
+    ``net_inv_income`` is the manual NII estimate the optimizer ran with (#591);
+    the base-year run prices NIIT on it so the MAGI rooms match.
     """
     year = hh.base_year
     snap = ytd if ytd is not None else YTDSnapshot(tax_year=year)
@@ -399,7 +403,7 @@ def summarize_this_year(
     as_applied.spouse_conversions[year] = plan.conversions.spouse_conversions.get(year, 0.0)
     hh_split = copy.deepcopy(hh)
     hh_split.exercise_schedule = plan.schedule
-    base = run_scenario(hh_split, as_applied, ytd=ytd).years[0]
+    base = run_scenario(hh_split, as_applied, ytd=ytd, net_inv_income=net_inv_income).years[0]
     conversions = [_person("you", base.your_conversion, snap.ira_conversions_ytd)]
     if base.filing_status == "MFJ":  # the scenario's status for the year
         conversions.append(
@@ -549,6 +553,8 @@ def rmd_lookahead(
     split: ThisYearSplit,
     split_plan: OptimizedPlan,
     end_age: int = 95,
+    *,
+    net_inv_income: float = 0.0,
 ) -> RmdLookahead:
     """The first RMD year under no conversions, the current plan, and the
     current plan with only this year replaced by the split (the base-year
@@ -563,14 +569,24 @@ def rmd_lookahead(
     year = first_rmd_year(hh)
     cpi = hh.cpi_assumption
 
-    none_result = run_no_conversion(copy.deepcopy(hh), end_age=end_age, ytd=ytd)
+    none_result = run_no_conversion(
+        copy.deepcopy(hh), end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
+    )
     current_result = run_scenario(
-        copy.deepcopy(hh), copy.deepcopy(current_plan), end_age=end_age, ytd=ytd
+        copy.deepcopy(hh),
+        copy.deepcopy(current_plan),
+        end_age=end_age,
+        ytd=ytd,
+        net_inv_income=net_inv_income,
     )
     split_hh = copy.deepcopy(hh)
     split_hh.exercise_schedule = apply_split_schedule(hh, split_plan)
     split_result = run_scenario(
-        split_hh, apply_split_conversions(current_plan, split), end_age=end_age, ytd=ytd
+        split_hh,
+        apply_split_conversions(current_plan, split),
+        end_age=end_age,
+        ytd=ytd,
+        net_inv_income=net_inv_income,
     )
 
     return RmdLookahead(

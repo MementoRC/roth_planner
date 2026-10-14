@@ -58,7 +58,9 @@ _BASE_YEAR = 2026
 _EXPIRY_YEAR = 2038
 
 
-def _zero_autofill(hh: Household, ytd: YTDSnapshot | None) -> ConversionPlan:
+def _zero_autofill(
+    hh: Household, ytd: YTDSnapshot | None, net_inv_income: float = 0.0
+) -> ConversionPlan:
     """Constant no-conversion autofill: pins conversions at zero in every
     year for both candidates, isolating the schedule's OWN federal-tax impact
     from any confounding interaction with an autofill strategy's bracket-room

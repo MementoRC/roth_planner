@@ -382,7 +382,7 @@ def _score_candidate(
     hh: Household,
     schedule: ExerciseSchedule,
     ceiling_label: str,
-    autofill_fn: Callable[[Household, YTDSnapshot | None], ConversionPlan],
+    autofill_fn: Callable[[Household, YTDSnapshot | None, float], ConversionPlan],
     over_ceiling_years: list[int],
     ytd: YTDSnapshot | None,
     end_age: int,
@@ -412,7 +412,7 @@ def _score_candidate(
     """
     hh_copy = copy.deepcopy(hh)
     hh_copy.exercise_schedule = schedule
-    plan = autofill_fn(hh_copy, ytd)
+    plan = autofill_fn(hh_copy, ytd, net_inv_income)
     if qcds or spouse_qcds:
         plan = replace(plan, qcds=dict(qcds or {}), spouse_qcds=dict(spouse_qcds or {}))
     result = run_scenario(hh_copy, plan, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income)
@@ -442,7 +442,7 @@ def _magi_ceiling_for(strategy: str, year: int, filing_status: str, cpi: float) 
     return aca_ceiling_magi(filing_status, year, cpi)  # aca-safe
 
 
-_AutofillFn = Callable[[Household, YTDSnapshot | None], ConversionPlan]
+_AutofillFn = Callable[[Household, YTDSnapshot | None, float], ConversionPlan]
 
 # (label, strategy-key, autofill_fn)
 DEFAULT_CEILINGS: list[tuple[str, str, _AutofillFn]] = [

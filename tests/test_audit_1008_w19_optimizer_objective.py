@@ -29,7 +29,7 @@ from engine.scenario_types import ConversionPlan, YearResult
 from models.household import Household
 
 
-def _no_conversions(hh: Household, ytd: object) -> ConversionPlan:
+def _no_conversions(hh: Household, ytd: object, net_inv_income: float = 0.0) -> ConversionPlan:
     return ConversionPlan()
 
 
