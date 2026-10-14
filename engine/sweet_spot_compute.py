@@ -5,6 +5,7 @@ Functions return plain dataclasses; no Streamlit, no plotly.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -24,6 +25,7 @@ from engine.irmaa import (
 )
 from engine.niit import niit
 from engine.scenario import run_scenario
+from engine.scenario_autofill import bracket_fill_conversions
 from engine.scenario_compute import QCD_MIN_AGE
 from engine.scenario_types import ConversionPlan
 from engine.tax import (
@@ -700,6 +702,11 @@ def fill_conversions_for_year(hh: Household, base: BaseIncome) -> tuple[float, f
 
     Ceilings are $50-rounded per IRC 1(f)(6) (round50=True), matching every
     bracket-indexing call in engine/tax.py.
+
+    ``base`` carries the forced IRA draw at ZERO conversion. In a year with such
+    a draw the displayed fills come from :func:`fills_for_year` instead, which
+    reads the auto-fill's joint solve (issue #1); this is the derivation for
+    every other year.
     """
     brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     ceiling_12 = _index_value(brackets[1][0], base.year, base.cpi, round50=True)
@@ -708,6 +715,41 @@ def fill_conversions_for_year(hh: Household, base: BaseIncome) -> tuple[float, f
         bracket_boundary_conversion(hh, base, ceiling_12),
         bracket_boundary_conversion(hh, base, ceiling_22),
     )
+
+
+def forced_draw_fills(
+    hh: Household,
+    *,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    ira_draws: Mapping[int, float],
+) -> dict[int, tuple[float, float]]:
+    """Issue #1: (fill_12, fill_22) for the forced-draw years in ``ira_draws``,
+    taken from the auto-fill plans so the Sweet Spot fills equal what "Fill X%"
+    converts.
+
+    A zero-conversion draw on the base (``base_income_for_year(ira_draw=...)``)
+    understates the draw the Fill itself provokes: the conversion's tax raises
+    the year's cash need, hence the forced draw, hence shrinks the room. The
+    auto-fill solves that jointly (engine.scenario_autofill._solve_year), so
+    those years read its result instead of re-deriving it. Years without a
+    zero-conversion draw are left to :func:`fill_conversions_for_year`; the map
+    is empty (and no plan is built) when no year has a draw.
+    """
+    draw_years = [y for y, d in ira_draws.items() if d > 0.0]
+    if not draw_years:
+        return {}
+    fills = bracket_fill_conversions(hh, ytd, net_inv_income)
+    return {y: fills.get(y, (0.0, 0.0)) for y in draw_years}
+
+
+def fills_for_year(
+    hh: Household, base: BaseIncome, fills: Mapping[int, tuple[float, float]]
+) -> tuple[float, float]:
+    """(fill_12, fill_22) for ``base``'s year: the auto-fill's when ``fills``
+    holds that year (a forced-draw year, see :func:`forced_draw_fills`), else
+    the bracket-boundary derivation of :func:`fill_conversions_for_year`."""
+    return fills[base.year] if base.year in fills else fill_conversions_for_year(hh, base)
 
 
 def all_in_at_conversion(
@@ -1094,6 +1136,7 @@ def compute_multi_year_summary(
     ytd: YTDSnapshot | None = None,
     include_ltcg_stacking: bool = False,
     ira_draws: dict[int, float] | None = None,
+    fills: Mapping[int, tuple[float, float]] | None = None,
 ) -> list[YearSummary]:
     """Compute sweet-spot summary rows for all conversion years.
 
@@ -1104,11 +1147,18 @@ def compute_multi_year_summary(
     already has it -- views/sweet_spot.py needs the same draws for its selected
     year -- to avoid paying for a second projection. Pass an empty dict for the
     pre-fix, draw-blind behaviour.
+
+    Issue #1: ``fills`` maps a forced-draw year to the (fill_12, fill_22) the
+    auto-fill plans convert there (see :func:`forced_draw_fills`). Derived from
+    ``ira_draws`` when not supplied; pass ``{}`` to size every year with the
+    bracket-boundary derivation on the given base alone.
     """
     conv_window = sweet_spot_conversion_window(hh)
     conv_years = list(range(hh.base_year, hh.base_year + conv_window))
     if ira_draws is None:
         ira_draws = zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
+    if fills is None:
+        fills = forced_draw_fills(hh, ytd=ytd, net_inv_income=net_inv_income, ira_draws=ira_draws)
 
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
 
@@ -1132,7 +1182,7 @@ def compute_multi_year_summary(
         # fill_conversions_for_year so views/sweet_spot.py's cards read the same
         # one: C23 fixed this table and left those cards, which is how one page
         # came to show two answers to one question (audit-0809 #01, Class B).
-        r12, r22 = fill_conversions_for_year(hh, b)
+        r12, r22 = fills_for_year(hh, b, fills)
 
         tier1_threshold = irmaa_tiers[0][0]
         # Binary search for the largest STEP-aligned conversion where magi <= tier1_threshold.

@@ -163,7 +163,9 @@ class TestFillConversionsSharedHelper:
         it exactly -- this is what makes the card/table divergence impossible."""
         hh = _ss_torpedo_household()
         draws = zero_conversion_ira_draws(hh)
-        rows = compute_multi_year_summary(hh, ira_draws=draws)
+        # fills={}: issue #1 reads the auto-fill in forced-draw years; this test
+        # pins the bracket-boundary derivation both consumers share.
+        rows = compute_multi_year_summary(hh, ira_draws=draws, fills={})
         assert rows, "precondition: the household must have a conversion window"
 
         for row in rows:

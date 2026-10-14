@@ -749,6 +749,33 @@ def auto_fill_22(
     )
 
 
+def bracket_fill_conversions(
+    hh: Household,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> dict[int, tuple[float, float]]:
+    """Year -> (Fill-to-12%, Fill-to-22%) conversion, as auto_fill_12 /
+    auto_fill_22 land on it: total ordinary income INCLUDING the waterfall's
+    forced IRA draw (issue #1).
+
+    The single source for every displayed "room to the 12% / 22% top" that is
+    meant to equal what Fill converts (Room This Year tiles, Sweet Spot fills),
+    so none of them re-derives the draw-aware room. Base-year amounts are net
+    of conversions already done (``ytd``), like the rooms they stand in for.
+    Years the plans hold no cell for (past the conversion window, or no IRA
+    left to convert) are absent: Fill converts nothing there.
+    """
+    plans = (auto_fill_12(hh, ytd, net_inv_income), auto_fill_22(hh, ytd, net_inv_income))
+    done = (ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd) if ytd is not None else 0.0
+
+    def _remaining(plan: ConversionPlan, year: int) -> float:
+        total = plan.your_conversions.get(year, 0.0) + plan.spouse_conversions.get(year, 0.0)
+        return max(total - (done if year == hh.base_year else 0.0), 0.0)
+
+    years = {y for p in plans for y in (*p.your_conversions, *p.spouse_conversions)}
+    return {y: (_remaining(plans[0], y), _remaining(plans[1], y)) for y in sorted(years)}
+
+
 def _irmaa_tier1_magi_room(
     base_magi: float,
     combined_ss: float,
