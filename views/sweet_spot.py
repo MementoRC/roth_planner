@@ -17,7 +17,7 @@ from engine.sweet_spot_compute import (
     STEP,
     all_in_at_conversion,
     base_income_for_year,
-    bracket_boundary_conversion,
+    bracket_vline_positions,
     compute_marginal_costs,
     compute_multi_year_summary,
     estimate_ltcg_eligible,
@@ -226,11 +226,12 @@ def render(hh: Household) -> None:
         )
 
     # Add bracket boundary lines
+    # Issue #4: the 12% / 22% lines sit at the cards' fills (draw-aware in a
+    # forced-draw year); SS-taxability nonlinearity is folded in via binary
+    # search inside bracket_boundary_conversion (audit finding 1 fix).
+    fill_12, fill_22 = fills_for_year(hh, base, _fills)
     bracket_boundaries = []
-    for ceil, rate in indexed_brackets[:-1]:
-        # SS-taxability nonlinearity is folded in via binary search inside
-        # bracket_boundary_conversion (audit finding 1 fix).
-        boundary_conv = bracket_boundary_conversion(hh, base, ceil)
+    for boundary_conv, rate in bracket_vline_positions(hh, base, indexed_brackets, _fills):
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
             fig_m.add_vline(
@@ -305,9 +306,8 @@ def render(hh: Household) -> None:
     # table below and left these cards, so one page showed two answers to one
     # question, and the cards disagreed with the bracket guide-lines drawn just
     # above them (which already bisect via bracket_boundary_conversion). Both the
-    # table and these cards now read one shared derivation.
-    fill_12, fill_22 = fills_for_year(hh, base, _fills)
-
+    # table and these cards now read one shared derivation (fill_12 / fill_22,
+    # computed above for the guide-lines too).
     st.markdown("### Recommended Conversion Zones")
 
     z1, z2, z3 = st.columns(3)

@@ -21,18 +21,23 @@ from engine.scenario import run_scenario
 from engine.scenario_autofill import auto_fill_12, auto_fill_22, bracket_fill_conversions
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.sweet_spot_compute import (
+    BaseIncome,
     base_income_for_year,
+    bracket_boundary_conversion,
+    bracket_vline_positions,
     compute_multi_year_summary,
     fill_conversions_for_year,
     fills_for_year,
     forced_draw_fills,
     zero_conversion_ira_draws,
 )
-from engine.tax import indexed_bracket_ceiling
+from engine.tax import BRACKETS_MFJ, indexed_bracket_ceiling
+from engine.tax_indexing import index_bracket_list
 from engine.this_year import draw_aware_bracket_rooms, summarize_this_year
 from models.exercise_schedule import ExerciseSchedule
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+from views.ytd_income._partials._analysis import ytd_bracket_rooms
 
 BASE_YEAR = 2026
 TOL = 100.0  # matches the #598 autofill tolerance
@@ -200,6 +205,97 @@ def test_no_draw_year_room_after_is_the_plain_scenario_room() -> None:
         yr.combined_gross - yr.total_deductions
     )
     assert split.room_after.to_22pct == pytest.approx(max(expected, 0.0))
+
+
+# --------------------------------------------------------------------------
+# (b2) issue #3: no draw at ZERO conversion, but the Fill's own tax forces one
+# --------------------------------------------------------------------------
+
+
+def _fill_provoked_draw_hh() -> Household:
+    """Brokerage covers spending but not spending plus the Fill's tax."""
+    return _hh(brokerage_start=70_000.0)
+
+
+def test_precondition_fill_provoked_draw() -> None:
+    hh = _fill_provoked_draw_hh()
+    assert zero_conversion_ira_draws(hh)[BASE_YEAR] == 0.0
+    assert _draw(_base(hh, auto_fill_22(hh, None))) > 0.0
+
+
+def test_sweet_spot_fills_equal_auto_fill_when_fill_provokes_the_draw() -> None:
+    hh = _fill_provoked_draw_hh()
+    f12, f22 = _fill_totals(hh)
+    draws = zero_conversion_ira_draws(hh)
+    base = base_income_for_year(hh, BASE_YEAR, ira_draw=draws[BASE_YEAR])
+    blind12, blind22 = fill_conversions_for_year(hh, base)
+    assert blind22 > f22 + 5_000.0  # the draw-blind fill overstates
+    fills = forced_draw_fills(hh, ytd=None, net_inv_income=0.0, ira_draws=draws)
+    assert BASE_YEAR in fills
+    card12, card22 = fills_for_year(hh, base, fills)
+    assert card12 == pytest.approx(f12, abs=TOL)
+    assert card22 == pytest.approx(f22, abs=TOL)
+    row = compute_multi_year_summary(hh)[0]
+    assert row.fill_22 == pytest.approx(f22, abs=TOL)
+
+
+# --------------------------------------------------------------------------
+# (b3) issue #4: the Sweet Spot 12% / 22% vlines sit where the cards say
+# --------------------------------------------------------------------------
+
+
+def _vlines(hh: Household) -> tuple[dict[float, float], tuple[float, float], BaseIncome]:
+    draws = zero_conversion_ira_draws(hh)
+    base = base_income_for_year(hh, BASE_YEAR, ira_draw=draws[BASE_YEAR])
+    fills = forced_draw_fills(hh, ytd=None, net_inv_income=0.0, ira_draws=draws)
+    brackets = index_bracket_list(BRACKETS_MFJ, BASE_YEAR, 0.0, round50=True)
+    pos = {rate: x for x, rate in bracket_vline_positions(hh, base, brackets, fills)}
+    return pos, fills_for_year(hh, base, fills), base
+
+
+def test_vlines_equal_card_fills_in_forced_draw_year() -> None:
+    hh = _forced_draw_hh()
+    pos, (card12, card22), base = _vlines(hh)
+    f12, f22 = _fill_totals(hh)
+    assert pos[0.12] == pytest.approx(card12)
+    assert pos[0.22] == pytest.approx(card22)
+    assert pos[0.12] == pytest.approx(f12, abs=TOL)
+    assert pos[0.22] == pytest.approx(f22, abs=TOL)
+
+
+def test_vlines_are_bracket_boundaries_in_no_draw_year() -> None:
+    hh = _no_draw_hh()
+    pos, _cards, base = _vlines(hh)
+    brackets = index_bracket_list(BRACKETS_MFJ, BASE_YEAR, 0.0, round50=True)
+    for ceil, rate in brackets[:-1]:
+        assert pos[rate] == pytest.approx(bracket_boundary_conversion(hh, base, ceil))
+
+
+# --------------------------------------------------------------------------
+# (b4) issue #5: the YTD Income page shows the same rooms as Room This Year
+# --------------------------------------------------------------------------
+
+
+def test_ytd_page_rooms_equal_room_this_year_in_forced_draw_year() -> None:
+    hh = _forced_draw_hh()
+    ytd = YTDSnapshot(tax_year=BASE_YEAR)
+    headroom = compute_headroom(hh, ytd, "MFJ")
+    rooms = ytd_bracket_rooms(hh, ytd, headroom)
+    assert rooms == draw_aware_bracket_rooms(hh, ytd, headroom)
+    f12, f22 = _fill_totals(hh)
+    assert headroom.room_to_12pct > rooms[0] + 10_000.0  # draw-blind overstates
+    assert rooms[0] == pytest.approx(f12, abs=TOL)
+    assert rooms[1] == pytest.approx(f22, abs=TOL)
+
+
+def test_ytd_page_rooms_unchanged_in_no_draw_year() -> None:
+    hh = _no_draw_hh()
+    ytd = YTDSnapshot(tax_year=BASE_YEAR)
+    headroom = compute_headroom(hh, ytd, "MFJ")
+    assert ytd_bracket_rooms(hh, ytd, headroom) == (
+        headroom.room_to_12pct,
+        headroom.room_to_22pct,
+    )
 
 
 # --------------------------------------------------------------------------

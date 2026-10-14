@@ -5,7 +5,7 @@ Functions return plain dataclasses; no Streamlit, no plotly.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -733,14 +733,52 @@ def forced_draw_fills(
     the year's cash need, hence the forced draw, hence shrinks the room. The
     auto-fill solves that jointly (engine.scenario_autofill._solve_year), so
     those years read its result instead of re-deriving it. Years without a
-    zero-conversion draw are left to :func:`fill_conversions_for_year`; the map
-    is empty (and no plan is built) when no year has a draw.
+    zero-conversion draw are left to :func:`fill_conversions_for_year` unless
+    the Fill's own tax forces a draw there (issue #3, see
+    :func:`_fill_provoked_draw_years`). The map is empty (and no auto-fill plan
+    is built) when no year can draw.
     """
-    draw_years = [y for y, d in ira_draws.items() if d > 0.0]
+    draw_years = {y for y, d in ira_draws.items() if d > 0.0}
+    draw_years |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws)
     if not draw_years:
         return {}
     fills = bracket_fill_conversions(hh, ytd, net_inv_income)
-    return {y: fills.get(y, (0.0, 0.0)) for y in draw_years}
+    return {y: fills.get(y, (0.0, 0.0)) for y in sorted(draw_years)}
+
+
+def _fill_provoked_draw_years(
+    hh: Household,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    ira_draws: Mapping[int, float],
+) -> set[int]:
+    """Issue #3: years with no IRA draw at ZERO conversion where the draw-blind
+    Fill-to-22% conversion's own tax nevertheless forces one.
+
+    One cheap projection with the draw-blind 22% fills as the plan. Since
+    fill_22 >= fill_12, a draw provoked by the 12% Fill is provoked here too, so
+    this is a superset gate; a year where only the 22% Fill draws is harmless,
+    as the joint solve then returns what the draw-blind derivation would.
+    """
+    if not ira_draws:
+        return set()
+    done = (ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd) if ytd is not None else 0.0
+    conversions: dict[int, float] = {}
+    for year, draw in ira_draws.items():
+        is_base = year == hh.base_year
+        base = base_income_for_year(hh, year, ytd=ytd if is_base else None, ira_draw=draw)
+        conversions[year] = fill_conversions_for_year(hh, base)[1] + (done if is_base else 0.0)
+    result = run_scenario(
+        hh,
+        ConversionPlan(your_conversions=conversions),
+        "sweet-spot fill-provoked draw gate",
+        end_age=hh.your_age + max(len(ira_draws) - 1, 0),
+        ytd=ytd,
+        net_inv_income=net_inv_income,
+    )
+    return {
+        yr.year for yr in result.years if yr.forced_your_ira_draw + yr.forced_spouse_ira_draw > 0.0
+    }
 
 
 def fills_for_year(
@@ -750,6 +788,30 @@ def fills_for_year(
     holds that year (a forced-draw year, see :func:`forced_draw_fills`), else
     the bracket-boundary derivation of :func:`fill_conversions_for_year`."""
     return fills[base.year] if base.year in fills else fill_conversions_for_year(hh, base)
+
+
+def bracket_vline_positions(
+    hh: Household,
+    base: BaseIncome,
+    indexed_brackets: Sequence[tuple[float, float]],
+    fills: Mapping[int, tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """(conversion, rate) of each bracket guide-line for ``base``'s year.
+
+    Issue #4: the 12% and 22% lines sit at the same fills as the "Fill to X%"
+    cards (:func:`fills_for_year`, draw-aware in a forced-draw year); other
+    brackets keep the draw-blind :func:`bracket_boundary_conversion`. The
+    top bracket (no ceiling) is not drawn. Brackets are matched to the fills
+    by rate.
+    """
+    fill_12, fill_22 = fills_for_year(hh, base, fills)
+    by_rate = {0.12: fill_12, 0.22: fill_22}
+    positions: list[tuple[float, float]] = []
+    for ceil, rate in indexed_brackets[:-1]:
+        fill = next((v for r, v in by_rate.items() if abs(r - rate) < 1e-9), None)
+        conv = fill if fill is not None else bracket_boundary_conversion(hh, base, ceil)
+        positions.append((conv, rate))
+    return positions
 
 
 def all_in_at_conversion(
