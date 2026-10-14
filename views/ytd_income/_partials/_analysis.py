@@ -3,7 +3,7 @@ from datetime import date as _date
 import pandas as pd
 import streamlit as st
 
-from engine.headroom import compute_headroom
+from engine.headroom import HeadroomResult, compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
@@ -17,9 +17,19 @@ from engine.tax import (
     safe_harbor_payment,
 )
 from engine.tax_return_pdf import load_pdf_tax_records
+from engine.this_year import draw_aware_bracket_rooms
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
+from views.optimizer_panel import manual_nii
+
+
+def ytd_bracket_rooms(
+    hh: Household, ytd: YTDSnapshot, headroom: HeadroomResult
+) -> tuple[float, float]:
+    """(room to 12%, room to 22%) as Room This Year shows them: draw-aware, so
+    they equal what "Fill X%" converts (issue #5)."""
+    return draw_aware_bracket_rooms(hh, ytd, headroom, manual_nii())
 
 
 def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
@@ -323,16 +333,19 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
 
     st.markdown("#### Room for Conversions (from locked income only)")
 
+    room_12, room_22 = ytd_bracket_rooms(hh, ytd, headroom)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Room to 12%",
-        fmt_dollars(headroom.room_to_12pct),
-        help="Ordinary bracket room — LTCG does NOT consume this",
+        fmt_dollars(room_12),
+        help="Ordinary bracket room — LTCG does NOT consume this. Counts any "
+        "living-expense IRA draw the plan needs.",
     )
     c2.metric(
         "Room to 22%",
-        fmt_dollars(headroom.room_to_22pct),
-        help="Ordinary bracket room — LTCG does NOT consume this",
+        fmt_dollars(room_22),
+        help="Ordinary bracket room — LTCG does NOT consume this. Counts any "
+        "living-expense IRA draw the plan needs.",
     )
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
@@ -385,6 +398,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
             p2.metric("Room to 22%", fmt_dollars(headroom.room_to_22pct_with_planned))
             p3.metric("Room to IRMAA", fmt_dollars(headroom.room_to_irmaa_t1_with_planned))
             p4.metric("Room to NIIT", fmt_dollars(headroom.room_to_niit_with_planned))
+            st.caption("These bracket rooms do not account for forced living-expense IRA draws.")
 
     # Visual explanation
     st.info(
