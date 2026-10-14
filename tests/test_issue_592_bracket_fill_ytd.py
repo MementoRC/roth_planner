@@ -75,6 +75,38 @@ def test_fill_with_ytd_lands_on_the_ceiling_and_draws_less() -> None:
     )
 
 
+def test_i8_comparator_preset_passes_nii_to_the_fill(monkeypatch) -> None:
+    import engine.scenario as scenario_mod
+    import engine.scenario_compare as compare_mod
+
+    seen: dict[str, float] = {}
+    real_fill = compare_mod.add_bracket_fill_withdrawals
+    real_run = scenario_mod.run_scenario
+
+    def fill_spy(*args, **kwargs):
+        seen["fill"] = kwargs.get("net_inv_income", 0.0)
+        return real_fill(*args, **kwargs)
+
+    def run_spy(*args, **kwargs):
+        if kwargs.get("end_age") == 95 and args[2:3] == ("temp",):
+            seen["inner"] = kwargs.get("net_inv_income", 0.0)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(compare_mod, "add_bracket_fill_withdrawals", fill_spy)
+    monkeypatch.setattr(scenario_mod, "run_scenario", run_spy)
+    build_scenario(_post_rmd_hh(), "fill_12_bf", ytd=_ytd(), net_inv_income=20_000.0)
+    assert seen == {"fill": 20_000.0, "inner": 20_000.0}
+
+
+def test_i8_fill_default_nii_equals_explicit_zero() -> None:
+    hh = _post_rmd_hh()
+    ytd = _ytd()
+    base = auto_fill_12(hh, ytd)
+    plain = add_bracket_fill_withdrawals(hh, base, target_bracket=0.12, ytd=ytd)
+    zero = add_bracket_fill_withdrawals(hh, base, target_bracket=0.12, ytd=ytd, net_inv_income=0.0)
+    assert plain.extra_withdrawals == zero.extra_withdrawals
+
+
 def test_comparator_preset_passes_ytd_to_the_fill() -> None:
     hh = _post_rmd_hh()
     result = build_scenario(hh, "fill_12_bf", ytd=_ytd())

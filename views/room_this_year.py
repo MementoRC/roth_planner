@@ -242,19 +242,20 @@ def _run(hh: Household, sig: tuple) -> None:
     ytd = _actuals()
     current = _current_plan()
     discount_rate, terminal_tax_rate = optimizer_panel.optimizer_settings()
+    nii = optimizer_panel.manual_nii()
     best = optimize_exercises(
         hh,
         current_plan=current,
         ytd=ytd,
         discount_rate=discount_rate,
         terminal_tax_rate=terminal_tax_rate,
-        net_inv_income=optimizer_panel.manual_nii(),
+        net_inv_income=nii,
     ).best
-    split = summarize_this_year(hh, ytd, best, current_plan=current)
+    split = summarize_this_year(hh, ytd, best, current_plan=current, net_inv_income=nii)
     lookahead: RmdLookahead | None = None
     error: str | None = None
     try:
-        lookahead = rmd_lookahead(hh, ytd, current, split, best)
+        lookahead = rmd_lookahead(hh, ytd, current, split, best, net_inv_income=nii)
     except ValueError as exc:  # first RMD year past the projection's end
         error = str(exc)
     st.session_state[RESULT_KEY] = RoomResult(best, current, split, lookahead, error)

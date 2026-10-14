@@ -998,6 +998,7 @@ def add_bracket_fill_withdrawals(
     base_plan: ConversionPlan,
     target_bracket: float = 0.22,
     ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
 ) -> ConversionPlan:
     """
     Add voluntary excess withdrawals post-RMD to fill the target bracket.
@@ -1014,11 +1015,13 @@ def add_bracket_fill_withdrawals(
         ytd: Base-year income realised so far. Pass the same snapshot the
             final projection runs with, or the base year's room ignores that
             income and the fill overshoots the target bracket (issue #592).
+        net_inv_income: Manual NII estimate; the internal base run prices
+            NIIT on it like the final projection does (issue #8).
     """
     # Run the base scenario first to get IRA balances and bracket room
     from engine.scenario import run_scenario
 
-    result = run_scenario(hh, base_plan, "temp", end_age=95, ytd=ytd)
+    result = run_scenario(hh, base_plan, "temp", end_age=95, ytd=ytd, net_inv_income=net_inv_income)
     _cpi_fill = hh.cpi_assumption
 
     # Base (unindexed) bracket ceiling for the target rate, resolved PER YEAR from that

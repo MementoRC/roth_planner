@@ -22,7 +22,7 @@ from models.household import Household
 _NII = 20_000.0
 
 
-def _no_conversions(hh: Household, ytd: object) -> ConversionPlan:
+def _no_conversions(hh: Household, ytd: object, net_inv_income: float = 0.0) -> ConversionPlan:
     return ConversionPlan()
 
 
@@ -90,6 +90,23 @@ def test_default_is_unchanged_for_direct_callers() -> None:
     a = optimize_exercises(hh, end_age=72, ceilings=_CEILINGS)
     b = optimize_exercises(hh, end_age=72, ceilings=_CEILINGS, net_inv_income=0.0)
     assert [c.lifetime_all_in for c in a.candidates] == [c.lifetime_all_in for c in b.candidates]
+
+
+# --- issue #7: the auto-fill that sizes each candidate gets the estimate too ---
+
+
+def test_i7_autofill_receives_the_manual_nii_estimate() -> None:
+    seen: list[float] = []
+
+    def spy(hh: Household, ytd: object, net_inv_income: float = 0.0) -> ConversionPlan:
+        seen.append(net_inv_income)
+        return ConversionPlan()
+
+    optimize_exercises(
+        _household(), end_age=72, ceilings=[("spy", "top-of-12", spy)], net_inv_income=_NII
+    )
+    assert seen
+    assert all(n == pytest.approx(_NII) for n in seen)
 
 
 # --- the panel passes the estimate and treats it as an input -----------------

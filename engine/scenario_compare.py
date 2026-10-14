@@ -364,7 +364,9 @@ def build_scenario(
         )
     if key == "fill_12_bf":
         base = auto_fill_12(hh, ytd, nii)
-        plan = add_bracket_fill_withdrawals(hh, base, target_bracket=0.22, ytd=ytd)
+        plan = add_bracket_fill_withdrawals(
+            hh, base, target_bracket=0.22, ytd=ytd, net_inv_income=nii
+        )
         return run_scenario(
             hh, plan, "Fill 12% + Bracket Fill", end_age=95, ytd=ytd, net_inv_income=nii
         )
