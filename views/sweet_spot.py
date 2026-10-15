@@ -27,8 +27,9 @@ from engine.sweet_spot_compute import (
     irmaa_safe_max,
     magi_boundary_conversion,
     sweet_spot_conversion_window,
-    zero_conversion_ira_draws,
+    zero_conversion_years,
 )
+from engine.sweet_spot_draw_curve import sweep_all_in
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
@@ -105,7 +106,10 @@ def render(hh: Household) -> None:
     # thin air. Derived ONCE here (one zero-conversion projection) and handed to
     # compute_multi_year_summary below, which would otherwise run a second
     # identical projection of its own.
-    _ira_draws = zero_conversion_ira_draws(hh, ytd=_ytd, net_inv_income=net_inv_income)
+    _zero_years = zero_conversion_years(hh, ytd=_ytd, net_inv_income=net_inv_income)
+    _ira_draws = {
+        y: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for y, yr in _zero_years.items()
+    }
     _selected_draw = _ira_draws.get(selected_year, 0.0)
     # Issue #1: in a forced-draw year the Fill cards / table read what "Fill X%"
     # converts (the auto-fill's joint solve), so they equal the Planner's Fill.
@@ -154,10 +158,17 @@ def render(hh: Household) -> None:
     max_conv = min(max_conv, 800_000)  # cap at $800K for performance
 
     convs = list(range(0, max_conv + STEP, STEP))
-    results = [
-        all_in_at_conversion(hh, base, c, net_inv_income, ltcg_eligible=_ltcg_eligible)
-        for c in convs
-    ]
+    # Issue #10: in a forced-draw year each conversion's own tax forces an extra
+    # IRA draw; the sweep counts it so the curve's steps sit at the cards' fills.
+    results = sweep_all_in(
+        hh,
+        base,
+        convs,
+        net_inv_income=net_inv_income,
+        ltcg_eligible=_ltcg_eligible,
+        zero_year=_zero_years[selected_year],
+        fills=_fills,
+    )
 
     # --- Marginal cost chart ---
     st.markdown("### Marginal All-In Cost per $1,000 Converted")
