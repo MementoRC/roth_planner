@@ -115,6 +115,18 @@ class TestStatementPdfs:
         assert rec.statement_period_end == "2026-06-30"
         assert rec.missing_fields == ()
 
+    def test_fidelity_taxable_prior_year(self) -> None:
+        rec = _broker_record("fidelity_taxable_2025.pdf")
+        assert (rec.broker, rec.account_type, rec.account_number) == (
+            "fidelity",
+            "taxable",
+            "Z12-345678",
+        )
+        assert rec.statement_period_end == "2025-12-31"
+        assert rec.dividends_taxable_ytd == 3_000.00
+        assert rec.dividends_tax_exempt_ytd == 500.00
+        assert rec.owner_key == "PAT EXAMPLE"
+
     def test_netbenefits_403b(self) -> None:
         [stmt] = _scan("netbenefits_403b_2026h1.pdf").netbenefits_statements
         assert stmt.owner_key == "SAM EXAMPLE"
@@ -146,6 +158,7 @@ class TestStatementPdfs:
             ("vanguard_roth_ira_2026q2.pdf", DocKind.BROKERAGE),
             ("fidelity_traditional_ira_2026q2.pdf", DocKind.BROKERAGE),
             ("ibkr_traditional_ira_2026q2.pdf", DocKind.BROKERAGE),
+            ("fidelity_taxable_2025.pdf", DocKind.BROKERAGE),
             ("netbenefits_403b_2026h1.pdf", DocKind.NETBENEFITS),
             ("ssa_statement_2026.pdf", DocKind.SSA_STATEMENT),
             ("form_1040_2025.pdf", DocKind.FORM_1040),

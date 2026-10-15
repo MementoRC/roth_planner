@@ -305,7 +305,26 @@ Filing Status Single Married filing jointly Head of household (HOH)
     """Schedule 1 (Form 1040) Additional Income and Adjustments""",
 ]
 
+# A TAXABLE account whose period ends in 2025: against a 2026 YTD snapshot its
+# figures are "another year" and must not be counted (audit-1008 W9, issue #12).
+FIDELITY_TAXABLE_2025 = [
+    """Fidelity Brokerage Services LLC
+INVESTMENT REPORT
+December 1, 2025 - December 31, 2025
+Account # Z12-345678
+PAT EXAMPLE - INDIVIDUAL
+Account Summary
+Account Value: $200,000.00 Account Holdings
+Change in Account Value $2,000.00
+Income Summary
+This Period Year-to-Date
+Taxable Dividends $300.00 $3,000.00
+Tax-exempt Dividends $50.00 $500.00
+Total $350.00 $3,500.00""",
+]
+
 PDF_FIXTURES: dict[str, list[str]] = {
+    "fidelity_taxable_2025.pdf": FIDELITY_TAXABLE_2025,
     "vanguard_roth_ira_2026q2.pdf": VANGUARD_ROTH_IRA,
     "fidelity_traditional_ira_2026q2.pdf": FIDELITY_TRADITIONAL_IRA,
     "ibkr_traditional_ira_2026q2.pdf": IBKR_TRADITIONAL_IRA,

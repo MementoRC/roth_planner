@@ -44,7 +44,9 @@ from engine.pdf_ledger import (
     latest_brokerage_period_end,
     load_ledger,
     off_year_contributions,
+    off_year_statement_note,
     save_ledger,
+    statement_in_tax_year,
     write_brokerage_contribution,
     write_koinly_contribution,
 )
@@ -434,8 +436,10 @@ def _apply_scan_result(
 
     # Documents from another tax year stay in the ledger but are skipped by
     # the year-gated totals above (audit-1008 F-10): say so, never silently.
-    if stmt_taxable_now or result.koinly_reports:
-        for note in off_year_contributions(ledger, _snap.tax_year):
+    # Statement notes are drawn by _render_scan_review (below the scan, and
+    # on every later render), so they are not repeated here.
+    if result.koinly_reports:
+        for note in off_year_contributions(ledger, _snap.tax_year, brokerage=False):
             st.info(note)
 
     # NetBenefits 403(b) statements are a BALANCE source, never YTD income:
@@ -1578,6 +1582,15 @@ def _render_scan_review(
             notes.append(
                 "Realized gains are not read from Fidelity statements; enter them manually."
             )
+        off_year = off_year_statement_note(
+            rec,
+            resolve_account_owner(
+                rec.broker, rec.account_number, account_overrides, instance_owner
+            ),
+            st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year,
+        )
+        if off_year:
+            notes.append(off_year)
         parsed = [
             f"dividends ${rec.dividends_taxable_ytd:,.2f}",
             f"interest ${rec.interest_taxable_ytd:,.2f}",
@@ -1631,7 +1644,25 @@ def _render_scan_review(
                 st.rerun()
 
     if stmt_taxable:
-        st.caption(f"Counted toward YTD income: {', '.join(stmt_taxable.keys())}")
+        # Only statements for the snapshot's tax year count; the rest stay in
+        # the ledger for their own year and are explained, never listed as
+        # counted (issue #12).
+        snap_year = st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year
+        counted = [
+            key for key, rec in stmt_taxable.items() if statement_in_tax_year(rec, snap_year)
+        ]
+        if counted:
+            st.caption(f"Counted toward YTD income: {', '.join(counted)}")
+        for rec in stmt_taxable.values():
+            note = off_year_statement_note(
+                rec,
+                resolve_account_owner(
+                    rec.broker, rec.account_number, account_overrides, instance_owner
+                ),
+                snap_year,
+            )
+            if note:
+                st.info(note)
         if not identity_set:
             st.caption(
                 "Applying is unavailable until this planner instance has an "
@@ -1680,7 +1711,14 @@ def _render_scan_review(
             st.session_state.ytd_snapshot = prev_ytd
             _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             save_ytd_snapshot(prev_ytd)
-            st.success(f"Applied {len(stmt_taxable)} taxable account(s) to YTD snapshot")
+            st.success(
+                f"Applied {len(counted)} taxable account(s) to YTD snapshot"
+                + (
+                    f" ({len(stmt_taxable) - len(counted)} from another tax year not counted)"
+                    if len(counted) < len(stmt_taxable)
+                    else ""
+                )
+            )
             if _manual_entry_kept_explicit:
                 st.caption(
                     "Manual entry stayed ON — you turned it on yourself, so this "
