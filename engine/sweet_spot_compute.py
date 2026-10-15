@@ -27,7 +27,7 @@ from engine.niit import niit
 from engine.scenario import run_scenario
 from engine.scenario_autofill import bracket_fill_conversions
 from engine.scenario_compute import QCD_MIN_AGE
-from engine.scenario_types import ConversionPlan
+from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
     BRACKETS_MFJ,
     BRACKETS_SINGLE,
@@ -1147,6 +1147,30 @@ def sweet_spot_conversion_window(hh: Household) -> int:
     return max(hh.your_conv_window, hh.spouse_conv_window)
 
 
+def zero_conversion_years(
+    hh: Household,
+    *,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> dict[int, YearResult]:
+    """The zero-conversion projection over the conversion window, by year.
+
+    The one projection behind :func:`zero_conversion_ira_draws` and the
+    draw-aware cost curve (``engine.sweet_spot_draw_curve``).
+    """
+    conv_window = sweet_spot_conversion_window(hh)
+    end_age = hh.your_age + max(conv_window - 1, 0)
+    result = run_scenario(
+        hh,
+        ConversionPlan(),
+        "sweet-spot waterfall baseline",
+        end_age=end_age,
+        ytd=ytd,
+        net_inv_income=net_inv_income,
+    )
+    return {yr.year: yr for yr in result.years}
+
+
 def zero_conversion_ira_draws(
     hh: Household,
     *,
@@ -1178,17 +1202,8 @@ def zero_conversion_ira_draws(
     understatement of the draw survives here -- the same direction, and for the
     same reason, as the engine's own first-pass conversion_cap.
     """
-    conv_window = sweet_spot_conversion_window(hh)
-    end_age = hh.your_age + max(conv_window - 1, 0)
-    result = run_scenario(
-        hh,
-        ConversionPlan(),
-        "sweet-spot waterfall baseline",
-        end_age=end_age,
-        ytd=ytd,
-        net_inv_income=net_inv_income,
-    )
-    return {yr.year: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for yr in result.years}
+    years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+    return {y: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for y, yr in years.items()}
 
 
 def compute_multi_year_summary(
