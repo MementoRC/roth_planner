@@ -1,0 +1,60 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1400 1000] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 677 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 40 960 Tm
+(Fidelity Brokerage Services LLC) Tj
+1 0 0 1 40 945 Tm
+(INVESTMENT REPORT) Tj
+1 0 0 1 40 930 Tm
+(December 1, 2025 - December 31, 2025) Tj
+1 0 0 1 40 915 Tm
+(Account # Z12-345678) Tj
+1 0 0 1 40 900 Tm
+(PAT EXAMPLE - INDIVIDUAL) Tj
+1 0 0 1 40 885 Tm
+(Account Summary) Tj
+1 0 0 1 40 870 Tm
+(Account Value: $200,000.00 Account Holdings) Tj
+1 0 0 1 40 855 Tm
+(Change in Account Value $2,000.00) Tj
+1 0 0 1 40 840 Tm
+(Income Summary) Tj
+1 0 0 1 40 825 Tm
+(This Period Year-to-Date) Tj
+1 0 0 1 40 810 Tm
+(Taxable Dividends $300.00 $3,000.00) Tj
+1 0 0 1 40 795 Tm
+(Tax-exempt Dividends $50.00 $500.00) Tj
+1 0 0 1 40 780 Tm
+(Total $350.00 $3,500.00) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000000340 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1068
+%%EOF

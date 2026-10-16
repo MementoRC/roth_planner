@@ -224,16 +224,29 @@ def _koinly_year(slot: dict[str, Any]) -> int | None:
         return None
 
 
-def off_year_contributions(ledger: PdfLedger, tax_year: int) -> list[str]:
+def statement_in_tax_year(rec: BrokerageStatementRecord, tax_year: int | None) -> bool:
+    """True when *rec*'s figures count toward *tax_year* (the same gate the
+    year-gated totals use; a statement whose period cannot be read is kept)."""
+    return _in_year(_record_year({"statement_period_end": rec.statement_period_end}), tax_year)
+
+
+def off_year_contributions(
+    ledger: PdfLedger,
+    tax_year: int,
+    *,
+    koinly: bool = True,
+    brokerage: bool = True,
+) -> list[str]:
     """Plain-language notes for ledgered documents NOT counted in *tax_year*.
 
     Statement YTD columns and Koinly reports cover one tax year. A document
     from another year stays in the ledger (it is still right for its own
     year) but is skipped by the *tax_year*-gated totals (audit-1008 F-10);
-    these notes tell the user why it was not applied.
+    these notes tell the user why it was not applied. *koinly* / *brokerage*
+    select which document kinds are described.
     """
     notes: list[str] = []
-    for owner, slot in sorted(ledger.get("koinly", {}).items()):
+    for owner, slot in sorted(ledger.get("koinly", {}).items() if koinly else ()):
         if not isinstance(slot, dict):
             continue
         year = _koinly_year(slot)
@@ -242,19 +255,52 @@ def off_year_contributions(ledger: PdfLedger, tax_year: int) -> list[str]:
                 f"Koinly report for {year} ({owner}) was not counted: "
                 f"the YTD snapshot is for {tax_year}."
             )
-    for owner, accounts in sorted(ledger.get("brokerage", {}).items()):
+    for owner, accounts in sorted(ledger.get("brokerage", {}).items() if brokerage else ()):
         for rec in accounts.values():
             if not isinstance(rec, dict):
                 continue
             year = _record_year(rec)
             if not _in_year(year, tax_year):
                 notes.append(
-                    f"{str(rec.get('broker', '')).title()} statement for account "
-                    f"{rec.get('account_number', '?')} ({owner}) ends "
-                    f"{rec.get('statement_period_end')}, so its {year} figures were not "
-                    f"counted: the YTD snapshot is for {tax_year}."
+                    _statement_off_year_text(
+                        str(rec.get("broker", "")),
+                        str(rec.get("account_number", "?")),
+                        owner,
+                        rec.get("statement_period_end"),
+                        year,
+                        tax_year,
+                    )
                 )
     return notes
+
+
+def _statement_off_year_text(
+    broker: str,
+    account_number: str,
+    owner: str,
+    period_end: object,
+    year: int | None,
+    tax_year: int,
+) -> str:
+    return (
+        f"{broker.title()} statement for account {account_number} ({owner}) ends "
+        f"{period_end}, so its {year} figures were not counted: "
+        f"the YTD snapshot is for {tax_year}."
+    )
+
+
+def off_year_statement_note(rec: BrokerageStatementRecord, owner: str, tax_year: int) -> str | None:
+    """The off-year note for one parsed statement, or None when it counts.
+
+    Same wording as :func:`off_year_contributions`, for a record that is not
+    (yet) in the ledger -- e.g. one held for the user's confirmation.
+    """
+    if statement_in_tax_year(rec, tax_year):
+        return None
+    year = _record_year({"statement_period_end": rec.statement_period_end})
+    return _statement_off_year_text(
+        rec.broker, rec.account_number, owner, rec.statement_period_end, year, tax_year
+    )
 
 
 def derive_koinly_totals(ledger: PdfLedger, tax_year: int | None = None) -> dict[str, float]:

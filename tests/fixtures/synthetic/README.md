@@ -28,6 +28,7 @@ bundle.
 | `vanguard_roth_ira_2026q2.pdf` | Vanguard Roth IRA, Pat | roth_ira, $50,000 ending value |
 | `fidelity_traditional_ira_2026q2.pdf` | Fidelity Rollover IRA, Pat | traditional_ira, $400,000 |
 | `ibkr_traditional_ira_2026q2.pdf` | IBKR Rollover IRA, Pat | traditional_ira, $100,000 |
+| `fidelity_taxable_2025.pdf` | Fidelity taxable account, Pat, period ends 2025-12-31 | taxable, dividends $3,000 (prior year) |
 | `netbenefits_403b_2026h1.pdf` | NetBenefits 403(b), Sam | 403(b), $100,000 |
 | `ssa_statement_2026.pdf` | SSA statement, Pat | FRA 67, $2,000/mo at FRA |
 | `form_1040_2025.pdf` | 2025 Form 1040 | AGI $150,000, MAGI $151,000 |
@@ -46,8 +47,16 @@ AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
 Start from a fresh session, or use **Reset to demo**. Set **Command Center**
 identity to **Me**.
 
-1. **Import Statements queue** (📥 Import Statements). Upload all six PDFs
-   at once.
+0. **Other-year note (W9)** (Data > Import Statements). Upload only
+   `fidelity_taxable_2025.pdf` with a 2026 YTD snapshot, then **Scan uploaded
+   PDFs**.
+   - Expect: a note saying the Fidelity statement for account Z12-345678 ends
+     2025-12-31 and its 2025 figures were not counted.
+   - Expect: the account is NOT listed under "Counted toward YTD income".
+   - Expect: **Apply to YTD snapshot** leaves interest and dividends at 0.
+
+1. **Import Statements queue** (📥 Import Statements). Upload the six
+   2026/2025 statement PDFs at once (all but `fidelity_taxable_2025.pdf`).
    - Expect: the queue lists the SSA statement, the NetBenefits 403(b), the
      2025 1040 and three IRA statements, with nothing unrecognised and no
      errors.
