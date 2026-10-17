@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 
 from models.grants import aggregate_by_key
 from models.household import Household
-from models.sourced import Provenance, SourcedDict, SourcedList, SourcedValue
+from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
 from models.ytd_income import YTDSnapshot
 
 STALE_THRESHOLD_DAYS = 7
@@ -97,6 +97,57 @@ class DataStatusItem:
     label: str
     severity: str
     detail: str
+    source: Source | None = None
+    as_of: datetime | None = None
+
+
+_UNCONFIRMED_SOURCES = (Source.DEFAULT, Source.UNKNOWN)
+
+
+def _field_status(
+    hh: Household, field_key: str, pending_candidates: set[str], now: datetime
+) -> DataStatusItem:
+    """Status of one governed field (severity ``ok`` when nothing is wrong).
+
+    Precedence: missing > conflict > unconfirmed > stale.
+    """
+    label = _field_label(field_key)
+    conflicted = field_key in pending_candidates
+    if field_key == GRANTS_KEY and _is_confirmed_empty_grants(hh):
+        # An empty list carries no per-item provenance, so there is no
+        # timestamp to age; "no grants" is confirmed and stays ok
+        # (audit-1008 F-72).
+        severity = "conflict" if conflicted else "ok"
+        return DataStatusItem(field_key, label, severity, _CONFLICT_DETAIL if conflicted else "")
+
+    prov = _field_provenance(hh, field_key)
+    if prov is None:
+        return DataStatusItem(field_key, label, "missing", "No confirmed value on record.")
+    source, as_of = prov.source, prov.recorded_at
+    if conflicted:
+        return DataStatusItem(field_key, label, "conflict", _CONFLICT_DETAIL, source, as_of)
+    if prov.source in _UNCONFIRMED_SOURCES:
+        detail = "Value present but never confirmed by you or a document."
+        return DataStatusItem(field_key, label, "unconfirmed", detail, source, as_of)
+    age = now - prov.recorded_at
+    if age > timedelta(days=STALE_THRESHOLD_DAYS):
+        detail = f"Last confirmed {age.days} days ago."
+        return DataStatusItem(field_key, label, "stale", detail, source, as_of)
+    return DataStatusItem(field_key, label, "ok", "", source, as_of)
+
+
+_CONFLICT_DETAIL = "A newer value is pending review in the Command Center."
+
+
+def compute_field_statuses(
+    hh: Household,
+    sourced_fields: list[str],
+    pending_candidates: set[str],
+    *,
+    now: datetime,
+) -> list[DataStatusItem]:
+    """One item per governed field, including ``ok`` ones (with source/as_of)."""
+    return [_field_status(hh, f, pending_candidates, now) for f in sourced_fields]
 
 
 def compute_data_status(
@@ -106,63 +157,17 @@ def compute_data_status(
     *,
     now: datetime,
 ) -> list[DataStatusItem]:
-    """Flag each field in ``sourced_fields`` that is missing, conflicted, or stale.
+    """Flag each field in ``sourced_fields`` that needs attention.
 
-    - ``conflict``: ``field_key`` is in ``pending_candidates`` (an unconfirmed
-      Command Center candidate is currently blocking it). Takes precedence
-      over the other two checks.
-    - ``missing``: no confirmed (provenance-carrying) value exists for the field.
-    - ``stale``: a confirmed value exists, but its provenance ``recorded_at``
-      is older than ``STALE_THRESHOLD_DAYS`` (as of ``now``).
+    Severities, in precedence order: ``missing`` (no confirmed value),
+    ``conflict`` (in ``pending_candidates``), ``unconfirmed`` (provenance
+    source is DEFAULT or UNKNOWN), ``stale`` (``recorded_at`` older than
+    ``STALE_THRESHOLD_DAYS``).
 
-    A field that is confirmed, not pending, and within the threshold is
-    ``ok`` and is omitted from the returned list.
+    ``ok`` fields are omitted; use ``compute_field_statuses`` to list them.
     """
-    items: list[DataStatusItem] = []
-    for field_key in sourced_fields:
-        label = _field_label(field_key)
-
-        if field_key in pending_candidates:
-            items.append(
-                DataStatusItem(
-                    field=field_key,
-                    label=label,
-                    severity="conflict",
-                    detail="A newer value is pending review in the Command Center.",
-                )
-            )
-            continue
-
-        if field_key == GRANTS_KEY and _is_confirmed_empty_grants(hh):
-            # An empty list carries no per-item provenance, so there is no
-            # timestamp to age; "no grants" is confirmed and stays ok
-            # (audit-1008 F-72).
-            continue
-
-        prov = _field_provenance(hh, field_key)
-        if prov is None:
-            items.append(
-                DataStatusItem(
-                    field=field_key,
-                    label=label,
-                    severity="missing",
-                    detail="No confirmed value on record.",
-                )
-            )
-            continue
-
-        age = now - prov.recorded_at
-        if age > timedelta(days=STALE_THRESHOLD_DAYS):
-            items.append(
-                DataStatusItem(
-                    field=field_key,
-                    label=label,
-                    severity="stale",
-                    detail=f"Last confirmed {age.days} days ago.",
-                )
-            )
-
-    return items
+    statuses = compute_field_statuses(hh, sourced_fields, pending_candidates, now=now)
+    return [s for s in statuses if s.severity != "ok"]
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,7 @@ class DataCompleteness:
     total: int
     ok: int
     issues: tuple[DataStatusItem, ...]
+    items: tuple[DataStatusItem, ...] = ()
 
     @property
     def by_severity(self) -> dict[str, int]:
@@ -194,10 +200,10 @@ def compute_data_completeness(
     *,
     now: datetime,
 ) -> DataCompleteness:
-    items = compute_data_status(hh, sourced_fields, pending_candidates, now=now)
-    flagged = {i.field for i in items}
-    ok = len(sourced_fields) - len(flagged)
-    return DataCompleteness(total=len(sourced_fields), ok=ok, issues=tuple(items))
+    statuses = compute_field_statuses(hh, sourced_fields, pending_candidates, now=now)
+    issues = tuple(s for s in statuses if s.severity != "ok")
+    ok = len(sourced_fields) - len({i.field for i in issues})
+    return DataCompleteness(total=len(sourced_fields), ok=ok, issues=issues, items=tuple(statuses))
 
 
 # Best-guess assignment of governed scalar fields to the 5 Setup steps.

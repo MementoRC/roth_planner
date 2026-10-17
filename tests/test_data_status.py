@@ -83,6 +83,81 @@ def test_fully_populated_recently_confirmed_household_returns_empty() -> None:
     assert items == []
 
 
+def _sv(source: Source, recorded_at: datetime = NOW) -> SourcedValue:
+    return SourcedValue(1.0, Provenance(source=source, recorded_at=recorded_at))
+
+
+def test_items_carry_source_and_as_of() -> None:
+    hh = Household()
+    hh.your_ira = _sv(Source.PDF, NOW - timedelta(days=10))
+
+    (item,) = compute_data_status(hh, ["your_ira"], set(), now=NOW)
+
+    assert item.severity == "stale"
+    assert item.source == Source.PDF
+    assert item.as_of == NOW - timedelta(days=10)
+
+
+def test_missing_item_has_no_source() -> None:
+    (item,) = compute_data_status(Household(), ["your_ira"], set(), now=NOW)
+    assert item.source is None
+    assert item.as_of is None
+
+
+def test_default_and_unknown_sources_are_unconfirmed() -> None:
+    hh = Household()
+    hh.your_ira = _sv(Source.DEFAULT)
+    hh.spouse_ira = _sv(Source.UNKNOWN)
+
+    items = compute_data_status(hh, ["your_ira", "spouse_ira"], set(), now=NOW)
+
+    assert [i.severity for i in items] == ["unconfirmed", "unconfirmed"]
+    assert [i.source for i in items] == [Source.DEFAULT, Source.UNKNOWN]
+
+
+def test_unconfirmed_beats_stale_and_conflict_beats_unconfirmed() -> None:
+    hh = Household()
+    hh.your_ira = _sv(Source.DEFAULT, NOW - timedelta(days=30))
+    hh.spouse_ira = _sv(Source.DEFAULT)
+
+    items = compute_data_status(hh, ["your_ira", "spouse_ira"], {"spouse_ira"}, now=NOW)
+
+    assert [i.severity for i in items] == ["unconfirmed", "conflict"]
+
+
+def test_missing_beats_conflict() -> None:
+    (item,) = compute_data_status(Household(), ["your_ira"], {"your_ira"}, now=NOW)
+    assert item.severity == "missing"
+
+
+def test_unconfirmed_lowers_completeness() -> None:
+    hh = Household()
+    hh.your_ira = _sv(Source.MANUAL)
+    hh.spouse_ira = _sv(Source.DEFAULT)
+
+    result = compute_data_completeness(hh, ["your_ira", "spouse_ira"], set(), now=NOW)
+
+    assert result.ok == 1
+    assert result.fraction == 0.5
+    assert result.by_severity == {"unconfirmed": 1}
+
+
+def test_completeness_items_list_ok_fields_with_source() -> None:
+    hh = Household()
+    hh.your_ira = _sv(Source.MANUAL)
+    hh.spouse_ira = _sv(Source.DEFAULT)
+
+    result = compute_data_completeness(hh, ["your_ira", "spouse_ira", "your_roth"], set(), now=NOW)
+
+    assert [(i.field, i.severity) for i in result.items] == [
+        ("your_ira", "ok"),
+        ("spouse_ira", "unconfirmed"),
+        ("your_roth", "missing"),
+    ]
+    assert result.items[0].source == Source.MANUAL
+    assert result.items[0].as_of == NOW
+
+
 def test_completeness_counts_total_ok_and_fraction() -> None:
     hh = Household()
     hh.your_ira = SourcedValue(500_000.0, Provenance(source=Source.MANUAL, recorded_at=NOW))

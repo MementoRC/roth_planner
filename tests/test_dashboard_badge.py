@@ -16,3 +16,32 @@ def test_dashboard_renders_completeness_badge() -> None:
     assert not at.exception
     captions = [c.value for c in at.caption]
     assert any("Data completeness" in c for c in captions)
+    (expander,) = [e for e in at.expander if e.label == "Data sources"]
+    table = expander.markdown[0].value
+    assert "| Field | Status | Source | As of |" in table
+    assert "Your IRA balance" in table
+
+
+def test_data_source_rows_label_source_and_date() -> None:
+    from datetime import datetime
+
+    from engine.data_status import DataStatusItem
+    from models.sourced import Source
+    from views._shared import data_source_rows
+
+    when = datetime(2026, 1, 2, 3, 4)
+    rows = data_source_rows(
+        (
+            DataStatusItem("your_ira", "Your IRA balance", "ok", "", Source.PDF, when),
+            DataStatusItem("spouse_ira", "Spouse IRA balance", "missing", "x"),
+        )
+    )
+
+    assert rows[0] == {
+        "Field": "Your IRA balance",
+        "Status": "ok",
+        "Source": "Statement PDF",
+        "As of": "2026-01-02",
+    }
+    assert rows[1]["Source"] == "—"
+    assert rows[1]["As of"] == "—"
