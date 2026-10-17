@@ -3,10 +3,13 @@ from datetime import date as _date
 import pandas as pd
 import streamlit as st
 
+from engine.dividend_breakdown import qualified_breakdown
+from engine.dividend_forecast import forecast_portfolio
 from engine.headroom import HeadroomResult, compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
+from engine.portfolio_sync.holdings import positions_for_forecast_multi
 from engine.tax import (
     LTCG_RATES_MFJ,
     SafeHarborGuidance,
@@ -30,6 +33,42 @@ def ytd_bracket_rooms(
     """(room to 12%, room to 22%) as Room This Year shows them: draw-aware, so
     they equal what "Fill X%" converts (issue #5)."""
     return draw_aware_bracket_rooms(hh, ytd, headroom, manual_nii())
+
+
+def _render_qualified_breakdown() -> None:
+    """Per-ticker qualified-vs-ordinary table from the forward dividend forecast."""
+    snap = st.session_state.get("portfolio_snapshot")
+    accounts = snap.brokerage_accounts if snap else []
+    if not accounts or snap.brokerage_total <= 0:
+        return
+    fcst = forecast_portfolio(
+        positions_for_forecast_multi(accounts), total_balance=snap.brokerage_total
+    )
+    bd = qualified_breakdown(fcst.per_position)
+    if not bd.rows:
+        return
+    with st.expander("Qualified vs ordinary by ticker"):
+        st.caption("Forward annual estimate from the dividend forecast, not YTD actuals.")
+        rows = [
+            {
+                "Ticker": r.ticker,
+                "Annual dividends": fmt_dollars(r.annual_div),
+                "Qualified": fmt_dollars(r.qualified),
+                "Ordinary": fmt_dollars(r.ordinary),
+                "Qualified %": fmt_pct(r.qualified_pct),
+            }
+            for r in bd.rows
+        ]
+        rows.append(
+            {
+                "Ticker": "Total",
+                "Annual dividends": fmt_dollars(bd.total_annual_div),
+                "Qualified": fmt_dollars(bd.total_qualified),
+                "Ordinary": fmt_dollars(bd.total_ordinary),
+                "Qualified %": fmt_pct(bd.total_qualified_pct),
+            }
+        )
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
@@ -85,6 +124,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
             fmt_dollars(ytd.interest_ytd),
             help="Ordinary-rate taxed. Reduces BOTH ordinary-bracket AND MAGI conversion room.",
         )
+        _render_qualified_breakdown()
 
     # NQO exercises YTD (FinExtract sync, PR3 of finextract-nqo-exercises)
     if ytd.nqo_exercise_ytd or getattr(ytd, "_option_exercises_by_grant", None):
