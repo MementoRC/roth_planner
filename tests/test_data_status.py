@@ -125,9 +125,11 @@ def test_unconfirmed_beats_stale_and_conflict_beats_unconfirmed() -> None:
     assert [i.severity for i in items] == ["unconfirmed", "conflict"]
 
 
-def test_missing_beats_conflict() -> None:
+def test_conflict_beats_missing() -> None:
     (item,) = compute_data_status(Household(), ["your_ira"], {"your_ira"}, now=NOW)
-    assert item.severity == "missing"
+    assert item.severity == "conflict"
+    assert item.source is None
+    assert item.as_of is None
 
 
 def test_unconfirmed_lowers_completeness() -> None:

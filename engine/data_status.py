@@ -109,7 +109,8 @@ def _field_status(
 ) -> DataStatusItem:
     """Status of one governed field (severity ``ok`` when nothing is wrong).
 
-    Precedence: missing > conflict > unconfirmed > stale.
+    Precedence: conflict > missing > unconfirmed > stale. A pending Command
+    Center candidate is the actionable signal, so it wins over everything.
     """
     label = _field_label(field_key)
     conflicted = field_key in pending_candidates
@@ -121,11 +122,12 @@ def _field_status(
         return DataStatusItem(field_key, label, severity, _CONFLICT_DETAIL if conflicted else "")
 
     prov = _field_provenance(hh, field_key)
-    if prov is None:
-        return DataStatusItem(field_key, label, "missing", "No confirmed value on record.")
-    source, as_of = prov.source, prov.recorded_at
+    source = prov.source if prov else None
+    as_of = prov.recorded_at if prov else None
     if conflicted:
         return DataStatusItem(field_key, label, "conflict", _CONFLICT_DETAIL, source, as_of)
+    if prov is None:
+        return DataStatusItem(field_key, label, "missing", "No confirmed value on record.")
     if prov.source in _UNCONFIRMED_SOURCES:
         detail = "Value present but never confirmed by you or a document."
         return DataStatusItem(field_key, label, "unconfirmed", detail, source, as_of)
@@ -159,8 +161,8 @@ def compute_data_status(
 ) -> list[DataStatusItem]:
     """Flag each field in ``sourced_fields`` that needs attention.
 
-    Severities, in precedence order: ``missing`` (no confirmed value),
-    ``conflict`` (in ``pending_candidates``), ``unconfirmed`` (provenance
+    Severities, in precedence order: ``conflict`` (in ``pending_candidates``,
+    wins over everything), ``missing`` (no confirmed value), ``unconfirmed`` (provenance
     source is DEFAULT or UNKNOWN), ``stale`` (``recorded_at`` older than
     ``STALE_THRESHOLD_DAYS``).
 

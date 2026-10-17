@@ -496,7 +496,7 @@ def data_source_rows(items: tuple[DataStatusItem, ...]) -> list[dict[str, str]]:
         {
             "Field": item.label,
             "Status": item.severity,
-            "Source": SOURCE_LABELS[item.source] if item.source else "—",
+            "Source": SOURCE_LABELS.get(item.source, item.source.value) if item.source else "—",
             "As of": item.as_of.strftime("%Y-%m-%d") if item.as_of else "—",
         }
         for item in items
