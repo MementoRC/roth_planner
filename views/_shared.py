@@ -56,7 +56,13 @@ import streamlit as st
 from config.loader import load_defaults
 from config.scalar_registry import scalar_default
 from engine.data_sources.candidate_store import CandidateStore
-from engine.data_sources.paths import CANDIDATE_STORE_PATH
+from engine.data_sources.committed import (
+    CorruptCommittedCacheError,
+    load_committed,
+    save_committed,
+)
+from engine.data_sources.confirm import confirm_as_is
+from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import (
     ScanIngestResult,
@@ -476,6 +482,44 @@ def render_completeness_badge(hh: Household) -> None:
         )
     with st.expander("Data sources", expanded=False):
         st.markdown(data_source_table(completeness.items))
+        _render_confirm_as_is_buttons(completeness.items)
+
+
+CONFIRMABLE_SEVERITIES = ("unconfirmed", "stale")
+
+
+def _confirm_as_is_and_save(field_key: str) -> bool:
+    """Re-stamp *field_key* as a MANUAL confirmation in the committed baseline.
+
+    Same persistence path as the Command Center's Confirm button
+    (``load_committed`` -> mutate -> ``save_committed(COMMITTED_PATH)``); the
+    next ``get_household()`` picks it up via ``resolve_for_app``. Warns and
+    returns False when there is nothing to confirm or the baseline is unreadable.
+    """
+    try:
+        committed_json = load_committed(COMMITTED_PATH)
+        if committed_json is None:
+            st.warning("No committed baseline to confirm against yet.")
+            return False
+        confirm_as_is(committed_json, field_key, datetime.now())
+        save_committed(COMMITTED_PATH, committed_json)
+    except CorruptCommittedCacheError:
+        st.warning(f"Committed baseline at `{COMMITTED_PATH}` is unreadable; left untouched.")
+        return False
+    except ValueError as exc:
+        st.warning(str(exc))
+        return False
+    return True
+
+
+def _render_confirm_as_is_buttons(items: tuple[DataStatusItem, ...]) -> None:
+    """One "Mark X as confirmed" button per unconfirmed/stale item (value unchanged)."""
+    for item in items:
+        if item.severity not in CONFIRMABLE_SEVERITIES:
+            continue
+        clicked = st.button(f"Mark {item.label} as confirmed", key=f"confirm_asis_{item.field}")
+        if clicked and _confirm_as_is_and_save(item.field):
+            st.rerun()
 
 
 SOURCE_LABELS: dict[Source, str] = {

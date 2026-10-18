@@ -101,6 +101,17 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "apply_uploads",
         "reset_demo",
         "_export_recipient_pubkey",
+        # "Mark X as confirmed" buttons in the shared completeness badge's
+        # "Data sources" expander (views/_shared.py). A fresh demo household has
+        # every governed field "unconfirmed", so all of them render.
+        "confirm_asis_your_ira",
+        "confirm_asis_spouse_ira",
+        "confirm_asis_your_roth",
+        "confirm_asis_spouse_roth",
+        "confirm_asis_stock_price_now",
+        "confirm_asis_grants",
+        "confirm_asis_your_ss_fra",
+        "confirm_asis_spouse_ss_fra",
     }
 )
 

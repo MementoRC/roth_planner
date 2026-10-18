@@ -74,3 +74,44 @@ def confirm_field(
         raise ValueError(f"Unknown or unsupported field: {field_key!r}")
 
     return committed_json
+
+
+def confirm_as_is(
+    committed_json: dict,
+    field_key: str,
+    now: datetime,
+    detail: str = "confirmed as-is",
+) -> dict:
+    """Re-stamp ``field_key``'s committed provenance as a MANUAL confirmation.
+
+    The committed VALUE is left untouched; only its provenance becomes
+    ``Provenance(Source.MANUAL, now, detail)``. Mutates and returns
+    ``committed_json`` in place. For ``prior_year_magi.<year>`` only that one
+    year is re-stamped; for ``grants`` every item is. Raises ``ValueError`` for
+    an unknown key or a field with no committed value (nothing to confirm).
+    Does not touch the trust ``ChoiceMap`` -- no source is being chosen.
+    """
+    prov_json = Provenance(source=Source.MANUAL, recorded_at=now, detail=detail).to_json()
+
+    if field_key.startswith(_MAGI_PREFIX):
+        year = field_key[len(_MAGI_PREFIX) :]
+        payload = committed_json.get("prior_year_magi") or {}
+        if year not in payload.get("data", {}):
+            raise ValueError(f"No committed value to confirm for {field_key!r}")
+        prov_map = dict(payload.get("prov", {}))
+        prov_map[year] = prov_json
+        committed_json["prior_year_magi"] = {**payload, "prov": prov_map}
+    elif field_key == GRANTS_KEY:
+        payload = committed_json.get(GRANTS_KEY)
+        if payload is None:
+            raise ValueError(f"No committed value to confirm for {field_key!r}")
+        committed_json[GRANTS_KEY] = {**payload, "prov": [prov_json for _ in payload["data"]]}
+    elif field_key in HOUSEHOLD_SCALAR_FIELDS:
+        payload = committed_json.get(field_key)
+        if payload is None:
+            raise ValueError(f"No committed value to confirm for {field_key!r}")
+        committed_json[field_key] = {**prov_json, "value": payload["value"]}
+    else:
+        raise ValueError(f"Unknown or unsupported field: {field_key!r}")
+
+    return committed_json
