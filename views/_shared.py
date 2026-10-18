@@ -66,6 +66,7 @@ from engine.data_sources.scan_ingest import (
 from engine.data_sources.snapshot_ingest import record_snapshot_candidates
 from engine.data_status import (
     SETUP_STEP_GROUPS,
+    DataStatusItem,
     compute_data_completeness,
     governed_fields_for_step,
 )
@@ -467,9 +468,46 @@ def render_completeness_badge(hh: Household) -> None:
         now=datetime.now(),
     )
     pct = round(completeness.fraction * 100)
-    if completeness.is_complete:
+    if completeness.is_complete and "unconfirmed" not in completeness.by_severity:
         st.caption(f"Data completeness: {pct}% -- all key inputs present")
     else:
         st.caption(
             f"Data completeness: {pct}% -- {len(completeness.issues)} item(s) need attention"
         )
+    with st.expander("Data sources", expanded=False):
+        st.markdown(data_source_table(completeness.items))
+
+
+SOURCE_LABELS: dict[Source, str] = {
+    Source.MANUAL: "Manual entry",
+    Source.PDF: "Statement PDF",
+    Source.FINEXTRACT_LIVE: "FinExtract",
+    Source.MARKET_QUOTE: "Market quote",
+    Source.ESTIMATE: "Estimate",
+    Source.BUNDLE: "Backup import",
+    Source.DEFAULT: "Default",
+    Source.UNKNOWN: "Unknown",
+}
+
+
+def data_source_rows(items: tuple[DataStatusItem, ...]) -> list[dict[str, str]]:
+    """One display row per governed field: label, status, source, as-of date."""
+    return [
+        {
+            "Field": item.label,
+            "Status": item.severity,
+            "Source": SOURCE_LABELS.get(item.source, item.source.value) if item.source else "—",
+            "As of": item.as_of.strftime("%Y-%m-%d") if item.as_of else "—",
+        }
+        for item in items
+    ]
+
+
+def data_source_table(items: tuple[DataStatusItem, ...]) -> str:
+    """Markdown table of ``data_source_rows`` (markdown, not st.dataframe, so
+    pages' own ``at.dataframe`` lookups and stlite are unaffected)."""
+    rows = data_source_rows(items)
+    columns = ("Field", "Status", "Source", "As of")
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    lines += ["| " + " | ".join(row[c] for c in columns) + " |" for row in rows]
+    return "\n".join(lines)
