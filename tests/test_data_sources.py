@@ -1371,7 +1371,9 @@ class TestSsFraCharacterization:
         assert outcome.result.household.your_ss_fra == 2_500.0
         assert outcome.result.household.spouse_ss_fra == 1_800.0
         assert isinstance(outcome.result.household.your_ss_fra, SourcedValue)
-        assert outcome.result.household.your_ss_fra.prov.source == Source.UNKNOWN
+        # 2_500 equals the synthetic seed default -> DEFAULT; 1_800 was supplied -> UNKNOWN.
+        assert outcome.result.household.your_ss_fra.prov.source == Source.DEFAULT
+        assert outcome.result.household.spouse_ss_fra.prov.source == Source.UNKNOWN
         assert outcome.result.household.your_ss_at_70() == pytest.approx(37_200.0)
 
 

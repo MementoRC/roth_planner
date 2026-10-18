@@ -485,7 +485,7 @@ SOURCE_LABELS: dict[Source, str] = {
     Source.MARKET_QUOTE: "Market quote",
     Source.ESTIMATE: "Estimate",
     Source.BUNDLE: "Backup import",
-    Source.DEFAULT: "Default",
+    Source.DEFAULT: "Seed default",
     Source.UNKNOWN: "Not recorded",
 }
 

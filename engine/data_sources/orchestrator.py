@@ -28,6 +28,7 @@ from engine.data_sources.resolver import (
     magi_field_key,
     resolve,
 )
+from engine.data_sources.seed_defaults import seed_default_fields
 from engine.data_sources.snapshot_ingest import (
     apply_snapshot_overwrite,
     record_bundle_grant_candidates,
@@ -205,9 +206,16 @@ def resolve_for_app(
         # behavior (session + snapshot overwrite of sourced fields) as the
         # baseline so migration is a numeric no-op.
         base = copy.deepcopy(session_hh)
+        # Untouched seed values are tagged DEFAULT so the completeness badge
+        # can flag them "unconfirmed". A snapshot overlay can't be told apart
+        # from a coincidentally-equal seed value, so with one every field
+        # keeps the UNKNOWN baseline.
+        default_fields: frozenset[str] = frozenset()
         if snap is not None and getattr(snap, "server_available", False):
             apply_snapshot_overwrite(base, snap, strikes)
-        committed_json = migrate_committed(base, recorded_at)
+        else:
+            default_fields = seed_default_fields(base)
+        committed_json = migrate_committed(base, recorded_at, default_fields=default_fields)
         migrated = True
 
     # Skip reconcile on the migration render: the committed baseline just
