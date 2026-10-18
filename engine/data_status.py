@@ -101,7 +101,10 @@ class DataStatusItem:
     as_of: datetime | None = None
 
 
-_UNCONFIRMED_SOURCES = (Source.DEFAULT, Source.UNKNOWN)
+# UNKNOWN is the pre-migration baseline for pre-existing user data
+# (committed.py migrate_committed), so it is treated as confirmed-but-
+# undocumented and ages out through the stale path like any other source.
+_UNCONFIRMED_SOURCES = (Source.DEFAULT,)
 
 
 def _field_status(
@@ -163,7 +166,7 @@ def compute_data_status(
 
     Severities, in precedence order: ``conflict`` (in ``pending_candidates``,
     wins over everything), ``missing`` (no confirmed value), ``unconfirmed`` (provenance
-    source is DEFAULT or UNKNOWN), ``stale`` (``recorded_at`` older than
+    source is DEFAULT), ``stale`` (``recorded_at`` older than
     ``STALE_THRESHOLD_DAYS``).
 
     ``ok`` fields are omitted; use ``compute_field_statuses`` to list them.

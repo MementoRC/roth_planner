@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from engine.data_sources.committed import COMMITTED_FIELD_ATTRS, migrate_committed
 from engine.data_status import (
     STALE_THRESHOLD_DAYS,
     DataCompleteness,
@@ -104,15 +105,32 @@ def test_missing_item_has_no_source() -> None:
     assert item.as_of is None
 
 
-def test_default_and_unknown_sources_are_unconfirmed() -> None:
+def test_default_is_unconfirmed_but_recent_unknown_is_ok() -> None:
     hh = Household()
     hh.your_ira = _sv(Source.DEFAULT)
     hh.spouse_ira = _sv(Source.UNKNOWN)
 
     items = compute_data_status(hh, ["your_ira", "spouse_ira"], set(), now=NOW)
 
-    assert [i.severity for i in items] == ["unconfirmed", "unconfirmed"]
-    assert [i.source for i in items] == [Source.DEFAULT, Source.UNKNOWN]
+    assert [i.severity for i in items] == ["unconfirmed"]
+    assert [i.source for i in items] == [Source.DEFAULT]
+
+
+def test_migrated_committed_household_is_fully_complete() -> None:
+    """Regression: migrate_committed stamps every field UNKNOWN; that baseline
+    must not read as unconfirmed."""
+    hh = Household()
+    hh.your_ira = 500_000.0
+    hh.spouse_ira = 400_000.0
+    hh.prior_year_magi = {2025: 150_000.0}
+    migrate_committed(hh, NOW)
+
+    fields = [a for a in COMMITTED_FIELD_ATTRS if a != "prior_year_magi"]
+    fields.append("prior_year_magi.2025")
+    result = compute_data_completeness(hh, fields, set(), now=NOW)
+
+    assert "unconfirmed" not in result.by_severity
+    assert result.fraction == 1.0
 
 
 def test_unconfirmed_beats_stale_and_conflict_beats_unconfirmed() -> None:
