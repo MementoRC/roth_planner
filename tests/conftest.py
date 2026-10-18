@@ -189,6 +189,7 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_scan_ingest_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_views_shared_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
+    monkeypatch.setattr(_views_shared_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(
         _option_exercise_helpers_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json")
     )
