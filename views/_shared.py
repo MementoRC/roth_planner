@@ -486,7 +486,7 @@ SOURCE_LABELS: dict[Source, str] = {
     Source.ESTIMATE: "Estimate",
     Source.BUNDLE: "Backup import",
     Source.DEFAULT: "Default",
-    Source.UNKNOWN: "Unknown",
+    Source.UNKNOWN: "Not recorded",
 }
 
 
