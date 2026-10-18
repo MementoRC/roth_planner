@@ -16,6 +16,7 @@ import dataclasses
 import json
 import logging
 import os
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -88,16 +89,26 @@ def apply_committed(hh: Household, committed_json: dict) -> None:
             setattr(hh, attr, SourcedValue.from_json(payload))
 
 
-def migrate_committed(hh: Household, recorded_at: datetime, detail: str = "pre-migration") -> dict:
+def migrate_committed(
+    hh: Household,
+    recorded_at: datetime,
+    detail: str = "pre-migration",
+    default_fields: Collection[str] = (),
+) -> dict:
     """Wrap every COMMITTED_FIELD_ATTRS value currently on ``hh`` as a
     committed Sourced* value with ``Source.UNKNOWN`` provenance (mutating
     ``hh`` in place), and return the resulting committed_json.
 
+    Attrs named in ``default_fields`` (every item, for dict/list attrs) are
+    instead stamped ``Source.DEFAULT`` with detail "seed default".
+
     Numeric values are preserved exactly — wrapping a float in SourcedValue
     keeps ``==`` against the original plain float.
     """
-    prov = Provenance(Source.UNKNOWN, recorded_at, detail)
+    unknown_prov = Provenance(Source.UNKNOWN, recorded_at, detail)
+    default_prov = Provenance(Source.DEFAULT, recorded_at, "seed default")
     for attr in COMMITTED_FIELD_ATTRS:
+        prov = default_prov if attr in default_fields else unknown_prov
         value = getattr(hh, attr)
         if attr == _MAGI_ATTR:
             data = dict(value)
