@@ -1645,7 +1645,7 @@ def _render_scan_review(
                 key=f"account_type_confirm_{account_number}",
             )
             if choice != "-- confirm --":
-                save_account_type_override(account_number, choice)
+                save_account_type_override(rec.account_number, choice, broker=rec.broker)
                 # Refresh the cached statement_by_account in-place so the
                 # confirmed classification sticks across the rerun below --
                 # otherwise the stale session_state dict is reused on the

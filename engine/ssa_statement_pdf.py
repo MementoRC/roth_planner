@@ -49,10 +49,20 @@ class SsaStatement:
     statement_date: str  # ISO date
     fra_age: int  # whole years ("66 and 10 months" -> 66)
     estimates: dict[int, float] = field(default_factory=dict)  # claim age -> $/month
+    fra_months: int = 0  # months past fra_age ("66 and 10 months" -> 10)
 
     @property
     def fra_monthly(self) -> float:
-        return self.estimates[self.fra_age]
+        """The benefit at full retirement age.
+
+        SSA prints whole-year rows only. When FRA is *fra_age* plus some
+        months, the *fra_age* row is a claim that many months EARLY (reduced
+        5/9 of 1% per month), so the FRA amount is derived by undoing that.
+        """
+        at_fra_age = self.estimates[self.fra_age]
+        if not self.fra_months:
+            return at_fra_age
+        return at_fra_age / (1 - self.fra_months * _EARLY_REDUCTION_PER_MONTH)
 
 
 # Both markers are required: a 1040 or a letter can mention the statement by
@@ -68,10 +78,11 @@ def is_ssa_statement(text: str) -> bool:
 
 _DATE = r"(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}"
 _HEADER_RE = re.compile(rf"^Your Social Security Statement\n(?:(.+?)\s+)?({_DATE})$", re.MULTILINE)
-_FRA_RE = re.compile(r"Your full retirement age is (\d{2})\b")
+_FRA_RE = re.compile(r"Your full retirement age is (\d{2})\b(?: and (\d{1,2}) months?)?")
 _ESTIMATE_RE = re.compile(r"^(6[2-9]|70) \$([\d,]+)$", re.MULTILINE)
 
 _STALE_AFTER_DAYS = 365
+_EARLY_REDUCTION_PER_MONTH = 5 / 900  # 5/9 of 1% for each month claimed before FRA
 
 
 def parse_ssa_statement_text(pages: Sequence[str]) -> SsaStatement:
@@ -105,6 +116,7 @@ def parse_ssa_statement_text(pages: Sequence[str]) -> SsaStatement:
         statement_date=datetime.strptime(header.group(2), "%B %d, %Y").date().isoformat(),
         fra_age=fra_age,
         estimates=estimates,
+        fra_months=int(fra.group(2) or 0),
     )
 
 
@@ -162,13 +174,21 @@ def default_ssa_owner(stmt: SsaStatement, owner_map: dict[str, str], instance_ow
 
 
 def pick_latest_ssa(statements: Iterable[SsaStatement]) -> list[SsaStatement]:
-    """Keep the newest statement (by statement date) per holder."""
-    latest: dict[str | None, SsaStatement] = {}
+    """Keep the newest statement (by statement date) per named holder.
+
+    Statements with no printed holder name cannot be told apart, so they are
+    never merged: each distinct one stays queued for the user to assign.
+    """
+    latest: dict[str, SsaStatement] = {}
+    nameless: list[SsaStatement] = []
     for stmt in statements:
         key = stmt.owner_key
-        if key not in latest or stmt.statement_date > latest[key].statement_date:
+        if key is None:
+            if stmt not in nameless:
+                nameless.append(stmt)
+        elif key not in latest or stmt.statement_date > latest[key].statement_date:
             latest[key] = stmt
-    return list(latest.values())
+    return [*latest.values(), *nameless]
 
 
 def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement, *, path: Path | None = None) -> None:
@@ -191,6 +211,7 @@ def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement, *, path: Path | None 
     existing[owner] = {
         "statement_date": stmt.statement_date,
         "fra_age": stmt.fra_age,
+        "fra_months": stmt.fra_months,
         "estimates": {str(age): amount for age, amount in stmt.estimates.items()},
     }
     write_pii_json(target, existing)
@@ -210,6 +231,7 @@ def load_ssa_pdf_estimates(owner: str, *, path: Path | None = None) -> SsaStatem
             statement_date=str(entry["statement_date"]),
             fra_age=int(entry["fra_age"]),
             estimates={int(age): float(v) for age, v in entry["estimates"].items()},
+            fra_months=int(entry.get("fra_months", 0)),
         )
     except (json.JSONDecodeError, OSError, AttributeError, KeyError, TypeError, ValueError):
         return None

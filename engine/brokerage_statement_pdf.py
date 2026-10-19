@@ -563,7 +563,7 @@ def _parse_vanguard(full_text: str) -> BrokerageStatementRecord:
 # IBKR accounts never need the manual "unknown" confirmation step Schwab
 # requires.
 
-_IBKR_ACCOUNT_NUMBER_RE = re.compile(r"Account ([A-Z]\d{8})\b")
+_IBKR_ACCOUNT_NUMBER_RE = re.compile(r"Account ([A-Z]\d{7,8})\b")
 
 # Order doesn't matter here (patterns are mutually exclusive), but each must
 # anchor on the literal "Customer Type" prefix specifically -- every IBKR
@@ -1352,12 +1352,41 @@ def validate_local_folder(raw: str) -> tuple[Path | None, str | None]:
     return candidate, None
 
 
-def save_account_type_override(account_number: str, account_type: str) -> None:
+def _override_key(broker: str, account_number: str) -> str:
+    """Override identity is (broker, account_number), like _account_slot."""
+    return f"{broker}:{account_number}"
+
+
+def save_account_type_override(
+    account_number: str, account_type: str, *, broker: str | None = None
+) -> None:
+    """Persist a confirmed type for one account. With *broker* the override is
+    keyed ``"<broker>:<account_number>"``; without it, the legacy bare number."""
     if account_type not in ACCOUNT_TYPES:
         raise ValueError(f"Invalid account_type {account_type!r}")
     overrides = load_account_type_overrides()
-    overrides[account_number] = account_type
+    key = account_number if broker is None else _override_key(broker, account_number)
+    overrides[key] = account_type
     write_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH, overrides)
+
+
+def _migrate_legacy_overrides(overrides: dict[str, str]) -> tuple[dict[str, str], bool]:
+    """Re-key legacy bare-number overrides by the broker that holds that number
+    in the statement cache. A number held by several brokers is ambiguous and is
+    dropped (the user is asked again); a number not in the cache stays bare."""
+    held = load_statement_records().values()
+    migrated: dict[str, str] = {}
+    changed = False
+    for key, value in overrides.items():
+        brokers = {r.broker for r in held if r.account_number == key}
+        if not brokers:
+            migrated[key] = value
+        elif len(brokers) == 1:
+            migrated.setdefault(_override_key(brokers.pop(), key), value)
+            changed = True
+        else:
+            changed = True
+    return migrated, changed
 
 
 def load_account_type_overrides() -> dict[str, str]:
@@ -1367,7 +1396,16 @@ def load_account_type_overrides() -> dict[str, str]:
         raw = read_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH)
     except (json.JSONDecodeError, OSError):
         return {}
-    return {str(k): str(v) for k, v in raw.items()}
+    overrides = {str(k): str(v) for k, v in raw.items()}
+    legacy = {k: v for k, v in overrides.items() if ":" not in k}
+    if not legacy:
+        return overrides
+    migrated, changed = _migrate_legacy_overrides(legacy)
+    if not changed:
+        return overrides
+    result = {**{k: v for k, v in overrides.items() if k not in legacy}, **migrated}
+    write_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH, result)
+    return result
 
 
 def apply_account_type_overrides(
@@ -1388,7 +1426,9 @@ def apply_account_type_overrides(
     """
     result: dict[str, BrokerageStatementRecord] = {}
     for account_number, rec in by_account.items():
-        override = overrides.get(account_number)
+        override = overrides.get(_override_key(rec.broker, rec.account_number))
+        if override is None:  # legacy bare-number entry not yet migrated
+            override = overrides.get(rec.account_number)
         if override is not None and override not in ACCOUNT_TYPES:
             result[account_number] = rec
             continue
