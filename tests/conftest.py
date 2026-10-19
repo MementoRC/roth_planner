@@ -36,6 +36,7 @@ import engine.brokerage_statement_pdf as _brokerage_mod  # noqa: E402
 import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
+import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
 import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
@@ -76,6 +77,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _ubs_activity_store_mod._UBS_ACTIVITY_CACHE_PATH,
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
+    _demo_mode_mod.DEMO_MODE_PATH,
 ]
 
 
@@ -175,6 +177,7 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
     )
     monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
+    monkeypatch.setattr(_demo_mode_mod, "DEMO_MODE_PATH", _tmp(".demo_mode"))
     monkeypatch.setattr(
         _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
     )

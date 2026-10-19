@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config.loader import clear_user_defaults, save_user_defaults
+from config.loader import save_user_defaults
+from config.scalar_registry import session_key_for_config_key
+from engine.demo_mode import enter_demo_mode, leave_demo_mode
 from engine.portfolio_sync import merge_snapshots
 from engine.portfolio_sync.shapes import portfolio_snapshot_from_dict
 from engine.upload_merge import SCALAR_KEYS, build_user_defaults_session_updates
@@ -80,8 +82,9 @@ def _user_defaults_from_session() -> dict:
     """Inverse of _apply_user_defaults_to_session: read session_state → JSON dict."""
     payload: dict = {}
     for k in SCALAR_KEYS:
-        # Reverse the alias: session stores stock_price, JSON schema expects stock_price_now
-        sess_key = "stock_price" if k == "stock_price_now" else k
+        # Reverse the alias: session stores stock_price / _stock_ticker, the JSON
+        # schema expects stock_price_now / stock_ticker.
+        sess_key = session_key_for_config_key(k)
         if sess_key in st.session_state:
             payload[k] = st.session_state[sess_key]
     # grant_strikes DELIBERATELY keeps a truthy-only guard (unlike the keys
@@ -205,8 +208,9 @@ _PERSONAL_KEY_PREFIXES = (
 )
 
 
-def _clear_personal_session_state() -> None:
-    """Reset personal-mode session state to demo defaults."""
+def _clear_session_for_reseed() -> None:
+    """Drop every personal session key (and the queued statements) so the next
+    run re-seeds from whatever defaults are visible at that time."""
     keys_to_clear = [
         "portfolio_snapshot",
         "_user_grant_strikes",
@@ -231,6 +235,9 @@ def _clear_personal_session_state() -> None:
         "advance_aptc_annual",
         "medicare_part_b_base_monthly",
         "cpi_assumption",
+        # audit-1018 F-29: the exercise optimizer's terminal tax rate is a
+        # registry scalar (Setup > Assumptions); it survived the reset.
+        "terminal_ira_tax_rate",
         "prior_year_magi",
         "survivor",
         "_survivor_enabled",
@@ -334,7 +341,7 @@ def _clear_personal_session_state() -> None:
         "import_slot_spouse",
         "import_v4_slot",
         # Per-slot capture times (plan R12). The persisted copy lives in
-        # .user_defaults.json, which clear_user_defaults() below deletes.
+        # .user_defaults.json, which demo mode hides from the loader.
         "_slot_captured_at",
         # audit-1008 F-65: accounts the last FinExtract sync refused to overwrite
         # (views/setup/portfolio.py KEPT_NEWER_KEY). They carry the user's account
@@ -355,12 +362,33 @@ def _clear_personal_session_state() -> None:
     for _k in list(st.session_state):
         if _k.startswith(_PERSONAL_KEY_PREFIXES):
             del st.session_state[_k]
-    st.session_state.pop("_seeded", None)  # force re-seed from synthetic
-    # Suppress on-disk cache auto-load for the remainder of this session so
-    # the reset is not silently undone by the app.py startup guard.  An
-    # explicit sync/upload clears this via _apply_portfolio_snapshot().
+    st.session_state.pop("_seeded", None)  # force re-seed
+    # audit-1018 F-25: queued SSA / NetBenefits / IRA statements and the scanned-
+    # PDF digests are personal too; this also bumps the uploader nonce so the
+    # same files can be scanned again. Deferred import: the scan view is heavy.
+    from views.ytd_income._partials._sync_scan import clear_queued_statements
+
+    clear_queued_statements(st.session_state)
+
+
+def _clear_personal_session_state() -> None:
+    """Reset to demo: clear the session and enter demo mode (audit-1018 D2).
+
+    Demo mode (engine/demo_mode.py) is what keeps the reset from being undone: the
+    personal on-disk caches and ``.user_defaults.json`` are neither read nor
+    written while it is on, and they stay on disk untouched until
+    :func:`exit_demo_mode`. (The old reset deleted ``.user_defaults.json``;
+    that destroyed the user's data and is gone.)
+    """
+    _clear_session_for_reseed()
+    # Also suppress the session-level snapshot autoload; an explicit sync/upload
+    # clears this via _apply_portfolio_snapshot().
     st.session_state["_suppress_snapshot_autoload"] = True
-    # Also remove the on-disk personal file. Session-only clearing is undone on
-    # the next startup because save_user_defaults merges onto whatever autosave
-    # left on disk before the reset (audit-0802 F3).
-    clear_user_defaults()
+    enter_demo_mode()
+
+
+def exit_demo_mode() -> None:
+    """Leave demo mode: the personal on-disk data is read again from the next run."""
+    _clear_session_for_reseed()
+    st.session_state.pop("_suppress_snapshot_autoload", None)
+    leave_demo_mode()

@@ -10,7 +10,7 @@ make public.
 from config.scalar_registry import scalar_default_by_config_key as _scalar
 from models.grants import StockGrant
 
-# The 13 keys below are also in engine.upload_merge.SCALAR_KEYS and carry a
+# The 14 keys below are also in engine.upload_merge.SCALAR_KEYS and carry a
 # ScalarSpec in config.scalar_registry.SCALAR_REGISTRY — sourced from there
 # so the value is written once (issue #498). Values are UNCHANGED; only the
 # origin moved. Do not add the other 18 SCALAR_KEYS scalars (growth_rate,
@@ -34,7 +34,7 @@ DEFAULTS: dict = {
     "living_expenses": _scalar("living_expenses"),
     # Employer / equity comp — fictional Acme Corp
     "employer_name": "Acme Corp",
-    "stock_ticker": "ACME",
+    "stock_ticker": _scalar("stock_ticker"),
     "stock_price_now": _scalar("stock_price_now"),
     "stock_price_late": 120,
     "grants": [

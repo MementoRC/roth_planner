@@ -32,7 +32,6 @@ def bridge_env(monkeypatch: pytest.MonkeyPatch) -> dict:
     import streamlit as st_mod
 
     import config.loader as loader_mod
-    import views.setup._state as state_mod
     import views.setup.data_bridge as mod
 
     env: dict = {"snapshot": None, "ledger": {}, "ytd": None, "persisted": {}, "saved": {}}
@@ -51,7 +50,6 @@ def bridge_env(monkeypatch: pytest.MonkeyPatch) -> dict:
         mod, "save_ytd_snapshot", lambda snap: env["saved"].__setitem__("ytd", snap)
     )
     monkeypatch.setattr(loader_mod, "load_raw_user_defaults", lambda: dict(env["persisted"]))
-    monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: None)
     monkeypatch.setattr(st_mod, "rerun", lambda: None)
     return env
 

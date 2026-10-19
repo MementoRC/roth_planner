@@ -40,11 +40,8 @@ direct harness matches the existing precedent in
 ``tests/test_audit_0722b_nii_clear.py`` and asserts the REAL read expression
 from ``_event_log.py:16`` verbatim, which is the thing that actually leaks.
 
-SAFETY: ``_clear_personal_session_state`` calls ``config.loader.clear_user_defaults()``,
-which does ``path.unlink(missing_ok=True)`` on the user's REAL gitignored
-``.user_defaults.json``. Every test here monkeypatches it to a no-op. (The
-existing precedent test does NOT, and therefore deletes that file for real on
-every suite run -- noted as a separate pre-existing defect, not fixed here.)
+NOTE (audit-1018 W9): the reset used to delete ``.user_defaults.json``; it now sets
+the demo-mode marker instead and leaves every personal file on disk.
 """
 
 import pytest
@@ -150,15 +147,14 @@ def run_clear(monkeypatch):
     """Return ``run(seed) -> surviving_state``.
 
     Monkeypatches ``st.session_state`` to a plain dict (``_clear_personal_session_state``
-    only needs ``.pop`` and ``__setitem__``) and neutralises ``clear_user_defaults``
-    so the user's real ``.user_defaults.json`` is never unlinked.
+    only needs ``.pop`` and ``__setitem__``). The demo-mode marker path is
+    redirected to tmp by ``tests/conftest.py``.
     """
     import views.setup._state as state_mod
 
     def run(seed: dict) -> dict:
         fake_state = dict(seed)
         monkeypatch.setattr(state_mod.st, "session_state", fake_state)
-        monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: None)
         state_mod._clear_personal_session_state()
         return fake_state
 
@@ -257,13 +253,9 @@ class TestNonRegression:
         surviving = run_clear({"_seeded": True})
         assert "_seeded" not in surviving
 
-    def test_clear_user_defaults_is_invoked(self, monkeypatch):
-        """The on-disk complement must still fire (audit-0802 F3)."""
-        import views.setup._state as state_mod
+    def test_demo_mode_is_entered(self, run_clear):
+        """The on-disk complement of the reset is the demo-mode marker (audit-1018 D2)."""
+        from engine.demo_mode import is_demo_mode
 
-        calls: list[int] = []
-        monkeypatch.setattr(state_mod.st, "session_state", {})
-        monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: calls.append(1))
-        state_mod._clear_personal_session_state()
-
-        assert calls == [1]
+        run_clear({})
+        assert is_demo_mode()

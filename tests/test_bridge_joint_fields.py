@@ -66,6 +66,7 @@ SENDER_JOINT = {
     "medicare_part_b_base_monthly": 199.9,
     "spouse_is_sole_beneficiary": False,
     "terminal_ira_tax_rate": 30.0,
+    "stock_ticker": "XYZ",
 }
 
 # What the same keys look like in the receiver's persisted .user_defaults.json
@@ -85,6 +86,7 @@ RECEIVER_PERSISTED = {
     "medicare_part_b_base_monthly": 185.0,
     "spouse_is_sole_beneficiary": True,
     "terminal_ira_tax_rate": 20.0,
+    "stock_ticker": "QRS",
 }
 
 
@@ -111,8 +113,10 @@ SENDER_YOUR_FIELDS = {
 
 
 def _session_key(file_key: str) -> str:
-    """Mirror the one alias in the scalar schema (engine/upload_merge.py:93)."""
-    return "stock_price" if file_key == "stock_price_now" else file_key
+    """The session slot for a file key (the registry's two aliases)."""
+    from config.scalar_registry import session_key_for_config_key
+
+    return session_key_for_config_key(file_key)
 
 
 class TestFreshReceiverTakesSenderJointValues:

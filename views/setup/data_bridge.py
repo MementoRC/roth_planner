@@ -39,10 +39,11 @@ from engine.data_bridge_keys import (
     load_pubkey,
 )
 from engine.data_sources.record import discard_pdf_balance_candidates, record_magi_candidates
+from engine.demo_mode import is_demo_mode
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
-from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
 from engine.portfolio_sync.portfolio import (
     EmptySnapshotWriteRefusedError,
     load_snapshot,
@@ -58,6 +59,7 @@ from ._state import (
     _clear_personal_session_state,
     _portfolio_snapshot_from_dict,
     _user_defaults_from_session,
+    exit_demo_mode,
 )
 
 
@@ -472,17 +474,45 @@ def _persist_slot_captured_at(new: dict, old: dict) -> None:
     save_user_defaults({"slot_captured_at": dict(new)})
 
 
+def _held_portfolio_state() -> tuple[PortfolioSnapshot | None, dict | None, YTDSnapshot | None]:
+    """The portfolio snapshot, PDF ledger and YTD snapshot this planner holds.
+
+    In demo mode (audit-1018 F-31) the on-disk caches are the parked PERSONAL
+    data, so an export or import diff sees only what the demo session itself
+    holds -- never the personal portfolio, ledger or YTD bundled in beside the
+    demo scalars.
+
+    Otherwise the in-session YTD snapshot is preferred (authoritative, and the
+    ONLY thing that exists at all in Pyodide -- there is no persistent
+    filesystem there, so ``load_ytd_snapshot()`` always misses on the public
+    site), falling back to the on-disk cache for a local run where the YTD page
+    hasn't been visited yet this session.
+    """
+    if is_demo_mode():
+        return (
+            st.session_state.get("portfolio_snapshot"),
+            None,
+            st.session_state.get("ytd_snapshot"),
+        )
+    return (
+        load_snapshot(),
+        _load_pdf_ledger(),
+        st.session_state.get("ytd_snapshot") or load_ytd_snapshot(),
+    )
+
+
 def _local_state() -> LocalState:
     """Everything this planner holds before an import, for the planner to diff against."""
     from config import loader
 
     overrides = st.session_state.get("account_type_overrides")
+    snapshot, ledger, ytd = _held_portfolio_state()
     return LocalState(
         scalars={k: st.session_state[k] for k in _SESSION_SCALAR_KEYS if k in st.session_state},
         persisted_scalars=loader.load_raw_user_defaults(),
-        snapshot=load_snapshot(),
-        ledger=_load_pdf_ledger() or {},
-        ytd=st.session_state.get("ytd_snapshot") or load_ytd_snapshot(),
+        snapshot=snapshot,
+        ledger=ledger or {},
+        ytd=ytd,
         account_type_overrides=overrides if isinstance(overrides, dict) else {},
         slot_captured_at=_slot_captured_at(),
     )
@@ -770,6 +800,14 @@ def _handle_personal_uploads() -> None:
             _clear_personal_session_state()
             st.success("Reset to demo defaults.")
             st.rerun()
+        if is_demo_mode():
+            st.caption(
+                "Demo mode is on: your saved data stays on disk, untouched, and is neither "
+                "read nor written until you leave demo mode."
+            )
+            if st.button("Leave demo mode", key="leave_demo_mode", use_container_width=True):
+                exit_demo_mode()
+                st.rerun()
 
 
 def _rederive_ytd_from_ledger(ledger: object) -> bool:
@@ -915,14 +953,9 @@ def _handle_personal_exports() -> None:
                 # st.download_button's ``data=`` argument is evaluated
                 # eagerly on every render regardless of disabled/clicked.
                 scalars = _user_defaults_from_session()
-                snapshot = load_snapshot()
-                ledger = _load_pdf_ledger()
-                # Prefer the in-session YTD snapshot (authoritative, and the ONLY
-                # thing that exists at all in Pyodide -- there is no persistent
-                # filesystem there, so load_ytd_snapshot() always misses on the
-                # public site). Fall back to the on-disk cache for a local run
-                # where the YTD page hasn't been visited yet this session.
-                ytd = st.session_state.get("ytd_snapshot") or load_ytd_snapshot()
+                # Demo mode exports demo data only (audit-1018 F-31); see
+                # _held_portfolio_state for the in-session-vs-disk rule.
+                snapshot, ledger, ytd = _held_portfolio_state()
                 # Carry the exporter's real stock-option/RSU grants along too --
                 # without this, the recipient's Household.grants keeps its
                 # synthetic Acme demo-grant default_factory forever (the

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from config.scalar_registry import joint_keys as _joint_keys
 from config.scalar_registry import scalar_default_by_config_key as _scalar_default
 from config.scalar_registry import scalar_keys as _scalar_keys
+from config.scalar_registry import session_key_for_config_key as _session_key_for
 from engine.portfolio_sync import PortfolioSnapshot
 from engine.portfolio_sync.classify import _resolve_override
 from models.legacy_keys import migrate_legacy_keys
@@ -143,7 +144,7 @@ def build_user_defaults_session_updates(
             for file_k in sorted(JOINT_FIELDS):
                 if file_k not in data:
                     continue
-                sess_k = "stock_price" if file_k == "stock_price_now" else file_k
+                sess_k = _session_key_for(file_k)
                 if not receiver_joint_value_is_set(file_k, receiver_persisted):
                     # Never set (absent, or still the demo default) => the only
                     # real value in the household is the sender's.
@@ -164,8 +165,7 @@ def build_user_defaults_session_updates(
         return updates
     for k in SCALAR_KEYS:
         if k in data:
-            sess_key = "stock_price" if k == "stock_price_now" else k
-            updates[sess_key] = data[k]
+            updates[_session_key_for(k)] = data[k]
     if "grant_strikes" in data:
         updates["_user_grant_strikes"] = data["grant_strikes"]
     if "account_type_overrides" in data and isinstance(data["account_type_overrides"], dict):
