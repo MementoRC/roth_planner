@@ -147,10 +147,9 @@ def test_due_date_rolls_past_weekends_and_legal_holidays(payment_date, expected)
         # Days between the nominal and rolled deadline map to the rolled one.
         ("2028-04-17", "2028-04-18"),
         ("2023-04-17", "2023-04-18"),
-        # Early January is the NEW tax year (whose guidance this page shows):
-        # the Jan 15 date there is the prior year's Q4, so the next current-year
-        # deadline is Q1.
-        ("2024-01-10", "2024-04-15"),
+        # audit-1018 F-13: Jan 1-15 maps to the prior tax year's Q4 (Jan 15, here
+        # rolled to Tue Jan 16 because the 15th is MLK Day), not to Q1.
+        ("2024-01-10", "2024-01-16"),
     ],
 )
 def test_true_deadline_day_does_not_skip_a_quarter(payment_date, expected):

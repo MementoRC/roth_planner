@@ -46,6 +46,7 @@ from engine.tax import (
     taxable_ss,
 )
 from engine.tax_indexing import index_value as _index_value
+from engine.tax_indexing import qcd_limit_for_year
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -337,7 +338,7 @@ def estimate_rmd_income(
     # -- unlike the YTD reduction below), gated on QCD_MIN_AGE and capped at
     # the inflation-indexed per-person qcd_limit.
     if your_qcd > 0 or spouse_qcd > 0:
-        _qcd_limit = _index_value(hh.qcd_limit, year, hh.cpi_assumption)
+        _qcd_limit = qcd_limit_for_year(hh.qcd_limit, year, hh.cpi_assumption)
         if ya >= QCD_MIN_AGE:
             _your_qcd_eff = min(your_qcd, _qcd_limit)
             your_rmd = max(your_rmd - min(_your_qcd_eff, your_rmd), 0.0)

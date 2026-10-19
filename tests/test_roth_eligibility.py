@@ -69,7 +69,10 @@ class TestRothTablesIndexing:
         from views.roth_eligibility import contrib_limit_for_year
 
         v = contrib_limit_for_year(2031, cpi=0.025)
-        assert v == pytest.approx(7_500 * 1.025**5)
+        raw = 7_500 * 1.025**5
+        # §219(b)(5)(C): the increase rounds DOWN to a multiple of $500
+        assert v == pytest.approx(8_000)
+        assert raw - 500 < v <= raw
         assert v > 7_500  # not frozen at the 2026 value
 
     def test_catchup_indexes_past_2026(self):
@@ -78,7 +81,10 @@ class TestRothTablesIndexing:
         from views.roth_eligibility import catchup_50_for_year
 
         v = catchup_50_for_year(2031, cpi=0.025)
-        assert v == pytest.approx(1_100 * 1.025**5)
+        raw = 1_100 * 1.025**5
+        # §219(b)(5)(C): the increase rounds DOWN to a multiple of $100
+        assert v == pytest.approx(1_200)
+        assert raw - 100 < v <= raw
         assert v > 1_100
 
     def test_phaseout_exact_for_published_year(self):
@@ -95,6 +101,7 @@ class TestRothTablesIndexing:
         from views.roth_eligibility import roth_phaseout_for_year
 
         low, high = roth_phaseout_for_year(2031, "MFJ", cpi=0.025)
-        assert low == pytest.approx(242_000 * 1.025**5)
-        assert high == pytest.approx(252_000 * 1.025**5)
+        # threshold rounds to the nearest $1,000; the statutory $10k width is fixed
+        assert low == pytest.approx(274_000)  # 242_000 * 1.025**5 = 273_800.8
+        assert high - low == pytest.approx(10_000)
         assert low > 242_000  # not frozen at the 2026 band

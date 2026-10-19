@@ -1,7 +1,8 @@
 """Regression tests for audit 0707 finding MU4-F2 — per-category $50 CPI rounding.
 
 Statutory inflation-adjusted amounts (ordinary brackets, standard/senior
-deductions, LTCG breakpoints) are rounded to the nearest $50 per IRC §1(f)(6).
+deductions, LTCG breakpoints) have their CPI increase rounded DOWN to a multiple
+of $50 per IRC §1(f)(7)(A) (audit-1018 F-38; formerly modeled as nearest-$50).
 That rounding is opt-in via the ``round50`` flag on the tax_indexing helpers and
 must NOT leak onto IRMAA/FPL/ACA/QCD/contribution/catch-up/phase-out amounts,
 which use different statutory rounding. Base-year (2026) values stay unrounded
@@ -16,32 +17,31 @@ import pytest
 
 from engine.tax_indexing import (
     BASE_YEAR,
-    _round_to_nearest_50,
+    _round_increase_down,
     index_bracket_list,
     index_tuple,
     index_value,
 )
 
 
-class TestRoundToNearest50:
+class TestRoundIncreaseDown50:
     def test_exact_multiple_unchanged(self):
-        assert _round_to_nearest_50(100.0) == 100.0
-        assert _round_to_nearest_50(0.0) == 0.0
+        assert _round_increase_down(0.0, 100.0, 50.0) == 100.0
+        assert _round_increase_down(0.0, 0.0, 50.0) == 0.0
 
-    def test_rounds_down_below_25(self):
-        assert _round_to_nearest_50(124.0) == 100.0
+    def test_rounds_down_below_50(self):
+        assert _round_increase_down(0.0, 124.0, 50.0) == 100.0
 
-    def test_rounds_up_above_25(self):
-        assert _round_to_nearest_50(126.0) == 150.0
+    def test_never_rounds_up(self):
+        assert _round_increase_down(0.0, 149.0, 50.0) == 100.0
+        assert _round_increase_down(0.0, 126.0, 50.0) == 100.0
 
-    def test_half_step_25_rounds_up(self):
-        # exact $25 half-step rounds UP to the next $50 (IRC §1(f)(6))
-        assert _round_to_nearest_50(25.0) == 50.0
-        assert _round_to_nearest_50(75.0) == 100.0
+    def test_increase_is_measured_from_base(self):
+        assert _round_increase_down(1_010.0, 1_075.0, 50.0) == 1_060.0
 
     def test_infinite_returned_unchanged(self):
-        assert _round_to_nearest_50(float("inf")) == float("inf")
-        assert _round_to_nearest_50(float("-inf")) == float("-inf")
+        assert _round_increase_down(0.0, float("inf"), 50.0) == float("inf")
+        assert _round_increase_down(0.0, float("-inf"), 50.0) == float("-inf")
 
 
 class TestIndexValueRound50:
@@ -53,7 +53,7 @@ class TestIndexValueRound50:
     def test_round50_true_lands_on_50_multiple(self):
         v = index_value(100_000.0, 2030, 0.025, round50=True)
         assert v % 50 == 0
-        assert v == _round_to_nearest_50(100_000.0 * (1.025**4))
+        assert v == _round_increase_down(100_000.0, 100_000.0 * (1.025**4), 50.0)
 
     def test_base_year_unrounded_even_with_round50(self):
         assert index_value(98_925.0, BASE_YEAR, 0.025, round50=True) == 98_925.0
@@ -62,7 +62,8 @@ class TestIndexValueRound50:
     def test_round50_matches_manual_computation(self):
         base, year, cpi = 24_800.0, 2035, 0.03
         scaled = base * (1.0 + cpi) ** (year - BASE_YEAR)
-        assert index_value(base, year, cpi, round50=True) == math.floor(scaled / 50.0 + 0.5) * 50.0
+        expected = base + math.floor((scaled - base) / 50.0) * 50.0
+        assert index_value(base, year, cpi, round50=True) == expected
 
 
 class TestIndexTupleAndBracketListRound50:

@@ -70,8 +70,12 @@ def _crosses(magi: float, threshold: float, *, is_top: bool) -> bool:
 
 
 def _round_to_1000(value: float) -> float:
-    """Round to the nearest multiple of $1,000, halves up (42 U.S.C. §1395r(i)(5)(B))."""
-    return float(math.floor(value / 1000.0 + 0.5) * 1000)
+    """Round to the nearest multiple of $1,000, halves up (42 U.S.C. §1395r(i)(5)(B)).
+
+    The 1e-9 term absorbs binary-float noise so an exact half (e.g. 2,500 carried as
+    2499.9999999999995) rounds up rather than down (audit-1018 F-39).
+    """
+    return float(math.floor(value / 1000.0 + 0.5 + 1e-9) * 1000)
 
 
 def _indexed_threshold(
