@@ -2,8 +2,10 @@
 
 Invented statements and a backup bundle for testing the import pages. These
 files are not real documents. Every name ("Pat Example", "Sam Example"),
-account number, amount and ticker (ACME) in them is made up. The repo is
-public, so never add text copied from a real statement here.
+account number and amount in them is made up, and so is the ACME ticker. The
+holdings fixture uses real fund tickers (VTI, BND, VNQ) so the dividend
+forecast can classify them, but their positions and dividends are invented.
+The repo is public, so never add text copied from a real statement here.
 
 `tests/test_synthetic_import_fixtures.py` runs every file through the real
 code path: pdfplumber extraction, content classification, then parse and
@@ -92,12 +94,14 @@ identity to **Me**.
 4b. **Per-ticker qualified/ordinary table** (🔐 Backup & Transfer, then
    💵 This Year's Income). Same steps as 4, but upload
    `synthetic_backup_v5_holdings.json.enc` and apply.
-   - Expect: This Year's Income shows YTD qualified dividends $1,500 (ordinary
-     dividends and interest are household fields that a backup never carries,
-     so they stay $0) and a "Qualified vs ordinary by ticker" expander.
+   - Expect: This Year's Income › Review Headroom tab shows YTD qualified
+     dividends $1,500 (ordinary dividends and interest are household fields
+     that a backup never carries, so they stay $0) and a "Qualified vs
+     ordinary by ticker" expander.
    - Expect rows: BND $2,100 / $0 qualified; VNQ $1,600 / $0; VTI $1,300
      all qualified (100%); Total $5,000, qualified $1,300, ordinary $3,700
      (26%). No `.dividend_rates.json` overrides may be present.
+   - Browser-verified 2026-10-19 on a local stlite build: all rows matched.
 5. **Option grid refill** (📝 Option Exercises). After step 4.
    - Imported grants are NOT adopted on their own (audit-1008 F-06): they
      wait in 🎛️ Review Changes as a `grants` card. Until it is confirmed,
