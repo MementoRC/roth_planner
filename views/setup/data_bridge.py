@@ -38,6 +38,13 @@ from engine.data_bridge_keys import (
     load_privkey,
     load_pubkey,
 )
+from engine.data_sources.committed import (
+    CorruptCommittedCacheError,
+    load_committed,
+    save_committed,
+)
+from engine.data_sources.orchestrator import stamp_bundle_scalars
+from engine.data_sources.paths import COMMITTED_PATH
 from engine.data_sources.record import discard_pdf_balance_candidates, record_magi_candidates
 from engine.demo_mode import is_demo_mode
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
@@ -603,6 +610,23 @@ def slots_with_replaced_accounts(plan: ImportPlan, selected: frozenset[str]) -> 
     ]
 
 
+def _stamp_bundle_scalars_in_baseline(scalar_updates: dict) -> None:
+    """Label imported balances/SS/price ``Backup import`` in the committed baseline.
+
+    Without a baseline (first load) or with an unreadable one, nothing is
+    touched and the imported values are handled by the normal first-load or
+    reconcile path (audit-1018 F-21).
+    """
+    try:
+        committed_json = load_committed(COMMITTED_PATH)
+        if committed_json is None:
+            return
+        if stamp_bundle_scalars(committed_json, scalar_updates, datetime.now()):
+            save_committed(COMMITTED_PATH, committed_json)
+    except CorruptCommittedCacheError:
+        return
+
+
 def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     """Apply a previewed upload: build, write the three caches, then stage the session.
 
@@ -641,6 +665,7 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     # NEXT run (see _apply_user_defaults_to_session).
     pending = st.session_state.setdefault("_pending_defaults", {})
     pending.update(result.scalar_updates)
+    _stamp_bundle_scalars_in_baseline(result.scalar_updates)
     if result.joint_conflicts:
         pending["_bundle_joint_conflicts"] = [dict(c) for c in result.joint_conflicts]
     if result.account_type_overrides != dict(ready.local.account_type_overrides):

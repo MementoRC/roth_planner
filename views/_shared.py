@@ -463,15 +463,15 @@ def render_completeness_badge(hh: Household) -> None:
     Byte-for-byte the same caption shape as Dashboard's original inline
     badge (see the Phase 4 design spec's Track 1 architecture section):
     a percent-complete line when fully populated, an issue-count line
-    otherwise. MVP simplification carried over unchanged from Dashboard's
-    original: pending Command Center candidates are not surfaced here
-    (only missing/stale) -- the Contextual shell's status bar already
-    covers pending conflicts separately.
+    otherwise. Fields pending Command Center review (``_pending_review``) are
+    reported as ``conflict``: the resolved household carries an unconfirmed
+    candidate's own provenance, which would otherwise read ``ok``/``stale``
+    and offer a "Mark as confirmed" button that cannot act (audit-1018 F-22).
     """
     completeness = compute_data_completeness(
         hh,
         _all_governed_fields(hh),
-        pending_candidates=set(),
+        pending_candidates=set(st.session_state.get("_pending_review") or ()),
         now=datetime.now(),
     )
     pct = round(completeness.fraction * 100)
