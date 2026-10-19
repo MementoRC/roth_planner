@@ -385,7 +385,7 @@ class TestClearPersonalSessionState:
 
         from views.setup import _state
 
-        return inspect.getsource(_state._clear_personal_session_state)
+        return inspect.getsource(_state._clear_session_for_reseed)
 
     def test_data_bridge_privkey_b64_cleared(self):
         """data_bridge_privkey_b64 must be in the keys_to_clear list."""
@@ -427,7 +427,11 @@ class TestClearPersonalSessionState:
         Static assertion: confirms the sentinel assignment is present so the
         app.py auto-load guard cannot silently re-hydrate from disk cache.
         """
-        source = self._state_source()
+        import inspect
+
+        from views.setup import _state
+
+        source = inspect.getsource(_state._clear_personal_session_state)
         assert "_suppress_snapshot_autoload" in source, (
             "_clear_personal_session_state does not set _suppress_snapshot_autoload — "
             "disk cache auto-load silently undoes the Reset-to-demo"
@@ -756,11 +760,12 @@ class TestPersistenceRoundTripAudit0802:
     (because the cleared value is falsy) leaves the stale on-disk value intact.
     """
 
-    def test_reset_to_demo_deletes_disk_file(
+    def test_reset_to_demo_hides_disk_file_without_deleting_it(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """F3: _clear_personal_session_state must remove the on-disk personal
-        file, or an autosave-before-reset is reseeded on the next startup."""
+        """F3 (revised by audit-1018 D2): the reset must not let an
+        autosave-before-reset be reseeded on the next startup, and must not
+        delete the personal file either -- demo mode hides it from the loader."""
         import config.loader as loader_mod
         import views.setup._state as state_mod
         from config.loader import DEFAULTS, load_defaults, save_user_defaults
@@ -781,11 +786,10 @@ class TestPersistenceRoundTripAudit0802:
         monkeypatch.setattr(state_mod.st, "session_state", {})
         state_mod._clear_personal_session_state()
 
-        assert not (tmp_path / ".user_defaults.json").exists(), (
-            "Reset-to-demo left .user_defaults.json on disk; restart will reseed "
-            "personal data (your_ira=$1.6M) instead of the demo default"
+        assert (tmp_path / ".user_defaults.json").exists(), "Reset-to-demo deleted personal data"
+        assert load_defaults()["your_ira"] == DEFAULTS["your_ira"], (
+            "restart would reseed personal data (your_ira=$1.6M) instead of the demo default"
         )
-        assert load_defaults()["your_ira"] == DEFAULTS["your_ira"]
 
     def test_cleared_survivor_not_resurrected(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

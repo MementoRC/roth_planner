@@ -38,6 +38,7 @@ from collections.abc import Mapping
 from importlib import util
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
 from models.legacy_keys import migrate_legacy_keys
 
 from .defaults import DEFAULTS
@@ -157,7 +158,13 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
     file, then ``.user_defaults.json``, then ``.user_defaults.py``; a missing
     or empty file falls through to the next one. ``source_path`` is None when
     no file supplied any override.
+
+    In demo mode (:mod:`engine.demo_mode`, set by "Reset to demo") no file
+    counts, so the demo ``DEFAULTS`` apply and the autosave has no target; the
+    personal files are left on disk untouched (audit-1018 D2).
     """
+    if is_demo_mode():
+        return None, {}
     env_path = _env_override_path()
     if env_path is not None:
         overrides = _load_override_file(env_path)
@@ -211,6 +218,8 @@ def save_user_defaults(data: dict) -> None:
     On success, the file is chmod'd to 0o600 (best-effort) since we are the
     writer this time and can proactively enforce safe permissions.
     """
+    if is_demo_mode():
+        return  # demo values must never land in the personal file (audit-1018 F-28)
     path = _save_target()
     # Preserve manually-added override keys the app doesn't manage (e.g.
     # grant_strikes): merge the incoming managed data ON TOP of whatever is
@@ -234,24 +243,6 @@ def save_user_defaults(data: dict) -> None:
         return
     with contextlib.suppress(OSError):
         path.chmod(0o600)
-
-
-def clear_user_defaults() -> None:
-    """Delete the on-disk ``.user_defaults.json`` (best-effort).
-
-    The write-side complement to a "Reset to demo": :func:`save_user_defaults`
-    merges incoming data on top of whatever is already on disk, so clearing
-    session_state alone cannot neutralise a file that autosave wrote before the
-    reset — on the next startup :func:`load_defaults` would reseed the stale
-    personal data. Removing the file makes ``load_defaults`` fall through to the
-    demo ``DEFAULTS``. A ``ROTH_PLANNER_DEFAULTS`` file is the user's own and is
-    never deleted; it still applies after a reset while the variable is set.
-
-    Best-effort: a failed unlink must never raise or break page rendering.
-    """
-    path = _USER_DEFAULTS_PATH
-    with contextlib.suppress(OSError):
-        path.unlink(missing_ok=True)
 
 
 def load_raw_user_defaults() -> dict:

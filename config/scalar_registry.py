@@ -32,8 +32,9 @@ class ScalarSpec:
     ``session_key`` is the ``st.session_state`` slot actually read/written.
     ``config_key`` is the ``.user_defaults.json`` / ``config.defaults.DEFAULTS``
     / ``SCALAR_KEYS`` name when it differs from ``session_key`` — today only
-    ``stock_price_now`` (config) <-> ``stock_price`` (session). Defaults to
-    ``session_key`` when unset.
+    ``stock_price_now`` (config) <-> ``stock_price`` (session) and
+    ``stock_ticker`` <-> ``_stock_ticker``. Defaults to
+    ``session_key`` when unset (see :func:`session_key_for_config_key`).
 
     ``scope`` is ``"joint"`` for household-wide values that cannot
     legitimately differ between the two people in this model (mirrors
@@ -133,6 +134,17 @@ SCALAR_REGISTRY: tuple[ScalarSpec, ...] = (
         ),
     ),
     ScalarSpec(
+        "_stock_ticker",
+        "ACME",
+        "joint",
+        config_key="stock_ticker",
+        note=(
+            "Employer ticker (audit-1018 F-34): session key '_stock_ticker', "
+            "config/SCALAR_KEYS name 'stock_ticker'. Travels in the export bundle "
+            "so a receiver classifies the sender's employer stock as qualified equity."
+        ),
+    ),
+    ScalarSpec(
         "prior_year_magi",
         {},
         "joint",
@@ -166,6 +178,16 @@ def scalar_default(session_key: str) -> object:
 def scalar_default_by_config_key(config_key: str) -> object:
     """Same as :func:`scalar_default`, keyed by the SCALAR_KEYS/config name."""
     return copy.deepcopy(_BY_CONFIG_KEY[current_key(config_key)].default)
+
+
+def session_key_for_config_key(config_key: str) -> str:
+    """The ``st.session_state`` slot for a SCALAR_KEYS/config name.
+
+    ``stock_price_now`` -> ``stock_price`` and ``stock_ticker`` -> ``_stock_ticker``;
+    every other scalar is 1:1.
+    """
+    spec = _BY_CONFIG_KEY.get(current_key(config_key))
+    return spec.session_key if spec is not None else config_key
 
 
 def scalar_keys() -> list[str]:

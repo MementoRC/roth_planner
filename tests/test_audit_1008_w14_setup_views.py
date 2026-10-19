@@ -180,7 +180,6 @@ class TestF65ResetClearsKeptNewer:
 
         fake_state = {"portfolio_kept_newer": ["PERSONAL-SENTINEL"]}
         monkeypatch.setattr(state_mod.st, "session_state", fake_state)
-        monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: None)
         state_mod._clear_personal_session_state()
         assert "portfolio_kept_newer" not in fake_state
 

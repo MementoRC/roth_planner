@@ -18,8 +18,13 @@ from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
-from config.scalar_registry import SCALAR_REGISTRY, scalar_default  # noqa: E402
+from config.scalar_registry import (  # noqa: E402
+    SCALAR_REGISTRY,
+    scalar_default,
+    session_key_for_config_key,
+)
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
+from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS  # noqa: E402
@@ -40,7 +45,7 @@ def _seed_session_state() -> None:
     # hand-list covering only ~10 of the 27 scalars; filing_status,
     # growth_rate, and 15 others were hardcoded below and silently discarded
     # any persisted value on every fresh session.)
-    session_keys = {k: ("stock_price" if k == "stock_price_now" else k) for k in SCALAR_KEYS}
+    session_keys = {k: session_key_for_config_key(k) for k in SCALAR_KEYS}
     for cfg_key, sess_key in session_keys.items():
         if cfg_key in defaults:
             st.session_state.setdefault(sess_key, defaults[cfg_key])
@@ -66,8 +71,9 @@ def _seed_session_state() -> None:
     st.session_state.setdefault(
         "account_type_overrides", defaults.get("account_type_overrides", {})
     )
-    # Cache ticker for sidebar label (avoids re-importing config on every render)
-    st.session_state.setdefault("_stock_ticker", defaults.get("stock_ticker", "Stock"))
+    # The employer ticker (``_stock_ticker``) is a registry scalar since
+    # audit-1018 F-34, so the SCALAR_KEYS loop above seeds it and export/import
+    # carries it.
     # 2026-08-29: instance identity is set once per machine/install (see
     # engine.instance_identity) and is never silently re-derived on a
     # corrupt cache -- a corrupt file degrades to None here (same "unset"
@@ -91,9 +97,16 @@ _seed_session_state()
 # after that widget already exists in the run).
 _drain_pending_defaults()
 
+# Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
+# personal cache below is skipped, so the reset cannot be silently undone and
+# the personal files stay parked on disk until the user leaves demo mode.
+_DEMO_MODE = is_demo_mode()
+
 # Load cached snapshots on first run (silently — Setup page shows status)
-if "portfolio_snapshot" not in st.session_state and not st.session_state.get(
-    "_suppress_snapshot_autoload"
+if (
+    not _DEMO_MODE
+    and "portfolio_snapshot" not in st.session_state
+    and not st.session_state.get("_suppress_snapshot_autoload")
 ):
     from engine.portfolio_sync import load_snapshot
 
@@ -108,8 +121,10 @@ if "portfolio_snapshot" not in st.session_state and not st.session_state.get(
         # defect: FinExtract sync/autoload bypassed the candidate gate).
         st.session_state.portfolio_snapshot = _cached
 
-if "ytd_snapshot" not in st.session_state and not st.session_state.get(
-    "_suppress_snapshot_autoload"
+if (
+    not _DEMO_MODE
+    and "ytd_snapshot" not in st.session_state
+    and not st.session_state.get("_suppress_snapshot_autoload")
 ):
     from engine.portfolio_sync import load_ytd_snapshot
 
@@ -117,7 +132,7 @@ if "ytd_snapshot" not in st.session_state and not st.session_state.get(
     if _cached_ytd is not None:
         st.session_state.ytd_snapshot = _cached_ytd
 
-if "ssa_snapshot_you" not in st.session_state:
+if not _DEMO_MODE and "ssa_snapshot_you" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
 
     _cached_ssa_you = load_ssa_snapshot(owner="you")
@@ -139,7 +154,7 @@ if "ssa_snapshot_you" not in st.session_state:
                     datetime.now(),
                 )
 
-if "ssa_snapshot_spouse" not in st.session_state:
+if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
 
     _cached_ssa_spouse = load_ssa_snapshot(owner="spouse")
@@ -164,7 +179,7 @@ if "ssa_snapshot_spouse" not in st.session_state:
 # prior_year_magi is the IRMAA-scoped slot, so the recorded value is
 # compute_irmaa_magi(agi, tax_exempt_interest, feie) — 42 U.S.C. §1395r(i)(4)
 # adds the FEIE back (audit-1008 F-59).
-_pdf_records = load_pdf_tax_records()
+_pdf_records = {} if _DEMO_MODE else load_pdf_tax_records()
 if _pdf_records:
     record_magi_candidates(
         {
@@ -216,6 +231,7 @@ from engine.data_sources.committed import (  # noqa: E402
 )
 from engine.data_sources.orchestrator import (  # noqa: E402
     MAGI_CLEARED_KEY,
+    AppResolveResult,
     resolve_for_app,
     session_keys_for_writeback,
 )
@@ -266,7 +282,7 @@ def _current_pending_review() -> set[str]:
     """
     published = set(st.session_state.get("_pending_review") or ())
     base = _run_state.get("baseline_hh")
-    if base is None:
+    if base is None or _DEMO_MODE:
         return published
     try:
         committed_json = load_committed(COMMITTED_PATH)
@@ -287,6 +303,67 @@ def _render_pending_badge(pending: set[str]) -> None:
         )
     else:
         _pending_badge_slot.empty()
+
+
+def _persist_resolution(
+    app_res: AppResolveResult,
+    store: CandidateStore,
+    choices: ChoiceMap,
+    corrupt_committed_path: Path | None,
+) -> None:
+    """Write the committed baseline, candidate store and trust choices back to disk.
+
+    Skipped entirely in demo mode (audit-1018 F-28): the in-memory state is built
+    from demo seeds, and persisting it would overwrite the parked personal files
+    and stamp the seeds as MANUAL.
+    """
+    if _DEMO_MODE:
+        return
+    # Persist: write the migrated committed baseline only on first migration
+    # (or when none existed), and always persist the candidate/choice stores.
+    # audit-0809 #11: if the on-disk committed file was corrupt (see above),
+    # app_res.committed_changed is still True here (resolve_for_app treated
+    # committed_json=None as "first load" and freshly migrated one) — but
+    # saving now would overwrite the still-intact corrupt file with the
+    # in-memory migration, destroying whatever data was in it. save_committed()
+    # itself now refuses this write unconditionally (the authoritative guard —
+    # see its docstring), so this early skip is defence in depth / an earlier,
+    # more specific warning message rather than the only thing preventing the
+    # clobber; kept so the app.py-level warning below still fires.
+    if app_res.committed_changed and corrupt_committed_path is None:
+        save_committed(COMMITTED_PATH, app_res.committed_json)
+    elif corrupt_committed_path is not None:
+        st.warning(
+            f"⚠️ Your committed baseline at `{corrupt_committed_path}` is unreadable "
+            "(corrupt or truncated) and could contain data with no other copy. It has "
+            "been left untouched and will NOT be overwritten this session — restore it "
+            "from a backup if you have one, or contact support before deleting it."
+        )
+    # audit-0823: mirror the committed-baseline guard above — a corrupt
+    # on-disk candidate store must not be silently clobbered by the
+    # in-memory store (which, per CandidateStore.load's resilience, would
+    # be EMPTY on a corrupt read). store.save() itself refuses this write
+    # (see CorruptCandidateStoreError's docstring); this except is what
+    # surfaces that refusal to the user instead of it failing silently.
+    try:
+        store.save(CANDIDATE_STORE_PATH)
+    except CorruptCandidateStoreError as exc:
+        st.warning(
+            f"⚠️ Your candidate store at `{exc.path}` is unreadable "
+            "(corrupt or truncated) and could contain data with no other copy. It has "
+            "been left untouched and will NOT be overwritten this session — restore it "
+            "from a backup if you have one, or contact support before deleting it."
+        )
+    # audit-1008 F-45: same guard for the trust-choice map.
+    try:
+        choices.save(TRUST_CHOICES_PATH)
+    except CorruptChoiceMapError as exc:
+        st.warning(
+            f"⚠️ Your saved source choices at `{exc.path}` are unreadable "
+            "(corrupt or truncated). The file has been left untouched and will NOT be "
+            "overwritten this session — restore it from a backup if you have one, or "
+            "delete it to start over with no saved choices."
+        )
 
 
 def get_household() -> Household:
@@ -382,8 +459,13 @@ def get_household() -> Household:
         "grant_strikes", {}
     )
 
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    # Demo mode (audit-1018 F-28): the personal committed baseline, candidate
+    # store and trust choices are parked on disk. Resolve against empty
+    # in-memory ones (the "first load" path, so the demo seeds are the baseline)
+    # and write none of them back -- demo values must never overwrite personal
+    # files or be stamped MANUAL there.
+    store = CandidateStore() if _DEMO_MODE else CandidateStore.load(CANDIDATE_STORE_PATH)
+    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load(TRUST_CHOICES_PATH)
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see
     # CorruptCommittedCacheError's docstring. On a corrupt file we proceed
@@ -392,11 +474,12 @@ def get_household() -> Household:
     # suppressed for this run and the user is warned; the corrupt file on
     # disk is left completely untouched (no delete/rename/overwrite).
     _corrupt_committed_path: Path | None = None
-    try:
-        committed_json = load_committed(COMMITTED_PATH)
-    except CorruptCommittedCacheError:
-        committed_json = None
-        _corrupt_committed_path = COMMITTED_PATH
+    committed_json: dict | None = None
+    if not _DEMO_MODE:
+        try:
+            committed_json = load_committed(COMMITTED_PATH)
+        except CorruptCommittedCacheError:
+            _corrupt_committed_path = COMMITTED_PATH
 
     # audit-1008 F-64: years the Setup MAGI-anchor form set back to 0.
     _cleared_magi = st.session_state.get(MAGI_CLEARED_KEY) or ()
@@ -446,51 +529,7 @@ def get_household() -> Household:
             # already used for these same fields.
             st.session_state[_session_key] = int(round(_value))
 
-    # Persist: write the migrated committed baseline only on first migration
-    # (or when none existed), and always persist the candidate/choice stores.
-    # audit-0809 #11: if the on-disk committed file was corrupt (see above),
-    # app_res.committed_changed is still True here (resolve_for_app treated
-    # committed_json=None as "first load" and freshly migrated one) — but
-    # saving now would overwrite the still-intact corrupt file with the
-    # in-memory migration, destroying whatever data was in it. save_committed()
-    # itself now refuses this write unconditionally (the authoritative guard —
-    # see its docstring), so this early skip is defence in depth / an earlier,
-    # more specific warning message rather than the only thing preventing the
-    # clobber; kept so the app.py-level warning below still fires.
-    if app_res.committed_changed and _corrupt_committed_path is None:
-        save_committed(COMMITTED_PATH, app_res.committed_json)
-    elif _corrupt_committed_path is not None:
-        st.warning(
-            f"⚠️ Your committed baseline at `{_corrupt_committed_path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
-        )
-    # audit-0823: mirror the committed-baseline guard above — a corrupt
-    # on-disk candidate store must not be silently clobbered by the
-    # in-memory store (which, per CandidateStore.load's resilience, would
-    # be EMPTY on a corrupt read). store.save() itself refuses this write
-    # (see CorruptCandidateStoreError's docstring); this except is what
-    # surfaces that refusal to the user instead of it failing silently.
-    try:
-        store.save(CANDIDATE_STORE_PATH)
-    except CorruptCandidateStoreError as exc:
-        st.warning(
-            f"⚠️ Your candidate store at `{exc.path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
-        )
-    # audit-1008 F-45: same guard for the trust-choice map.
-    try:
-        choices.save(TRUST_CHOICES_PATH)
-    except CorruptChoiceMapError as exc:
-        st.warning(
-            f"⚠️ Your saved source choices at `{exc.path}` are unreadable "
-            "(corrupt or truncated). The file has been left untouched and will NOT be "
-            "overwritten this session — restore it from a backup if you have one, or "
-            "delete it to start over with no saved choices."
-        )
+    _persist_resolution(app_res, store, choices, _corrupt_committed_path)
 
     # Expose the review gate to the sidebar/Command Center.
     st.session_state["_pending_review"] = app_res.result.pending_review

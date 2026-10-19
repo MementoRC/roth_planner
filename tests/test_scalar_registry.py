@@ -58,6 +58,7 @@ class TestDefaultsSourcedFromRegistry:
         "spouse_ss_fra",
         "living_expenses",
         "stock_price_now",
+        "stock_ticker",
     ]
 
     def test_defaults_values_match_registry(self) -> None:
@@ -156,7 +157,9 @@ _PRE_REFACTOR_SCALAR_KEYS = [
 
 # Scalars added AFTER #498 (joint scope, session key == config key). Recorded
 # explicitly so the pre-refactor literals below stay untouched.
-_POST_498_ADDITIONS = ["net_inv_income", "terminal_ira_tax_rate"]
+_POST_498_ADDITIONS = ["net_inv_income", "terminal_ira_tax_rate", "stock_ticker"]
+# Their session keys (stock_ticker is held under "_stock_ticker").
+_POST_498_SESSION_KEYS = {"net_inv_income", "terminal_ira_tax_rate", "_stock_ticker"}
 
 _PRE_REFACTOR_JOINT_FIELDS = frozenset(
     {
@@ -225,12 +228,12 @@ class TestPreRefactorLiteralPins:
     def test_joint_fields_matches_pre_refactor_literal(self) -> None:
         assert _PRE_REFACTOR_JOINT_FIELDS | frozenset(_POST_498_ADDITIONS) == JOINT_FIELDS
 
-    def test_registry_has_exactly_34_session_keys(self) -> None:
+    def test_registry_has_exactly_35_session_keys(self) -> None:
         # 32 pre-#498 session keys plus the post-#498 additions.
         assert {spec.session_key for spec in SCALAR_REGISTRY} == set(
             _PRE_REFACTOR_SCALAR_DEFAULTS
-        ) | set(_POST_498_ADDITIONS)
-        assert len(SCALAR_REGISTRY) == 34
+        ) | _POST_498_SESSION_KEYS
+        assert len(SCALAR_REGISTRY) == 35
 
     def test_every_scalar_default_matches_pre_refactor_literal(self) -> None:
         for session_key, expected in _PRE_REFACTOR_SCALAR_DEFAULTS.items():

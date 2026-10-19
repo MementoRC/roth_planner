@@ -54,7 +54,6 @@ def decrypt_seen(monkeypatch: pytest.MonkeyPatch, tmp_path) -> list[bytes]:
     import config.loader as loader_mod
     import engine.data_bridge_crypto as crypto_mod
     import engine.data_bridge_keys as keys_mod
-    import views.setup._state as state_mod
     import views.setup.data_bridge as mod
 
     monkeypatch.delenv(keys_mod.PRIVKEY_ENV, raising=False)
@@ -67,8 +66,6 @@ def decrypt_seen(monkeypatch: pytest.MonkeyPatch, tmp_path) -> list[bytes]:
     monkeypatch.setattr(mod, "load_ytd_snapshot", lambda: None)
     monkeypatch.setattr(mod, "save_ytd_snapshot", lambda snap: None)
     monkeypatch.setattr(loader_mod, "load_raw_user_defaults", lambda: {})
-    # "Reset to demo" deletes the real .user_defaults.json in cwd otherwise.
-    monkeypatch.setattr(state_mod, "clear_user_defaults", lambda: None)
     monkeypatch.setattr(st_mod, "rerun", lambda: None)
 
     seen: list[bytes] = []

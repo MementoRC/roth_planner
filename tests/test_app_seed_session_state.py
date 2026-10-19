@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from config.scalar_registry import SCALAR_REGISTRY, scalar_default
+from config.scalar_registry import SCALAR_REGISTRY, scalar_default, session_key_for_config_key
 from engine.instance_identity import CorruptInstanceOwnerError
 from engine.upload_merge import SCALAR_KEYS
 
@@ -103,6 +103,7 @@ def _run_seed_session_state(
         "SCALAR_KEYS": SCALAR_KEYS,
         "SCALAR_REGISTRY": SCALAR_REGISTRY,
         "scalar_default": scalar_default,
+        "session_key_for_config_key": session_key_for_config_key,
         "load_instance_owner": _fake_load_instance_owner,
         "CorruptInstanceOwnerError": CorruptInstanceOwnerError,
     }
@@ -131,7 +132,7 @@ class TestSeedSessionStateRestoresPersistedScalars:
         persisted = {k: f"__persisted_{k}__" for k in SCALAR_KEYS}
         state = _run_seed_session_state(persisted)
         for k in SCALAR_KEYS:
-            sess_key = "stock_price" if k == "stock_price_now" else k
+            sess_key = session_key_for_config_key(k)
             assert state.get(sess_key) == f"__persisted_{k}__", (
                 f"{k} was not seeded from persisted defaults"
             )

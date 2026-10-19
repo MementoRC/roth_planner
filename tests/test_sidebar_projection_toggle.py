@@ -91,7 +91,6 @@ def test_projection_toggle_reset_to_demo_clears_key_and_sidebar_shows_false(monk
     fake_state = {"apply_ytd_to_projection": True}
     with monkeypatch.context() as m:
         m.setattr(state_mod.st, "session_state", fake_state)
-        m.setattr(state_mod, "clear_user_defaults", lambda: None)
         state_mod._clear_personal_session_state()
     assert "apply_ytd_to_projection" not in fake_state
 
