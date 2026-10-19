@@ -408,6 +408,7 @@ def render(hh: Household):
         trad_contrib_you = st.number_input(
             "Your Trad IRA contribution (this year)",
             value=default_you,
+            min_value=0,
             step=500,
             format="%d",
         )
@@ -415,6 +416,7 @@ def render(hh: Household):
             trad_contrib_spouse = st.number_input(
                 "Spouse Trad IRA contribution (this year)",
                 value=default_spouse,
+                min_value=0,
                 step=500,
                 format="%d",
             )

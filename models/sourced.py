@@ -142,6 +142,11 @@ class SourcedDict(dict):
     def clear(self) -> None:
         raise TypeError(self._MUTATION_ERROR)
 
+    def __ior__(self, other: Any) -> SourcedDict:  # type: ignore[misc]
+        # dict.__ior__ is a C slot that never calls the update() override
+        # (audit-1018 F-44).
+        raise TypeError(self._MUTATION_ERROR)
+
     def to_json(self) -> dict:
         if self.keys() != self.prov.keys():
             raise ValueError(
@@ -217,6 +222,15 @@ class SourcedList(list):
         # Always raises -- mypy's __iadd__/__add__ consistency check doesn't
         # model that, so this override is exempted rather than widened to an
         # unsound signature.
+        raise TypeError(self._MUTATION_ERROR)
+
+    def __imul__(self, other: Any) -> SourcedList:  # type: ignore[misc]
+        raise TypeError(self._MUTATION_ERROR)
+
+    def sort(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(self._MUTATION_ERROR)
+
+    def reverse(self) -> None:
         raise TypeError(self._MUTATION_ERROR)
 
     def to_json(self) -> dict:
