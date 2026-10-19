@@ -427,7 +427,11 @@ class TestClearPersonalSessionState:
         Static assertion: confirms the sentinel assignment is present so the
         app.py auto-load guard cannot silently re-hydrate from disk cache.
         """
-        source = self._state_source()
+        import inspect
+
+        from views.setup import _state
+
+        source = inspect.getsource(_state._clear_personal_session_state)
         assert "_suppress_snapshot_autoload" in source, (
             "_clear_personal_session_state does not set _suppress_snapshot_autoload — "
             "disk cache auto-load silently undoes the Reset-to-demo"
