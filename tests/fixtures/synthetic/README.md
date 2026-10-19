@@ -34,6 +34,8 @@ bundle.
 | `form_1040_2025.pdf` | 2025 Form 1040 | AGI $150,000, MAGI $151,000 |
 | `synthetic_backup_v5.json` | v5 backup, plaintext | 4 accounts, 2 ACME grants, YTD |
 | `synthetic_backup_v5.json.enc` | the same backup, encrypted | needs the test key below |
+| `synthetic_backup_v5_holdings.json` | v5 backup, plaintext, with brokerage holdings | as above, plus 3 brokerage positions and YTD qualified dividends |
+| `synthetic_backup_v5_holdings.json.enc` | the same holdings backup, encrypted | needs the test key below |
 
 **Test-only data-bridge private key** (base64). This key protects nothing:
 it only exists to open the `.enc` file above. Never use it for real data.
@@ -87,6 +89,15 @@ identity to **Me**.
      1 household account, each section on its own line.
    - Apply. Expect: Holdings shows the four "Example …" accounts, and its
      grant comparison labels the imported rows "Backup import".
+4b. **Per-ticker qualified/ordinary table** (🔐 Backup & Transfer, then
+   💵 This Year's Income). Same steps as 4, but upload
+   `synthetic_backup_v5_holdings.json.enc` and apply.
+   - Expect: This Year's Income shows YTD qualified dividends $1,500 (ordinary
+     dividends and interest are household fields that a backup never carries,
+     so they stay $0) and a "Qualified vs ordinary by ticker" expander.
+   - Expect rows: BND $2,100 / $0 qualified; VNQ $1,600 / $0; VTI $1,300
+     all qualified (100%); Total $5,000, qualified $1,300, ordinary $3,700
+     (26%). No `.dividend_rates.json` overrides may be present.
 5. **Option grid refill** (📝 Option Exercises). After step 4.
    - Imported grants are NOT adopted on their own (audit-1008 F-06): they
      wait in 🎛️ Review Changes as a `grants` card. Until it is confirmed,
