@@ -341,12 +341,26 @@ BUNDLE_ENC_NAME = "synthetic_backup_v5.json.enc"
 BUNDLE_EXPORTED_AT = "2026-07-01T12:00:00+00:00"
 
 
-def build_backup_bundle() -> dict:
-    """A v5 backup of a fictional two-person household, via the app's builder."""
+BUNDLE_HOLDINGS_NAME = "synthetic_backup_v5_holdings.json"
+BUNDLE_HOLDINGS_ENC_NAME = "synthetic_backup_v5_holdings.json.enc"
+
+
+def build_backup_bundle(*, with_holdings: bool = False) -> dict:
+    """A v5 backup of a fictional two-person household, via the app's builder.
+
+    ``with_holdings`` adds three fictional brokerage positions (summing to the
+    brokerage total, with 2025 dividends) and a YTD qualified-dividend figure, so
+    the YTD per-ticker qualified-vs-ordinary table has rows to show.
+    """
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from engine.bridge_bundle import build_bundle_v5
-    from engine.portfolio_sync.shapes import AccountSummary, EquityGrant, PortfolioSnapshot
+    from engine.portfolio_sync.shapes import (
+        AccountSummary,
+        EquityGrant,
+        Holding,
+        PortfolioSnapshot,
+    )
     from models.ytd_income import IncomeEvent, YTDSnapshot
 
     scalars = {
@@ -405,10 +419,34 @@ def build_backup_bundle() -> dict:
         EquityGrant("ACME-2019", "NQO", "2019-02-01", 1_000, 1_000, 50_000.0),
         EquityGrant("ACME-2020", "NQO", "2020-02-01", 2_000, 2_000, 80_000.0),
     ]
+    you_ytd = {"wages_ytd": 50_000.0, "federal_withholding_ytd": 8_000.0}
+    if with_holdings:
+        brokerage = snapshot.accounts[3]
+        # Real fund tickers so the dividend forecast classifies them: VTI is
+        # fully qualified, BND and VNQ are not. Names and amounts are invented.
+        for symbol, description, qty, value, div in (
+            ("VTI", "EXAMPLE TOTAL MARKET ETF", 400.0, 100_000.0, 1_300.0),
+            ("BND", "EXAMPLE BOND FUND", 800.0, 60_000.0, 2_100.0),
+            ("VNQ", "EXAMPLE REIT", 450.0, 40_000.0, 1_600.0),
+        ):
+            brokerage.holdings.append(
+                Holding(
+                    symbol=symbol,
+                    description=description,
+                    quantity=qty,
+                    market_value=value,
+                    account_name=brokerage.account_name,
+                    asset_class="bond" if symbol == "BND" else "equity",
+                    dividends_by_year={"2025": div},
+                )
+            )
+        # Only qualified dividends are per-owner; ordinary dividends and interest
+        # are household fields that never travel in a v5 backup.
+        you_ytd["qualified_dividends_ytd"] = 1_500.0
     ytd = YTDSnapshot(
         snapshot_date="2026-06-30",
         by_owner={
-            "you": {"wages_ytd": 50_000.0, "federal_withholding_ytd": 8_000.0},
+            "you": you_ytd,
             "spouse": {"wages_ytd": 40_000.0},
         },
         ira_conversions_ytd=20_000.0,
@@ -426,8 +464,9 @@ def build_backup_bundle() -> dict:
     )
 
 
-def bundle_bytes() -> bytes:
-    return json.dumps(build_backup_bundle(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+def bundle_bytes(*, with_holdings: bool = False) -> bytes:
+    bundle = build_backup_bundle(with_holdings=with_holdings)
+    return json.dumps(bundle, indent=2, sort_keys=True).encode("utf-8") + b"\n"
 
 
 def main() -> None:
@@ -441,7 +480,11 @@ def main() -> None:
 
     pubkey = derive_pubkey(base64.b64decode(TEST_PRIVKEY_B64))
     (HERE / BUNDLE_ENC_NAME).write_bytes(seal(plaintext, pubkey))
-    print(f"wrote {len(PDF_FIXTURES) + 2} files to {HERE}")
+
+    holdings_plaintext = bundle_bytes(with_holdings=True)
+    (HERE / BUNDLE_HOLDINGS_NAME).write_bytes(holdings_plaintext)
+    (HERE / BUNDLE_HOLDINGS_ENC_NAME).write_bytes(seal(holdings_plaintext, pubkey))
+    print(f"wrote {len(PDF_FIXTURES) + 4} files to {HERE}")
 
 
 if __name__ == "__main__":

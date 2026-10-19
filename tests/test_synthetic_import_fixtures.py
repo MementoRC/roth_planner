@@ -19,9 +19,11 @@ from types import ModuleType
 import pytest
 
 from engine.bridge_bundle import classify_bundle, parse_v5
-from engine.bridge_import import LocalState, apply_import, plan_import
+from engine.bridge_import import ImportResult, LocalState, apply_import, plan_import
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_bridge_crypto import open_uploaded_payload
+from engine.dividend_breakdown import qualified_breakdown
+from engine.dividend_forecast import forecast_portfolio
 from engine.ira_statement_balance import apply_ira_statement, is_ira_record
 from engine.netbenefits_statement_pdf import apply_netbenefits_statement
 from engine.pdf_import import (
@@ -31,6 +33,7 @@ from engine.pdf_import import (
     extract_pages,
     scan_pdf_documents,
 )
+from engine.portfolio_sync.holdings import positions_for_forecast_multi
 from engine.portfolio_sync.shapes import PortfolioSnapshot
 
 FIXTURES = Path(__file__).parent / "fixtures" / "synthetic"
@@ -69,6 +72,11 @@ class TestFixturesAreCurrent:
 
     def test_bundle_matches_generator(self) -> None:
         assert (FIXTURES / gen.BUNDLE_NAME).read_bytes() == gen.bundle_bytes()
+
+    def test_holdings_bundle_matches_generator(self) -> None:
+        assert (FIXTURES / gen.BUNDLE_HOLDINGS_NAME).read_bytes() == gen.bundle_bytes(
+            with_holdings=True
+        )
 
     @pytest.mark.parametrize("name", sorted(gen.PDF_FIXTURES))
     def test_pdf_text_survives_extraction(self, name: str) -> None:
@@ -242,3 +250,47 @@ class TestBackupBundle:
         assert result.ytd is not None
         assert result.ytd.by_owner["you"]["wages_ytd"] == 50_000.0
         assert result.ytd.by_owner["spouse"]["wages_ytd"] == 40_000.0
+
+
+class TestHoldingsBackupBundle:
+    """The holdings variant feeds the YTD per-ticker qualified-vs-ordinary table."""
+
+    def _restore(self) -> ImportResult:
+        privkey = base64.b64decode(gen.TEST_PRIVKEY_B64)
+        plaintext = open_uploaded_payload(
+            (FIXTURES / gen.BUNDLE_HOLDINGS_ENC_NAME).read_bytes(), privkey
+        )
+        assert plaintext == (FIXTURES / gen.BUNDLE_HOLDINGS_NAME).read_bytes()
+        bundle = parse_v5(json.loads(plaintext))
+        local = LocalState()
+        plan = plan_import(bundle, local)
+        return apply_import(bundle, plan, local, selected=frozenset(plan.slots), operator="you")
+
+    def test_restore_yields_qualified_and_ordinary_rows(self) -> None:
+        result = self._restore()
+        snap = result.snapshot
+        assert snap.brokerage_total == 200_000.0
+        assert sum(h.market_value for a in snap.brokerage_accounts for h in a.holdings) == (
+            snap.brokerage_total
+        )
+        fcst = forecast_portfolio(
+            positions_for_forecast_multi(snap.brokerage_accounts),
+            total_balance=snap.brokerage_total,
+            overrides_path=FIXTURES / "no_overrides.json",
+            employer_ticker="",
+        )
+        bd = qualified_breakdown(fcst.per_position)
+        assert [r.ticker for r in bd.rows] == ["BND", "VNQ", "VTI"]
+        assert {r.ticker: r.qualified for r in bd.rows} == {
+            "BND": 0.0,
+            "VNQ": 0.0,
+            "VTI": 1_300.0,
+        }
+        assert bd.total_annual_div == 5_000.0
+        assert bd.total_ordinary == 3_700.0
+
+    def test_restore_carries_ytd_qualified_dividends(self) -> None:
+        ytd = self._restore().ytd
+        assert ytd is not None
+        assert ytd.by_owner["you"]["qualified_dividends_ytd"] == 1_500.0
+        assert ytd.qualified_dividends_ytd == 1_500.0
