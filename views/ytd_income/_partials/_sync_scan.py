@@ -1378,7 +1378,13 @@ def _render_ira_statement_review(
         )
         new_acct = to_ira_account_summary(rec, owner)
         link_key, others = _render_account_link_choice(rec, snap, owner, link_map, qid)
-        replaced = [a for a in snap.accounts if account_key(a) in (account_key(new_acct), link_key)]
+        other_owner = "spouse" if owner == "you" else "you"
+        stale_key = (new_acct.account_type, other_owner, new_acct.account_name)
+        replaced = [
+            a
+            for a in snap.accounts
+            if account_key(a) in (account_key(new_acct), link_key, stale_key)
+        ]
         if replaced:
             st.caption(
                 md_dollars(
@@ -1419,6 +1425,11 @@ def _render_ira_statement_review(
                 if rec.account_type == "roth_ira"
                 else record_ira_balance_candidate
             )
+            if outcome.other_owner_total is not None:
+                # The owner was corrected: the wrong-owner copy is gone, so
+                # that person's candidate is re-recorded at their corrected total.
+                other_field, other_total = outcome.other_owner_total
+                record(other_field, other_total, outcome.detail, datetime.now())
             record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
             if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
                 save_owner_map(learn_owner(rec.owner_key, owner, owner_map))

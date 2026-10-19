@@ -112,6 +112,10 @@ class IraApplyOutcome:
     # statement would have written, for a "Use anyway" force-apply.
     kept_newer: AccountSummary | None = None
     new_account: AccountSummary | None = None
+    # Set when a copy of this statement's account under the OTHER owner was
+    # removed (the owner was corrected): that owner's ``(field_key, new total)``,
+    # for the caller to re-record so the IRA is not counted for both people.
+    other_owner_total: tuple[str, float] | None = None
 
 
 def _field_key(rec: BrokerageStatementRecord, owner: str) -> str:
@@ -216,13 +220,21 @@ def apply_ira_statement(
             kept_newer=newest,
             new_account=new_acct,
         )
-    kept = [a for a in snap.accounts if account_key(a) not in drop]
+    other = "spouse" if owner == "you" else "you"
+    stale = (pdf_acct.account_type, other, pdf_acct.account_name)
+    kept = [a for a in snap.accounts if account_key(a) not in drop and account_key(a) != stale]
     removed = [a for a in snap.accounts if account_key(a) in drop]
+    stale_copies = [a for a in snap.accounts if account_key(a) == stale]
     new_snap = dataclasses.replace(snap, accounts=[*kept, new_acct])
     return IraApplyOutcome(
         snapshot=new_snap,
-        replaced=removed,
+        replaced=[*removed, *stale_copies],
         field_key=_field_key(rec, owner),
         total=_owner_total(new_snap, owner, roth=roth),
         detail=detail,
+        other_owner_total=(
+            (_field_key(rec, other), _owner_total(new_snap, other, roth=roth))
+            if stale_copies
+            else None
+        ),
     )
