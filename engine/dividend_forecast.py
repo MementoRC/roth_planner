@@ -21,6 +21,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
+
 logger = logging.getLogger(__name__)
 
 # Per-security-type qualified-dividend defaults. Override per ticker via
@@ -126,7 +128,7 @@ def _load_overrides(path: Path) -> Mapping[str, Mapping[str, float]]:
     ticker entry is skipped, and a non-numeric field is ignored so that ticker
     falls back to its trailing-12-month / default figures.
     """
-    if not path.exists():
+    if is_demo_mode() or not path.exists():  # audit-1018 W9b: personal overrides hidden in demo
         return {}
     try:
         raw = json.loads(path.read_text())

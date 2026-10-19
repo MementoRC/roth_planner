@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
 from engine.pdf_owner import OwnerRole
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -65,8 +66,11 @@ def load_instance_owner() -> str | None:
     that as a first-run prompt case, never silently default it. Raises
     CorruptInstanceOwnerError if the file exists but its content is
     unreadable or invalid -- callers must not silently re-prompt over broken
-    data (see CorruptInstanceOwnerError's docstring).
+    data (see CorruptInstanceOwnerError's docstring). Demo mode
+    (audit-1018 W9b) reads as unset.
     """
+    if is_demo_mode():
+        return None
     try:
         raw = INSTANCE_OWNER_PATH.read_text()
     except OSError:
@@ -97,6 +101,8 @@ def save_instance_owner(owner: str) -> None:
         raise ValueError(
             f"Invalid instance owner {owner!r}, must be one of {sorted(_VALID_INSTANCE_OWNERS)}"
         )
+    if is_demo_mode():  # audit-1018 W9b: the personal file stays untouched in demo mode
+        return
     if INSTANCE_OWNER_PATH.exists():
         try:
             json.loads(INSTANCE_OWNER_PATH.read_text())

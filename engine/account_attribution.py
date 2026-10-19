@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
 from engine.pdf_owner import OWNER_ROLES, resolve_owner
 from engine.secure_io import read_pii_json, write_pii_json
 
@@ -96,7 +97,7 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     persists verbatim. Dropping the entry degrades that account to the
     instance owner -- the same outcome as if no override had been recorded.
     """
-    if not _ACCOUNT_ATTRIBUTION_PATH.exists():
+    if is_demo_mode() or not _ACCOUNT_ATTRIBUTION_PATH.exists():
         return {}
     try:
         raw = read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
@@ -126,7 +127,7 @@ def _refuse_if_corrupt() -> None:
     CorruptAccountAttributionError's docstring). A missing file is not
     corrupt -- first run, nothing to protect.
     """
-    if not _ACCOUNT_ATTRIBUTION_PATH.exists():
+    if is_demo_mode() or not _ACCOUNT_ATTRIBUTION_PATH.exists():
         return
     try:
         read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
@@ -138,8 +139,11 @@ def _write(overrides: dict[tuple[str, str], str]) -> None:
     """Write *overrides* atomically via a tmp file + ``os.replace``.
 
     Callers must call ``_refuse_if_corrupt()`` first -- this function does
-    not pre-check, it only writes.
+    not pre-check, it only writes. A no-op in demo mode (audit-1018 W9b): the
+    tmp-file + ``os.replace`` pair would otherwise replace the personal file.
     """
+    if is_demo_mode():
+        return
     encoded = {
         _encode_key(broker, account_number): owner
         for (broker, account_number), owner in overrides.items()

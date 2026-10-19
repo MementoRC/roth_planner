@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
 from engine.secure_io import read_pii_json, write_pii_json
 from models.exercise_schedule import _SCHEDULE_VERSION, ExerciseSchedule
 
@@ -55,4 +56,6 @@ def clear_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> None:
     this unconditionally on a "Reset to default" action. After clearing,
     ``Household.effective_schedule()`` falls back to ``default_at_expiry``.
     """
+    if is_demo_mode():  # audit-1018 W9b: never delete the personal file in demo mode
+        return
     path.unlink(missing_ok=True)
