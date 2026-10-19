@@ -176,6 +176,8 @@ def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -
             existing = read_pii_json(_CACHE_PATH)
         except (json.JSONDecodeError, OSError):
             existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
 
     if allow_empty is None:
         allow_empty = snap.server_available

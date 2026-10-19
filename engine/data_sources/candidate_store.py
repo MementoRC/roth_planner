@@ -22,11 +22,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from engine.secure_io import write_pii_json
 from models.grants import StockGrant
 from models.legacy_keys import migrate_legacy_keys
 from models.sourced import Provenance
@@ -192,9 +192,7 @@ class CandidateStore:
                 self._parse(target.read_text())
             except (OSError, KeyError, ValueError, TypeError) as exc:
                 raise CorruptCandidateStoreError(path, exc) from exc
-        tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
-        tmp_path.write_text(json.dumps(self.to_json()))
-        os.replace(tmp_path, target)
+        write_pii_json(target, self.to_json(), indent=0)
 
     @classmethod
     def load(cls, path: str | Path) -> CandidateStore:
@@ -210,16 +208,20 @@ class CandidateStore:
         be sitting in those unreadable bytes).
         """
         try:
-            raw = Path(path).read_text()
+            return cls._parse(Path(path).read_text())
         except OSError as exc:
             logger.warning("CandidateStore.load(%s) failed (%s); returning empty store", path, exc)
             return cls()
-        try:
-            return cls._parse(raw)
         except (KeyError, ValueError, TypeError) as exc:
-            logger.warning(
-                "CandidateStore.load(%s) failed (%s); returning empty (corrupt) store", path, exc
-            )
-            store = cls()
-            store.load_corrupt = True
-            return store
+            # UnicodeDecodeError (non-UTF-8 bytes) is a ValueError: corrupt, not fatal.
+            return cls._corrupt_store(path, exc)
+
+    @classmethod
+    def _corrupt_store(cls, path: str | Path, exc: Exception) -> CandidateStore:
+        """Empty store flagged ``load_corrupt`` so ``save`` refuses to clobber the file."""
+        logger.warning(
+            "CandidateStore.load(%s) failed (%s); returning empty (corrupt) store", path, exc
+        )
+        store = cls()
+        store.load_corrupt = True
+        return store

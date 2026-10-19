@@ -124,12 +124,12 @@ class ChoiceMap:
         """
         try:
             raw = Path(path).read_text()
+            return cls.from_json(json.loads(raw))
         except OSError as exc:
             logger.warning("ChoiceMap.load(%s) failed (%s); returning empty map", path, exc)
             return cls()
-        try:
-            return cls.from_json(json.loads(raw))
         except (KeyError, ValueError, TypeError) as exc:
+            # UnicodeDecodeError (non-UTF-8 bytes) is a ValueError: corrupt, not fatal.
             logger.warning(
                 "ChoiceMap.load(%s) failed (%s); returning empty (corrupt) map", path, exc
             )

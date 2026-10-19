@@ -15,6 +15,8 @@ Pattern mirrors ``engine.data_bridge_keys._write_keyfile`` (PR #172 precedent).
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import json
 import os
 from pathlib import Path
@@ -34,12 +36,29 @@ def write_pii_json(path: Path, obj: Any, *, indent: int = 2) -> None:
     attack surface.
     """
     payload = json.dumps(obj, indent=indent).encode()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    target = Path(path)
+    if target.is_symlink():
+        # os.replace would swap the link itself; keep the refuse-to-follow contract.
+        raise OSError(errno.ELOOP, "refusing to write through a symlink", str(target))
+    tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+    # O_EXCL after a best-effort unlink: never reuse a stale/planted temp file.
+    tmp_path.unlink(missing_ok=True)
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
-        os.fchmod(fd, 0o600)
-        os.write(fd, payload)
-    finally:
-        os.close(fd)
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(payload)
+            while view:
+                view = view[os.write(fd, view) :]
+            # stlite/Pyodide (emscripten FS) may not support fsync.
+            with contextlib.suppress(OSError):
+                os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, target)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def read_pii_bytes(path: Path) -> bytes:
@@ -71,5 +90,12 @@ def read_pii_json(path: Path) -> Any:
     so a PII cache read cannot be redirected to an attacker-controlled file.
     Raises ``OSError`` (including the symlink case) or ``json.JSONDecodeError``
     on malformed content — both already handled by the cache-load call sites.
+    Non-UTF-8 bytes are reported as ``json.JSONDecodeError`` too (audit-1018
+    F-20), so no caller sees a bare ``UnicodeDecodeError``.
     """
-    return json.loads(read_pii_bytes(path))
+    raw = read_pii_bytes(path)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise json.JSONDecodeError(f"not valid UTF-8: {exc}", "", exc.start) from exc
+    return json.loads(text)
