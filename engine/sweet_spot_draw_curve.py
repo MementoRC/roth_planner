@@ -7,8 +7,10 @@ ordinary income exactly like a conversion. The 12% / 22% cards and guide-lines
 already account for it (``scenario_autofill._solve_year``); this module makes
 the cost curve do so too, so its bracket steps land where the cards say.
 
-Simplification: the realized gain on the brokerage leg of the waterfall is
-preferential income, not ordinary, and is ignored here.
+The gain the zero-conversion waterfall realizes by selling brokerage is already
+in ``base`` (``BaseIncome.sale_gain``, audit-1018 F-04). Simplification: the
+EXTRA brokerage sale (and gain) a conversion's tax forces is ignored here -- it
+is preferential income, not ordinary, and the draw solver prices IRA legs only.
 """
 
 from __future__ import annotations
@@ -19,10 +21,12 @@ from dataclasses import replace
 from engine.scenario import waterfall_accounts
 from engine.scenario_types import YearResult
 from engine.sweet_spot_compute import (
+    STEP,
     BaseIncome,
     ConversionResult,
     all_in_at_conversion,
     bracket_vline_positions,
+    irmaa_safe_max,
 )
 from engine.withdrawal_waterfall import Accounts, solve_waterfall
 from models.household import Household
@@ -53,7 +57,7 @@ def _extra_need(result: ConversionResult) -> float:
 def sweep_all_in(
     hh: Household,
     base: BaseIncome,
-    convs: Sequence[int],
+    convs: Sequence[float],
     *,
     net_inv_income: float,
     ltcg_eligible: float,
@@ -169,6 +173,38 @@ def draw_aware_bracket_vlines(
             )
         positions.append((conv, rate))
     return positions
+
+
+def draw_aware_irmaa_safe_max(
+    hh: Household,
+    base: BaseIncome,
+    irmaa_tier1_threshold: float,
+    net_inv_income: float,
+    ltcg_eligible: float,
+    *,
+    zero_year: YearResult,
+    fills: Mapping[int, tuple[float, float]],
+) -> float:
+    """audit-1018 F-05: :func:`irmaa_safe_max` with the extra IRA draw the
+    conversion's own tax forces -- the largest STEP-aligned C whose draw-aware
+    MAGI (priced at C + D(C), the curve's own pricing) stays at or under the
+    tier. The draw-blind answer is the upper bound (the draw only adds MAGI) and
+    the answer when the year has no forced draw.
+    """
+    blind = irmaa_safe_max(hh, base, irmaa_tier1_threshold, net_inv_income, ltcg_eligible)
+    solve = _draw_solver(hh, base, net_inv_income, ltcg_eligible, zero_year, fills)
+    if solve is None or blind <= 0.0:
+        return blind
+    lo, hi = 0, int(blind // STEP)
+    best = 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if solve(float(mid * STEP), 0.0)[0].magi <= irmaa_tier1_threshold:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return float(best * STEP)
 
 
 def draw_aware_boundary(

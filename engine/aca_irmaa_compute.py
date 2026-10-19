@@ -6,6 +6,7 @@ plain dataclasses with all curves the view needs. No Streamlit, no plotly.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from engine.aca import (
@@ -20,11 +21,13 @@ from engine.aca import (
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
+from engine.scenario_types import YearResult
 from engine.sweet_spot_compute import (
     _ltcg_stack_tax,
     base_income_for_year,
     estimate_ltcg_eligible,
-    zero_conversion_ira_draws,
+    zero_conversion_sale_gains,
+    zero_conversion_years,
 )
 from engine.tax import (
     LTCG_THRESHOLDS_MFJ,
@@ -220,10 +223,23 @@ def default_base_magi(hh: Household, *, ytd: YTDSnapshot | None, net_inv_income:
     Explorer used to default to option income alone, so a household with no
     grants started the whole timeline at $0).
     """
-    draws = zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
-    return base_income_for_year(
-        hh, hh.base_year, ytd=ytd, ira_draw=draws.get(hh.base_year, 0.0)
-    ).base_magi
+    years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+    draw, gain = _zero_conversion_adds(hh, years, hh.base_year)
+    return base_income_for_year(hh, hh.base_year, ytd=ytd, ira_draw=draw, sale_gain=gain).base_magi
+
+
+def _zero_conversion_adds(
+    hh: Household, years: Mapping[int, YearResult], year: int
+) -> tuple[float, float]:
+    """(IRA draw, brokerage-sale gain) the zero-conversion waterfall puts into
+    ``year``'s base (audit-1018 F-04: the sale gain is MAGI too)."""
+    yr = years.get(year)
+    if yr is None:
+        return 0.0, 0.0
+    return (
+        yr.forced_your_ira_draw + yr.forced_spouse_ira_draw,
+        zero_conversion_sale_gains(hh, years).get(year, 0.0),
+    )
 
 
 @dataclass
@@ -539,19 +555,17 @@ def compute_year_by_year_timeline(
     """
     surv = hh.survivor
     is_mfj_base = hh.filing_status == "MFJ"
-    draws = (
-        {}
-        if hold_base_magi
-        else zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
+    zero_years = (
+        {} if hold_base_magi else zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     )
     rows: list[TimelineRow] = []
     for yr_idx in range(years):
         year = hh.base_year + yr_idx
-        year_magi = (
-            base_magi
-            if hold_base_magi or year == hh.base_year
-            else base_income_for_year(hh, year, ira_draw=draws.get(year, 0.0)).base_magi
-        )
+        if hold_base_magi or year == hh.base_year:
+            year_magi = base_magi
+        else:
+            draw, gain = _zero_conversion_adds(hh, zero_years, year)
+            year_magi = base_income_for_year(hh, year, ira_draw=draw, sale_gain=gain).base_magi
 
         # === Survivor scenario: determine filing status for this year ===
         survivor_active = surv is not None and year >= surv.death_year + 1
