@@ -196,24 +196,19 @@ def _bracket_room_after(hh: Household, base: YearResult, level: int) -> float:
 def draw_aware_bracket_rooms(
     hh: Household,
     ytd: YTDSnapshot | None,
-    headroom: HeadroomResult,
     net_inv_income: float = 0.0,
 ) -> tuple[float, float]:
-    """(room to the 12% top, room to the 22% top) before any split, as the
-    conversion "Fill X%" lands on for the base year (issue #1).
+    """(room to the 12% top, room to the 22% top) before any split: the
+    conversion "Fill X%" lands on for the base year, in EVERY year (issues
+    #1/#5, audit-1018 F-03/F-06, owner decision D1).
 
-    ``headroom``'s rooms are draw-blind. In a base year where the waterfall
-    forces an IRA draw at zero conversion they overstate the Fill by about the
-    draw, so those years read the auto-fill (bracket_fill_conversions) instead;
-    every other year keeps headroom's own rooms unchanged.
+    Always the full-year projection basis (bracket_fill_conversions): forced and
+    fill-provoked IRA draws, forecast RMD, inherited drains, dividends,
+    scheduled options, and the senior-bonus phase-out per converted dollar. The
+    YTD-actuals-only compute_headroom rooms are a different quantity and are
+    not used here.
     """
-    year = hh.base_year
-    base = run_no_conversion(
-        copy.deepcopy(hh), end_age=hh.your_age, ytd=ytd, net_inv_income=net_inv_income
-    ).years[0]
-    if base.forced_your_ira_draw + base.forced_spouse_ira_draw <= 0.0:
-        return headroom.room_to_12pct, headroom.room_to_22pct
-    return bracket_fill_conversions(hh, ytd, net_inv_income).get(year, (0.0, 0.0))
+    return bracket_fill_conversions(hh, ytd, net_inv_income).get(hh.base_year, (0.0, 0.0))
 
 
 def _magi_rooms_after(hh: Household, base: YearResult) -> tuple[float, float]:

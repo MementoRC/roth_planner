@@ -43,11 +43,16 @@ RESULT_KEY = "_room_result"
 SIG_KEY = "_room_sig"
 FLASH_KEY = "_room_flash"
 
-# The tiles and the card's room-after are on different bases; say which.
-TILES_LABEL = "So far this year (actuals; 12% / 22% rooms count living-expense IRA draws)"
+# The 12% / 22% tiles are the full-year "Fill to X%" conversion; the other tiles are actuals.
+TILES_LABEL = (
+    "Locked income and the IRMAA / NIIT rooms are this year's actuals; the 12% / 22% "
+    'rooms are the full-year projection, the same amount "Fill to X%" converts'
+)
 BRACKET_TILE_HELP = (
-    "The conversion that lands total taxable income on this bracket top, counting "
-    "any IRA draw the plan needs for living expenses."
+    "The conversion that lands total taxable income on this bracket top over the "
+    "full-year projection: IRA draws the plan forces (living expenses, the "
+    "conversion's own tax), forecast RMD, dividends, scheduled options and the "
+    'senior-bonus phase-out. Equals "Fill to X%".'
 )
 ROOM_AFTER_LABEL = (
     "Room left after the split — full-year projection, incl. IRA draws for living expenses"
@@ -464,9 +469,7 @@ def render(hh: Household) -> None:
         ytd if ytd is not None else YTDSnapshot(tax_year=hh.base_year),
         filing_status=hh.filing_status,
     )
-    _render_tiles(
-        hh, headroom, draw_aware_bracket_rooms(hh, ytd, headroom, optimizer_panel.manual_nii())
-    )
+    _render_tiles(hh, headroom, draw_aware_bracket_rooms(hh, ytd, optimizer_panel.manual_nii()))
 
     st.markdown("---")
     flash_slot = st.empty()  # filled after the button, which may clear the flash

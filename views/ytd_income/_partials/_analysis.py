@@ -5,7 +5,7 @@ import streamlit as st
 
 from engine.dividend_breakdown import qualified_breakdown
 from engine.dividend_forecast import forecast_portfolio
-from engine.headroom import HeadroomResult, compute_headroom
+from engine.headroom import compute_headroom
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
@@ -27,12 +27,11 @@ from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 from views.optimizer_panel import manual_nii
 
 
-def ytd_bracket_rooms(
-    hh: Household, ytd: YTDSnapshot, headroom: HeadroomResult
-) -> tuple[float, float]:
-    """(room to 12%, room to 22%) as Room This Year shows them: draw-aware, so
-    they equal what "Fill X%" converts (issue #5)."""
-    return draw_aware_bracket_rooms(hh, ytd, headroom, manual_nii())
+def ytd_bracket_rooms(hh: Household, ytd: YTDSnapshot) -> tuple[float, float]:
+    """(room to 12%, room to 22%) as Room This Year shows them: the full-year
+    projection, so they equal what "Fill X%" converts in every year (issue #5,
+    audit-1018 F-03/F-06)."""
+    return draw_aware_bracket_rooms(hh, ytd, manual_nii())
 
 
 def _render_qualified_breakdown() -> None:
@@ -371,22 +370,18 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
             f"110% when AGI is just under the limit — import the {prior_year} 1040 to use AGI."
         )
 
-    st.markdown("#### Room for Conversions (from locked income only)")
+    st.markdown("#### Room for Conversions")
 
-    room_12, room_22 = ytd_bracket_rooms(hh, ytd, headroom)
+    room_12, room_22 = ytd_bracket_rooms(hh, ytd)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric(
-        "Room to 12%",
-        fmt_dollars(room_12),
-        help="Ordinary bracket room — LTCG does NOT consume this. Counts any "
-        "living-expense IRA draw the plan needs.",
+    _bracket_help = (
+        "Ordinary bracket room — LTCG does NOT consume this. Full-year projection: "
+        "counts forced IRA draws, forecast RMD, dividends, scheduled options and the "
+        'senior-bonus phase-out, so it equals "Fill to X%". Room to IRMAA / NIIT '
+        "below are from locked income only."
     )
-    c2.metric(
-        "Room to 22%",
-        fmt_dollars(room_22),
-        help="Ordinary bracket room — LTCG does NOT consume this. Counts any "
-        "living-expense IRA draw the plan needs.",
-    )
+    c1.metric("Room to 12%", fmt_dollars(room_12), help=_bracket_help)
+    c2.metric("Room to 22%", fmt_dollars(room_22), help=_bracket_help)
 
     # Prior-year MAGI anchor for IRMAA 2-year lookback
     prior_magi = st.session_state.get("prior_year_magi") or {}
