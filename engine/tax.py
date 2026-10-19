@@ -38,6 +38,7 @@ BRACKETS_SINGLE = [
 
 # Standard deduction — Single (2026 — IRS Rev. Proc. 2025-32)
 STD_DEDUCTION_SINGLE = 16_100
+STD_DEDUCTION_HOH = 24_150  # Head of household (2026 — Rev. Proc. 2025-32)
 SENIOR_EXTRA_SINGLE = 2_050  # single filer 65+ — IRC §63(f), Rev. Proc. 2025-32
 
 # Standard deduction — MFJ (2026)
@@ -122,14 +123,18 @@ def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MF
     Compute taxable portion of Social Security.
 
     Provisional income = other_income + 0.5 * SS
-    MFJ:    Below $32,000: 0% | $32,000–$44,000: 50% of excess | Above: 85%
-    Single: Below $25,000: 0% | $25,000–$34,000: 50% of excess | Above: 85%
+    MFJ:         Below $32,000: 0% | $32,000–$44,000: 50% of excess | Above: 85%
+    Single/HoH:  Below $25,000: 0% | $25,000–$34,000: 50% of excess | Above: 85%
+    MFS:         base amounts are $0 (filer lived with spouse during the year, the
+                 common case), so up to 85% is taxable from the first dollar.
 
-    Capped at 85% of total SS.
+    Capped at 85% of total SS (IRC §86(c)).
     """
     if combined_ss <= 0:
         return 0.0
-    if filing_status == "Single":
+    if filing_status == "MFS":
+        tier1 = tier2 = 0
+    elif filing_status in ("Single", "HoH"):
         tier1 = SS_TIER_1_SINGLE
         tier2 = SS_TIER_2_SINGLE
     else:
@@ -164,9 +169,11 @@ def deductions(
     """Total standard deduction including senior extras.
 
     When ``std_ded`` or ``senior_extra`` are omitted (None), the correct
-    amounts are inferred from ``filing_status`` — Single/HoH/MFS use
-    STD_DEDUCTION_SINGLE / SENIOR_EXTRA_SINGLE; MFJ uses STD_DEDUCTION_MFJ /
-    SENIOR_EXTRA_MFJ.  Callers that pass explicit values are unaffected.
+    amounts are inferred from ``filing_status`` — Single and MFS use
+    STD_DEDUCTION_SINGLE, HoH uses STD_DEDUCTION_HOH (IRC §63(c)(2)(B)), MFJ uses
+    STD_DEDUCTION_MFJ; the additional (senior) amount is SENIOR_EXTRA_MFJ for the
+    married statuses and SENIOR_EXTRA_SINGLE (the unmarried amount) otherwise.
+    Callers that pass explicit values are unaffected.
 
     For MFJ each spouse's age is checked independently (up to two extras).
     For any other filing status (Single, HoH, MFS) exactly one filer is
@@ -176,7 +183,12 @@ def deductions(
     logic in senior_bonus_deduction() (IRC §63(f), audit 0706 #tax-deductions-1).
     """
     if std_ded is None:
-        std_ded = STD_DEDUCTION_MFJ if filing_status == "MFJ" else STD_DEDUCTION_SINGLE
+        if filing_status == "MFJ":
+            std_ded = STD_DEDUCTION_MFJ
+        elif filing_status == "HoH":
+            std_ded = STD_DEDUCTION_HOH
+        else:
+            std_ded = STD_DEDUCTION_SINGLE
     if senior_extra is None:
         # C1 (audit-0721 W5): MFS is in the "married" bucket for the additional
         # standard deduction (IRC §63(f)) — SENIOR_EXTRA_MFJ, not the Single
@@ -722,13 +734,19 @@ def _roll_to_business_day(d: date) -> date:
     return d
 
 
-def _next_quarterly_due(payment_date: str) -> str:
+def _next_quarterly_due(payment_date: str, tax_year: int | None = None) -> str:
     """Return ISO date of the next quarterly estimated-tax due date.
 
     Q1: Apr 15  (Jan 1 – Apr 15)
     Q2: Jun 15  (Apr 16 – Jun 15)
     Q3: Sep 15  (Jun 16 – Sep 15)
     Q4: Jan 15 next year  (Sep 16 – Dec 31)
+
+    With ``tax_year`` the deadlines are that year's four installments
+    (Apr/Jun/Sep 15 of ``tax_year`` and Jan 15 of ``tax_year + 1``); a snapshot of
+    the prior year viewed on Jan 1-15 therefore reports its Q4 date. Without it
+    the next deadline of ANY year is returned, including Jan 15 of the payment
+    date's own year (the prior tax year's Q4, IRC §6654(c)(2)).
 
     Per §7503, a due date that falls on a Saturday, Sunday or legal holiday
     (including DC Emancipation Day and MLK Day) rolls forward to the next day
@@ -739,18 +757,21 @@ def _next_quarterly_due(payment_date: str) -> str:
     except ValueError:
         d = date.today()
 
-    year = d.year
+    year = d.year if tax_year is None else tax_year
     _rolled = _roll_to_business_day
 
     # Roll each candidate deadline BEFORE comparing, so a date in the gap between
     # a weekend nominal date and its rolled deadline maps to the still-open
     # deadline rather than skipping to the next quarter.
-    candidates = [
-        _rolled(date(year, 4, 15)),
-        _rolled(date(year, 6, 15)),
-        _rolled(date(year, 9, 15)),
-        _rolled(date(year + 1, 1, 15)),
+    nominal = [
+        date(year, 4, 15),
+        date(year, 6, 15),
+        date(year, 9, 15),
+        date(year + 1, 1, 15),
     ]
+    if tax_year is None:
+        nominal.insert(0, date(year, 1, 15))  # prior tax year's Q4
+    candidates = [_rolled(n) for n in nominal]
     for due in candidates:
         if due >= d:
             return due.isoformat()
@@ -764,6 +785,7 @@ def safe_harbor_payment(
     payment_date: str,
     prior_year_agi: float | None = None,
     filing_status: str = "MFJ",
+    tax_year: int | None = None,
 ) -> SafeHarborGuidance:
     """Compute remaining safe-harbor payment to avoid underpayment penalty.
 
@@ -779,8 +801,11 @@ def safe_harbor_payment(
     110% to every household.
 
     If prior_year_tax is 0 (no data), uses current-year estimate only.
+
+    ``tax_year`` is the year the estimate/payments belong to; it scopes the next
+    due date to that year's installments (see ``_next_quarterly_due``).
     """
-    next_due = _next_quarterly_due(payment_date)
+    next_due = _next_quarterly_due(payment_date, tax_year)
 
     # §6654(d)(1)(C): $150K threshold for all statuses except MFS ($75K). Above → 110%; at or below
     # → 100%. When prior-year AGI is unknown, conservatively assume 110% and annotate the label.
@@ -921,7 +946,9 @@ def load_prior_year_federal_tax(tax_year: int | None = None) -> float:
                             return float(val)
                         except (TypeError, ValueError):
                             continue
-    # Flat dict fallback (single-year cache)
+    # Flat dict fallback (single-year cache); a non-dict top level has no fields.
+    if not isinstance(data, dict):
+        return 0.0
     for key in ("total_federal_tax", "total_tax", "line_24"):
         val = data.get(key)
         if val:

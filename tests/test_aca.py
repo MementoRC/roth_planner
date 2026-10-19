@@ -411,7 +411,9 @@ class TestACA2026:
         upper edge (matching the next band's start rate), and the 150-200% band
         starts at 4.19%. So values just below and just above 150% should both
         approximate 4.19%, demonstrating ramp continuity (vs the pre-fix step
-        discontinuity from 3.14% → 4.19% at 150%).
+        discontinuity from 3.14% → 4.19% at 150%). The pre-ARP lookup uses the
+        Form 8962 whole-percent FPL figure (audit-1018 F-56), so "just below" reads
+        as 149% and sits one percent-of-FPL step (~0.06 pts) under 4.19%.
         """
         from engine.aca import FPL_2, aca_premium_cap_rate
 
@@ -421,7 +423,7 @@ class TestACA2026:
         rate_above = aca_premium_cap_rate(
             1.5001 * FPL_2, enhanced_subsidies_active=False, filing_status="MFJ"
         )
-        assert rate_below == pytest.approx(0.0419, abs=1e-4)
+        assert rate_below == pytest.approx(0.0419, abs=1e-3)
         assert rate_above == pytest.approx(0.0419, abs=1e-4)
 
     def test_aca_2026_175pct_fpl_ramp_midpoint(self):

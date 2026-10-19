@@ -36,7 +36,7 @@ from engine.tax import (
     senior_bonus_deduction,
 )
 from engine.tax_indexing import index_tuple as _index_tuple
-from engine.tax_indexing import index_value as _index_value
+from engine.tax_indexing import qcd_limit_for_year
 from engine.withdrawal_waterfall import (
     Accounts,
     WaterfallDraw,
@@ -262,7 +262,7 @@ def _project_year(
         plan.qcds.get(year, 0.0),
         plan.spouse_qcds.get(year, 0.0),
         # QCD cap is inflation-indexed forward (SECURE 2.0 §307)
-        _index_value(hh.qcd_limit, year, cpi),
+        qcd_limit_for_year(hh.qcd_limit, year, cpi),
         your_defer_first_rmd=hh.your_defer_first_rmd,
         spouse_defer_first_rmd=hh.spouse_defer_first_rmd,
         your_prior_year_balance=prev_your_ira_begin,

@@ -6,6 +6,8 @@ schedule by default (ENHANCED_SUBSIDIES_ACTIVE = False). Toggle the flag
 to model a hypothetical future extension.
 """
 
+import math
+
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
 
 # HHS poverty guidelines (48 contiguous states + DC), keyed by the COVERAGE year
@@ -329,8 +331,24 @@ def fpl_for(filing_status: str, year: int, cpi: float) -> float:
     return _fpl(filing_status, year=year, cpi=cpi)
 
 
+def _truncated_fpl_ratio(magi: float, fpl: float) -> float:
+    """MAGI as a fraction of FPL with the percentage truncated to a whole percent.
+
+    Form 8962 line 5 (and Worksheet 2) drop any digits after the decimal point,
+    so 199.99% reads as 199% and 400.9% reads as 400% (still eligible; 401% is
+    not). The 1e-9 term keeps an exact boundary (e.g. 1.33 * FPL) from falling a
+    percent short through float noise.
+    """
+    return math.floor(magi / fpl * 100.0 + 1e-9) / 100.0
+
+
 def aca_ceiling_magi(filing_status: str, year: int, cpi: float) -> float:
-    """400%-FPL MAGI cliff — the ceiling above which no ACA subsidy is available."""
+    """400%-FPL MAGI cliff — the planning ceiling above which no ACA subsidy is assumed.
+
+    Deliberately the exact 400% mark: Form 8962 truncation (see
+    ``_truncated_fpl_ratio``) keeps MAGI up to just under 401% eligible, so this is
+    conservative by about 1% of FPL; ``aca_subsidy`` applies the truncated rule.
+    """
     return 4.0 * _fpl(filing_status, year=year, cpi=cpi)
 
 
@@ -354,7 +372,10 @@ def aca_premium_cap_rate(
     Enhanced (ARPA/IRA) schedule: linear ramp from each band's initial to its
     final percentage (IRC §36B(b)(3)(A)(iii)); flat 8.5% above 400% FPL.
     """
-    fpl_ratio = magi / _fpl(filing_status, year=year, cpi=cpi)
+    fpl = _fpl(filing_status, year=year, cpi=cpi)
+    # The pre-ARP table is looked up on Form 8962's whole-percent FPL figure; the
+    # hypothetical enhanced schedule is modeled as a continuous linear ramp.
+    fpl_ratio = magi / fpl if enhanced_subsidies_active else _truncated_fpl_ratio(magi, fpl)
     # Pre-ARP cliff: above 400% FPL there is no subsidy, so cap rate is irrelevant.
     # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
     if not enhanced_subsidies_active and fpl_ratio > 4.0:
@@ -380,8 +401,10 @@ def aca_premium_cap_rate(
     # Pre-ARP schedule: linear interpolation within ramp bands per IRC §36B Table A.
     # Each band is "at least X but less than Y" (26 CFR §1.36B-3(g); Rev. Proc. 2025-25
     # §3.01), so upper bounds are EXCLUSIVE except for the final band (≤ 400% FPL).
-    # Form 8962 Line 5 truncates the FPL ratio, so exactly 133% FPL → integer 133,
-    # which must fall in the ramp band (3.14%), not the flat band (2.10%).
+    # fpl_ratio is already the Form 8962 Line 5 whole-percent truncation (see
+    # _truncated_fpl_ratio), so exactly 133% FPL → integer 133, which must fall in
+    # the ramp band (3.14%), not the flat band (2.10%), and the ramp below
+    # interpolates on that truncated percentage.
     band_start_fpl = 1.0  # 100% FPL — implicit lower edge of the bottom band
     last_i = len(schedule) - 1
     for i, (upper_fpl, start_rate) in enumerate(schedule):
@@ -422,8 +445,12 @@ def aca_subsidy(
 
     When using pre-ARP schedule, no subsidies above 400% FPL.
     """
-    # Check 400% FPL cliff for pre-ARP schedule
-    if not enhanced_subsidies_active and magi > aca_ceiling_magi(filing_status, year, cpi):
+    # 400% FPL cliff for the pre-ARP schedule, on the Form 8962 truncated percentage
+    # (401% or more is ineligible; 400.9% still reads as 400).
+    if (
+        not enhanced_subsidies_active
+        and _truncated_fpl_ratio(magi, _fpl(filing_status, year=year, cpi=cpi)) > 4.0
+    ):
         return 0.0
 
     # 100% FPL floor under both schedules: below 100% FPL the household is

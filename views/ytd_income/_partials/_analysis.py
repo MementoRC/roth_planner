@@ -297,7 +297,9 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     # --- Section D: Mid-Year Safe-Harbor Payment ---
     st.markdown("---")
     st.subheader("Mid-Year Safe-Harbor Payment Guidance")
-    prior_year = _date.today().year - 1
+    # The snapshot's own tax year, not today's calendar year: viewed on Jan 1-15 a
+    # prior-year snapshot is still the one whose Q4 installment is due.
+    prior_year = ytd.tax_year - 1
     # §6654(d)(1)(B): the safe harbor is the PRECEDING year's tax — read that
     # year's 1040 only, never an older/newer return that happens to be cached.
     prior_year_tax = load_prior_year_federal_tax(prior_year)
@@ -322,6 +324,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
         payment_date=_date.today().isoformat(),
         prior_year_agi=prior_year_agi,
         filing_status=hh.filing_status,
+        tax_year=ytd.tax_year,
     )
     if prior_year_tax == 0:
         _pdf_records = load_pdf_tax_records()

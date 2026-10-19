@@ -118,7 +118,8 @@ class TestSafeHarborPayment:
         from engine.tax import safe_harbor_payment
 
         cases = [
-            ("2026-01-15", "2026-04-15"),  # Q1 window
+            ("2026-01-15", "2026-01-15"),  # prior tax year's Q4 deadline (audit-1018 F-13)
+            ("2026-01-16", "2026-04-15"),  # Q1 window
             ("2026-03-01", "2026-04-15"),  # Q1 window
             ("2026-04-15", "2026-04-15"),  # Q1 boundary
             ("2026-04-16", "2026-06-15"),  # Q2 window
@@ -218,7 +219,9 @@ class TestSafeHarborPayment:
         # (Apr 15, 2023 — also a Saturday — rolls to Apr 18, not Apr 17: Monday
         # Apr 17, 2023 was DC Emancipation Day observed, a §7503 legal holiday.)
         assert _next_quarterly_due("2024-04-20") == "2024-06-17"
-        assert _next_quarterly_due("2023-01-01") == "2023-04-18"
+        # (2023-01-01 now maps to the prior year's Q4, Jan 15 -> Sun -> MLK Day -> Jan 17;
+        # audit-1018 F-13, so probe the Q1 window from Jan 18.)
+        assert _next_quarterly_due("2023-01-18") == "2023-04-18"
 
     def test_next_quarterly_due_rolls_sunday_to_monday(self):
         """Quarterly due dates that fall on Sunday must advance to Monday."""
@@ -450,16 +453,6 @@ class TestLoadPriorYearFederalTax:
         result = self._load(tmp_path, monkeypatch, "{{not valid json")
         assert result == pytest.approx(0.0)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AttributeError,
-        reason=(
-            "audit-1018 F-51: engine/tax.py flat-dict fallback calls data.get() "
-            "without an isinstance(data, dict) guard, so a top-level JSON list "
-            "raises AttributeError. Latent only: the sole production caller passes "
-            "tax_year and takes the guarded branch."
-        ),
-    )
     def test_top_level_list_returns_zero(self, tmp_path, monkeypatch):
         result = self._load(tmp_path, monkeypatch, [1, 2, 3])
         assert result == pytest.approx(0.0)

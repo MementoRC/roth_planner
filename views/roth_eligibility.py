@@ -13,7 +13,7 @@ import math
 
 import streamlit as st
 
-from engine.tax_indexing import DEFAULT_CPI, index_tuple, index_value
+from engine.tax_indexing import DEFAULT_CPI, index_value_floor, index_value_nearest
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct
 from views._shared import render_canonical_field, render_completeness_badge
@@ -44,22 +44,32 @@ ROTH_PHASEOUT_BY_YEAR: dict[int, dict[str, tuple[int, int]]] = {
 }
 
 
+def _indexed_phaseout(base: tuple[int, int], tax_year: int, cpi: float) -> tuple[float, float]:
+    """Index a phase-out range past 2026: the threshold is rounded to the nearest
+    $1,000 and the statutory width stays fixed (IRC §408A(c)(3)(A), §219(g)(3)(B));
+    only the starting threshold is inflation-adjusted, never the width."""
+    low, high = base
+    new_low = index_value_nearest(float(low), tax_year, cpi, 1_000.0)
+    return (new_low, new_low + (high - low))
+
+
 def contrib_limit_for_year(tax_year: int, cpi: float = DEFAULT_CPI) -> float:
     """Roth/IRA elective contribution limit (IRC §219(b)(5)). Exact for published years;
-    CPI-indexed past 2026 (the IRS inflation-adjusts this limit) rather than frozen."""
+    past 2026 the CPI increase is rounded DOWN to a multiple of $500 (§219(b)(5)(C))."""
     if tax_year in CONTRIB_LIMIT_BY_YEAR:
         return CONTRIB_LIMIT_BY_YEAR[tax_year]
     if tax_year > 2026:
-        return index_value(CONTRIB_LIMIT_BY_YEAR[2026], tax_year, cpi)
+        return index_value_floor(CONTRIB_LIMIT_BY_YEAR[2026], tax_year, cpi, 500.0)
     return CONTRIB_LIMIT_BY_YEAR[min(CONTRIB_LIMIT_BY_YEAR)]
 
 
 def catchup_50_for_year(tax_year: int, cpi: float = DEFAULT_CPI) -> float:
-    """Age-50 catch-up contribution (IRC §414(v)). Exact for published years; CPI-indexed past 2026."""
+    """Age-50 IRA catch-up (IRC §219(b)(5)(B)). Exact for published years; past 2026
+    the CPI increase is rounded DOWN to a multiple of $100 (§219(b)(5)(C)(ii))."""
     if tax_year in CATCHUP_50_BY_YEAR:
         return CATCHUP_50_BY_YEAR[tax_year]
     if tax_year > 2026:
-        return index_value(CATCHUP_50_BY_YEAR[2026], tax_year, cpi)
+        return index_value_floor(CATCHUP_50_BY_YEAR[2026], tax_year, cpi, 100.0)
     return CATCHUP_50_BY_YEAR[min(CATCHUP_50_BY_YEAR)]
 
 
@@ -67,13 +77,13 @@ def roth_phaseout_for_year(
     tax_year: int, filing_status: str, cpi: float = DEFAULT_CPI
 ) -> tuple[float, float]:
     """Roth contribution MAGI phase-out range (IRC §408A(c)(3)). Exact for published years;
-    CPI-indexed past 2026 rather than frozen."""
+    past 2026 the threshold is CPI-indexed and rounded to $1,000 with a fixed width
+    ($10,000 MFJ / $15,000 single)."""
     if tax_year in ROTH_PHASEOUT_BY_YEAR:
         low, high = ROTH_PHASEOUT_BY_YEAR[tax_year][filing_status]
         return (float(low), float(high))
     if tax_year > 2026:
-        low, high = index_tuple(ROTH_PHASEOUT_BY_YEAR[2026][filing_status], tax_year, cpi)
-        return (float(low), float(high))
+        return _indexed_phaseout(ROTH_PHASEOUT_BY_YEAR[2026][filing_status], tax_year, cpi)
     low, high = ROTH_PHASEOUT_BY_YEAR[min(ROTH_PHASEOUT_BY_YEAR)][filing_status]
     return (float(low), float(high))
 
@@ -118,10 +128,9 @@ def trad_deduction_phaseout_for_year(
         low, high = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[tax_year].get(key, (0, 0))
         return (float(low), float(high))
     if tax_year > 2026:
-        low, high = index_tuple(
+        return _indexed_phaseout(
             TRAD_DEDUCTION_PHASEOUT_BY_YEAR[2026].get(key, (0, 0)), tax_year, cpi
         )
-        return (float(low), float(high))
     year_data = TRAD_DEDUCTION_PHASEOUT_BY_YEAR[min(TRAD_DEDUCTION_PHASEOUT_BY_YEAR)]
     low, high = year_data.get(key, (0, 0))
     return (float(low), float(high))
