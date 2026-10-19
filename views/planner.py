@@ -308,7 +308,8 @@ def render(hh: Household) -> None:
 
     with col_btn1:
         if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
-            plan = auto_fill_12(hh, net_inv_income=_scenario_ytd_and_nii()[1])
+            # audit-1018 F-10: size with the same YTD the projection below uses.
+            plan = auto_fill_12(hh, *_scenario_ytd_and_nii())
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
             st.session_state.conv_plan_qcd = plan.qcds
@@ -530,7 +531,8 @@ def render(hh: Household) -> None:
     # C26 follow-up (audit-0721): thread the same YTD gating into the
     # no-conversion baseline so the IRA trajectory chart stays consistent
     # with the YTD-aware "Custom" result above.
-    no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd)
+    # audit-1018 F-27: and the same NII estimate as "Your Plan".
+    no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd, net_inv_income=net_inv_income)
 
     fig = go.Figure()
     all_ages = [yr.your_age for yr in result.years]
