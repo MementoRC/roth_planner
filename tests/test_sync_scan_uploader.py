@@ -393,7 +393,7 @@ class TestSyncButtonErrorIsolation:
                 side_effect=RuntimeError("connection refused"),
             ),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
-            patch("engine.portfolio_sync.save_ytd_snapshot") as mock_save,
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save,
         ):
             sync_scan_mod.render_ytd_finextract_sync(hh)
 
@@ -437,7 +437,7 @@ class TestSyncButtonErrorIsolation:
                 "engine.portfolio_sync.fetch_option_exercises",
                 side_effect=RuntimeError("malformed payload"),
             ),
-            patch("engine.portfolio_sync.save_ytd_snapshot") as mock_save,
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save,
         ):
             sync_scan_mod.render_ytd_finextract_sync(hh)
 
@@ -477,7 +477,7 @@ class TestSyncButtonErrorIsolation:
             patch("engine.koinly_report_pdf.load_koinly_report", return_value=None),
             patch("engine.portfolio_sync.fetch_ytd_snapshot", return_value=failed_status),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
-            patch("engine.portfolio_sync.save_ytd_snapshot") as mock_save,
+            patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save,
         ):
             mock_exercises = MagicMock()
             mock_exercises.server_available = False

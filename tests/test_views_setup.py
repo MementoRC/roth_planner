@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -40,38 +42,72 @@ def test_page_render_signature(module, name):
     assert params[0].annotation is Household or params[0].annotation == "Household"
 
 
+def _parse_function(func) -> ast.FunctionDef:
+    """AST of ``func``'s source (code only: docstrings/comments are never matched
+    by the node predicates below)."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    node = tree.body[0]
+    assert isinstance(node, ast.FunctionDef)
+    return node
+
+
+def _is_pyodide_call(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "is_pyodide"
+    )
+
+
+def _is_not_pyodide(test: ast.expr) -> bool:
+    return (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and _is_pyodide_call(test.operand)
+    )
+
+
+def _calls_named(nodes: list[ast.stmt], name: str) -> list[ast.Call]:
+    return [
+        n
+        for stmt in nodes
+        for n in ast.walk(stmt)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+    ]
+
+
 class TestPyodideGating:
     """Verify the FinExtract sync block is gated behind is_pyodide()."""
 
     def test_fetch_portfolio_inside_pyodide_else_branch(self):
-        """fetch_portfolio must be unreachable BEFORE the is_pyodide() guard.
+        """The FinExtract sync call must sit INSIDE an ``if not is_pyodide():`` body.
 
-        Static assertion: confirms the guard is not accidentally removed and that
-        fetch_portfolio cannot be reached on Pyodide even without executing Streamlit.
+        AST assertion (not a source-text position check): every call to
+        ``sync_portfolio_from_finextract`` in ``render_portfolio_legacy`` must be
+        a descendant of the body of an ``if not is_pyodide():`` statement, so the
+        network sync cannot be reached on the public stlite build. An unrelated
+        earlier ``is_pyodide()`` mention (e.g. the info note) does not count.
 
-        Post-W2-Part-B refactor: the actual ``fetch_portfolio(`` call now lives in
+        Post-W2-Part-B refactor: the actual ``fetch_portfolio(`` call lives in
         ``sync_portfolio_from_finextract`` (extracted so ``views._shared.
-        sync_everything`` can reuse it). Post-Task-6 (ui-shell-theme-toggle plan):
-        the ``is_pyodide()`` guard + the ``sync_portfolio_from_finextract(`` call
-        both moved out of ``render_portfolio_tab`` into
-        ``views/setup/_partials/_portfolio.py:render_portfolio_legacy`` — this test now
-        inspects that partial's source instead.
+        sync_everything`` can reuse it).
         """
         import inspect
 
         from views.setup import portfolio as portfolio_mod
         from views.setup._partials import render_portfolio_legacy
 
-        source = inspect.getsource(render_portfolio_legacy)
-        guard_pos = source.find("is_pyodide()")
-        sync_call_pos = source.find("sync_portfolio_from_finextract(")
-        assert guard_pos != -1, "is_pyodide() guard not found in render_portfolio_legacy()"
-        assert sync_call_pos != -1, (
-            "sync_portfolio_from_finextract( call not found in render_portfolio_legacy()"
-        )
-        assert guard_pos < sync_call_pos, (
-            "sync_portfolio_from_finextract() appears before is_pyodide() guard — "
-            "sync block is not properly gated on Pyodide"
+        func = _parse_function(render_portfolio_legacy)
+        all_calls = _calls_named(func.body, "sync_portfolio_from_finextract")
+        assert all_calls, "sync_portfolio_from_finextract( call not found"
+
+        gated: list[ast.Call] = []
+        for node in ast.walk(func):
+            if isinstance(node, ast.If) and _is_not_pyodide(node.test):
+                gated.extend(_calls_named(node.body, "sync_portfolio_from_finextract"))
+        assert {id(c) for c in all_calls} == {id(c) for c in gated}, (
+            "sync_portfolio_from_finextract() is reachable outside an "
+            "`if not is_pyodide():` body — the FinExtract sync is not gated on Pyodide"
         )
 
         helper_source = inspect.getsource(portfolio_mod.sync_portfolio_from_finextract)
@@ -90,17 +126,42 @@ class TestPdf1040ImportHelper:
         assert hasattr(setup, "_render_pdf_1040_import")
         assert callable(setup._render_pdf_1040_import)
 
-    def test_pyodide_gate_present_in_source(self):
-        """_render_pdf_1040_import must contain is_pyodide() guard."""
-        import inspect
+    def test_confirm_ui_not_gated_off_in_pyodide(self):
+        """The 1040 confirm/save UI is intentionally NOT gated behind
+        ``is_pyodide()`` (the public site scans 1040s too), and the helper never
+        touches pdfplumber itself (scanning lives in the Data-tab uploader).
 
+        AST assertions on code only: the one remaining ``if is_pyodide():`` may
+        only show a caption (no early return / save logic inside it), and no
+        ``pdfplumber`` import or name appears in the function body.
+        """
         from views import setup
 
-        source = inspect.getsource(setup._render_pdf_1040_import)
-        assert "is_pyodide()" in source, (
-            "is_pyodide() guard missing from _render_pdf_1040_import — "
-            "pdfplumber would be called in the Pyodide web build"
-        )
+        func = _parse_function(setup._render_pdf_1040_import)
+
+        for node in ast.walk(func):
+            if isinstance(node, ast.If) and _is_pyodide_call(node.test):
+                assert not any(isinstance(n, ast.Return) for s in node.body for n in ast.walk(s)), (
+                    "is_pyodide() branch returns early — the 1040 confirm UI is gated off"
+                )
+                assert not _calls_named(node.body, "save_pdf_tax_records")
+                assert all(
+                    isinstance(s, ast.Expr)
+                    and isinstance(s.value, ast.Call)
+                    and isinstance(s.value.func, ast.Attribute)
+                    and s.value.func.attr == "caption"
+                    for s in node.body
+                ), "is_pyodide() branch may only render a caption"
+
+        assert not any(
+            (isinstance(n, ast.Name) and n.id == "pdfplumber")
+            or (isinstance(n, ast.Import) and any(a.name == "pdfplumber" for a in n.names))
+            or (isinstance(n, ast.ImportFrom) and n.module == "pdfplumber")
+            for n in ast.walk(func)
+        ), "_render_pdf_1040_import must not use pdfplumber directly"
+
+        # The save path stays reachable regardless of the runtime.
+        assert _calls_named(func.body, "save_pdf_tax_records")
 
     def test_filing_status_options_complete(self):
         """_FILING_STATUS_OPTIONS must contain all four canonical statuses."""

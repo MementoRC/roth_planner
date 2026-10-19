@@ -120,100 +120,88 @@ class TestSurvivorBrokerageLTCGStackBaseline:
     and the projected brokerage balance must be LOWER.
     """
 
-    def test_rmd_stacking_increases_ltcg_tax(self) -> None:
-        """With RMD income stacking under realized gains that span the 0%→15% boundary,
-        the RMD-based LTCG tax MUST be higher than the zero-baseline tax."""
-        from engine.tax import LTCG_THRESHOLDS_SINGLE
-        from engine.tax_indexing import index_tuple
+    # Fixed synthetic RMD fed to every projection offset (calc_rmd is stubbed in
+    # the snapshot module, so the expected balances below need no IRA replay).
+    _RMD = 100_000.0
+
+    def _final_year_brok_ltcg_income(
+        self, monkeypatch: pytest.MonkeyPatch, rmd: float = _RMD
+    ) -> tuple[float, float]:
+        """Run the REAL compute_survivor_snapshot and return (the realized
+        brokerage LTCG income it handed to survivor_year_tax in the projection
+        year, the closing balance the test expects from the year-0 balance)."""
+        import engine.scenario_compare as sc
+        from engine.scenario import run_no_conversion
+        from engine.scenario_compare import compute_survivor_snapshot
         from models.household import Household
 
         hh = Household(
+            base_year=2026,
             your_age=72,
-            spouse_age=67,
+            spouse_age=78,
             your_ira=2_000_000.0,
             spouse_ira=0.0,
             growth_rate=0.05,
-            your_rmd_start_age=73,
-            spouse_rmd_start_age=73,
-        )
-        cpi = hh.cpi_assumption
-        year = 2026
-        thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year, cpi)
-        # threshold[0] ≈ 49,450; gains crossing from below to above = material LTCG tax
-        rmd_income = 40_000.0  # RMD pushes total past the 0% ceiling
-        brok_realized = 30_000.0  # gains straddle 49,450 with and without RMD
-
-        # Zero-baseline (old code): gains start at 0
-        ltcg_at_15_z = max(0.0, min(brok_realized, thr[1]) - thr[0])
-        tax_zero = ltcg_at_15_z * LTCG_RATES_SINGLE[1]
-
-        # RMD-baseline (fixed code): stack starts at rmd_income (40k), gains 40k→70k
-        ltcg_start = rmd_income
-        ltcg_end = rmd_income + brok_realized
-        ltcg_at_15_r = max(0.0, min(ltcg_end, thr[1]) - max(ltcg_start, thr[0]))
-        tax_rmd = ltcg_at_15_r * LTCG_RATES_SINGLE[1]
-
-        assert tax_rmd > tax_zero, (
-            f"RMD-stacked LTCG tax ({tax_rmd:.2f}) must exceed zero-baseline tax ({tax_zero:.2f}) "
-            f"when RMD pushes gains above the 0% ceiling ({thr[0]:.0f})"
-        )
-
-    def test_compute_survivor_snapshot_brokerage_tax_uses_rmd_baseline(self) -> None:
-        """Integration: with a large inherited IRA generating RMDs that push realized
-        gains above the LTCG 0% ceiling, the RMD-baseline LTCG tax must exceed the
-        zero-baseline, confirming the fix is wired into the brokerage projection loop.
-        """
-        from engine.ira import calc_rmd
-        from engine.tax import LTCG_THRESHOLDS_SINGLE, STD_DEDUCTION_SINGLE
-        from engine.tax_indexing import index_tuple
-        from models.household import Household
-
-        # Survivor (spouse) inherits large IRA → big RMD → pushes LTCG into 15% band
-        hh = Household(
-            your_age=72,
-            spouse_age=67,
-            your_ira=2_000_000.0,
-            spouse_ira=0.0,
-            growth_rate=0.05,
-            your_rmd_start_age=73,
-            spouse_rmd_start_age=73,
+            cpi_assumption=0.0,
+            your_rmd_start_age=75,
+            spouse_rmd_start_age=75,
             brokerage_start=500_000.0,
+            brokerage_start_basis=500_000.0,
             brok_turnover=0.10,
+            grants=[],
         )
-        cpi = hh.cpi_assumption
-        # Projection year 2, survivor age 74 (past rmd_start=73) — RMD kicks in
-        year_at_offset = 2028
-        survivor_age_at_offset = 74
-        brok_balance = 500_000.0
-        brok_appreciation_rate = 0.05
-        brok_realized = brok_balance * brok_appreciation_rate * hh.brok_turnover
-        # brok_realized = 500000 * 0.05 * 0.10 = 2500
+        scenario = run_no_conversion(hh, end_age=95)
+        monkeypatch.setattr(sc, "calc_rmd", lambda *_a, **_k: rmd)
 
-        ira_balance_at_proj = 1_800_000.0  # approximate inherited IRA after growth
-        rmd_this_year = calc_rmd(
-            ira_balance_at_proj, survivor_age_at_offset, hh.spouse_rmd_start_age
-        )
-        # rmd_this_year ≈ 1800000 / 25.5 ≈ 70,588
+        seen: list[float] = []
+        original = sc.survivor_year_tax
 
-        thr = index_tuple(LTCG_THRESHOLDS_SINGLE, year_at_offset, cpi)
-        # thr[0] ≈ 49,450 * cpi^2 ≈ 51k
+        def _spy(survivor_age, rmd, survivor_ss, **kwargs):
+            seen.append(kwargs["brok_ltcg_income"])
+            return original(survivor_age, rmd, survivor_ss, **kwargs)
 
-        # OLD (zero-baseline): brok_realized=2500 < thr[0]≈51k → all at 0% → tax=0
-        ltcg_at_15_old = max(0.0, min(brok_realized, thr[1]) - thr[0])
-        tax_old = ltcg_at_15_old * LTCG_RATES_SINGLE[1]
+        monkeypatch.setattr(sc, "survivor_year_tax", _spy)
+        compute_survivor_snapshot(hh, [scenario], "you", [72])
+        assert len(seen) == 1
 
-        # NEW (RMD-baseline): taxable_ordinary ≈ rmd - std_ded ≈ 70588-16100=54488 > 51k
-        # so ALL brok_realized gains fall in the 15% band
-        taxable_ordinary_approx = max(rmd_this_year - STD_DEDUCTION_SINGLE, 0.0)
-        ltcg_start = taxable_ordinary_approx
-        ltcg_end = taxable_ordinary_approx + brok_realized
-        ltcg_at_15_new = max(0.0, min(ltcg_end, thr[1]) - max(ltcg_start, thr[0]))
-        tax_new = ltcg_at_15_new * LTCG_RATES_SINGLE[1]
+        # Independent replay of the 5-year brokerage loop on Single thresholds.
+        from engine.tax import LTCG_THRESHOLDS_SINGLE, deductions
 
-        assert rmd_this_year > 50_000, (
-            f"Test setup: RMD ({rmd_this_year:.0f}) must be large enough to exceed LTCG 0%-ceiling"
-        )
-        assert tax_new > tax_old, (
-            f"RMD-baseline LTCG tax ({tax_new:.2f}) must exceed zero-baseline ({tax_old:.2f}) "
-            f"when taxable_ordinary ({taxable_ordinary_approx:.0f}) > LTCG 0%-ceiling ({thr[0]:.0f})"
-        )
+        year0 = next(y for y in scenario.years if y.your_age == 72)
+        balance = year0.brokerage_balance_end
+        appr = hh.brokerage_rate(2027)  # constant growth, no GrowthProfile
+        for offset in range(1, 6):
+            realized = balance * appr * hh.brok_turnover
+            ded = deductions(78 + offset, 0, filing_status="Single", year=2026 + offset, cpi=0.0)
+            start = max(rmd - ded, 0.0)
+            end = start + realized
+            thr = LTCG_THRESHOLDS_SINGLE
+            tax = (
+                max(0.0, min(end, thr[1]) - max(start, thr[0])) * LTCG_RATES_SINGLE[1]
+                + max(0.0, end - max(start, thr[1])) * LTCG_RATES_SINGLE[2]
+            )
+            balance = balance + balance * appr - tax
+        return seen[0], balance * appr * hh.brok_turnover
+
+    def test_rmd_stacking_increases_ltcg_tax(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With RMD income stacking under realized gains, the survivor's brokerage
+        balance (hence the projection-year realized income) must be LOWER than a
+        zero-baseline run would leave it: the RMD-stacked gains pay 15% tax.
+
+        Zero-baseline expectation: gains of ~12.5K/yr sit below the ~49K 0% ceiling,
+        so no tax is ever paid and the balance only compounds.
+        """
+        captured, expected = self._final_year_brok_ltcg_income(monkeypatch, rmd=self._RMD)
+        assert captured == pytest.approx(expected, rel=1e-9)
+
+        zero_baseline, _ = self._final_year_brok_ltcg_income(monkeypatch, rmd=0.0)
+        assert captured < zero_baseline
+
+    def test_compute_survivor_snapshot_brokerage_tax_uses_rmd_baseline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Integration: a large inherited IRA's RMD pushes realized gains above the
+        LTCG 0% ceiling, and the tax actually reduces the projected balance that
+        compute_survivor_snapshot feeds to survivor_year_tax."""
+        captured, expected = self._final_year_brok_ltcg_income(monkeypatch)
+        assert captured == pytest.approx(expected, rel=1e-9)

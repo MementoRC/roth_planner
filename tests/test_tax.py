@@ -397,69 +397,71 @@ class TestLoadPriorYearFederalTax:
         result = load_prior_year_federal_tax()
         assert result == pytest.approx(0.0)
 
-    def test_nested_total_federal_tax_key(self, tmp_path):
-        """Cache with nested year → total_federal_tax → returns float."""
+    @staticmethod
+    def _load(tmp_path, monkeypatch, content):
+        """Write ``content`` to a tmp cache, point the writer constant at it, and
+        call the REAL load_prior_year_federal_tax (legacy no-arg path)."""
+        import engine.tax_return_pdf as tax_return_pdf_module
+        from engine.tax import load_prior_year_federal_tax
 
         cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(json.dumps({"2024": {"total_federal_tax": 42_500.0}}))
+        cache.write_text(content if isinstance(content, str) else json.dumps(content))
+        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
+        return load_prior_year_federal_tax()
 
-        # Exercise the parsing logic directly (same logic as the real function)
-        data = json.loads(cache.read_text())
-        result = 0.0
-        for year_key in sorted(data.keys(), reverse=True):
-            entry = data[year_key]
-            if isinstance(entry, dict):
-                for key in ("total_federal_tax", "total_tax", "line_24"):
-                    val = entry.get(key)
-                    if val:
-                        try:
-                            result = float(val)
-                            break
-                        except (TypeError, ValueError):
-                            continue
-            if result:
-                break
+    def test_nested_total_federal_tax_key(self, tmp_path, monkeypatch):
+        """Cache with nested year → total_federal_tax → returns float."""
+        result = self._load(tmp_path, monkeypatch, {"2024": {"total_federal_tax": 42_500.0}})
         assert result == pytest.approx(42_500.0)
 
-    def test_nested_line_24_key(self, tmp_path):
+    def test_nested_line_24_key(self, tmp_path, monkeypatch):
         """Cache with nested year → line_24 → returns float."""
-
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(json.dumps({"2023": {"line_24": 38_000.0}}))
-
-        data = json.loads(cache.read_text())
-        result = 0.0
-        for year_key in sorted(data.keys(), reverse=True):
-            entry = data[year_key]
-            if isinstance(entry, dict):
-                for key in ("total_federal_tax", "total_tax", "line_24"):
-                    val = entry.get(key)
-                    if val:
-                        try:
-                            result = float(val)
-                            break
-                        except (TypeError, ValueError):
-                            continue
-            if result:
-                break
+        result = self._load(tmp_path, monkeypatch, {"2023": {"line_24": 38_000.0}})
         assert result == pytest.approx(38_000.0)
+
+    def test_most_recent_year_wins(self, tmp_path, monkeypatch):
+        result = self._load(
+            tmp_path,
+            monkeypatch,
+            {"2022": {"total_federal_tax": 1_000.0}, "2024": {"total_federal_tax": 2_000.0}},
+        )
+        assert result == pytest.approx(2_000.0)
+
+    def test_nested_bad_value_falls_through_to_next_key(self, tmp_path, monkeypatch):
+        """An unparseable total_federal_tax must not hide a usable line_24."""
+        result = self._load(
+            tmp_path,
+            monkeypatch,
+            {"2024": {"total_federal_tax": "n/a", "line_24": 1_234.0}},
+        )
+        assert result == pytest.approx(1_234.0)
+
+    def test_flat_dict_fallback(self, tmp_path, monkeypatch):
+        """Single-year (non-nested) cache is read through the flat fallback."""
+        result = self._load(tmp_path, monkeypatch, {"line_24": 777.0})
+        assert result == pytest.approx(777.0)
+
+    def test_flat_dict_bad_value_returns_zero(self, tmp_path, monkeypatch):
+        result = self._load(tmp_path, monkeypatch, {"total_federal_tax": "n/a"})
+        assert result == pytest.approx(0.0)
 
     def test_malformed_json_returns_zero(self, tmp_path, monkeypatch):
         """Malformed JSON → returns 0.0 without raising."""
+        result = self._load(tmp_path, monkeypatch, "{{not valid json")
+        assert result == pytest.approx(0.0)
 
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text("{{not valid json")
-        # Confirm the content is genuinely malformed
-        with pytest.raises(json.JSONDecodeError):
-            json.loads(cache.read_text())
-        # The real function catches JSONDecodeError → 0.0
-        # Exercise the except branch directly to validate the pattern
-        result = None
-        try:
-            json.loads(cache.read_text())
-            result = 99_999.0  # should never reach here
-        except (json.JSONDecodeError, OSError):
-            result = 0.0
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AttributeError,
+        reason=(
+            "audit-1018 F-51: engine/tax.py flat-dict fallback calls data.get() "
+            "without an isinstance(data, dict) guard, so a top-level JSON list "
+            "raises AttributeError. Latent only: the sole production caller passes "
+            "tax_year and takes the guarded branch."
+        ),
+    )
+    def test_top_level_list_returns_zero(self, tmp_path, monkeypatch):
+        result = self._load(tmp_path, monkeypatch, [1, 2, 3])
         assert result == pytest.approx(0.0)
 
 
@@ -475,22 +477,66 @@ class TestBrokerageGainTaxStackWalk:
         ordinary_taxable_income: float,
         realized_gains: float,
     ) -> float:
-        """Return the brokerage_gain_tax produced by the stack-walk for a given
-        ordinary taxable income and realized-gains amount.
-
-        Drives the same arithmetic as scenario.py without spinning up a full
-        run_scenario call — mirrors the inline stack-walk exactly.
+        """Return the preferential stack-walk tax for a given ordinary taxable
+        income and realized-gains amount, by calling the REAL engine function
+        (engine.scenario._pref_stack_tax) that run_scenario uses for
+        brokerage_gain_tax, with MFJ thresholds/rates.
         """
-        from engine.tax import LTCG_THRESHOLDS_MFJ
+        from engine.scenario import _pref_stack_tax
+        from engine.tax import LTCG_RATES_MFJ, LTCG_THRESHOLDS_MFJ
 
-        ltcg_start = max(0.0, ordinary_taxable_income)
-        ltcg_end = ltcg_start + max(0.0, realized_gains)
-        ltcg_at_15 = max(
+        return _pref_stack_tax(
+            ordinary_taxable_income,
             0.0,
-            min(ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(ltcg_start, LTCG_THRESHOLDS_MFJ[0]),
+            0.0,
+            realized_gains,
+            LTCG_THRESHOLDS_MFJ,
+            LTCG_RATES_MFJ,
         )
-        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, LTCG_THRESHOLDS_MFJ[1]))
-        return ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
+
+    @staticmethod
+    def _projected_year(*, survivor, yield_rate: float, year: int):
+        """Run the REAL projection for a synthetic brokerage-only household and
+        return the YearResult for ``year`` (no IRA/SS/grants, zero CPI, so the
+        constant thresholds apply un-indexed)."""
+        from engine.scenario import ConversionPlan, run_scenario
+        from models.household import GrowthProfile, Household
+
+        hh = Household(
+            base_year=2026,
+            your_age=55,
+            spouse_age=53,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            exercise_schedule=None,
+            living_expenses=0.0,
+            cpi_assumption=0.0,
+            brokerage_start=3_000_000.0,
+            brokerage_start_basis=3_000_000.0,
+            brok_turnover=0.5,
+            brokerage_growth=GrowthProfile(
+                default_rate=0.07, yield_rate=yield_rate, qualified_fraction=1.0
+            ),
+            survivor=survivor,
+        )
+        result = run_scenario(hh, ConversionPlan(), end_age=60)
+        return hh, next(y for y in result.years if y.year == year)
+
+    @staticmethod
+    def _worksheet_tax(yr, hh, thresholds) -> float:
+        """Independent 0/15/20 worksheet over the year's own reported figures."""
+        pref = yr.brokerage_growth * hh.brok_turnover + yr.brokerage_qual_div
+        unused_ded = max(0.0, yr.total_deductions - yr.combined_gross)
+        start = yr.taxable_income
+        end = start + max(0.0, pref - unused_ded)
+        at_15 = max(0.0, min(end, thresholds[1]) - max(start, thresholds[0]))
+        at_20 = max(0.0, end - max(start, thresholds[1]))
+        return at_15 * 0.15 + at_20 * 0.20
 
     def test_brokerage_gain_tax_all_in_15pct(self):
         """Small ordinary income + small gain → all gains taxed at 15%."""
@@ -547,7 +593,7 @@ class TestBrokerageGainTaxStackWalk:
         gain = 30_000.0
         threshold_0 = LTCG_THRESHOLDS_MFJ[0]  # ≈98_900 for 2026 MFJ
 
-        # Fixed result via helper (mirrors corrected scenario.py arithmetic)
+        # Real engine stack-walk
         result = self._single_year_brokerage_gain_tax(ordinary, gain)
 
         # The $30K gain straddles the 0%→15% boundary:
@@ -557,18 +603,10 @@ class TestBrokerageGainTaxStackWalk:
         assert result == pytest.approx(expected, rel=1e-9)
         assert result > 0.0, "Fixed formula must produce non-zero LTCG tax here"
 
-        # Demonstrate what the buggy formula would have returned ($0)
-        buggy_ltcg_start = max(0.0, ordinary - gain)  # 50_000
-        buggy_ltcg_end = buggy_ltcg_start + gain  # 80_000
-        buggy_at_15 = max(
-            0.0,
-            min(buggy_ltcg_end, LTCG_THRESHOLDS_MFJ[1]) - max(buggy_ltcg_start, threshold_0),
-        )
-        buggy_result = buggy_at_15 * 0.15
-        assert buggy_result == pytest.approx(0.0), (
-            "Buggy formula should yield $0 (regression anchor)"
-        )
-        assert result > buggy_result, "Fix must increase LTCG tax vs buggy formula"
+        # The buggy start (ordinary - gain) would have kept the whole gain in the 0% band.
+        buggy_result = self._single_year_brokerage_gain_tax(ordinary - gain, gain)
+        assert buggy_result == pytest.approx(0.0), "Buggy start must yield $0 (regression anchor)"
+        assert result > buggy_result, "Fix must increase LTCG tax vs buggy start"
 
     def test_qual_div_included_in_ltcg_stack_mfj(self):
         """C-5 regression: qualified dividends taxed at LTCG preferential rates (IRC §1(h)(11)).
@@ -578,34 +616,24 @@ class TestBrokerageGainTaxStackWalk:
         Post-fix: stack walks $100K → $110K; LTCG_THRESHOLDS_MFJ[0]=98_900 so
         $10K is entirely above 0%-band → 15% = $1_500.
         """
-        from engine.tax import LTCG_THRESHOLDS_MFJ
-
-        ltcg_thresholds = LTCG_THRESHOLDS_MFJ
-        ordinary = 100_000.0
-        realized_gains = 0.0
-        qual_div = 10_000.0
-        ltcg_eligible = realized_gains + qual_div
-        ltcg_start = max(0.0, ordinary)
-        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
-        ltcg_at_15 = max(
-            0.0,
-            min(ltcg_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
-        )
-        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
-        result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
-
-        # $10K above 98_900 threshold → taxed at 15%
+        # Real engine stack-walk: $10K of eligible income above the 98_900 threshold → 15%
+        result = self._single_year_brokerage_gain_tax(100_000.0, 10_000.0)
         assert result == pytest.approx(1_500.0, rel=1e-9)
 
         # Pre-fix (no qual_div in stack) would have returned $0
-        pre_fix_end = ltcg_start + max(0.0, realized_gains)
-        pre_fix_at_15 = max(
-            0.0,
-            min(pre_fix_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
-        )
-        pre_fix_result = pre_fix_at_15 * 0.15
-        assert pre_fix_result == pytest.approx(0.0), "Pre-fix must yield $0 (anchor)"
-        assert result > pre_fix_result, "Fix must increase LTCG tax when qual_div present"
+        assert self._single_year_brokerage_gain_tax(100_000.0, 0.0) == pytest.approx(0.0)
+
+    def test_run_scenario_stacks_qualified_dividends_in_gain_tax(self):
+        """C-5 wired into run_scenario: qualified dividends are part of the
+        preferential stack that yields yr.brokerage_gain_tax (MFJ year)."""
+        from engine.tax import LTCG_THRESHOLDS_MFJ
+
+        hh, with_div = self._projected_year(survivor=None, yield_rate=0.02, year=2027)
+        assert with_div.filing_status == "MFJ"
+        assert with_div.brokerage_qual_div > 0.0
+        expected = self._worksheet_tax(with_div, hh, LTCG_THRESHOLDS_MFJ)
+        assert expected > 0.0
+        assert with_div.brokerage_gain_tax == pytest.approx(expected, rel=1e-6)
 
     def test_single_survivor_uses_single_thresholds(self):
         """C-6 regression: survivor (Single) uses LTCG_THRESHOLDS_SINGLE not MFJ.
@@ -615,34 +643,35 @@ class TestBrokerageGainTaxStackWalk:
         Single 0%-ceiling ($49_450, 2026 Rev. Proc. 2025-32): stack starts $60K (above ceiling) → all $30K at 15%
         = $4_500 (post-fix).
         """
+        from engine.scenario import _pref_stack_tax
+        from engine.tax import (
+            LTCG_RATES_MFJ,
+            LTCG_RATES_SINGLE,
+            LTCG_THRESHOLDS_MFJ,
+            LTCG_THRESHOLDS_SINGLE,
+        )
+
+        # Real stack-walk function with each filing status's constants
+        single = _pref_stack_tax(
+            60_000.0, 0.0, 0.0, 30_000.0, LTCG_THRESHOLDS_SINGLE, LTCG_RATES_SINGLE
+        )
+        mfj = _pref_stack_tax(60_000.0, 0.0, 0.0, 30_000.0, LTCG_THRESHOLDS_MFJ, LTCG_RATES_MFJ)
+        assert single == pytest.approx(4_500.0, rel=1e-9)
+        assert mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
+
+    def test_run_scenario_survivor_year_uses_single_thresholds(self):
+        """C-6 wired into run_scenario: a survivor year (Single) must price
+        yr.brokerage_gain_tax on Single thresholds, a joint year on MFJ."""
         from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE
+        from models.household import SurvivorScenario
 
-        ordinary = 60_000.0
-        realized_gains = 30_000.0
-        qual_div = 0.0
-        ltcg_eligible = realized_gains + qual_div
-        ltcg_start = max(0.0, ordinary)
-        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
-
-        # Post-fix: Single thresholds
-        single_thresh = LTCG_THRESHOLDS_SINGLE
-        at_15_single = max(
-            0.0,
-            min(ltcg_end, single_thresh[1]) - max(ltcg_start, single_thresh[0]),
-        )
-        at_20_single = max(0.0, ltcg_end - max(ltcg_start, single_thresh[1]))
-        result_single = at_15_single * 0.15 + at_20_single * 0.20
-        assert result_single == pytest.approx(4_500.0, rel=1e-9)
-
-        # Pre-fix: MFJ thresholds would have returned $0
-        mfj_thresh = LTCG_THRESHOLDS_MFJ
-        at_15_mfj = max(
-            0.0,
-            min(ltcg_end, mfj_thresh[1]) - max(ltcg_start, mfj_thresh[0]),
-        )
-        result_mfj = at_15_mfj * 0.15
-        assert result_mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
-        assert result_single > result_mfj
+        surv = SurvivorScenario(who_dies="you", death_year=2026)
+        hh, yr = self._projected_year(survivor=surv, yield_rate=0.02, year=2027)
+        assert yr.filing_status == "Single"
+        on_single = self._worksheet_tax(yr, hh, LTCG_THRESHOLDS_SINGLE)
+        on_mfj = self._worksheet_tax(yr, hh, LTCG_THRESHOLDS_MFJ)
+        assert on_single > on_mfj + 1_000.0, "precondition: the two statuses must differ"
+        assert yr.brokerage_gain_tax == pytest.approx(on_single, rel=1e-6)
 
     def test_single_survivor_ytd_uses_single_thresholds(self):
         """YTD LTCG (b) regression: survivor (Single) uses LTCG_THRESHOLDS_SINGLE
@@ -651,32 +680,41 @@ class TestBrokerageGainTaxStackWalk:
         Same numerical setup as test_single_survivor_uses_single_thresholds:
         ordinary $60K + ltcg_ytd $30K. MFJ would yield $0; Single yields $4,500.
         """
-        from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE
+        from engine.tax import estimate_ytd_federal_tax
 
-        ordinary = 60_000.0
-        ltcg_ytd = 30_000.0
-        ltcg_start = max(0.0, ordinary)
-        ltcg_end = ltcg_start + max(0.0, ltcg_ytd)
+        hh, ytd = self._single_filer_ytd(ordinary_taxable=60_000.0, ltcg=30_000.0)
+        assert estimate_ytd_federal_tax(ytd, hh).ltcg_tax == pytest.approx(4_500.0, rel=1e-9)
 
-        # Post-fix: Single thresholds
-        single_thresh = LTCG_THRESHOLDS_SINGLE
-        at_15_single = max(
-            0.0,
-            min(ltcg_end, single_thresh[1]) - max(ltcg_start, single_thresh[0]),
+        # The same figures filed jointly sit wholly in the 0% band.
+        mfj_hh, mfj_ytd = self._single_filer_ytd(ordinary_taxable=60_000.0, ltcg=30_000.0, mfj=True)
+        assert estimate_ytd_federal_tax(mfj_ytd, mfj_hh).ltcg_tax == pytest.approx(0.0)
+
+    @staticmethod
+    def _single_filer_ytd(
+        *, ordinary_taxable: float, ltcg: float, qual_div: float = 0.0, mfj: bool = False
+    ):
+        """Synthetic age-50 household + YTD snapshot whose ordinary TAXABLE income
+        is exactly ``ordinary_taxable`` (wages = taxable + standard deduction)."""
+        from engine.tax import STD_DEDUCTION_MFJ, STD_DEDUCTION_SINGLE
+        from models.household import Household
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            base_year=2026,
+            your_age=50,
+            spouse_age=50,
+            cpi_assumption=0.0,
+            filing_status="MFJ" if mfj else "Single",
+            grants=[],
         )
-        at_20_single = max(0.0, ltcg_end - max(ltcg_start, single_thresh[1]))
-        result_single = at_15_single * 0.15 + at_20_single * 0.20
-        assert result_single == pytest.approx(4_500.0, rel=1e-9)
-
-        # Pre-fix: MFJ thresholds would have returned $0
-        mfj_thresh = LTCG_THRESHOLDS_MFJ
-        at_15_mfj = max(
-            0.0,
-            min(ltcg_end, mfj_thresh[1]) - max(ltcg_start, mfj_thresh[0]),
+        std_ded = STD_DEDUCTION_MFJ if mfj else STD_DEDUCTION_SINGLE
+        ytd = YTDSnapshot(
+            tax_year=2026,
+            wages_ytd=ordinary_taxable + std_ded,
+            ltcg_ytd=ltcg,
+            qualified_dividends_ytd=qual_div,
         )
-        result_mfj = at_15_mfj * 0.15
-        assert result_mfj == pytest.approx(0.0), "MFJ thresholds yield $0 (pre-fix anchor)"
-        assert result_single > result_mfj
+        return hh, ytd
 
     def test_qual_div_and_single_thresholds_compose(self):
         """C-5 + C-6 combined: Single survivor with both qual_div and realized_gains.
@@ -686,24 +724,10 @@ class TestBrokerageGainTaxStackWalk:
         ltcg_eligible = $13K; stack: $40K → $53K.
         $53K - $49_450 = $3_550 above 0%-band → all at 15% = $532.50.
         """
-        from engine.tax import LTCG_THRESHOLDS_SINGLE
+        from engine.tax import estimate_ytd_federal_tax
 
-        ltcg_thresholds = LTCG_THRESHOLDS_SINGLE
-        ordinary = 40_000.0
-        realized_gains = 5_000.0
-        qual_div = 8_000.0
-        ltcg_eligible = realized_gains + qual_div
-        ltcg_start = max(0.0, ordinary)
-        ltcg_end = ltcg_start + max(0.0, ltcg_eligible)
-        ltcg_at_15 = max(
-            0.0,
-            min(ltcg_end, ltcg_thresholds[1]) - max(ltcg_start, ltcg_thresholds[0]),
-        )
-        ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, ltcg_thresholds[1]))
-        result = ltcg_at_15 * 0.15 + ltcg_at_20 * 0.20
-
-        expected_taxed = ltcg_end - ltcg_thresholds[0]  # 53_000 - 49_450 = 3_550
-        assert result == pytest.approx(expected_taxed * 0.15, rel=1e-9)
+        hh, ytd = self._single_filer_ytd(ordinary_taxable=40_000.0, ltcg=5_000.0, qual_div=8_000.0)
+        result = estimate_ytd_federal_tax(ytd, hh).ltcg_tax
         assert result == pytest.approx(532.50, rel=1e-9)
 
 

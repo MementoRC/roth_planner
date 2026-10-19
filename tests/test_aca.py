@@ -31,7 +31,13 @@ class TestACA:
         assert aca_subsidy(30_000) > 15_000
 
     def test_high_income_subsidy(self):
-        aca_subsidy(300_000)  # just verify no error
+        # Pre-ARP rules (the default): no premium tax credit above 400% FPL.
+        assert aca_subsidy(300_000) == 0.0
+        assert aca_subsidy(300_000, enhanced_subsidies_active=False) == 0.0
+        # A benchmark far above 8.5% of income would leave a positive credit if the
+        # 400% FPL cliff were dropped or the enhanced schedule became the default.
+        assert aca_subsidy(300_000, benchmark=1_000_000.0) == 0.0
+        assert aca_subsidy(300_000, benchmark=1_000_000.0, enhanced_subsidies_active=True) > 0.0
 
     def test_benchmark_premium_default_unchanged(self):
         """Default benchmark (21600) must produce same subsidy loss as the old hardcoded constant."""
