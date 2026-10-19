@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from engine.demo_mode import is_demo_mode
 from engine.secure_io import write_pii_json
 from models.grants import StockGrant
 from models.legacy_keys import migrate_legacy_keys
@@ -185,7 +186,11 @@ class CandidateStore:
         with an unknown Source or stale StockGrant fields included
         (audit-1008 F-44). A missing target (first run, nothing to protect)
         or an existing-and-parseable one both write normally.
+
+        Demo mode (audit-1018 W9b): a no-op, checked before anything is read.
         """
+        if is_demo_mode():
+            return
         target = Path(path)
         if target.exists():
             try:
@@ -206,7 +211,11 @@ class CandidateStore:
         file (nothing has ever been saved — normal first run), True when
         the file existed but failed to parse (real candidate data may still
         be sitting in those unreadable bytes).
+
+        Demo mode (audit-1018 W9b): always an empty store.
         """
+        if is_demo_mode():
+            return cls()
         try:
             return cls._parse(Path(path).read_text())
         except OSError as exc:

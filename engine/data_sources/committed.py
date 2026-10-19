@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS
+from engine.demo_mode import is_demo_mode
 from engine.secure_io import write_pii_json
 from models.grants import StockGrant
 from models.household import Household
@@ -171,6 +172,8 @@ def load_committed(path: str | Path) -> dict | None:
     so would let a caller re-migrate and overwrite the only copy of that
     data). See CorruptCommittedCacheError's docstring for the full rationale.
     """
+    if is_demo_mode():  # audit-1018 W9b: the personal baseline is hidden in demo mode
+        return None
     try:
         raw = Path(path).read_text()
     except UnicodeDecodeError as exc:
@@ -218,7 +221,11 @@ def save_committed(path: str | Path, committed_json: dict) -> None:
     audit-1008 (W11 follow-up): the pre-write check runs the same parse as
     :func:`load_committed` (JSON *and* shape), so a valid-JSON file that load
     reports as corrupt is refused here too instead of silently replaced.
+
+    Demo mode (audit-1018 W9b): a no-op, checked before anything is read.
     """
+    if is_demo_mode():
+        return
     target = Path(path)
     if target.exists():
         try:

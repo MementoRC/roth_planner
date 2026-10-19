@@ -24,6 +24,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from engine.demo_mode import is_demo_mode
 from engine.secure_io import read_pii_json, write_pii_json
 from engine.ubs_activity_csv import UbsActivityOrder, UbsExerciseLot
 
@@ -145,7 +146,7 @@ def load_ubs_orders() -> list[UbsActivityOrder]:
     class's docstring for why a silent empty-list fallback here would be
     actively dangerous rather than merely inconvenient.
     """
-    if not _UBS_ACTIVITY_CACHE_PATH.exists():
+    if is_demo_mode() or not _UBS_ACTIVITY_CACHE_PATH.exists():
         return []
     try:
         data = read_pii_json(_UBS_ACTIVITY_CACHE_PATH)

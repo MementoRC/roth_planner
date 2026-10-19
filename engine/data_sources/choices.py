@@ -1,6 +1,6 @@
 """Per-field trusted-source choices for the Setup / Command Center.
 
-Pure module: stdlib + models/ only. No streamlit, no other engine imports.
+Pure module: stdlib + models/ + engine.demo_mode only. No streamlit.
 
 Once a user tells the app "trust FinExtract for your_ira going forward", that
 choice is recorded here so future resolutions don't need to re-ask — until
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
 from models.legacy_keys import migrate_legacy_keys
 from models.sourced import Source
 
@@ -99,7 +100,11 @@ class ChoiceMap:
         good file. If ``path`` exists but does not parse as a choice map, the
         write is refused with :class:`CorruptChoiceMapError` so the unreadable
         bytes (possibly the only copy of the user's choices) stay on disk.
+
+        Demo mode (audit-1018 W9b): a no-op.
         """
+        if is_demo_mode():
+            return
         target = Path(path)
         if target.exists():
             try:
@@ -121,7 +126,11 @@ class ChoiceMap:
         crash the Setup / Command Center. A file that exists but fails to
         parse sets ``load_corrupt`` on the returned map; ``save`` refuses to
         overwrite such a file.
+
+        Demo mode (audit-1018 W9b): always an empty map.
         """
+        if is_demo_mode():
+            return cls()
         try:
             raw = Path(path).read_text()
             return cls.from_json(json.loads(raw))
