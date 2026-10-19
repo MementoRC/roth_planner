@@ -62,6 +62,10 @@ def render(hh: Household) -> None:
 
     render_exercise_half(hh)
 
+    if all(g.expiry_year < hh.base_year for g in hh.grants):
+        st.info("All option grants have expired before the base year; nothing left to schedule.")
+        return
+
     _render_tabs(hh)
 
 

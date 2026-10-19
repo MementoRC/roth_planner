@@ -34,7 +34,15 @@ class StockGrant:
         H10) — shares are NOT part of the key since they mutate over a
         grant's life and the key must stay stable.
         """
-        return self.grant_id or f"{self.year}:{self.strike:g}:{self.expiry_year}"
+        if self.grant_id:
+            return self.grant_id
+        # ``:g`` keeps only 6 significant digits, so distinct high/long
+        # strikes would collide (audit-1018 F-45). Use it only when it
+        # round-trips exactly (keeps every already-saved key stable) and
+        # fall back to repr() otherwise.
+        short = f"{self.strike:g}"
+        strike = short if float(short) == self.strike else repr(self.strike)
+        return f"{self.year}:{strike}:{self.expiry_year}"
 
 
 def aggregate_by_key(grants: list[StockGrant]) -> list[StockGrant]:

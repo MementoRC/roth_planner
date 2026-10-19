@@ -184,7 +184,10 @@ def _qualified_for(
 ) -> float:
     ov = overrides.get(ticker, {})
     if "qualified_fraction" in ov:
-        return float(ov["qualified_fraction"])
+        # audit-1018 F-35: clamp like dividend_breakdown so an out-of-range
+        # override (1.5, or 85 for 0.85) cannot yield negative ordinary income
+        # or disagree with the per-ticker breakdown.
+        return min(max(float(ov["qualified_fraction"]), 0.0), 1.0)
     if employer_ticker and ticker.upper() == employer_ticker.upper():
         return QUALIFIED_DEFAULTS["equity"]
     cls = TICKER_CLASS.get(ticker.upper(), "unknown")

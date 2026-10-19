@@ -9,6 +9,7 @@ bug class PR #369 patched (positional ``grants[year-base_year]`` indexing).
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -264,6 +265,10 @@ class ExerciseSchedule:
         }
         raw_prices = _require_mapping(d.get("price_by_year", {}), "price_by_year")
         price_by_year = {int(year): float(p) for year, p in raw_prices.items()}
+        # audit-1018 F-46: json.loads accepts bare NaN/Infinity; a non-finite
+        # price would turn that year's option income into NaN.
+        if not all(math.isfinite(p) for p in price_by_year.values()):
+            raise ValueError("price_by_year contains a non-finite price")
         return cls(shares_by_grant_year=shares_by_grant_year, price_by_year=price_by_year)
 
 

@@ -300,7 +300,7 @@ def render_assumptions_partial(hh: Household, container) -> None:
     st.session_state.living_expenses = container.number_input(
         "Annual Living Expenses",
         min_value=0,
-        value=st.session_state.living_expenses,
+        value=_clamp(int(st.session_state.living_expenses), 0),
         step=5_000,
         format="%d",
     )

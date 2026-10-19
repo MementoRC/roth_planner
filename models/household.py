@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -76,18 +77,24 @@ class InheritedIRA:
             balance = float(data.get("balance", 0) or 0)
         except (TypeError, ValueError):
             return None
-        if balance <= 0:
+        # audit-1018 F-46: NaN passes ``<= 0`` and inf is not a balance.
+        if not math.isfinite(balance) or balance <= 0:
             return None
         owner = data.get("owner")
         if owner not in ("you", "spouse"):
             return None
+        # A bool year (``true``) would int() to 1.
+        if isinstance(data.get("inherited_year"), bool):
+            return None
         try:
             inherited_year = int(data["inherited_year"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         try:
             growth_rate = float(data.get("growth_rate", 0.07))
         except (TypeError, ValueError):
+            growth_rate = 0.07
+        if not math.isfinite(growth_rate):
             growth_rate = 0.07
         return cls(
             balance=balance,

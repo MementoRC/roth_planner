@@ -9,6 +9,7 @@ Key distinction: LTCG affects MAGI (IRMAA/NIIT) but NOT ordinary bracket room.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -149,6 +150,8 @@ def manual_mark_from_dict(raw: object) -> ManualMark | None:
         return None
     value, as_of, note = raw.get("value"), raw.get("as_of"), raw.get("note", "")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
         return None
     if not isinstance(as_of, str):
         return None
