@@ -7,6 +7,8 @@ C34 (roth_eligibility MFJ spouse-only phase-out), C35 (setup reset missing keys)
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 
 from engine.aca import (
@@ -15,11 +17,15 @@ from engine.aca import (
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
 )
-from engine.aca_irmaa_compute import compute_year_by_year_timeline
+from engine.aca_irmaa_compute import compute_year_by_year_timeline as _timeline_projected_magi
 from engine.headroom import compute_headroom
 from engine.tax import deductions, estimate_ytd_federal_tax, room_to_12
 from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
+
+# The survivor-benchmark tests below price every year on the one MAGI they pass in;
+# the default projects each year's own MAGI (audit-1018 F-11).
+compute_year_by_year_timeline = partial(_timeline_projected_magi, hold_base_magi=True)
 
 
 class TestC1MfsSeniorExtra:

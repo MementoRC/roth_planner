@@ -40,8 +40,9 @@ from views._style import render_page_header
 DOLLAR_TICKS = "$,.3~s"
 
 IRMAA_ROOM_CAPTION = (
-    "IRMAA Room is for income earned that year (premiums two years later); "
-    "from the year after a death the survivor files Single."
+    "IRMAA Room is for income earned that year (premiums two years later), "
+    "measured against that year's own projected no-conversion MAGI (the base year "
+    "uses the MAGI above); from the year after a death the survivor files Single."
 )
 
 
@@ -180,14 +181,12 @@ def render(hh: Household):
             )
 
             # Mark FPL thresholds
-            if not hh.aca_enhanced_subsidies_active:
-                cliff_magi = 4.0 * fpl_for(hh.filing_status, _view_year, _view_cpi)
-                # The x-axis is raw (IRMAA) MAGI, but ACA MAGI adds back non-taxable SS
-                # (IRC §36B), so the subsidy cliff falls at raw MAGI = 4*FPL −
-                # nontaxable_ss on this axis. Place the marker there so it lines up with
-                # the ACA curve's actual drop (audit C7 / aca-4). nontaxable_ss is 0
-                # unless SS is drawn during the ACA years → no-op for the default HH.
-                cliff_x = cliff_magi - curves.nontaxable_ss
+            # The x-axis is raw (IRMAA) MAGI, but ACA MAGI adds back the non-taxable
+            # SS (IRC §36B), which shrinks as MAGI grows. The engine solves for the
+            # raw MAGI where the per-point ACA MAGI crosses 400% FPL, so the marker
+            # lines up with the curve's actual drop (audit C7 / aca-4, audit-1018 F-01).
+            cliff_x = curves.aca_cliff_magi
+            if cliff_x is not None:
                 fig_aca.add_vline(
                     x=cliff_x,
                     line_dash="dash",
@@ -353,7 +352,9 @@ def render(hh: Household):
     import pandas as pd
 
     _yr_cpi = hh.cpi_assumption
-    timeline_rows = compute_year_by_year_timeline(hh, base_magi, years=20, cpi=_yr_cpi)
+    timeline_rows = compute_year_by_year_timeline(
+        hh, base_magi, years=20, cpi=_yr_cpi, ytd=_ytd, net_inv_income=net_inv_income
+    )
 
     timeline = []
     for row in timeline_rows:
