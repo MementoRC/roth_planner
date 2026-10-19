@@ -93,10 +93,10 @@ def _render_candidate_row(candidate: Candidate, field_key: str) -> None:
 
 
 def _resolve_confirm_choice(
-    candidates: list[Candidate], chosen_source: Source | None, manual_value: float
+    candidates: list[Candidate], chosen_source: Source | None, manual_value: float | None
 ) -> tuple[Any, Source, str] | None:
     """Return (value, source, detail) to confirm, or None if nothing was chosen."""
-    if manual_value:
+    if manual_value is not None:
         return manual_value, Source.MANUAL, "manual entry"
     if chosen_source is not None:
         for candidate in candidates:
@@ -136,7 +136,7 @@ def _handle_confirm_click(
     choices: ChoiceMap,
     candidates: list[Candidate],
     chosen_source: Source | None,
-    manual_value: float,
+    manual_value: float | None,
 ) -> bool:
     """Process a Confirm click; returns True if a value was actually confirmed."""
     picked = _resolve_confirm_choice(candidates, chosen_source, manual_value)
@@ -145,7 +145,13 @@ def _handle_confirm_click(
         return False
     value, source, detail = picked
 
-    confirm_field(committed_json, choices, field_key, value, source, datetime.now(), detail=detail)
+    try:
+        confirm_field(
+            committed_json, choices, field_key, value, source, datetime.now(), detail=detail
+        )
+    except ValueError as exc:
+        st.warning(f"⚠️ Not confirmed: {exc}")
+        return False
     # audit-0809 #11: save_committed() itself refuses to overwrite a
     # committed cache file that exists on disk but fails to parse (see its
     # docstring) — that is the actual guard, not this call site. Catch the
@@ -208,12 +214,16 @@ def _render_field_card(
             if source_options
             else None
         )
-        manual_value = 0.0
+        manual_value: float | None = None
         if field_key != GRANTS_KEY:
+            # Empty = use the selected source; a typed 0 is a real override.
+            # Prior-year MAGI may legitimately be negative; nothing else may
+            # (audit-1018 F-32).
             manual_value = st.number_input(
-                "Or enter manually (0 = use the selected source above)",
+                "Or enter manually (leave empty to use the selected source above)",
                 key=f"manual_{field_key}",
-                value=0.0,
+                value=None,
+                min_value=None if field_key.startswith(_MAGI_PREFIX) else 0.0,
                 step=1000.0,
             )
 

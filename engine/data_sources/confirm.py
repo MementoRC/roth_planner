@@ -49,6 +49,8 @@ def confirm_field(
     list of ``StockGrant``, serialized as a ``SourcedList`` JSON payload, one
     per grant).
     """
+    if field_key in HOUSEHOLD_SCALAR_FIELDS and float(value) < 0:
+        raise ValueError(f"A negative value is not allowed for {field_key!r}")
     prov = Provenance(source=source, recorded_at=recorded_at, detail=detail)
     choices.set_choice(field_key, source, recorded_at)
 

@@ -110,6 +110,33 @@ def _matches_pending_candidate(store: CandidateStore | None, year: int, value: f
     )
 
 
+def stamp_bundle_scalars(
+    committed_json: dict,
+    scalar_updates: dict[str, Any],
+    recorded_at: datetime,
+    detail: str = "Data bridge import",
+) -> bool:
+    """Commit bundle-imported sourced scalars as ``Source.BUNDLE`` (audit-1018 F-21).
+
+    ``scalar_updates`` is keyed by session key (``stock_price``, not
+    ``stock_price_now``). Without this, the drained values differ from the
+    baseline and ``reconcile_manual_edits`` relabels them ``Source.MANUAL``.
+    Only fields already committed whose whole-dollar value actually changes are
+    re-stamped, in place; returns True when anything changed.
+    """
+    changed = False
+    prov_json = Provenance(Source.BUNDLE, recorded_at, detail).to_json()
+    for attr in HOUSEHOLD_SCALAR_FIELDS:
+        payload = committed_json.get(attr)
+        value = scalar_updates.get(SOURCED_SESSION_KEYS.get(attr, attr))
+        if payload is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if _rounded_differs(value, payload["value"]):
+            committed_json[attr] = {**prov_json, "value": float(value)}
+            changed = True
+    return changed
+
+
 def reconcile_manual_edits(
     session_hh: Household,
     committed_json: dict,
