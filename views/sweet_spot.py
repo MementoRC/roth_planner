@@ -17,7 +17,6 @@ from engine.sweet_spot_compute import (
     STEP,
     all_in_at_conversion,
     base_income_for_year,
-    bracket_vline_positions,
     compute_marginal_costs,
     compute_multi_year_summary,
     estimate_ltcg_eligible,
@@ -29,7 +28,11 @@ from engine.sweet_spot_compute import (
     sweet_spot_conversion_window,
     zero_conversion_years,
 )
-from engine.sweet_spot_draw_curve import sweep_all_in
+from engine.sweet_spot_draw_curve import (
+    draw_aware_boundary,
+    draw_aware_bracket_vlines,
+    sweep_all_in,
+)
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
@@ -242,7 +245,17 @@ def render(hh: Household) -> None:
     # search inside bracket_boundary_conversion (audit finding 1 fix).
     fill_12, fill_22 = fills_for_year(hh, base, _fills)
     bracket_boundaries = []
-    for boundary_conv, rate in bracket_vline_positions(hh, base, indexed_brackets, _fills):
+    # Issue #21: every other bracket sits where the draw-aware curve reaches it.
+    _zero_year = _zero_years[selected_year]
+    for boundary_conv, rate in draw_aware_bracket_vlines(
+        hh,
+        base,
+        indexed_brackets,
+        _fills,
+        net_inv_income=net_inv_income,
+        ltcg_eligible=_ltcg_eligible,
+        zero_year=_zero_year,
+    ):
         if 0 < boundary_conv < max_conv:
             bracket_boundaries.append((boundary_conv, rate))
             fig_m.add_vline(
@@ -263,7 +276,20 @@ def render(hh: Household) -> None:
         # Max card below binary-searches via irmaa_safe_max; only these lines
         # still used the closed form, so one chart answered one question three
         # different ways.
-        irmaa_conv = magi_boundary_conversion(hh, base, threshold, net_inv_income, _ltcg_eligible)
+        # Issue #21: placed where the draw-aware curve's MAGI reaches the tier.
+        irmaa_conv = draw_aware_boundary(
+            hh,
+            base,
+            blind_boundary=magi_boundary_conversion(
+                hh, base, threshold, net_inv_income, _ltcg_eligible
+            ),
+            target=threshold,
+            measure=lambda r: r.magi,
+            net_inv_income=net_inv_income,
+            ltcg_eligible=_ltcg_eligible,
+            zero_year=_zero_year,
+            fills=_fills,
+        )
         if 0 < irmaa_conv < max_conv:
             fig_m.add_vline(
                 x=irmaa_conv,
@@ -285,8 +311,18 @@ def render(hh: Household) -> None:
     # line sat too far RIGHT and under-warned. The shaded NIIT band on this same
     # chart already used .niit_magi via niit_delta, so the band began before the
     # line marking its own onset.
-    niit_conv = magi_boundary_conversion(
-        hh, base, niit_threshold, net_inv_income, _ltcg_eligible, magi_kind="niit"
+    niit_conv = draw_aware_boundary(
+        hh,
+        base,
+        blind_boundary=magi_boundary_conversion(
+            hh, base, niit_threshold, net_inv_income, _ltcg_eligible, magi_kind="niit"
+        ),
+        target=niit_threshold,
+        measure=lambda r: r.niit_magi,
+        net_inv_income=net_inv_income,
+        ltcg_eligible=_ltcg_eligible,
+        zero_year=_zero_year,
+        fills=_fills,
     )
     if 0 < niit_conv < max_conv and net_inv_income > 0:
         fig_m.add_vline(

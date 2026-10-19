@@ -13,12 +13,17 @@ preferential income, not ordinary, and is ignored here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from engine.scenario import waterfall_accounts
 from engine.scenario_types import YearResult
-from engine.sweet_spot_compute import BaseIncome, ConversionResult, all_in_at_conversion
+from engine.sweet_spot_compute import (
+    BaseIncome,
+    ConversionResult,
+    all_in_at_conversion,
+    bracket_vline_positions,
+)
 from engine.withdrawal_waterfall import Accounts, solve_waterfall
 from models.household import Household
 
@@ -70,9 +75,42 @@ def sweep_all_in(
     def _price(amount: float) -> ConversionResult:
         return all_in_at_conversion(hh, base, amount, net_inv_income, ltcg_eligible=ltcg_eligible)
 
+    solve = _draw_solver(hh, base, net_inv_income, ltcg_eligible, zero_year, fills)
+    if solve is None:
+        return [_price(c) for c in convs]
+
+    results: list[ConversionResult] = []
+    extra_draw = 0.0
+    for conv in convs:
+        if conv > 0:
+            priced, extra_draw = solve(conv, extra_draw)
+        else:
+            extra_draw = 0.0
+            priced = _price(0.0)
+        results.append(replace(priced, conv=conv))
+    return results
+
+
+_DrawSolver = Callable[[float, float], tuple[ConversionResult, float]]
+
+
+def _draw_solver(
+    hh: Household,
+    base: BaseIncome,
+    net_inv_income: float,
+    ltcg_eligible: float,
+    zero_year: YearResult,
+    fills: Mapping[int, tuple[float, float]],
+) -> _DrawSolver | None:
+    """``solve(conv, extra_draw_guess) -> (priced at conv + draw, extra draw)``,
+    or None when the year has no forced draw and the Fill provokes none."""
+
+    def _price(amount: float) -> ConversionResult:
+        return all_in_at_conversion(hh, base, amount, net_inv_income, ltcg_eligible=ltcg_eligible)
+
     zero_draw = zero_year.forced_your_ira_draw + zero_year.forced_spouse_ira_draw
     if zero_draw <= 0.0 and base.year not in fills:
-        return [_price(c) for c in convs]
+        return None
 
     accounts = waterfall_accounts(zero_year, zero_year.brokerage_balance)
     # The unclamped need (income_needed floors at 0 and splits slack into
@@ -82,21 +120,85 @@ def sweep_all_in(
     )
     draw0 = _ira_draw(need0, accounts, zero_year)
 
-    results: list[ConversionResult] = []
-    extra_draw = 0.0
-    for conv in convs:
+    def solve(conv: float, extra_draw: float) -> tuple[ConversionResult, float]:
         priced = _price(conv + extra_draw)
-        if conv > 0:
-            for _ in range(_MAX_PASSES):
-                need = need0 + _extra_need(priced)
-                new_draw = max(_ira_draw(need, accounts, zero_year) - draw0, 0.0)
-                settled = abs(new_draw - extra_draw) < _TOLERANCE
-                extra_draw = new_draw
-                priced = _price(conv + extra_draw)
-                if settled:
-                    break
+        for _ in range(_MAX_PASSES):
+            need = need0 + _extra_need(priced)
+            new_draw = max(_ira_draw(need, accounts, zero_year) - draw0, 0.0)
+            settled = abs(new_draw - extra_draw) < _TOLERANCE
+            extra_draw = new_draw
+            priced = _price(conv + extra_draw)
+            if settled:
+                break
+        return priced, extra_draw
+
+    return solve
+
+
+_CARD_RATES = (0.12, 0.22)
+
+
+def draw_aware_bracket_vlines(
+    hh: Household,
+    base: BaseIncome,
+    indexed_brackets: Sequence[tuple[float, float]],
+    fills: Mapping[int, tuple[float, float]],
+    *,
+    net_inv_income: float,
+    ltcg_eligible: float,
+    zero_year: YearResult,
+) -> list[tuple[float, float]]:
+    """Issue #21: :func:`bracket_vline_positions` with every bracket above the
+    card brackets (12% / 22%, already the cards' draw-aware fills) moved to
+    where the draw-aware curve reaches its ceiling. Unchanged in a no-draw year.
+    """
+    blind = bracket_vline_positions(hh, base, indexed_brackets, fills)
+    positions: list[tuple[float, float]] = []
+    for (ceil, _), (conv, rate) in zip(indexed_brackets, blind, strict=False):
+        if not any(abs(rate - r) < 1e-9 for r in _CARD_RATES):
+            conv = draw_aware_boundary(
+                hh,
+                base,
+                blind_boundary=conv,
+                target=ceil,
+                measure=lambda r: r.taxable_inc,
+                net_inv_income=net_inv_income,
+                ltcg_eligible=ltcg_eligible,
+                zero_year=zero_year,
+                fills=fills,
+            )
+        positions.append((conv, rate))
+    return positions
+
+
+def draw_aware_boundary(
+    hh: Household,
+    base: BaseIncome,
+    *,
+    blind_boundary: float,
+    target: float,
+    measure: Callable[[ConversionResult], float],
+    net_inv_income: float,
+    ltcg_eligible: float,
+    zero_year: YearResult,
+    fills: Mapping[int, tuple[float, float]],
+) -> float:
+    """Issue #21: the conversion at which the draw-aware curve's ``measure``
+    (taxable income, MAGI, ...) reaches ``target``.
+
+    The curve prices conversion C at C + D(C), D being the extra IRA draw C's tax
+    forces, so it reaches every threshold earlier than the draw-blind
+    ``blind_boundary`` (which is therefore an upper bound and the answer when the
+    year has no draw). Bisects on C with the curve's own pricing.
+    """
+    solve = _draw_solver(hh, base, net_inv_income, ltcg_eligible, zero_year, fills)
+    if solve is None or blind_boundary <= 0.0:
+        return blind_boundary
+    lo, hi = 0.0, blind_boundary
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if measure(solve(mid, 0.0)[0]) <= target:
+            lo = mid
         else:
-            extra_draw = 0.0
-            priced = _price(0.0)
-        results.append(replace(priced, conv=conv))
-    return results
+            hi = mid
+    return lo
