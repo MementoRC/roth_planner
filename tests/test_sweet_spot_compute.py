@@ -334,7 +334,10 @@ class TestIrmaaPaymentYearIndexingInSweetSpot:
         cpi = 0.06
         hh = self._make_household(base_year=2026, cpi=cpi)
 
-        rows = compute_multi_year_summary(hh)
+        # Explicit ira_draws keeps this draw-blind: it isolates the payment-year
+        # indexing from the (audit-1018 F-05) extra draw a conversion's own tax
+        # forces, which lowers the safe max below the naive income-year value.
+        rows = compute_multi_year_summary(hh, ira_draws=zero_conversion_ira_draws(hh))
         assert rows, "expected at least one YearSummary row"
 
         row2026 = rows[0]

@@ -15,7 +15,6 @@ from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers
 from engine.niit import NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.sweet_spot_compute import (
     STEP,
-    all_in_at_conversion,
     base_income_for_year,
     compute_marginal_costs,
     compute_multi_year_summary,
@@ -23,14 +22,15 @@ from engine.sweet_spot_compute import (
     fills_for_year,
     find_sweet_spots,
     forced_draw_fills,
-    irmaa_safe_max,
     magi_boundary_conversion,
     sweet_spot_conversion_window,
+    zero_conversion_sale_gains,
     zero_conversion_years,
 )
 from engine.sweet_spot_draw_curve import (
     draw_aware_boundary,
     draw_aware_bracket_vlines,
+    draw_aware_irmaa_safe_max,
     sweep_all_in,
 )
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
@@ -114,6 +114,9 @@ def render(hh: Household) -> None:
         y: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for y, yr in _zero_years.items()
     }
     _selected_draw = _ira_draws.get(selected_year, 0.0)
+    # audit-1018 F-04: the gain the same waterfall realizes by selling brokerage
+    # is MAGI too, so it belongs in the base next to the IRA draw.
+    _sale_gains = zero_conversion_sale_gains(hh, _zero_years)
     # Issue #1: in a forced-draw year the Fill cards / table read what "Fill X%"
     # converts (the auto-fill's joint solve), so they equal the Planner's Fill.
     _fills = forced_draw_fills(hh, ytd=_ytd, net_inv_income=net_inv_income, ira_draws=_ira_draws)
@@ -122,6 +125,7 @@ def render(hh: Household) -> None:
         selected_year,
         ytd=_ytd if selected_year == hh.base_year else None,
         ira_draw=_selected_draw,
+        sale_gain=_sale_gains.get(selected_year, 0.0),
     )
 
     # --- Info bar ---
@@ -357,37 +361,49 @@ def render(hh: Household) -> None:
     # computed above for the guide-lines too).
     st.markdown("### Recommended Conversion Zones")
 
+    # audit-1018 F-05: the cards' All-In Costs and the IRMAA-Safe Max price each
+    # conversion with the extra IRA draw its own tax forces -- the cost curve's
+    # pricing -- so a card reads the same number as the curve at that conversion.
+    # Binary-search for the largest conversion that keeps magi at/under the tier-1
+    # threshold. The naive subtraction (threshold - base_magi) overstates the safe
+    # amount when SS provisional income is in the partial-taxability zone ($32K-$44K
+    # MFJ / $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
+    irmaa_safe = draw_aware_irmaa_safe_max(
+        hh,
+        base,
+        irmaa_tiers[0][0],
+        net_inv_income,
+        _ltcg_eligible,
+        zero_year=_zero_year,
+        fills=_fills,
+    )
+    r12_result, r22_result, irmaa_result = sweep_all_in(
+        hh,
+        base,
+        [fill_12, fill_22, irmaa_safe],
+        net_inv_income=net_inv_income,
+        ltcg_eligible=_ltcg_eligible,
+        zero_year=_zero_year,
+        fills=_fills,
+    )
+
     z1, z2, z3 = st.columns(3)
     with z1:
         st.markdown("#### Fill to 12%")
         st.metric("Conversion", fmt_dollars(fill_12))
-        r12_result = all_in_at_conversion(
-            hh, base, fill_12, net_inv_income, ltcg_eligible=_ltcg_eligible
-        )
         avg_rate = r12_result.all_in / max(fill_12, 1)
         st.metric("All-In Cost", fmt_dollars(r12_result.all_in), f"Avg {fmt_pct(avg_rate)}")
 
     with z2:
         st.markdown("#### Fill to 22%")
         st.metric("Conversion", fmt_dollars(fill_22))
-        r22_result = all_in_at_conversion(
-            hh, base, fill_22, net_inv_income, ltcg_eligible=_ltcg_eligible
-        )
         avg_rate_22 = r22_result.all_in / max(fill_22, 1)
         st.metric("All-In Cost", fmt_dollars(r22_result.all_in), f"Avg {fmt_pct(avg_rate_22)}")
 
     with z3:
         st.markdown("#### IRMAA-Safe Max")
-        # Binary-search for the largest conversion that keeps magi at/under the tier-1
-        # threshold. The naive subtraction (threshold - base_magi) overstates the safe
-        # amount when SS provisional income is in the partial-taxability zone ($32K-$44K
-        # MFJ / $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
-        irmaa_safe = irmaa_safe_max(hh, base, irmaa_tiers[0][0], net_inv_income, _ltcg_eligible)
         st.metric("Conversion", fmt_dollars(irmaa_safe))
         if irmaa_safe > 0:
-            irmaa_result = all_in_at_conversion(
-                hh, base, irmaa_safe, net_inv_income, ltcg_eligible=_ltcg_eligible
-            )
             avg_rate_i = irmaa_result.all_in / max(irmaa_safe, 1)
             st.metric("All-In Cost", fmt_dollars(irmaa_result.all_in), f"Avg {fmt_pct(avg_rate_i)}")
         else:
@@ -502,6 +518,8 @@ def render(hh: Household) -> None:
         include_ltcg_stacking=True,
         ira_draws=_ira_draws,
         fills=_fills,
+        zero_years=_zero_years,
+        sale_gains=_sale_gains,
     )
 
     import pandas as pd

@@ -83,15 +83,21 @@ class BaseIncome:
     # Ordinary income, so it belongs in the ordinary bracket base, in MAGI and
     # in the muni-exclusive NIIT MAGI alike -- but NOT in net investment income.
     waterfall_draw: float = 0.0
+    # audit-1018 F-04: the gain the same zero-conversion waterfall realizes by
+    # SELLING brokerage to fund living expenses (zero_conversion_sale_gains).
+    # Preferential, so it is in MAGI, provisional income, NIIT MAGI and NII but
+    # NOT in the ordinary bracket base -- the same split scenario.py makes when
+    # it folds the forced-draw gain into realized_gains.
+    sale_gain: float = 0.0
 
     @property
     def magi_addl(self) -> float:
         """Year-level MAGI additions independent of the swept conversion amount:
         YTD MAGI + forecast qual/ord dividends + forecast realized gains + RMD/
-        inherited-IRA income + the living-expense waterfall draw. Mirrors
-        engine.scenario's magi assembly (compute_magi + the realized_gains fold),
-        including compute_magi's forced_your_ira_draw/forced_spouse_ira_draw
-        terms (audit-0809 #08)."""
+        inherited-IRA income + the living-expense waterfall draw + the gain on
+        the waterfall's brokerage sale. Mirrors engine.scenario's magi assembly
+        (compute_magi + the realized_gains fold), including compute_magi's
+        forced_your_ira_draw/forced_spouse_ira_draw terms (audit-0809 #08)."""
         return (
             self.ytd_magi
             + self.forecast_qual_div
@@ -99,6 +105,7 @@ class BaseIncome:
             + self.forecast_realized_gains
             + self.rmd_income
             + self.waterfall_draw
+            + self.sale_gain
         )
 
     @property
@@ -123,6 +130,7 @@ class BaseIncome:
         but never the NII the tax is charged on."""
         return (
             self.forecast_realized_gains
+            + self.sale_gain
             + self.forecast_qual_div
             + self.forecast_ord_div
             + self.ytd_investment_income
@@ -148,6 +156,7 @@ class BaseIncome:
             + self.forecast_realized_gains
             + self.rmd_income
             + self.waterfall_draw
+            + self.sale_gain
         )
 
 
@@ -394,6 +403,7 @@ def base_income_for_year(
     your_qcd: float = 0.0,
     spouse_qcd: float = 0.0,
     ira_draw: float = 0.0,
+    sale_gain: float = 0.0,
 ) -> BaseIncome:
     """Compute fixed income components for a given year (no conversion).
 
@@ -416,6 +426,11 @@ def base_income_for_year(
     auto_fill_irmaa_safe/auto_fill_aca sizing the plan against a draw-blind
     base_magi". Defaults to 0.0, so direct callers that do not model a draw are
     numerically unchanged.
+
+    audit-1018 F-04: `sale_gain` is the realized gain on the brokerage leg of
+    that same zero-conversion waterfall (see zero_conversion_sale_gains). It is
+    preferential, so it joins MAGI, provisional income, NIIT MAGI and net
+    investment income but not the ordinary bracket base. Defaults to 0.0.
     """
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
@@ -504,6 +519,7 @@ def base_income_for_year(
         + forecast_realized_gains
         + rmd_income
         + ira_draw
+        + sale_gain
     )
     ordinary_addl = ytd_ordinary + forecast_ord_div + rmd_income + ira_draw
     niit_magi_addl = (
@@ -513,6 +529,7 @@ def base_income_for_year(
         + forecast_realized_gains
         + rmd_income
         + ira_draw
+        + sale_gain
     )
 
     # Base taxable SS (without conversion).
@@ -566,6 +583,7 @@ def base_income_for_year(
         rmd_income=rmd_income,
         ytd_investment_income=ytd_investment_income,
         waterfall_draw=ira_draw,
+        sale_gain=sale_gain,
     )
 
 
@@ -1191,9 +1209,11 @@ def zero_conversion_ira_draws(
     Only the two traditional-IRA legs are returned. The Roth leg is excluded
     because a qualified Roth distribution is not includible in gross income and
     so never reaches MAGI. The brokerage leg is excluded because it is largely a
-    return of capital whose realized-gain component this module already models on
-    its own forecast_realized_gains path -- folding the leg in here would
-    double-count it.
+    return of capital, not ordinary income. Its realized GAIN is NOT covered by
+    forecast_realized_gains (that is turnover on the whole balance and is
+    computed independently of any sale): it is returned separately by
+    :func:`zero_conversion_sale_gains` and enters the base as ``sale_gain``
+    (audit-1018 F-04).
 
     ZERO conversion, not the swept amount: see engine/scenario.py's "AVOIDING
     CIRCULARITY" note. A draw solved at the conversion being sized is itself a
@@ -1206,6 +1226,28 @@ def zero_conversion_ira_draws(
     return {y: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for y, yr in years.items()}
 
 
+def zero_conversion_sale_gains(hh: Household, years: Mapping[int, YearResult]) -> dict[int, float]:
+    """Per-year realized gain on the brokerage leg of the zero-conversion
+    waterfall (audit-1018 F-04), from the projection ``years``
+    (:func:`zero_conversion_years`).
+
+    The sale realizes ``forced_brokerage_draw`` times the unrealized fraction of
+    the begin-of-year balance, exactly as engine.scenario folds it into
+    realized_gains. Begin-of-year basis is the household's starting basis
+    (``None`` = full basis) in the first year and the prior year's closing basis
+    after that.
+    """
+    basis = hh.brokerage_start_basis if hh.brokerage_start_basis is not None else hh.brokerage_start
+    gains: dict[int, float] = {}
+    for year in sorted(years):
+        yr = years[year]
+        begin = yr.brokerage_balance
+        basis_fraction = min(basis / begin, 1.0) if begin > 0.0 else 0.0
+        gains[year] = yr.forced_brokerage_draw * (1.0 - basis_fraction)
+        basis = yr.brokerage_basis
+    return gains
+
+
 def compute_multi_year_summary(
     hh: Household,
     *,
@@ -1214,6 +1256,8 @@ def compute_multi_year_summary(
     include_ltcg_stacking: bool = False,
     ira_draws: dict[int, float] | None = None,
     fills: Mapping[int, tuple[float, float]] | None = None,
+    zero_years: Mapping[int, YearResult] | None = None,
+    sale_gains: Mapping[int, float] | None = None,
 ) -> list[YearSummary]:
     """Compute sweet-spot summary rows for all conversion years.
 
@@ -1229,11 +1273,28 @@ def compute_multi_year_summary(
     auto-fill plans convert there (see :func:`forced_draw_fills`). Derived from
     ``ira_draws`` when not supplied; pass ``{}`` to size every year with the
     bracket-boundary derivation on the given base alone.
+
+    audit-1018 F-05: ``zero_years`` (:func:`zero_conversion_years`) lets the
+    IRMAA-safe and Fill-cost columns price each conversion with the extra IRA
+    draw its own tax forces, the same pricing as the cost curve
+    (engine.sweet_spot_draw_curve); a year absent from it, or ``zero_years``
+    not supplied alongside an explicit ``ira_draws``, is priced draw-blind.
+    ``sale_gains`` (F-04, :func:`zero_conversion_sale_gains`) is the brokerage-
+    sale gain folded into each base; both are derived with ``ira_draws`` when
+    that is not supplied.
     """
+    # Deferred: engine.sweet_spot_draw_curve imports this module.
+    from engine.sweet_spot_draw_curve import draw_aware_irmaa_safe_max, sweep_all_in
+
     conv_window = sweet_spot_conversion_window(hh)
     conv_years = list(range(hh.base_year, hh.base_year + conv_window))
     if ira_draws is None:
-        ira_draws = zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
+        zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+        ira_draws = {
+            y: yr.forced_your_ira_draw + yr.forced_spouse_ira_draw for y, yr in zero_years.items()
+        }
+    if sale_gains is None:
+        sale_gains = zero_conversion_sale_gains(hh, zero_years) if zero_years else {}
     if fills is None:
         fills = forced_draw_fills(hh, ytd=ytd, net_inv_income=net_inv_income, ira_draws=ira_draws)
 
@@ -1246,7 +1307,13 @@ def compute_multi_year_summary(
         irmaa_tiers = _index_irmaa_tiers(_base_irmaa_tiers, irmaa_payment_year(yr), cpi)
 
         _yr_ytd = ytd if yr == hh.base_year else None
-        b = base_income_for_year(hh, yr, ytd=_yr_ytd, ira_draw=ira_draws.get(yr, 0.0))
+        b = base_income_for_year(
+            hh,
+            yr,
+            ytd=_yr_ytd,
+            ira_draw=ira_draws.get(yr, 0.0),
+            sale_gain=sale_gains.get(yr, 0.0),
+        )
         _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
 
         # C23 (audit-0805) / audit-0809 #01: fill_12/fill_22 route through
@@ -1266,15 +1333,44 @@ def compute_multi_year_summary(
         # The naive subtraction (tier1_threshold - b.base_magi) overstates the safe amount
         # when SS provisional income is in the partial-taxability zone ($32K-$44K MFJ /
         # $25K-$34K Single), where each $1 converted raises MAGI by up to $1.85.
-        safe_conv = irmaa_safe_max(hh, b, tier1_threshold, net_inv_income, _le)
+        # audit-1018 F-05: priced draw-aware (curve pricing) when the year's
+        # zero-conversion projection is known; the safe max and the two Fill
+        # costs then match the cost curve at the same conversion.
+        zero_year = zero_years.get(yr) if zero_years else None
+        if zero_year is None:
+            safe_conv = irmaa_safe_max(hh, b, tier1_threshold, net_inv_income, _le)
+            r12_res = (
+                all_in_at_conversion(hh, b, r12, net_inv_income, ltcg_eligible=_le)
+                if r12 > 0
+                else None
+            )
+            r22_res = (
+                all_in_at_conversion(hh, b, r22, net_inv_income, ltcg_eligible=_le)
+                if r22 > 0
+                else None
+            )
+        else:
+            safe_conv = draw_aware_irmaa_safe_max(
+                hh,
+                b,
+                tier1_threshold,
+                net_inv_income,
+                _le,
+                zero_year=zero_year,
+                fills=fills,
+            )
+            priced = sweep_all_in(
+                hh,
+                b,
+                [r12, r22],
+                net_inv_income=net_inv_income,
+                ltcg_eligible=_le,
+                zero_year=zero_year,
+                fills=fills,
+            )
+            r12_res = priced[0] if r12 > 0 else None
+            r22_res = priced[1] if r22 > 0 else None
         irmaa_safe: float | None = safe_conv if safe_conv > 0 else None
-
-        r12_res = (
-            all_in_at_conversion(hh, b, r12, net_inv_income, ltcg_eligible=_le) if r12 > 0 else None
-        )
-        r22_res = (
-            all_in_at_conversion(hh, b, r22, net_inv_income, ltcg_eligible=_le) if r22 > 0 else None
-        )
 
         rows.append(
             YearSummary(
