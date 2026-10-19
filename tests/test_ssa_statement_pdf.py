@@ -141,11 +141,13 @@ class TestParse:
         with pytest.raises(SsaStatementParseError):
             parse_ssa_statement_text(no_67)
 
-    def test_fra_with_months_uses_the_whole_year_row(self) -> None:
+    def test_fra_with_months_derives_the_fra_amount_from_the_whole_year_row(self) -> None:
+        # audit-1018 F-17: the age-66 row is a claim 10 months early.
         pages = [PAGE_1.replace("age is 67,", "age is 66 and 10 months,"), PAGE_2]
         stmt = parse_ssa_statement_text(pages)
         assert stmt.fra_age == 66
-        assert stmt.fra_monthly == 1860
+        assert stmt.fra_months == 10
+        assert stmt.fra_monthly == pytest.approx(1860 / (1 - 10 * 5 / 900))
 
     def test_missing_holder_line_is_none_not_a_guess(self) -> None:
         pages = [PAGE_1.replace("JOHN Q EXAMPLE March 4, 2026", "March 4, 2026"), PAGE_2]

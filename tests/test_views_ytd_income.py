@@ -1978,7 +1978,7 @@ class TestBrokerageStatementSync:
             sync_scan_mod.render_sync_scan_results(sync_scan_mod.render_sync_scan_partial(hh))
             ytd_income_mod.render(hh)
 
-        mock_save_override.assert_called_once_with("XXXX5555", "taxable")
+        mock_save_override.assert_called_once_with("XXXX5555", "taxable", broker="schwab")
         setitem_calls = [
             call
             for call in mock_st.session_state.__setitem__.call_args_list
