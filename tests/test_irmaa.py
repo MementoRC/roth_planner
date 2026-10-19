@@ -35,12 +35,13 @@ class TestIRMAA:
         magi = 220_000
         assert irmaa_surcharge(magi) == irmaa_surcharge(magi, base_part_b=202.90 * 12)
 
-    def test_part_b_base_higher_reduces_surcharge(self):
-        """Higher base_part_b → smaller surcharge: tier premium - higher_base < tier premium - lower_base."""
+    def test_part_b_base_higher_raises_surcharge(self):
+        """audit-1018 F-37: the Part B IRMAA is a fixed share of the standard premium,
+        so a higher base_part_b yields a larger surcharge (it used to shrink)."""
         magi = 220_000  # above Tier 1 threshold
         default_surcharge = irmaa_surcharge(magi)
         higher_base_surcharge = irmaa_surcharge(magi, base_part_b=300.0 * 12)
-        assert higher_base_surcharge < default_surcharge
+        assert higher_base_surcharge > default_surcharge
 
     def test_household_field_wires_through_scenario(self):
         """medicare_part_b_base_monthly on Household reaches irmaa_for_year via run_scenario.
@@ -48,7 +49,8 @@ class TestIRMAA:
         Use a large conversion at age 63 so MAGI exceeds the $218K Tier 1 threshold.
         Both spouses are 63, so the 2-year lookback puts them on Medicare at 65.
         With default base ($202.90/mo) a positive surcharge is expected.
-        With a raised base ($300/mo) the per-tier delta shrinks, so total IRMAA is lower.
+        With a raised base ($300/mo) the surcharge scales up with it (audit-1018 F-37),
+        so total IRMAA is higher.
         """
         hh_default = Household(your_age=63, spouse_age=63)
         hh_high_base = Household(your_age=63, spouse_age=63, medicare_part_b_base_monthly=300.0)
@@ -59,7 +61,7 @@ class TestIRMAA:
         irmaa_default = sum(yr.irmaa_cost for yr in r_default.years)
         irmaa_high = sum(yr.irmaa_cost for yr in r_high.years)
         assert irmaa_default > 0, "Sanity: default base must trigger IRMAA"
-        assert irmaa_high < irmaa_default
+        assert irmaa_high > irmaa_default
 
     # --- PR5: prior_year_magi anchor + proper temporal accounting ---
 

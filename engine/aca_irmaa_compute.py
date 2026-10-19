@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from engine.aca import (
     aca_applies,
+    aca_ceiling_magi,
     aca_net_cost,
     aca_subsidy,
     aca_subsidy_loss,
@@ -19,8 +20,15 @@ from engine.aca import (
 from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
-from engine.sweet_spot_compute import base_income_for_year, zero_conversion_ira_draws
+from engine.sweet_spot_compute import (
+    _ltcg_stack_tax,
+    base_income_for_year,
+    estimate_ltcg_eligible,
+    zero_conversion_ira_draws,
+)
 from engine.tax import (
+    LTCG_THRESHOLDS_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
     SENIOR_EXTRA_SINGLE,
     STD_DEDUCTION_SINGLE,
     deductions,
@@ -31,6 +39,7 @@ from engine.tax import (
     senior_bonus_deduction,
     taxable_ss,
 )
+from engine.tax_indexing import index_value
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -132,6 +141,76 @@ def _nontaxable_ss(
     return max(combined_ss - taxable, 0.0)
 
 
+def _aca_cliff_raw_magi(
+    hh: Household, ya: int, sa: int | None, *, filing_status: str, ceiling: float
+) -> float | None:
+    """Raw (IRMAA-basis) MAGI at which ACA MAGI first reaches ``ceiling`` (400% FPL).
+
+    ACA MAGI at swept MAGI ``p`` is ``p + _nontaxable_ss(p)``, which is
+    non-decreasing in ``p`` (audit-1018 F-01), so bisect. ``None`` when the
+    non-taxable SS alone already puts ACA MAGI above the ceiling.
+    """
+
+    def aca_magi(p: float) -> float:
+        return p + _nontaxable_ss(hh, ya, sa, other_income=p, filing_status=filing_status)
+
+    if aca_magi(0.0) > ceiling:
+        return None
+    lo, hi = 0.0, ceiling
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if aca_magi(mid) <= ceiling:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _swept_federal_tax(
+    magi: float,
+    *,
+    hh: Household,
+    ded: float,
+    preferential: float,
+    tax_exempt: float,
+    year: int,
+    cpi: float,
+) -> tuple[float, float]:
+    """Federal tax and marginal rate at swept IRMAA-basis MAGI ``magi`` (audit-1018 F-14).
+
+    Muni interest is out of AGI (IRC §103) and out of the OBBBA senior-bonus
+    phase-out. LTCG + qualified dividends (``preferential``) sit on top of
+    ordinary taxable income in the §1(h) stack instead of being taxed at
+    ordinary rates; taxable Social Security is already inside ``magi``. The
+    marginal rate adds the stack's extra tax on the next ordinary dollar.
+    """
+    single = hh.filing_status == "Single"
+    agi = max(magi - tax_exempt, 0.0)
+    pref = min(preferential, agi)
+    ordinary = agi - pref
+    total_ded = ded + senior_bonus_deduction(
+        hh.your_age, hh.spouse_age, agi, year=year, cpi=cpi, filing_status=hh.filing_status
+    )
+    taxable = max(ordinary - total_ded, 0.0)
+    unused = max(total_ded - ordinary, 0.0)
+    base_thr = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
+    thresholds = (
+        index_value(base_thr[0], year, cpi, round50=True),
+        index_value(base_thr[1], year, cpi, round50=True),
+    )
+    stack = _ltcg_stack_tax(taxable, pref, thresholds, unused)
+    stack_next = _ltcg_stack_tax(taxable + 1.0, pref, thresholds, unused)
+    if single:
+        return (
+            federal_tax_single(taxable, year=year, cpi=cpi) + stack,
+            marginal_rate_single(taxable, year=year, cpi=cpi) + (stack_next - stack),
+        )
+    return (
+        federal_tax(taxable, year=year, cpi=cpi) + stack,
+        marginal_rate(taxable, year=year, cpi=cpi) + (stack_next - stack),
+    )
+
+
 def default_base_magi(hh: Household, *, ytd: YTDSnapshot | None, net_inv_income: float) -> float:
     """Base-year MAGI with no conversion: the Explorer's "base MAGI" default.
 
@@ -172,6 +251,10 @@ class CostCurves:
     # ACA MAGI add-back (IRC §36B); 0 unless SS drawn in ACA years. Used to align
     # the cliff marker (audit C7 / aca-4).
     nontaxable_ss: float = 0.0
+    # audit-1018 F-01: raw swept MAGI where per-point ACA MAGI crosses 400% FPL;
+    # None when enhanced subsidies are active (no cliff), nobody is on ACA, or
+    # non-taxable SS alone already exceeds the ceiling.
+    aca_cliff_magi: float | None = None
     # W4: auto-derived net investment income (forecast div/gains + YTD investment
     # income, if applied) folded into every NIIT computation below. Exposed so the
     # view can show the manual field's "on top of X auto-detected" meaning.
@@ -245,15 +328,27 @@ def compute_cost_curves(
     _is_mfj_curves = hh.filing_status == "MFJ"
 
     # ACA MAGI adds back non-taxable SS (IRC §36B(d)(2)(B)(iii)); IRMAA MAGI does
-    # not. Constant offset at the base point applied to every swept MAGI below.
-    # 0.0 unless someone is drawing SS during the ACA years (no-op for default HH).
+    # not. The add-back shrinks as swept MAGI grows (more SS becomes taxable,
+    # IRC §86), so it is recomputed for every swept point below (audit-1018
+    # F-01); this base-point value only anchors the base ACA MAGI. 0.0 unless
+    # someone is drawing SS during the ACA years (no-op for default HH).
+    _ya = hh.your_age_in(year)
+    _sa = hh.spouse_age_in(year) if _is_mfj_curves else None
     nontaxable_ss = _nontaxable_ss(
-        hh,
-        hh.your_age_in(year),
-        hh.spouse_age_in(year) if _is_mfj_curves else None,
-        other_income=base_magi,
-        filing_status=hh.filing_status,
+        hh, _ya, _sa, other_income=base_magi, filing_status=hh.filing_status
     )
+    aca_cliff_magi = (
+        _aca_cliff_raw_magi(
+            hh,
+            _ya,
+            _sa,
+            filing_status=hh.filing_status,
+            ceiling=aca_ceiling_magi(hh.filing_status, year, cpi),
+        )
+        if anyone_on_aca and not hh.aca_enhanced_subsidies_active
+        else None
+    )
+    _preferential = estimate_ltcg_eligible(hh, year, ytd=ytd)
 
     # IRMAA 2-year lookback: income realized in `year` is judged against the
     # thresholds published for, and paid in, year + 2. ACA (below) stays on `year`
@@ -293,10 +388,13 @@ def compute_cost_curves(
     total_hidden_cost: list[float] = []
 
     for magi in magi_points:
+        point_nontaxable_ss = _nontaxable_ss(
+            hh, _ya, _sa, other_income=magi, filing_status=hh.filing_status
+        )
         # ACA (only meaningful if enrolled and pre-65)
         if anyone_on_aca:
             sub = aca_subsidy(
-                magi + nontaxable_ss,
+                magi + point_nontaxable_ss,
                 benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
@@ -306,7 +404,7 @@ def compute_cost_curves(
             aca_subsidy_vals.append(sub)
             aca_net_cost_vals.append(
                 aca_net_cost(
-                    magi + nontaxable_ss,
+                    magi + point_nontaxable_ss,
                     benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
@@ -317,7 +415,7 @@ def compute_cost_curves(
             aca_loss_vals.append(
                 aca_subsidy_loss(
                     base_magi + nontaxable_ss,
-                    magi + nontaxable_ss,
+                    magi + point_nontaxable_ss,
                     benchmark=effective_benchmark,
                     enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                     filing_status=hh.filing_status,
@@ -348,27 +446,23 @@ def compute_cost_curves(
         niit_vals.append(niit(magi + _niit_magi_shift, total_nii, filing_status=hh.filing_status))
 
         # Tax
-        bonus_ded = senior_bonus_deduction(
-            hh.your_age,
-            hh.spouse_age,
+        point_tax, point_marginal = _swept_federal_tax(
             magi,
+            hh=hh,
+            ded=ded,
+            preferential=_preferential,
+            tax_exempt=_tei,
             year=year,
             cpi=cpi,
-            filing_status=hh.filing_status,
         )
-        taxable = max(magi - ded - bonus_ded, 0)
-        if hh.filing_status == "Single":
-            fed_tax_vals.append(federal_tax_single(taxable, year=year, cpi=cpi))
-            marginal_vals.append(marginal_rate_single(taxable, year=year, cpi=cpi))
-        else:
-            fed_tax_vals.append(federal_tax(taxable, year=year, cpi=cpi))
-            marginal_vals.append(marginal_rate(taxable, year=year, cpi=cpi))
+        fed_tax_vals.append(point_tax)
+        marginal_vals.append(point_marginal)
 
         # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
         hidden = (
             aca_subsidy_loss(
                 base_magi + nontaxable_ss,
-                magi + nontaxable_ss,
+                magi + point_nontaxable_ss,
                 benchmark=effective_benchmark,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=hh.filing_status,
@@ -399,6 +493,7 @@ def compute_cost_curves(
         base_irmaa=base_irmaa,
         base_niit=base_niit,
         nontaxable_ss=nontaxable_ss,
+        aca_cliff_magi=aca_cliff_magi,
         auto_nii=auto_nii,
     )
 
@@ -423,6 +518,9 @@ def compute_year_by_year_timeline(
     *,
     years: int = 20,
     cpi: float,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+    hold_base_magi: bool = False,
 ) -> list[TimelineRow]:
     """Build the 20-year ACA → IRMAA timeline.
 
@@ -431,12 +529,29 @@ def compute_year_by_year_timeline(
     - Determine which system applies (ACA / Medicare / both)
     - If anyone on Medicare: compute IRMAA tier + room to next threshold
     - If ACA applies: compute current ACA subsidy + net cost
+
+    audit-1018 F-11: the base year uses ``base_magi`` (the user-editable
+    input); every later year uses its own no-conversion MAGI, the same base
+    Sweet Spot shows (``base_income_for_year`` with that year's zero-conversion
+    IRA draw), so SS start, RMD onset and growth move each row's room/tier.
+    ``hold_base_magi=True`` prices every year on ``base_magi`` instead (a
+    what-if, and how single-rule unit tests isolate one effect).
     """
     surv = hh.survivor
     is_mfj_base = hh.filing_status == "MFJ"
+    draws = (
+        {}
+        if hold_base_magi
+        else zero_conversion_ira_draws(hh, ytd=ytd, net_inv_income=net_inv_income)
+    )
     rows: list[TimelineRow] = []
     for yr_idx in range(years):
         year = hh.base_year + yr_idx
+        year_magi = (
+            base_magi
+            if hold_base_magi or year == hh.base_year
+            else base_income_for_year(hh, year, ira_draw=draws.get(year, 0.0)).base_magi
+        )
 
         # === Survivor scenario: determine filing status for this year ===
         survivor_active = surv is not None and year >= surv.death_year + 1
@@ -525,7 +640,11 @@ def compute_year_by_year_timeline(
         # already gates on `_irmaa_year`. The `system` label above deliberately
         # stays on the income year -- it reports coverage while the income was
         # earned, which is a different question from who pays the surcharge.
-        if survivor_active and surv is not None:
+        # audit-1018 F-12: survivor status for the payment year, not the income
+        # year -- a decedent is no Medicare beneficiary once _irmaa_year >=
+        # death_year + 1, even while the income year still files MFJ.
+        payer_is_survivor = surv is not None and _irmaa_year >= surv.death_year + 1
+        if payer_is_survivor and surv is not None:
             if surv.who_dies == "spouse":
                 _irmaa_medicare_count = 1 if hh.your_age_in(_irmaa_year) >= 65 else 0
             else:
@@ -539,7 +658,7 @@ def compute_year_by_year_timeline(
 
         irmaa_room = (
             irmaa_next_threshold(
-                base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
+                year_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
             )
             if _irmaa_medicare_count > 0
             else None
@@ -620,13 +739,13 @@ def compute_year_by_year_timeline(
             # interaction with ACA is deferred to a separate design pass.
             nontaxable_ss_yr = (
                 _nontaxable_ss(
-                    hh, ya, sa, other_income=base_magi, filing_status=current_filing_status
+                    hh, ya, sa, other_income=year_magi, filing_status=current_filing_status
                 )
                 if not survivor_active
                 else 0.0
             )
             aca_sub = aca_subsidy(
-                base_magi + nontaxable_ss_yr,
+                year_magi + nontaxable_ss_yr,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
@@ -634,7 +753,7 @@ def compute_year_by_year_timeline(
                 cpi=_yr_cpi,
             )
             aca_pay = aca_net_cost(
-                base_magi + nontaxable_ss_yr,
+                year_magi + nontaxable_ss_yr,
                 benchmark=eff_bench_yr,
                 enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
                 filing_status=current_filing_status,
@@ -649,7 +768,7 @@ def compute_year_by_year_timeline(
                 spouse_age=row_spouse_age,
                 system=system,
                 irmaa_tier=irmaa_tier(
-                    base_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
+                    year_magi, filing_status=current_filing_status, year=_irmaa_year, cpi=_yr_cpi
                 )
                 if _irmaa_medicare_count > 0
                 else None,

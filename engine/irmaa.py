@@ -159,7 +159,8 @@ def irmaa_surcharge(
     Args:
         magi: Modified Adjusted Gross Income
         num_people: number of people on Medicare (1 or 2)
-        base_part_b: annual per-person base Part B premium (default: module constant)
+        base_part_b: annual per-person standard Part B premium (default: module
+            constant); the Part B surcharge scales in proportion to it
         filing_status: "MFJ" (default) or "Single" — selects threshold table
         year: calendar year (used to index MAGI thresholds forward from 2026 base)
         cpi: annual CPI rate for indexing (default 2.5%)
@@ -177,7 +178,13 @@ def irmaa_surcharge(
     for i in range(top_index, -1, -1):
         threshold, part_b_annual, part_d_annual = tiers[i]
         if _crosses(magi, threshold, is_top=i == top_index):
-            surcharge_per_person = (part_b_annual - base_part_b) + (part_d_annual - BASE_PART_D)
+            # audit-1018 F-37: the Part B IRMAA is a fixed share of the standard
+            # premium (42 U.S.C. §1395r(i)(3): tier totals are 35-85% of program
+            # cost vs the 25% base share), so the published 2026 surcharge over
+            # BASE_PART_B scales with the user's base instead of shrinking as
+            # the base rises. Exact at the default base. Part D is independent.
+            part_b_surcharge = (part_b_annual - BASE_PART_B) * (base_part_b / BASE_PART_B)
+            surcharge_per_person = part_b_surcharge + (part_d_annual - BASE_PART_D)
             # Index surcharge dollars forward at the medical-inflation rate (audit A1).
             # Both tier and base premiums share this rate, so scaling the net
             # surcharge is exact; at year==BASE_YEAR the factor is 1.0 (no change).

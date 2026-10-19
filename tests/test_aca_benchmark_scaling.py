@@ -1,5 +1,7 @@
 """Regression tests: ACA benchmark must scale by enrollee count across all consumers."""
 
+from functools import partial
+
 import pytest
 
 from engine.aca import (
@@ -9,10 +11,15 @@ from engine.aca import (
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
 )
-from engine.aca_irmaa_compute import compute_cost_curves, compute_year_by_year_timeline
+from engine.aca_irmaa_compute import compute_cost_curves
+from engine.aca_irmaa_compute import compute_year_by_year_timeline as _timeline_projected_magi
 from engine.scenario_compute import compute_aca
 from engine.sweet_spot_compute import BaseIncome, all_in_at_conversion
 from models.household import Household, SurvivorScenario
+
+# These tests check benchmark scaling at one fixed MAGI, so every timeline year is
+# priced on that MAGI; the default projects each year's own MAGI (audit-1018 F-11).
+compute_year_by_year_timeline = partial(_timeline_projected_magi, hold_base_magi=True)
 
 
 def test_compute_aca_clawback_scales_benchmark_single_enrollee() -> None:

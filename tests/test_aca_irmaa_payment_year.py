@@ -5,16 +5,23 @@ judged against the thresholds published for, and paid in, year Y+2. The cost
 curves must index IRMAA thresholds — and gate Medicare eligibility — to Y+2.
 """
 
+from functools import partial
+
 import pytest
 
 from engine.aca_irmaa_compute import (
     _nontaxable_ss,
     compute_cost_curves,
-    compute_year_by_year_timeline,
 )
+from engine.aca_irmaa_compute import compute_year_by_year_timeline as _timeline_projected_magi
 from engine.irmaa import irmaa_next_threshold, irmaa_tier
 from engine.scenario import ConversionPlan, run_scenario
 from models.household import Household
+
+# These tests isolate one rule at a time (payment-year indexing, add-back, ...),
+# so they price every timeline year on the single MAGI they pass in. The default
+# prices each year on its own projected MAGI (audit-1018 F-11).
+compute_year_by_year_timeline = partial(_timeline_projected_magi, hold_base_magi=True)
 
 
 def test_cost_curve_irmaa_tier_uses_payment_year_thresholds():
