@@ -46,7 +46,7 @@ class TestDecodeKeymaterialPadding:
     def test_standard_padded_base64_accepted(self) -> None:
         key = self._make_key()
         padded = base64.b64encode(key).decode("ascii")
-        assert padded.endswith("=") or True  # may or may not have padding
+        assert padded.endswith("=")  # 32 bytes -> 44 chars, one '=' pad (padded form under test)
         assert _decode_keymaterial(padded) == key
 
     def test_unpadded_base64_accepted(self) -> None:

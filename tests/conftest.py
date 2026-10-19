@@ -36,6 +36,7 @@ import engine.brokerage_statement_pdf as _brokerage_mod  # noqa: E402
 import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
+import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
 import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
@@ -74,6 +75,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _instance_identity_mod.INSTANCE_OWNER_PATH,
     _ubs_activity_store_mod._UBS_ACTIVITY_CACHE_PATH,
     _account_link_mod._ACCOUNT_LINK_PATH,
+    _REPO_ROOT / ".dividend_rates.json",
 ]
 
 
@@ -217,6 +219,18 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _tmp(".candidate_store.json"),
     )
     _patch_default(
+        monkeypatch,
+        _record_mod.record_ira_balance_candidate,
+        "store_path",
+        _tmp(".candidate_store.json"),
+    )
+    _patch_default(
+        monkeypatch,
+        _record_mod.record_roth_balance_candidate,
+        "store_path",
+        _tmp(".candidate_store.json"),
+    )
+    _patch_default(
         monkeypatch, _scan_ingest_mod.scan_and_record, "store_path", _tmp(".candidate_store.json")
     )
     _patch_default(
@@ -230,6 +244,16 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _option_exercise_helpers_mod.handle_stock_quote_fetch,
         "store_path",
         _tmp(".candidate_store.json"),
+    )
+
+    # 3b. forecast_portfolio defaults overrides_path to the cwd-relative, personal,
+    # gitignored ".dividend_rates.json" (audit-1018 F-52). Point it at a
+    # per-test path that never exists, so no test reads the developer's file.
+    _patch_default(
+        monkeypatch,
+        _dividend_forecast_mod.forecast_portfolio,
+        "overrides_path",
+        _tmp(".dividend_rates.json"),
     )
 
     # 4. exercise_schedule_store functions bake ``path=`` at definition time, so
