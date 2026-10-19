@@ -82,7 +82,8 @@ def render(hh: Household):
     # Plan and Sweet Spot do.
     _nii = int(st.session_state.get("net_inv_income", scalar_default("net_inv_income")))
     no_conv = run_no_conversion(hh, end_age=95, ytd=_ytd, net_inv_income=_nii)
-    plan_12 = auto_fill_12(hh, net_inv_income=_nii)
+    # audit-1018 F-10: size Fill 12% with the same YTD the projection runs with.
+    plan_12 = auto_fill_12(hh, _ytd, _nii)
 
     # Plan-QCD scenarios run only when the engine actually applies some QCD
     # (it gates by QCD age and the indexed limit), so the shown total is the applied one.
