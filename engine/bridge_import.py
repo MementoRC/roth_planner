@@ -43,7 +43,7 @@ from engine.bridge_bundle import (
     classify_bundle,
     parse_v5,
 )
-from engine.pdf_ledger import replace_owner
+from engine.pdf_ledger import prune_duplicates_elsewhere, replace_owner
 from engine.portfolio_sync.classify import _resolve_override
 from engine.portfolio_sync.portfolio import EmptySnapshotWriteRefusedError
 from engine.portfolio_sync.shapes import (
@@ -591,14 +591,19 @@ def _apply_ledger(
         out = replace_owner(
             out, slot, {s: incoming.get(s, {}).get(slot) or {} for s in ("koinly", "brokerage")}
         )
+    winners = set(record_slots)
     if any_selected:
         household_koinly = incoming.get("koinly", {}).get("household")
         if household_koinly:
             out["koinly"]["household"] = copy.deepcopy(household_koinly)
+            winners.add("household")
         household_brokerage = incoming.get("brokerage", {}).get("household")
         if household_brokerage:
             out["brokerage"].setdefault("household", {}).update(copy.deepcopy(household_brokerage))
-    return out
+            winners.add("household")
+    # Move, never copy: the same account / report under a receiver-side owner
+    # would be summed twice by derive_*_totals (audit-1018 F-08).
+    return prune_duplicates_elsewhere(out, frozenset(winners))
 
 
 def _apply_ytd(
