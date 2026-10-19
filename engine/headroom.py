@@ -158,7 +158,8 @@ def compute_headroom(
     locked_niit_magi = ytd.niit_magi_ytd + locked_tss
     result.locked_magi = locked_magi
 
-    # Deductions use locked MAGI for phaseout (conservative — planned income may change).
+    # Deductions: the senior bonus is phased out by MAGI, so the bracket-room
+    # bisections below recompute it per trial conversion (audit-1018 F-02).
     # M2: Single filers use Single std deduction / senior extra (not MFJ household defaults).
     if filing_status == "Single":
         _std_ded: float = STD_DEDUCTION_SINGLE
@@ -168,12 +169,18 @@ def compute_headroom(
         _senior_extra = hh.senior_extra
     # FIX #5: senior_bonus_deduction phaseout must use muni-EXCLUDED MAGI (niit_magi),
     # consistent with engine/tax.py which passes ytd.niit_magi_ytd.
-    ded = deductions(
+    ded_base = deductions(
         ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi
     )
-    ded += senior_bonus_deduction(
-        ya, sa, locked_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
-    )
+
+    def _senior_bonus_at(niit_magi: float) -> float:
+        return senior_bonus_deduction(
+            ya, sa, niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
+        )
+
+    # Zero-conversion deduction: only the bisection's upper bound (the deduction
+    # can only shrink as conversions phase the bonus out).
+    ded = ded_base + _senior_bonus_at(locked_niit_magi)
 
     # Ordinary gross for bracket walk: ordinary income only + taxable SS (LTCG excluded
     # from brackets per IRC §1(h)); conversions are ordinary income and stay in.
@@ -186,12 +193,15 @@ def compute_headroom(
     # the naive room amount lands taxable income past the ceiling. Bisect
     # against the actual (non-linear) taxable-income function instead, mirroring
     # engine.sweet_spot_compute.bracket_boundary_conversion (same class of bug,
-    # audit C14/C23). Deductions stay fixed at the locked MAGI (already a
-    # deliberate, documented conservative choice above) -- only taxable SS is
-    # re-derived per candidate conversion here.
+    # audit C14/C23).
+    # audit-1018 F-02: the OBBBA senior bonus phases out as the conversion raises
+    # MAGI, so the deduction is recomputed per trial conversion too. Holding it at
+    # its pre-conversion size is NOT conservative: a larger deduction means a
+    # larger room, which overshoots the bracket top.
     def _locked_taxable_at(conv: float) -> float:
         tss_c = taxable_ss(combined_ss, locked_other + conv, filing_status=filing_status)
-        return max(ytd.total_ordinary_income + conv + tss_c - ded, 0.0)
+        ded_c = ded_base + _senior_bonus_at(ytd.niit_magi_ytd + conv + tss_c)
+        return max(ytd.total_ordinary_income + conv + tss_c - ded_c, 0.0)
 
     _brackets = BRACKETS_SINGLE if filing_status == "Single" else BRACKETS_MFJ
     _ceiling_12 = index_value(_brackets[1][0], _year, _cpi, round50=True)
@@ -258,18 +268,17 @@ def compute_headroom(
     # Recalculate deductions with full planned MAGI.
     # FIX #5 (planned path): same muni-excluded MAGI for senior_bonus_deduction phaseout.
     # M2 (planned path): same Single std deduction as locked path.
-    ded_planned = deductions(
-        ya, sa, _std_ded, _senior_extra, filing_status=filing_status, year=_year, cpi=_cpi
-    )
-    ded_planned += senior_bonus_deduction(
-        ya, sa, planned_niit_magi, year=_year, cpi=_cpi, filing_status=filing_status
-    )
+    ded_planned = ded_base + _senior_bonus_at(planned_niit_magi)
 
-    # C81 (planned path): same SS-torpedo bisection as the locked path above.
+    # C81 (planned path): same SS-torpedo and senior-bonus bisection as the
+    # locked path above (deduction recomputed per trial conversion, F-02).
     def _planned_taxable_at(conv: float) -> float:
         tss_c = taxable_ss(combined_ss, planned_other + conv, filing_status=filing_status)
+        ded_c = ded_base + _senior_bonus_at(
+            ytd.niit_magi_ytd + result.planned_option_income + conv + tss_c
+        )
         return max(
-            ytd.total_ordinary_income + result.planned_option_income + conv + tss_c - ded_planned,
+            ytd.total_ordinary_income + result.planned_option_income + conv + tss_c - ded_c,
             0.0,
         )
 

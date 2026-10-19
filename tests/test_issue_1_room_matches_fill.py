@@ -137,7 +137,7 @@ def test_room_this_year_tiles_equal_fill_conversions() -> None:
     f12, f22 = _fill_totals(hh)
     # The draw-blind tiles overstate the Fill by (about) the draw.
     assert headroom.room_to_12pct > f12 + 10_000.0
-    r12, r22 = draw_aware_bracket_rooms(hh, None, headroom)
+    r12, r22 = draw_aware_bracket_rooms(hh, None)
     assert r12 == pytest.approx(f12, abs=TOL)
     assert r22 == pytest.approx(f22, abs=TOL)
 
@@ -177,14 +177,17 @@ def test_planner_and_dashboard_room_is_zero_after_fill(fill, level: int) -> None
 # --------------------------------------------------------------------------
 
 
-def test_no_draw_year_tiles_unchanged() -> None:
+def test_no_draw_year_tiles_equal_fill() -> None:
+    """Owner decision D1 (audit-1018 F-06): the tiles are the Fill basis in every
+    year; in this simple no-draw year that basis happens to equal the YTD-only
+    headroom rooms."""
     hh = _no_draw_hh()
     assert _draw(_base(hh, auto_fill_12(hh, None))) == 0.0
     headroom = compute_headroom(hh, YTDSnapshot(tax_year=BASE_YEAR), "MFJ")
-    assert draw_aware_bracket_rooms(hh, None, headroom) == (
-        headroom.room_to_12pct,
-        headroom.room_to_22pct,
-    )
+    f12, f22 = _fill_totals(hh)
+    rooms = draw_aware_bracket_rooms(hh, None)
+    assert rooms == pytest.approx((f12, f22), abs=0.01)
+    assert rooms == pytest.approx((headroom.room_to_12pct, headroom.room_to_22pct), abs=TOL)
 
 
 def test_no_draw_year_sweet_spot_unchanged() -> None:
@@ -280,22 +283,18 @@ def test_ytd_page_rooms_equal_room_this_year_in_forced_draw_year() -> None:
     hh = _forced_draw_hh()
     ytd = YTDSnapshot(tax_year=BASE_YEAR)
     headroom = compute_headroom(hh, ytd, "MFJ")
-    rooms = ytd_bracket_rooms(hh, ytd, headroom)
-    assert rooms == draw_aware_bracket_rooms(hh, ytd, headroom)
+    rooms = ytd_bracket_rooms(hh, ytd)
+    assert rooms == draw_aware_bracket_rooms(hh, ytd)
     f12, f22 = _fill_totals(hh)
     assert headroom.room_to_12pct > rooms[0] + 10_000.0  # draw-blind overstates
     assert rooms[0] == pytest.approx(f12, abs=TOL)
     assert rooms[1] == pytest.approx(f22, abs=TOL)
 
 
-def test_ytd_page_rooms_unchanged_in_no_draw_year() -> None:
+def test_ytd_page_rooms_equal_fill_in_no_draw_year() -> None:
     hh = _no_draw_hh()
     ytd = YTDSnapshot(tax_year=BASE_YEAR)
-    headroom = compute_headroom(hh, ytd, "MFJ")
-    assert ytd_bracket_rooms(hh, ytd, headroom) == (
-        headroom.room_to_12pct,
-        headroom.room_to_22pct,
-    )
+    assert ytd_bracket_rooms(hh, ytd) == pytest.approx(_fill_totals(hh), abs=TOL)
 
 
 # --------------------------------------------------------------------------
