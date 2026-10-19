@@ -173,6 +173,8 @@ def load_committed(path: str | Path) -> dict | None:
     """
     try:
         raw = Path(path).read_text()
+    except UnicodeDecodeError as exc:
+        raise CorruptCommittedCacheError(path, exc) from exc
     except OSError as exc:
         logger.warning("load_committed(%s) failed (%s); returning None", path, exc)
         return None

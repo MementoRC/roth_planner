@@ -71,6 +71,8 @@ def save_ssa_snapshot(snap: SSASnapshot, *, owner: str) -> None:
             existing = read_pii_json(_SSA_CACHE_PATH)
         except (json.JSONDecodeError, OSError):
             existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
     existing[owner] = asdict(snap)
     write_pii_json(_SSA_CACHE_PATH, existing)
 
