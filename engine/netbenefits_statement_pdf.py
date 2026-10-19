@@ -26,7 +26,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from engine.pdf_owner import resolve_owner
-from engine.portfolio_sync.as_of import account_key, is_newer_or_equal
+from engine.portfolio_sync.as_of import is_newer_or_equal
 from engine.portfolio_sync.shapes import AccountSummary, Holding, PortfolioSnapshot
 from models.ytd_income import iso_day
 
@@ -392,18 +392,45 @@ def to_account_summary(stmt: NetBenefitsStatement, owner: str) -> AccountSummary
     return acct
 
 
+_PLAN_NOISE = re.compile(r"403\s*\(?b\)?|\bplan\b", re.IGNORECASE)
+
+
+def _plan_id(name: str) -> str:
+    """Plan name reduced to its distinguishing words: ``"PLAN A 403B"`` and
+    ``"Plan A 403(b) Plan"`` both become ``"a"``."""
+    return " ".join(re.findall(r"[a-z0-9]+", _PLAN_NOISE.sub(" ", name.lower())))
+
+
+def matching_403bs(snap: PortfolioSnapshot, account: AccountSummary) -> list[AccountSummary]:
+    """The owner's 403(b)s that *account* (one plan) replaces.
+
+    Those naming the same plan. Failing that, the owner's only 403(b) when it
+    is custodian-labelled (a FinExtract sync names it its own way, never by
+    plan); a statement-sourced 403(b) of another plan is never replaced, and
+    neither is any plan when the owner holds several unmatched ones.
+    """
+    owned = [a for a in snap.accounts if a.account_type == "403b" and a.owner == account.owner]
+    same_plan = [a for a in owned if _plan_id(a.account_name) == _plan_id(account.account_name)]
+    if same_plan:
+        return same_plan
+    if len(owned) == 1 and (owned[0].as_of_source != "statement" or not owned[0].account_name):
+        return owned
+    return []
+
+
 def replace_owner_403b(
     snap: PortfolioSnapshot, account: AccountSummary
 ) -> tuple[PortfolioSnapshot, list[AccountSummary]]:
     """Return a copy of *snap* whose 403(b) for ``account.owner`` is *account*.
 
-    Every existing 403(b) account of that owner is removed and returned so the
-    caller can show what was replaced. Other owners' accounts and every other
-    account type (the Rollover IRA, Roth, brokerage) are untouched. *snap*
-    itself is not modified.
+    Only the plan *account* describes is removed and returned (see
+    ``matching_403bs``) so the caller can show what was replaced; the owner's
+    other 403(b) plans, other owners' accounts and every other account type
+    (the Rollover IRA, Roth, brokerage) are untouched. *snap* itself is not
+    modified.
     """
-    replaced = [a for a in snap.accounts if a.account_type == "403b" and a.owner == account.owner]
-    kept = [a for a in snap.accounts if not (a.account_type == "403b" and a.owner == account.owner)]
+    replaced = matching_403bs(snap, account)
+    kept = [a for a in snap.accounts if not any(a is r for r in replaced)]
     return dataclasses.replace(snap, accounts=[*kept, account]), replaced
 
 
@@ -452,7 +479,7 @@ def apply_netbenefits_statement(
     new_acct = to_account_summary(stmt, owner)
     detail = f"NetBenefits 403(b) PDF — {stmt.plan_name}, as of {stmt.period_end}"
     field_key = "your_ira" if owner == "you" else "spouse_ira"
-    cached = [a for a in snap.accounts if account_key(a) == account_key(new_acct)]
+    cached = matching_403bs(snap, new_acct)
     newest = max(cached, key=lambda a: a.as_of, default=None)
     if newest is not None and not force and not is_newer_or_equal(new_acct, newest):
         return NetBenefitsApplyOutcome(
