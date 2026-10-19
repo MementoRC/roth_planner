@@ -414,6 +414,8 @@ def _apply_scan_result(
                 report.owner_key or "unknown",
                 account_overrides,
                 instance_owner,
+                holder_key=report.owner_key,
+                owner_map=owner_map,
             )
             _warn_on_holder_name_mismatch(
                 report.owner_key,

@@ -47,6 +47,51 @@ PdfLedger = dict[str, dict[str, Any]]
 _EMPTY_LEDGER: PdfLedger = {"koinly": {}, "brokerage": {}}
 
 
+_REPORT_IDENTITY_FIELDS = (
+    "tax_year",
+    "source",
+    "parser_version",
+    "stcg",
+    "ltcg",
+    "income",
+    "provenance",
+    "owner_key",
+)
+
+
+def _same_report(slot: dict[str, Any], other: dict[str, Any]) -> bool:
+    """True when two Koinly slots are the identical report (see
+    write_koinly_contribution for why identity is inferred from content)."""
+    return all(slot.get(f) == other.get(f) for f in _REPORT_IDENTITY_FIELDS)
+
+
+def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> PdfLedger:
+    """Return a NEW ledger where every Koinly report / brokerage account held
+    by an owner in *owners* is removed from all owners NOT in *owners*.
+
+    The bundle-import path writes whole owner slices (replace_owner) and so
+    bypasses the move-not-copy prune that write_koinly_contribution and
+    write_brokerage_contribution do; without this, the same joint account or
+    report filed under a different owner on the receiver is summed twice by
+    derive_*_totals (audit-1018 F-08). The incoming (authoritative) owners win.
+    """
+    out = copy.deepcopy(ledger)
+    koinly = out.get("koinly", {})
+    for kept in [o for o in owners if o in koinly]:
+        for other in [o for o in koinly if o not in owners]:
+            if _same_report(koinly[other], koinly[kept]):
+                del koinly[other]
+    brokerage = out.get("brokerage", {})
+    for kept in [o for o in owners if o in brokerage]:
+        for other in [o for o in brokerage if o not in owners]:
+            for key, rec in list(brokerage[other].items()):
+                if isinstance(rec, dict) and _find_account_key(
+                    brokerage[kept], str(rec.get("broker", "")), str(rec.get("account_number", key))
+                ):
+                    del brokerage[other][key]
+    return out
+
+
 def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyReport) -> PdfLedger:
     """Return a NEW ledger with *owner*'s Koinly slot set to *report*'s
     figures, pruning that SAME report from any OTHER owner slot it was
@@ -100,24 +145,12 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
         "owner_key": report.owner_key,
     }
 
-    def _same_report(slot: dict[str, Any]) -> bool:
-        return (
-            slot.get("tax_year") == new_slot["tax_year"]
-            and slot.get("source") == new_slot["source"]
-            and slot.get("parser_version") == new_slot["parser_version"]
-            and slot.get("stcg") == new_slot["stcg"]
-            and slot.get("ltcg") == new_slot["ltcg"]
-            and slot.get("income") == new_slot["income"]
-            and slot.get("provenance") == new_slot["provenance"]
-            and slot.get("owner_key") == new_slot["owner_key"]
-        )
-
     # Prune the same report from every OTHER owner so a stale owner
     # assignment (e.g. the "household" fallback later corrected to a named
     # owner) MOVES the slot rather than leaving a duplicate that
     # derive_koinly_totals would sum a second time.
     for other_owner, slot in list(updated["koinly"].items()):
-        if other_owner != owner and _same_report(slot):
+        if other_owner != owner and _same_report(slot, new_slot):
             del updated["koinly"][other_owner]
 
     updated["koinly"][owner] = new_slot
@@ -196,11 +229,16 @@ def _slot_key_for(accounts: dict[str, Any], record: BrokerageStatementRecord) ->
     slot key is normally the bare account_number; a second broker's account
     with the same number is stored under ``"<broker>:<account_number>"``.
     """
+    return _find_account_key(accounts, record.broker, record.account_number)
+
+
+def _find_account_key(accounts: dict[str, Any], broker: str, account_number: str) -> str | None:
+    """Key of (broker, account_number) among one owner's brokerage slots, or None."""
     for key, rec in accounts.items():
         if not isinstance(rec, dict):
             continue
         number = str(rec.get("account_number", key))
-        if number == record.account_number and str(rec.get("broker", "")) == record.broker:
+        if number == account_number and str(rec.get("broker", "")) == broker:
             return key
     return None
 

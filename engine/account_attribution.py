@@ -16,7 +16,7 @@ import json
 import os
 from pathlib import Path
 
-from engine.pdf_owner import OWNER_ROLES
+from engine.pdf_owner import OWNER_ROLES, resolve_owner
 from engine.secure_io import read_pii_json, write_pii_json
 
 _ACCOUNT_ATTRIBUTION_PATH = Path(__file__).resolve().parent.parent / ".account_attribution.json"
@@ -184,11 +184,26 @@ def resolve_account_owner(
     account_number: str,
     account_overrides: dict[tuple[str, str], str],
     instance_owner: str,
+    *,
+    holder_key: str | None = None,
+    owner_map: dict[str, str] | None = None,
 ) -> str:
-    """TOTAL: an override wins, otherwise fall back to instance_owner.
+    """TOTAL: an override wins, then the learned holder-name owner_map entry
+    (only when *holder_key* and *owner_map* are given), otherwise instance_owner.
 
     Never returns None and never prompts -- this is the single replacement
     for the ad-hoc st.selectbox owner-confirm prompts this plan retires (see
     views/ytd_income/_partials/_sync_scan.py, Task 6).
+
+    The owner_map fallback exists for documents with no account number
+    (Koinly): without it two people's reports both land on instance_owner
+    and the second overwrites the first (audit-1018 F-07).
     """
-    return account_overrides.get((broker, account_number)) or instance_owner
+    override = account_overrides.get((broker, account_number))
+    if override:
+        return override
+    if holder_key is not None and owner_map:
+        learned = resolve_owner(holder_key, owner_map)
+        if learned:
+            return learned
+    return instance_owner
