@@ -103,6 +103,13 @@ def _nontaxable_ss(
     just the phase-in band, without touching the (already-correct) IRMAA
     MAGI path, which never adds this value back.
 
+    Bases (issue #42): ``other_income`` is IRMAA-basis MAGI, i.e. AGI (with
+    taxable SS) plus tax-exempt interest. The solved ``x`` is therefore non-SS
+    AGI plus tax-exempt interest, which is exactly §86(b)(2)'s modified AGI;
+    ``taxable_ss`` then adds half of benefits and adds no muni of its own, so
+    tax-exempt interest is counted once. ``magi + nontaxable_ss`` is then AGI +
+    tax-exempt interest + non-taxable SS, the §36B(d)(2)(B) ACA MAGI.
+
     Mirrors the canonical add-back in engine/scenario_compute.compute_aca and
     engine/sweet_spot_compute. The SSA survivor step-up (survivor keeps the
     larger benefit) is not separately modeled here — a second-order effect on
@@ -474,19 +481,12 @@ def compute_cost_curves(
         fed_tax_vals.append(point_tax)
         marginal_vals.append(point_marginal)
 
-        # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase)
+        # Combined hidden cost (ACA loss + IRMAA beyond base + NIIT increase).
+        # Issue #42: reuse this point's gated ACA loss (0 when nobody is on ACA)
+        # instead of recomputing it ungated, so the hidden-cost line can never
+        # carry a subsidy loss the loss series itself reports as zero.
         hidden = (
-            aca_subsidy_loss(
-                base_magi + nontaxable_ss,
-                magi + point_nontaxable_ss,
-                benchmark=effective_benchmark,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=hh.filing_status,
-                year=year,
-                cpi=cpi,
-            )
-            + max(surcharge - base_irmaa, 0)
-            + max(niit_vals[-1] - base_niit, 0)
+            aca_loss_vals[-1] + max(surcharge - base_irmaa, 0) + max(niit_vals[-1] - base_niit, 0)
         )
         total_hidden_cost.append(hidden)
 

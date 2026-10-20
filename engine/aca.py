@@ -348,6 +348,13 @@ def aca_ceiling_magi(filing_status: str, year: int, cpi: float) -> float:
     Deliberately the exact 400% mark: Form 8962 truncation (see
     ``_truncated_fpl_ratio``) keeps MAGI up to just under 401% eligible, so this is
     conservative by about 1% of FPL; ``aca_subsidy`` applies the truncated rule.
+
+    Owner decision (issue #42): KEEP the exact 4.0 x FPL bound for planning. On the
+    2026-coverage two-person FPL ($21,150) the truncated rule would allow up to
+    $211.50 more MAGI (about $156.50 Single). Headroom and the Explorer's cliff
+    solve plan against this bound on purpose: a projected MAGI is an estimate,
+    and a ~$211 margin under a cliff that can cost the whole subsidy is cheap
+    insurance. Do not "fix" this to the truncation edge; tests pin the value.
     """
     return 4.0 * _fpl(filing_status, year=year, cpi=cpi)
 
@@ -375,6 +382,11 @@ def aca_premium_cap_rate(
     fpl = _fpl(filing_status, year=year, cpi=cpi)
     # The pre-ARP table is looked up on Form 8962's whole-percent FPL figure; the
     # hypothetical enhanced schedule is modeled as a continuous linear ramp.
+    # Issue #42: the enhanced ratio is deliberately NOT truncated. Enhanced
+    # (ARPA/IRA) subsidies expired after 2025, so this branch only serves
+    # historical and what-if runs, where whole-percent steps would add sawtooth
+    # noise without changing any decision. The enhanced schedule also has no
+    # 400% cliff for truncation to move, and the W5 tests rely on its continuity.
     fpl_ratio = magi / fpl if enhanced_subsidies_active else _truncated_fpl_ratio(magi, fpl)
     # Pre-ARP cliff: above 400% FPL there is no subsidy, so cap rate is irrelevant.
     # Guard here prevents AssertionError on direct callers that skip aca_subsidy().
