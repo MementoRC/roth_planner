@@ -30,6 +30,7 @@ from engine.ira_statement_balance import (
     pick_latest_ira_records,
     to_ira_account_summary,
 )
+from engine.koinly_report_pdf import KoinlyReport
 from engine.netbenefits_statement_pdf import (
     NetBenefitsStatement,
     apply_netbenefits_statement,
@@ -178,8 +179,8 @@ def _brokerage_owner(
 ) -> str:
     """Whose brokerage statement this is: an override, else the learned
     holder name, else the instance owner -- the Koinly loop's order, so a
-    statement with no override lands on its named holder rather than only
-    raising a mismatch warning (issue #38). The account number, never the
+    statement with no override lands on its named holder instead of the
+    instance owner (issue #38). The account number, never the
     ``"<broker>:"`` dict key, is the override key."""
     return resolve_account_owner(
         rec.broker,
@@ -188,6 +189,54 @@ def _brokerage_owner(
         instance_owner,
         holder_key=rec.owner_key,
         owner_map=owner_map,
+    )
+
+
+_LEGACY_KOINLY_KEY = "unknown"
+
+
+def _koinly_override_key(
+    report: KoinlyReport, account_overrides: dict[tuple[str, str], str]
+) -> str:
+    """The override key a Koinly report resolves under.
+
+    A nameless report's key is its own fingerprint, so an override can tell
+    two nameless reports apart (issue #38). Before that every nameless report
+    shared ``("koinly", "unknown")``; an override saved under that key (no
+    code path writes one, but a hand-edited store may hold it) still applies
+    to a nameless report with no override of its own, so upgrading never
+    re-attributes data.
+    """
+    key = report.override_key
+    if (
+        report.owner_key is None
+        and ("koinly", key) not in account_overrides
+        and ("koinly", _LEGACY_KOINLY_KEY) in account_overrides
+    ):
+        return _LEGACY_KOINLY_KEY
+    return key
+
+
+def _warn_on_brokerage_holder_mismatch(
+    rec: BrokerageStatementRecord,
+    account_overrides: dict[tuple[str, str], str],
+    instance_owner: str,
+    owner_map: dict[str, str],
+) -> bool:
+    """Record a mismatch when the holder name's learned owner differs from
+    the account's SET owner (its override, else this instance's default).
+
+    Compared against the set owner, not :func:`_brokerage_owner`'s answer:
+    that answer already follows the name, so comparing with it would never
+    warn and the user would lose the signal that an account with no
+    confirmed owner was filed by its holder name alone. Confirming either
+    way in the panel (learn the name, or save an override) clears it.
+    """
+    set_owner = resolve_account_owner(
+        rec.broker, rec.account_number, account_overrides, instance_owner
+    )
+    return _warn_on_holder_name_mismatch(
+        rec.owner_key, set_owner, owner_map, rec.account_number, (rec.broker, rec.account_number)
     )
 
 
@@ -232,10 +281,20 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
             del mismatches[entry_id]
             continue
 
+        if (broker, account_key) in fresh_overrides:
+            filed = f"but this account is set to '{resolved_now}'"
+        elif broker == "koinly":
+            filed = f"but this instance attributes it to '{resolved_now}'"
+        else:
+            # Brokerage with no override: filed under the named holder
+            # (issue #38), which differs from this instance's default owner.
+            filed = (
+                f"so it was filed under '{named_now}', not this instance's "
+                f"default owner '{resolved_now}'"
+            )
         st.warning(
             f"Account {entry['account_label']}: holder name '{entry['owner_key']}' "
-            f"maps to '{named_now}' but this instance attributes it to "
-            f"'{resolved_now}'. Which is correct?"
+            f"maps to '{named_now}' {filed}. Which is correct?"
         )
         if st.button(f"Holder name is {resolved_now}", key=f"holder_mismatch_name_{entry_id}"):
             save_owner_map(learn_owner(entry["owner_key"], resolved_now, fresh_owner_map))
@@ -404,11 +463,8 @@ def _apply_scan_result(
         for rec in stmt_taxable_now.values():
             # rec.account_number, not the dict key: a second broker's
             # same-number account is keyed "<broker>:<number>".
-            account_number = rec.account_number
             resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
-            _warn_on_holder_name_mismatch(
-                rec.owner_key, resolved, owner_map, account_number, (rec.broker, account_number)
-            )
+            _warn_on_brokerage_holder_mismatch(rec, account_overrides, instance_owner, owner_map)
             ledger = write_brokerage_contribution(ledger, resolved, rec)
 
         save_ledger(ledger)
@@ -431,11 +487,10 @@ def _apply_scan_result(
         from engine.koinly_report_pdf import save_koinly_report
 
         for report in result.koinly_reports:
-            # A nameless report's key is its own fingerprint, so an override
-            # can tell two nameless reports apart (issue #38).
+            override_key = _koinly_override_key(report, account_overrides)
             resolved = resolve_account_owner(
                 "koinly",
-                report.override_key,
+                override_key,
                 account_overrides,
                 instance_owner,
                 holder_key=report.owner_key,
@@ -446,7 +501,7 @@ def _apply_scan_result(
                 resolved,
                 owner_map,
                 f"Koinly {report.tax_year}",
-                ("koinly", report.override_key),
+                ("koinly", override_key),
             )
             ledger = write_koinly_contribution(ledger, resolved, report)
 
@@ -1747,14 +1802,9 @@ def _render_scan_review(
         ):
             _apply_had_mismatch = False
             for rec in stmt_taxable.values():
-                account_number = rec.account_number  # never the "<broker>:" key
                 resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
-                if _warn_on_holder_name_mismatch(
-                    rec.owner_key,
-                    resolved,
-                    owner_map,
-                    account_number,
-                    (rec.broker, account_number),
+                if _warn_on_brokerage_holder_mismatch(
+                    rec, account_overrides, instance_owner, owner_map
                 ):
                     _apply_had_mismatch = True
                 ledger = write_brokerage_contribution(ledger, resolved, rec)

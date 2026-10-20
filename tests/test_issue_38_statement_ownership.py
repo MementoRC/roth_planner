@@ -224,6 +224,31 @@ class TestKoinlyNamelessReports:
         assert ledger["koinly"]["you"]["stcg"] == 100.0
         assert ledger["koinly"]["spouse"]["stcg"] == 200.0
 
+    def test_legacy_unknown_override_still_applies_after_upgrade(self) -> None:
+        legacy = {("koinly", "unknown"): "spouse"}
+        report = _koinly(100.0)
+        assert sync_scan_mod._koinly_override_key(report, legacy) == "unknown"
+        # A report's own override beats the legacy shared one; named reports
+        # never use it.
+        own = {**legacy, ("koinly", report.override_key): "you"}
+        assert sync_scan_mod._koinly_override_key(report, own) == report.override_key
+        named = _koinly(1.0, "PAT SAMPLE")
+        assert sync_scan_mod._koinly_override_key(named, legacy) == "PAT SAMPLE"
+
+    def test_legacy_unknown_override_routes_the_scan(self) -> None:
+        mock_st, _state = _mock_st()
+        with contextlib.ExitStack() as stack:
+            for p in _scan_patches(mock_st):
+                stack.enter_context(p)
+            ledger = sync_scan_mod._apply_scan_result(
+                PdfImportResult(koinly_reports=[_koinly(100.0)]),
+                ledger={"koinly": {}, "brokerage": {}},
+                account_overrides={("koinly", "unknown"): "spouse"},
+                owner_map={},
+                instance_owner="you",
+            )
+        assert list(ledger["koinly"]) == ["spouse"]
+
 
 # ------------------------------------------------- 4. brokerage owner fallback
 
@@ -265,14 +290,24 @@ class TestSyncScanBrokerageOwnerFallback:
             )
         return writer, _state
 
-    def test_named_holder_wins_over_instance_owner(self) -> None:
+    def test_named_holder_wins_over_instance_owner_and_still_warns(self) -> None:
         writer, state = self._scan(_taxable("PAT SAMPLE"), {})
+        assert writer.call_args.args[1] == "spouse"
+        # The account has no confirmed owner, so filing it by name alone is
+        # still flagged against the instance default (the safety signal).
+        [entry] = state["holder_name_mismatches"].values()
+        assert (entry["named_owner"], entry["resolved"]) == ("spouse", "you")
+
+    def test_override_agreeing_with_the_name_is_silent(self) -> None:
+        writer, state = self._scan(_taxable("PAT SAMPLE"), {("schwab", "9999-0001"): "spouse"})
         assert writer.call_args.args[1] == "spouse"
         assert not state.get("holder_name_mismatches")
 
-    def test_override_still_beats_the_holder_name(self) -> None:
-        writer, _ = self._scan(_taxable("PAT SAMPLE"), {("schwab", "9999-0001"): "household"})
+    def test_override_still_beats_the_holder_name_and_warns(self) -> None:
+        writer, state = self._scan(_taxable("PAT SAMPLE"), {("schwab", "9999-0001"): "household"})
         assert writer.call_args.args[1] == "household"
+        [entry] = state["holder_name_mismatches"].values()
+        assert entry["resolved"] == "household"
 
     def test_nameless_statement_falls_back_to_instance_owner(self) -> None:
         writer, _ = self._scan(_taxable(None), {})

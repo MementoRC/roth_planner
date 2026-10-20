@@ -144,7 +144,10 @@ class TestPickLatestPerAccountBrokerIdentity:
                 owner_map={},
                 instance_owner="you",
             )
-        looked_up = sorted((c.args[0], c.args[1]) for c in resolve.call_args_list)
+        # A set: each record is resolved twice since issue #38 (the owner it
+        # is filed under, and its set owner for the holder-name check); the
+        # point here is only which keys are looked up.
+        looked_up = sorted({(c.args[0], c.args[1]) for c in resolve.call_args_list})
         assert looked_up == [("fidelity", "1111-2222"), ("schwab", "1111-2222")]
 
 
