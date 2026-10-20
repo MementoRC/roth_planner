@@ -13,6 +13,7 @@ F-73  Due dates roll forward past Saturdays, Sundays AND legal holidays
 from __future__ import annotations
 
 import json
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -166,6 +167,20 @@ def test_safe_harbor_payment_reports_holiday_rolled_due_date():
 # ---------------------------------------------------------------------------
 
 
+class _FrozenDate(date):
+    """date.today() pinned to 2028 so the tests never depend on the wall clock."""
+
+    @classmethod
+    def today(cls) -> date:
+        return cls(2028, 6, 1)
+
+
+# The view derives the prior year from the snapshot's own tax_year, so the tests
+# pin tax_year explicitly instead of inheriting the model default or today's year.
+_TAX_YEAR = 2027
+_PRIOR_YEAR = _TAX_YEAR - 1
+
+
 class TestAnalysisViewWiring:
     def _render_capture(self, hh, ytd, *, agi_return, tax_return=50_000.0):
         from engine.tax import SafeHarborGuidance
@@ -206,48 +221,40 @@ class TestAnalysisViewWiring:
                 return_value=agi_return,
             ),
             patch("views.ytd_income._partials._analysis.safe_harbor_payment", side_effect=_capture),
+            patch.object(analysis_mod, "_date", _FrozenDate),
         ):
             ytd_income_mod.render(hh)
         return captured, tax_calls, mock_st
 
     def test_view_requests_prior_tax_year_specifically(self):
-        from datetime import date
-
         from models.ytd_income import YTDSnapshot
         from tests.test_views_ytd_income import _stub_hh
 
-        prior_year = date.today().year - 1
         _captured, tax_calls, _ = self._render_capture(
-            _stub_hh(), YTDSnapshot(wages_ytd=100_000.0), agi_return=None
+            _stub_hh(), YTDSnapshot(tax_year=_TAX_YEAR, wages_ytd=100_000.0), agi_return=None
         )
         assert tax_calls, "load_prior_year_federal_tax was not called"
         args, kwargs = tax_calls[0]
         requested = args[0] if args else kwargs.get("tax_year")
-        assert requested == prior_year
+        assert requested == _PRIOR_YEAR
 
     def test_view_prefers_return_agi_over_irmaa_magi(self):
-        from datetime import date
-
         from models.ytd_income import YTDSnapshot
         from tests.test_views_ytd_income import _stub_hh
 
-        prior_year = date.today().year - 1
-        hh = _stub_hh(prior_year_magi={prior_year: 155_000.0})
+        hh = _stub_hh(prior_year_magi={_PRIOR_YEAR: 155_000.0})
         captured, _tax_calls, _ = self._render_capture(
-            hh, YTDSnapshot(wages_ytd=100_000.0), agi_return=140_000.0
+            hh, YTDSnapshot(tax_year=_TAX_YEAR, wages_ytd=100_000.0), agi_return=140_000.0
         )
         assert captured.get("prior_year_agi") == 140_000.0
 
     def test_view_falls_back_to_magi_proxy_when_no_return_agi(self):
-        from datetime import date
-
         from models.ytd_income import YTDSnapshot
         from tests.test_views_ytd_income import _stub_hh
 
-        prior_year = date.today().year - 1
-        hh = _stub_hh(prior_year_magi={prior_year: 155_000.0})
+        hh = _stub_hh(prior_year_magi={_PRIOR_YEAR: 155_000.0})
         captured, _tax_calls, mock_st = self._render_capture(
-            hh, YTDSnapshot(wages_ytd=100_000.0), agi_return=None
+            hh, YTDSnapshot(tax_year=_TAX_YEAR, wages_ytd=100_000.0), agi_return=None
         )
         assert captured.get("prior_year_agi") == 155_000.0
         captions = " ".join(
