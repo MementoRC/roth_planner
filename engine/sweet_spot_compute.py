@@ -181,11 +181,11 @@ class ConversionResult:
     taxable_inc: float = 0.0
     room_12: float = 0.0
     room_22: float = 0.0
-    # Issue #22: the parts of conv_tax caused by the extra IRA draw that funds
-    # the conversion's own cost (sweet_spot_draw_curve.sweep_all_in). The draw's
-    # tax is split by what the draw pays for: penalty_tax is the share on the
-    # dollars that pay the 10% early-withdrawal penalty, funding_draw_tax the
-    # rest. conv_tax - funding_draw_tax - penalty_tax is the conversion's own tax.
+    # Issue #22: the extra IRA draw that funds the conversion's own cost
+    # (sweet_spot_draw_curve). funding_draw_tax is the part of conv_tax that
+    # draw causes (conv_tax - funding_draw_tax is the conversion's own tax);
+    # penalty_tax is the 10% early-withdrawal penalty on it, NOT in conv_tax
+    # but included in all_in.
     funding_draw_tax: float = 0.0
     penalty_tax: float = 0.0
 
@@ -205,10 +205,10 @@ class SweetSpotJump:
 class MarginalCosts:
     """Per-$1K marginal cost components across the conversion sweep.
 
-    Issue #22: ``marginal_tax`` is federal tax on the conversion itself;
-    ``marginal_funding_draw`` and ``marginal_penalty`` are the tax on the extra
-    IRA draw that funds it (see ConversionResult.funding_draw_tax /
-    .penalty_tax). The three sum to the change in ConversionResult.conv_tax.
+    Issue #22: ``marginal_tax`` is federal tax on the conversion itself and
+    ``marginal_funding_draw`` the tax on the extra IRA draw that funds it (the
+    two sum to the change in ConversionResult.conv_tax); ``marginal_penalty``
+    is the 10% early-withdrawal penalty on that draw (part of ``marginals``).
     """
 
     marginals: list[float]
@@ -1197,7 +1197,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     marginal_penalty = [0.0]
 
     def _own_tax(r: ConversionResult) -> float:
-        return r.conv_tax - r.funding_draw_tax - r.penalty_tax
+        return r.conv_tax - r.funding_draw_tax
 
     for i in range(1, len(results)):
         cur, prev = results[i], results[i - 1]

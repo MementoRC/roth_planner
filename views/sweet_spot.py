@@ -200,9 +200,9 @@ def render(hh: Household) -> None:
     _has_penalty = any(v > 0 for v in marginal_data.marginal_penalty)
     if _has_funding or _has_penalty:
         _penalty_note = (
-            " Part of that withdrawal comes from an IRA owner under 59½, so it is "
-            "grossed up to also pay the 10% early-withdrawal penalty; the tax on "
-            "those extra dollars is the 10% Penalty Gross-Up trace."
+            " Part of that withdrawal comes from an IRA owner under 59½, so it also "
+            "owes the 10% early-withdrawal penalty (10% Penalty trace, included in "
+            "the total and the All-In Costs below)."
             if _has_penalty
             else ""
         )
@@ -240,10 +240,10 @@ def render(hh: Household) -> None:
             go.Scatter(
                 x=convs,
                 y=marginal_data.marginal_penalty,
-                name="10% Penalty Gross-Up",
+                name="10% Penalty",
                 stackgroup="one",
                 line={"color": "#1e3a8a"},
-                hovertemplate="10% Penalty Gross-Up: $%{y:.0f} per $1K<extra></extra>",
+                hovertemplate="10% Penalty: $%{y:.0f} per $1K<extra></extra>",
             )
         )
     fig_m.add_trace(
@@ -475,7 +475,10 @@ def render(hh: Household) -> None:
 
     # --- Cumulative all-in cost chart ---
     st.markdown("### Cumulative All-In Cost")
-    st.caption("Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking) at each conversion level.")
+    st.caption(
+        "Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking + any 10% "
+        "early-withdrawal penalty) at each conversion level."
+    )
 
     fig_c = go.Figure()
     fig_c.add_trace(
@@ -524,6 +527,16 @@ def render(hh: Household) -> None:
                 name="LTCG Stacking",
                 stackgroup="one",
                 line={"color": "#06b6d4"},
+            )
+        )
+    if any(r.penalty_tax > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.penalty_tax for r in results],
+                name="10% Penalty",
+                stackgroup="one",
+                line={"color": "#1e3a8a"},
             )
         )
 

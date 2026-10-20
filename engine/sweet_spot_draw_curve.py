@@ -73,14 +73,16 @@ def _extra_need(result: ConversionResult) -> float:
     return result.conv_tax + result.niit_delta + result.aca_loss
 
 
-def _split_draw_tax(priced: ConversionResult, own_tax: float, extra: _Legs) -> ConversionResult:
-    """Issue #22: split the tax the extra draw adds (conv_tax over the
-    conversion's ``own_tax``) by what the draw pays for -- the penalty's share
-    of the draw is ``penalty_tax``, the rest ``funding_draw_tax``."""
-    draw_tax = priced.conv_tax - own_tax
-    penalty_share = extra.penalty / extra.draw if extra.draw > 0.0 else 0.0
-    penalty_tax = draw_tax * penalty_share
-    return replace(priced, funding_draw_tax=draw_tax - penalty_tax, penalty_tax=penalty_tax)
+def _split_draw_tax(priced: ConversionResult, own_tax: float) -> ConversionResult:
+    """Issue #22: the tax the extra draw adds -- conv_tax over the conversion's
+    ``own_tax`` -- reported as ``funding_draw_tax``."""
+    return replace(priced, funding_draw_tax=priced.conv_tax - own_tax)
+
+
+def _with_penalty(priced: ConversionResult, extra: _Legs) -> ConversionResult:
+    """Issue #22 (owner decision): the 10% early-withdrawal penalty on the extra
+    draw is a real cost of the conversion, so it joins all_in."""
+    return replace(priced, penalty_tax=extra.penalty, all_in=priced.all_in + extra.penalty)
 
 
 def sweep_all_in(
@@ -104,7 +106,8 @@ def sweep_all_in(
     ``C + D`` -- a draw and a conversion enter every income aggregate
     identically -- with G as preferential income, but reported at ``conv=C`` so
     deltas stay relative to zero conversion. Issue #22: the tax D adds is
-    reported on ``funding_draw_tax`` / ``penalty_tax`` (parts of conv_tax).
+    reported on ``funding_draw_tax`` (part of conv_tax) and the 10% penalty on
+    D on ``penalty_tax`` (added to all_in).
     """
 
     def _price(amount: float) -> ConversionResult:
@@ -119,7 +122,7 @@ def sweep_all_in(
     for conv in convs:
         if conv > 0:
             priced, extra = solve(conv, extra)
-            priced = _split_draw_tax(priced, _price(conv).conv_tax, extra)
+            priced = _split_draw_tax(priced, _price(conv).conv_tax)
         else:
             extra = _NO_EXTRA
             priced = _price(0.0)
@@ -179,7 +182,7 @@ def _draw_solver(
             priced = _price(conv + extra.draw, extra.gain)
             if settled:
                 break
-        return priced, extra
+        return _with_penalty(priced, extra), extra
 
     return solve
 

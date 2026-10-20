@@ -222,34 +222,44 @@ def test_young_forced_draw_precondition() -> None:
     assert yr.forced_early_withdrawal_penalty > 0.0
 
 
-def test_fed_tax_trace_is_the_statutory_rate_in_the_12_bracket() -> None:
+def test_12_bracket_split_own_tax_funding_draw_and_real_penalty() -> None:
+    # Draw D = rC / (0.9 - r): at r = 12%, D = 15.38% of C.
     m = compute_marginal_costs(_sweep(_young_hh(), CONVS))
     i = CONVS.index(10_000.0)
+    draw_per_1k = 1000 * 0.12 / (0.9 - 0.12)
     assert m.marginal_tax[i] == pytest.approx(120.0, abs=0.5)
-    # Old Fed Tax trace: rate / (1 - rate / 0.9).
-    total = m.marginal_tax[i] + m.marginal_funding_draw[i] + m.marginal_penalty[i]
-    assert total == pytest.approx(120.0 / (1 - 0.12 / 0.9), abs=0.5)
-    # The penalty is a tenth of every exposed draw dollar.
-    assert m.marginal_penalty[i] == pytest.approx(0.1 * (total - 120.0), abs=0.2)
-    assert m.marginal_funding_draw[i] > 0.0
+    assert m.marginal_funding_draw[i] == pytest.approx(0.12 * draw_per_1k, abs=0.5)  # 1.85%
+    # Fed tax + funding draw is the old Fed Tax trace, rate / (1 - rate / 0.9).
+    old_fed = m.marginal_tax[i] + m.marginal_funding_draw[i]
+    assert old_fed == pytest.approx(120.0 / (1 - 0.12 / 0.9), abs=0.5)  # 13.85%
+    # The penalty is the real 10% of the draw.
+    assert m.marginal_penalty[i] == pytest.approx(0.1 * draw_per_1k, abs=0.5)  # 1.54%
+    assert m.marginals[i] == pytest.approx(draw_per_1k, abs=0.5)  # 15.38% == D / C
 
 
-def test_split_components_sum_to_the_previous_fed_tax_and_total() -> None:
+def test_components_sum_to_the_new_total_which_adds_the_penalty() -> None:
     hh = _young_hh()
     results = _sweep(hh, CONVS)
     m = compute_marginal_costs(results)
     for i in range(1, len(results)):
-        prev_fed = (results[i].conv_tax - results[i - 1].conv_tax) / STEP * 1000
-        parts = m.marginal_tax[i] + m.marginal_funding_draw[i] + m.marginal_penalty[i]
-        assert parts == pytest.approx(prev_fed, abs=1e-6)
-        stacked = parts + m.marginal_irmaa[i] + m.marginal_aca[i] + m.marginal_niit[i]
-        assert stacked + m.marginal_ltcg[i] == pytest.approx(m.marginals[i], abs=1e-6)
-    # all_in is the unsplit draw-aware price at every point.
+        cur, prev = results[i], results[i - 1]
+        fed = (cur.conv_tax - prev.conv_tax) / STEP * 1000
+        assert m.marginal_tax[i] + m.marginal_funding_draw[i] == pytest.approx(fed, abs=1e-6)
+        parts = fed + m.marginal_penalty[i] + m.marginal_irmaa[i] + m.marginal_aca[i]
+        assert parts + m.marginal_niit[i] + m.marginal_ltcg[i] == pytest.approx(
+            m.marginals[i], abs=1e-6
+        )
+    # New total - old (penalty-free) total == the penalty, at every point.
     years, fills, base = _setup(hh)
     solve = _draw_solver(hh, base, 0.0, 0.0, years[BASE_YEAR], fills)
     assert solve is not None
     for r in results[1::25]:
-        assert r.all_in == pytest.approx(solve(r.conv, _NO_EXTRA)[0].all_in, abs=1.0)
+        priced, extra = solve(r.conv, _NO_EXTRA)
+        old = all_in_at_conversion(hh, base, r.conv + extra.draw, 0.0, extra_gain=extra.gain)
+        assert extra.penalty > 0.0
+        assert priced.all_in - old.all_in == pytest.approx(extra.penalty, abs=1e-6)
+        assert r.penalty_tax == pytest.approx(extra.penalty, abs=1.0)
+        assert r.all_in == pytest.approx(priced.all_in, abs=1.0)
 
 
 def test_no_draw_year_has_no_split_traces() -> None:
