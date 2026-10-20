@@ -17,6 +17,7 @@ import streamlit as st
 from engine.data_bridge_browser import is_pyodide
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, load_snapshot, save_snapshot
 from engine.portfolio_sync.as_of import as_of_label, as_of_text, force_replace
+from engine.portfolio_sync.portfolio import CorruptPortfolioCacheError
 from models.household import Household
 
 _SYNC_FLASH_KEY = "_portfolio_sync_flash"
@@ -48,7 +49,14 @@ def _render_kept_newer(container) -> None:
                 snap = load_snapshot()
             if snap is not None:
                 snap.accounts = force_replace(snap.accounts, rejected)
-                save_snapshot(snap)
+                try:
+                    save_snapshot(snap)
+                except CorruptPortfolioCacheError:
+                    container.error(
+                        "The portfolio cache file is unreadable; it was left untouched "
+                        "and this change was not saved."
+                    )
+                    continue
                 st.session_state["portfolio_snapshot"] = snap
             st.session_state[_KEPT_NEWER_KEY] = [p for j, p in enumerate(pending) if j != i]
             st.rerun()

@@ -5,7 +5,9 @@ No Streamlit dependency — safe to import in tests and engine modules.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+from typing import Any
 
 from config.scalar_registry import joint_keys as _joint_keys
 from config.scalar_registry import scalar_default_by_config_key as _scalar_default
@@ -48,6 +50,30 @@ JOINT_FIELDS: frozenset[str] = _joint_keys()
 
 # Joint keys carried outside the scalar registry, with their "never set" value.
 _EXTRA_JOINT_UNSET: dict[str, object] = {"survivor": None, "inherited_iras": []}
+
+
+def sanitize_living_expenses(value: Any) -> Any:
+    """A usable annual-living-expenses figure from an untrusted source.
+
+    Negative numbers clamp to 0 (the Setup widget's floor); NaN and infinity
+    fall back to the registry default. ``json.loads`` accepts bare
+    ``NaN``/``Infinity``, so an uploaded or hand-edited settings file can
+    otherwise seed them straight into session state (audit-1018 F-33
+    follow-up). Non-numeric values are returned untouched.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return value
+    if not math.isfinite(value):
+        return _scalar_default("living_expenses")
+    return max(value, 0)
+
+
+def _sanitized(updates: dict) -> dict:
+    """Run the numeric sanitizers over a session-updates dict (in place)."""
+    key = _session_key_for("living_expenses")
+    if key in updates:
+        updates[key] = sanitize_living_expenses(updates[key])
+    return updates
 
 
 def receiver_joint_value_is_set(key: str, persisted: Mapping[str, object]) -> bool:
@@ -162,7 +188,7 @@ def build_user_defaults_session_updates(
                     )
             if conflicts:
                 updates["_bundle_joint_conflicts"] = conflicts
-        return updates
+        return _sanitized(updates)
     for k in SCALAR_KEYS:
         if k in data:
             updates[_session_key_for(k)] = data[k]
@@ -189,7 +215,7 @@ def build_user_defaults_session_updates(
     # inherited_iras is a joint field; each entry carries its own owner field
     if "inherited_iras" in data and not as_spouse:
         updates["inherited_iras"] = data["inherited_iras"]
-    return updates
+    return _sanitized(updates)
 
 
 def extract_bundle_magi(data: dict) -> dict[int, float]:

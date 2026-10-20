@@ -27,7 +27,7 @@ from engine.data_sources.record import record_magi_candidates, record_ss_fra_can
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
-from engine.upload_merge import SCALAR_KEYS  # noqa: E402
+from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
 from views.setup._state import _drain_pending_defaults  # noqa: E402
 
@@ -58,6 +58,11 @@ def _seed_session_state() -> None:
     # SCALAR_KEYS/persisted-export field; see that registry entry's note).
     for _spec in SCALAR_REGISTRY:
         st.session_state.setdefault(_spec.session_key, scalar_default(_spec.session_key))
+    # A persisted file can carry NaN/negative expenses (json.loads accepts NaN);
+    # sanitize at the source so no page ever computes on them (audit-1018 F-33).
+    st.session_state["living_expenses"] = sanitize_living_expenses(
+        st.session_state["living_expenses"]
+    )
     # Complex (non-scalar) persisted keys: seed from `defaults` so a saved
     # value survives a fresh session. (Audit 2026-07-22: these were hardcoded
     # to empty — survivor=None, inherited_iras=[], account_type_overrides
