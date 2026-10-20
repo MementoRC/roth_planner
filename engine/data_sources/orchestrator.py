@@ -14,7 +14,7 @@ candidates via resolver.resolve().
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -43,6 +43,13 @@ _MAGI_ATTR = "prior_year_magi"
 # to 0; app.py passes it to ``resolve_for_app(cleared_magi_years=...)`` and
 # drops it once applied (audit-1008 F-64).
 MAGI_CLEARED_KEY = "_prior_year_magi_cleared"
+
+# Session keys (issue #43). SEED_VALUES_KEY: attr -> value a fresh session was
+# seeded with, consumed (popped) by the first resolve. BUNDLE_SCALARS_KEY: the
+# scalars a bundle import drained before any baseline existed, consumed by the
+# migrating resolve so they are labelled Backup import.
+SEED_VALUES_KEY = "_seed_sourced_values"
+BUNDLE_SCALARS_KEY = "_first_load_bundle_scalars"
 
 # Single source of truth for Household sourced-field attr -> session_state key.
 # Almost all are 1:1; stock_price_now is aliased to "stock_price" because the
@@ -137,12 +144,37 @@ def stamp_bundle_scalars(
     return changed
 
 
+def stamp_first_load_bundle_scalars(
+    committed_json: dict,
+    bundle_scalars: Mapping[str, Any],
+    recorded_at: datetime,
+    detail: str = "Data bridge import",
+) -> None:
+    """Label freshly migrated fields that hold a bundle-imported value ``Source.BUNDLE``.
+
+    First-load counterpart of :func:`stamp_bundle_scalars` (audit-1018 F-21
+    follow-up, issue #43): with no baseline yet the import could not stamp
+    anything, so the migrated value would be UNKNOWN or DEFAULT. A field is
+    stamped only when its migrated whole-dollar value equals the imported one
+    (a snapshot overlay that won the migration keeps its own provenance).
+    """
+    prov_json = Provenance(Source.BUNDLE, recorded_at, detail).to_json()
+    for attr in HOUSEHOLD_SCALAR_FIELDS:
+        payload = committed_json.get(attr)
+        value = bundle_scalars.get(SOURCED_SESSION_KEYS.get(attr, attr))
+        if payload is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if not _rounded_differs(value, payload["value"]):
+            committed_json[attr] = {**prov_json, "value": payload["value"]}
+
+
 def reconcile_manual_edits(
     session_hh: Household,
     committed_json: dict,
     recorded_at: datetime,
     store: CandidateStore | None = None,
     cleared_magi_years: Iterable[int] = (),
+    unedited_seed: Mapping[str, float] | None = None,
 ) -> tuple[dict, bool]:
     """Promote Setup-form edits (raw ``session_hh`` values) to committed
     MANUAL entries, mutating and returning ``committed_json`` in place.
@@ -160,8 +192,14 @@ def reconcile_manual_edits(
     A committed year absent from the session dict is NOT deleted (a fresh
     session seeds ``{}``); only years in ``cleared_magi_years`` — the explicit
     "Leave 0" signal from the Setup form — are removed (audit-1008 F-64).
+
+    ``unedited_seed`` (attr -> value) are the values a fresh session was seeded
+    with. A session value still equal to its seed is not a user action, so it
+    must not overwrite a committed baseline value as ``Source.MANUAL`` (issue
+    #43); only the first resolve of a session passes it.
     """
     changed = False
+    seed = unedited_seed or {}
     prov_json = Provenance(Source.MANUAL, recorded_at, "manual entry").to_json()
 
     for attr in HOUSEHOLD_SCALAR_FIELDS:
@@ -170,6 +208,8 @@ def reconcile_manual_edits(
             continue
         session_value = getattr(session_hh, attr, None)
         if session_value is None:
+            continue
+        if attr in seed and not _rounded_differs(session_value, seed[attr]):
             continue
         if _rounded_differs(session_value, payload["value"]):
             new_payload = dict(prov_json)
@@ -215,6 +255,8 @@ def resolve_for_app(
     committed_json: dict | None,
     recorded_at: datetime,
     cleared_magi_years: Iterable[int] = (),
+    unedited_seed: Mapping[str, float] | None = None,
+    bundle_scalars: Mapping[str, Any] | None = None,
 ) -> AppResolveResult:
     """Run the per-load pipeline (see module docstring).
 
@@ -222,6 +264,9 @@ def resolve_for_app(
     back to 0 in Setup ("Leave 0 to use projected MAGI"): they are removed
     from the committed baseline and their candidates dropped from ``store``
     so the anchor does not reappear (audit-1008 F-64).
+
+    ``unedited_seed`` and ``bundle_scalars`` are issue #43 inputs: see
+    :func:`reconcile_manual_edits` and :func:`stamp_first_load_bundle_scalars`.
     """
     migrated = False
     cleared = {int(y) for y in cleared_magi_years}
@@ -243,6 +288,8 @@ def resolve_for_app(
         else:
             default_fields = seed_default_fields(base)
         committed_json = migrate_committed(base, recorded_at, default_fields=default_fields)
+        if bundle_scalars:
+            stamp_first_load_bundle_scalars(committed_json, bundle_scalars, recorded_at)
         migrated = True
 
     # Skip reconcile on the migration render: the committed baseline just
@@ -255,7 +302,7 @@ def resolve_for_app(
         reconciled = False
     else:
         committed_json, reconciled = reconcile_manual_edits(
-            session_hh, committed_json, recorded_at, store, cleared
+            session_hh, committed_json, recorded_at, store, cleared, unedited_seed
         )
 
     apply_committed(session_hh, committed_json)
