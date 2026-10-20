@@ -90,6 +90,10 @@ class BaseIncome:
     # NOT in the ordinary bracket base -- the same split scenario.py makes when
     # it folds the forced-draw gain into realized_gains.
     sale_gain: float = 0.0
+    # Issue #40: unrealized share of the begin-of-year brokerage balance
+    # (zero_conversion_gain_fractions). An EXTRA sale a conversion's own tax
+    # forces realizes this share of its proceeds as gain (sweet_spot_draw_curve).
+    sale_gain_fraction: float = 0.0
 
     @property
     def magi_addl(self) -> float:
@@ -177,6 +181,13 @@ class ConversionResult:
     taxable_inc: float = 0.0
     room_12: float = 0.0
     room_22: float = 0.0
+    # Issue #22: the parts of conv_tax caused by the extra IRA draw that funds
+    # the conversion's own cost (sweet_spot_draw_curve.sweep_all_in). The draw's
+    # tax is split by what the draw pays for: penalty_tax is the share on the
+    # dollars that pay the 10% early-withdrawal penalty, funding_draw_tax the
+    # rest. conv_tax - funding_draw_tax - penalty_tax is the conversion's own tax.
+    funding_draw_tax: float = 0.0
+    penalty_tax: float = 0.0
 
 
 @dataclass
@@ -192,7 +203,13 @@ class SweetSpotJump:
 
 @dataclass
 class MarginalCosts:
-    """Per-$1K marginal cost components across the conversion sweep."""
+    """Per-$1K marginal cost components across the conversion sweep.
+
+    Issue #22: ``marginal_tax`` is federal tax on the conversion itself;
+    ``marginal_funding_draw`` and ``marginal_penalty`` are the tax on the extra
+    IRA draw that funds it (see ConversionResult.funding_draw_tax /
+    .penalty_tax). The three sum to the change in ConversionResult.conv_tax.
+    """
 
     marginals: list[float]
     marginal_tax: list[float]
@@ -200,6 +217,8 @@ class MarginalCosts:
     marginal_aca: list[float]
     marginal_niit: list[float]
     marginal_ltcg: list[float]
+    marginal_funding_draw: list[float]
+    marginal_penalty: list[float]
 
 
 @dataclass
@@ -396,6 +415,14 @@ def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = N
     return realized_gains + qual_div
 
 
+def sweet_spot_ltcg_eligible(hh: Household, base: BaseIncome, ytd: YTDSnapshot | None) -> float:
+    """Issue #40: :func:`estimate_ltcg_eligible` for ``base``'s year plus the
+    zero-conversion waterfall's brokerage-sale gain (``base.sale_gain``).
+    engine.scenario folds that gain into realized_gains, so it stacks with the
+    rest of the year's preferential income (on top of any YTD amount)."""
+    return estimate_ltcg_eligible(hh, base.year, ytd=ytd) + base.sale_gain
+
+
 def base_income_for_year(
     hh: Household,
     year: int,
@@ -405,6 +432,7 @@ def base_income_for_year(
     spouse_qcd: float = 0.0,
     ira_draw: float = 0.0,
     sale_gain: float = 0.0,
+    sale_gain_fraction: float = 0.0,
 ) -> BaseIncome:
     """Compute fixed income components for a given year (no conversion).
 
@@ -432,6 +460,10 @@ def base_income_for_year(
     that same zero-conversion waterfall (see zero_conversion_sale_gains). It is
     preferential, so it joins MAGI, provisional income, NIIT MAGI and net
     investment income but not the ordinary bracket base. Defaults to 0.0.
+
+    Issue #40: `sale_gain_fraction` is the unrealized share of the year's
+    begin-of-year brokerage balance (see zero_conversion_gain_fractions); it does
+    not move the base, only what an extra conversion-forced sale realizes.
     """
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
@@ -585,6 +617,7 @@ def base_income_for_year(
         ytd_investment_income=ytd_investment_income,
         waterfall_draw=ira_draw,
         sale_gain=sale_gain,
+        sale_gain_fraction=sale_gain_fraction,
     )
 
 
@@ -742,6 +775,7 @@ def forced_draw_fills(
     ytd: YTDSnapshot | None,
     net_inv_income: float,
     ira_draws: Mapping[int, float],
+    sale_gains: Mapping[int, float] | None = None,
 ) -> dict[int, tuple[float, float]]:
     """Issue #1: (fill_12, fill_22) for the forced-draw years in ``ira_draws``,
     taken from the auto-fill plans so the Sweet Spot fills equal what "Fill X%"
@@ -755,10 +789,12 @@ def forced_draw_fills(
     zero-conversion draw are left to :func:`fill_conversions_for_year` unless
     the Fill's own tax forces a draw there (issue #3, see
     :func:`_fill_provoked_draw_years`). The map is empty (and no auto-fill plan
-    is built) when no year can draw.
+    is built) when no year can draw. ``sale_gains`` (issue #40,
+    :func:`zero_conversion_sale_gains`) puts the brokerage-sale gain into the
+    gate's base, as the cards' base has it; omitted means none.
     """
     draw_years = {y for y, d in ira_draws.items() if d > 0.0}
-    draw_years |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws)
+    draw_years |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws, sale_gains or {})
     if not draw_years:
         return {}
     fills = bracket_fill_conversions(hh, ytd, net_inv_income)
@@ -770,6 +806,7 @@ def _fill_provoked_draw_years(
     ytd: YTDSnapshot | None,
     net_inv_income: float,
     ira_draws: Mapping[int, float],
+    sale_gains: Mapping[int, float],
 ) -> set[int]:
     """Issue #3: years with no IRA draw at ZERO conversion where the draw-blind
     Fill-to-22% conversion's own tax nevertheless forces one.
@@ -778,6 +815,8 @@ def _fill_provoked_draw_years(
     fill_22 >= fill_12, a draw provoked by the 12% Fill is provoked here too, so
     this is a superset gate; a year where only the 22% Fill draws is harmless,
     as the joint solve then returns what the draw-blind derivation would.
+    Issue #40: the fills are sized on the same base as the cards, sale gain
+    included.
     """
     if not ira_draws:
         return set()
@@ -785,7 +824,13 @@ def _fill_provoked_draw_years(
     conversions: dict[int, float] = {}
     for year, draw in ira_draws.items():
         is_base = year == hh.base_year
-        base = base_income_for_year(hh, year, ytd=ytd if is_base else None, ira_draw=draw)
+        base = base_income_for_year(
+            hh,
+            year,
+            ytd=ytd if is_base else None,
+            ira_draw=draw,
+            sale_gain=sale_gains.get(year, 0.0),
+        )
         conversions[year] = fill_conversions_for_year(hh, base)[1] + (done if is_base else 0.0)
     result = run_scenario(
         hh,
@@ -839,14 +884,23 @@ def all_in_at_conversion(
     conv: float,
     net_inv_income: float,
     ltcg_eligible: float = 0.0,
+    *,
+    extra_gain: float = 0.0,
 ) -> ConversionResult:
-    """Compute all-in costs at a given conversion amount."""
+    """Compute all-in costs at a given conversion amount.
+
+    Issue #40: ``extra_gain`` is realized gain the conversion itself causes --
+    the extra brokerage sale its tax forces (sweet_spot_draw_curve). It joins
+    the with-conversion side only, as preferential income: MAGI, provisional
+    income, NIIT MAGI, net investment income and the LTCG stack, never the
+    ordinary bracket base.
+    """
     ya, sa = base.ya, base.sa
     year: int = base.year
     cpi: float = base.cpi
 
     single = hh.filing_status == "Single"
-    magi_addl = base.magi_addl
+    magi_addl = base.magi_addl + extra_gain
     ordinary_addl = base.ordinary_addl
 
     # Recalculate taxable SS with conversion income.
@@ -870,7 +924,7 @@ def all_in_at_conversion(
     senior_bonus = senior_bonus_deduction(
         ya,
         sa,
-        base.opt + conv + tss + base.niit_magi_addl,
+        base.opt + conv + tss + base.niit_magi_addl + extra_gain,
         year=year,
         cpi=cpi,
         filing_status=hh.filing_status,
@@ -883,7 +937,9 @@ def all_in_at_conversion(
     # Base tax (no conversion).
     # F9/R1/R3: include magi_addl in provisional income base, consistent with the
     # with-conversion path.
-    base_tss = taxable_ss(base.combined_ss, base.opt + magi_addl, filing_status=hh.filing_status)
+    base_tss = taxable_ss(
+        base.combined_ss, base.opt + base.magi_addl, filing_status=hh.filing_status
+    )
     # MU8-F1/R3/R4: include ordinary_addl in the no-conversion ordinary base.
     base_gross = base.opt + base_tss + ordinary_addl
     base_senior = senior_bonus_deduction(
@@ -961,7 +1017,7 @@ def all_in_at_conversion(
     # below, so the excess-over-threshold niit() charges against isn't understated.
     # Applied identically to both the with- and without-conversion MAGI so the
     # manual figure is measured consistently on both sides of niit_delta.
-    niit_magi = base.opt + conv + tss + net_inv_income + base.niit_magi_addl
+    niit_magi = base.opt + conv + tss + net_inv_income + base.niit_magi_addl + extra_gain
     niit_base_magi = base.opt + base_tss + net_inv_income + base.niit_magi_addl
     # R2: net investment income = realized gains + qual/ord dividends + YTD investment
     # income, mirroring scenario.py's `net_investment_income = realized_gains +
@@ -970,7 +1026,7 @@ def all_in_at_conversion(
     # Added to the caller-supplied net_inv_income, a manual estimate/override for NII
     # not otherwise modeled by this module (e.g. non-brokerage taxable accounts).
     total_net_inv_income = net_inv_income + base.net_investment_income_addl
-    niit_with = niit(niit_magi, total_net_inv_income, filing_status=hh.filing_status)
+    niit_with = niit(niit_magi, total_net_inv_income + extra_gain, filing_status=hh.filing_status)
     niit_without = niit(niit_base_magi, total_net_inv_income, filing_status=hh.filing_status)
     niit_delta = niit_with - niit_without
 
@@ -987,7 +1043,10 @@ def all_in_at_conversion(
         _index_value(_base_ltcg_thr[1], year, cpi, round50=True),
     )
     ltcg_with = _ltcg_stack_tax(
-        taxable_inc, ltcg_eligible, _ltcg_thr, unused_deduction=max(0.0, total_ded - gross)
+        taxable_inc,
+        ltcg_eligible + extra_gain,
+        _ltcg_thr,
+        unused_deduction=max(0.0, total_ded - gross),
     )
     ltcg_without = _ltcg_stack_tax(
         base_taxable,
@@ -1134,15 +1193,23 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     marginal_aca = [0.0]
     marginal_niit = [0.0]
     marginal_ltcg = [0.0]
+    marginal_funding = [0.0]
+    marginal_penalty = [0.0]
+
+    def _own_tax(r: ConversionResult) -> float:
+        return r.conv_tax - r.funding_draw_tax - r.penalty_tax
 
     for i in range(1, len(results)):
-        m = (results[i].all_in - results[i - 1].all_in) / STEP * 1000
+        cur, prev = results[i], results[i - 1]
+        m = (cur.all_in - prev.all_in) / STEP * 1000
         marginals.append(m)
-        marginal_tax.append((results[i].conv_tax - results[i - 1].conv_tax) / STEP * 1000)
-        marginal_irmaa.append((results[i].irmaa_delta - results[i - 1].irmaa_delta) / STEP * 1000)
-        marginal_aca.append((results[i].aca_loss - results[i - 1].aca_loss) / STEP * 1000)
-        marginal_niit.append((results[i].niit_delta - results[i - 1].niit_delta) / STEP * 1000)
-        marginal_ltcg.append((results[i].ltcg_delta - results[i - 1].ltcg_delta) / STEP * 1000)
+        marginal_tax.append((_own_tax(cur) - _own_tax(prev)) / STEP * 1000)
+        marginal_funding.append((cur.funding_draw_tax - prev.funding_draw_tax) / STEP * 1000)
+        marginal_penalty.append((cur.penalty_tax - prev.penalty_tax) / STEP * 1000)
+        marginal_irmaa.append((cur.irmaa_delta - prev.irmaa_delta) / STEP * 1000)
+        marginal_aca.append((cur.aca_loss - prev.aca_loss) / STEP * 1000)
+        marginal_niit.append((cur.niit_delta - prev.niit_delta) / STEP * 1000)
+        marginal_ltcg.append((cur.ltcg_delta - prev.ltcg_delta) / STEP * 1000)
 
     return MarginalCosts(
         marginals=marginals,
@@ -1151,6 +1218,8 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
         marginal_aca=marginal_aca,
         marginal_niit=marginal_niit,
         marginal_ltcg=marginal_ltcg,
+        marginal_funding_draw=marginal_funding,
+        marginal_penalty=marginal_penalty,
     )
 
 
@@ -1236,17 +1305,28 @@ def zero_conversion_sale_gains(hh: Household, years: Mapping[int, YearResult]) -
     the begin-of-year balance, exactly as engine.scenario folds it into
     realized_gains. Begin-of-year basis is the household's starting basis
     (``None`` = full basis) in the first year and the prior year's closing basis
-    after that.
+    after that (see :func:`zero_conversion_gain_fractions`).
+    """
+    fractions = zero_conversion_gain_fractions(hh, years)
+    return {y: years[y].forced_brokerage_draw * f for y, f in fractions.items()}
+
+
+def zero_conversion_gain_fractions(
+    hh: Household, years: Mapping[int, YearResult]
+) -> dict[int, float]:
+    """Per-year unrealized share of the begin-of-year brokerage balance in the
+    zero-conversion projection ``years``: what each dollar sold realizes as gain.
+    Begin-of-year basis is the household's starting basis (``None`` = full
+    basis) in the first year and the prior year's closing basis after that.
     """
     basis = hh.brokerage_start_basis if hh.brokerage_start_basis is not None else hh.brokerage_start
-    gains: dict[int, float] = {}
+    fractions: dict[int, float] = {}
     for year in sorted(years):
         yr = years[year]
         begin = yr.brokerage_balance
-        basis_fraction = min(basis / begin, 1.0) if begin > 0.0 else 0.0
-        gains[year] = yr.forced_brokerage_draw * (1.0 - basis_fraction)
+        fractions[year] = 1.0 - min(basis / begin, 1.0) if begin > 0.0 else 0.0
         basis = yr.brokerage_basis
-    return gains
+    return fractions
 
 
 def compute_multi_year_summary(
@@ -1296,8 +1376,15 @@ def compute_multi_year_summary(
         }
     if sale_gains is None:
         sale_gains = zero_conversion_sale_gains(hh, zero_years) if zero_years else {}
+    gain_fractions = zero_conversion_gain_fractions(hh, zero_years) if zero_years else {}
     if fills is None:
-        fills = forced_draw_fills(hh, ytd=ytd, net_inv_income=net_inv_income, ira_draws=ira_draws)
+        fills = forced_draw_fills(
+            hh,
+            ytd=ytd,
+            net_inv_income=net_inv_income,
+            ira_draws=ira_draws,
+            sale_gains=sale_gains,
+        )
 
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ
 
@@ -1314,8 +1401,9 @@ def compute_multi_year_summary(
             ytd=_yr_ytd,
             ira_draw=ira_draws.get(yr, 0.0),
             sale_gain=sale_gains.get(yr, 0.0),
+            sale_gain_fraction=gain_fractions.get(yr, 0.0),
         )
-        _le = estimate_ltcg_eligible(hh, yr, ytd=_yr_ytd) if include_ltcg_stacking else 0.0
+        _le = sweet_spot_ltcg_eligible(hh, b, _yr_ytd) if include_ltcg_stacking else 0.0
 
         # C23 (audit-0805) / audit-0809 #01: fill_12/fill_22 route through
         # bracket_boundary_conversion -- the module's own SS-torpedo-aware oracle

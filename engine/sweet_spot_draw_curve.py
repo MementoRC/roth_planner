@@ -8,15 +8,17 @@ already account for it (``scenario_autofill._solve_year``); this module makes
 the cost curve do so too, so its bracket steps land where the cards say.
 
 The gain the zero-conversion waterfall realizes by selling brokerage is already
-in ``base`` (``BaseIncome.sale_gain``, audit-1018 F-04). Simplification: the
-EXTRA brokerage sale (and gain) a conversion's tax forces is ignored here -- it
-is preferential income, not ordinary, and the draw solver prices IRA legs only.
+in ``base`` (``BaseIncome.sale_gain``, audit-1018 F-04). Issue #40: the EXTRA
+brokerage sale a conversion's tax forces (brokerage is sold before any IRA) is
+solved here too, and its gain priced as preferential income
+(``all_in_at_conversion(extra_gain=...)``), as engine.scenario folds it into
+realized_gains.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from engine.scenario import waterfall_accounts
 from engine.scenario_types import YearResult
@@ -35,23 +37,50 @@ _MAX_PASSES = 10
 _TOLERANCE = 0.5
 
 
+@dataclass(frozen=True)
+class _Legs:
+    """Waterfall legs that are income or cost: the IRA draw, the gain realized
+    by the brokerage sale and the early-withdrawal penalty on the IRA draw."""
+
+    draw: float = 0.0
+    gain: float = 0.0
+    penalty: float = 0.0
+
+
+_NO_EXTRA = _Legs()
+
+
 def _no_marginal_tax(_extra_ordinary: float) -> float:
     return 0.0
 
 
-def _ira_draw(need: float, accounts: Accounts, zero_year: YearResult) -> float:
-    """IRA legs the waterfall takes to fund ``need`` (slack and penalty gross-up
+def _waterfall_legs(need: float, accounts: Accounts, zero_year: YearResult) -> _Legs:
+    """Legs the waterfall takes to fund ``need`` (slack and penalty gross-up
     handled by the solver; its marginal tax is zero as in the auto-fill)."""
     draw = solve_waterfall(
         need, accounts, _no_marginal_tax, zero_year.your_age, zero_year.spouse_age
     )
-    return draw.your_ira_draw + draw.spouse_ira_draw
+    return _Legs(
+        draw.your_ira_draw + draw.spouse_ira_draw,
+        draw.realized_gain,
+        draw.early_withdrawal_penalty,
+    )
 
 
 def _extra_need(result: ConversionResult) -> float:
     """Cash the conversion adds to the year's need. Excludes LTCG tax (paid from
     the brokerage) and IRMAA (2-year lookback), as the waterfall does."""
     return result.conv_tax + result.niit_delta + result.aca_loss
+
+
+def _split_draw_tax(priced: ConversionResult, own_tax: float, extra: _Legs) -> ConversionResult:
+    """Issue #22: split the tax the extra draw adds (conv_tax over the
+    conversion's ``own_tax``) by what the draw pays for -- the penalty's share
+    of the draw is ``penalty_tax``, the rest ``funding_draw_tax``."""
+    draw_tax = priced.conv_tax - own_tax
+    penalty_share = extra.penalty / extra.draw if extra.draw > 0.0 else 0.0
+    penalty_tax = draw_tax * penalty_share
+    return replace(priced, funding_draw_tax=draw_tax - penalty_tax, penalty_tax=penalty_tax)
 
 
 def sweep_all_in(
@@ -65,15 +94,17 @@ def sweep_all_in(
     fills: Mapping[int, tuple[float, float]],
 ) -> list[ConversionResult]:
     """All-in cost at each conversion in ``convs``, counting the extra IRA draw
-    each conversion's tax forces.
+    and brokerage sale each conversion's tax forces.
 
-    ``base`` carries the zero-conversion draw. A year with no such draw that the
-    Fill does not provoke one in (``fills`` lacks it) is the plain sweep. Else,
-    per conversion C, the extra draw D is the fixed point of
-    ``D = draw(need0 + cost(C + D)) - draw(need0)`` (warm-started from the
-    previous C), and the point is priced at ``C + D`` -- a draw and a conversion
-    enter every income aggregate identically -- but reported at ``conv=C`` so
-    deltas stay relative to zero conversion.
+    ``base`` carries the zero-conversion draw. A year with no such draw or
+    gain-realizing sale that the Fill does not provoke a draw in (``fills``
+    lacks it) is the plain sweep. Else, per conversion C, the extra draw D (and
+    sale gain G) is the fixed point of ``D = draw(need0 + cost(C + D, G)) -
+    draw(need0)`` (warm-started from the previous C), and the point is priced at
+    ``C + D`` -- a draw and a conversion enter every income aggregate
+    identically -- with G as preferential income, but reported at ``conv=C`` so
+    deltas stay relative to zero conversion. Issue #22: the tax D adds is
+    reported on ``funding_draw_tax`` / ``penalty_tax`` (parts of conv_tax).
     """
 
     def _price(amount: float) -> ConversionResult:
@@ -84,18 +115,19 @@ def sweep_all_in(
         return [_price(c) for c in convs]
 
     results: list[ConversionResult] = []
-    extra_draw = 0.0
+    extra = _NO_EXTRA
     for conv in convs:
         if conv > 0:
-            priced, extra_draw = solve(conv, extra_draw)
+            priced, extra = solve(conv, extra)
+            priced = _split_draw_tax(priced, _price(conv).conv_tax, extra)
         else:
-            extra_draw = 0.0
+            extra = _NO_EXTRA
             priced = _price(0.0)
         results.append(replace(priced, conv=conv))
     return results
 
 
-_DrawSolver = Callable[[float, float], tuple[ConversionResult, float]]
+_DrawSolver = Callable[[float, _Legs], tuple[ConversionResult, _Legs]]
 
 
 def _draw_solver(
@@ -106,35 +138,48 @@ def _draw_solver(
     zero_year: YearResult,
     fills: Mapping[int, tuple[float, float]],
 ) -> _DrawSolver | None:
-    """``solve(conv, extra_draw_guess) -> (priced at conv + draw, extra draw)``,
-    or None when the year has no forced draw and the Fill provokes none."""
-
-    def _price(amount: float) -> ConversionResult:
-        return all_in_at_conversion(hh, base, amount, net_inv_income, ltcg_eligible=ltcg_eligible)
-
+    """``solve(conv, extra_guess) -> (priced at conv + draw, extra legs)``, or
+    None when the year has no forced draw, no gain-realizing sale and the Fill
+    provokes no draw."""
     zero_draw = zero_year.forced_your_ira_draw + zero_year.forced_spouse_ira_draw
-    if zero_draw <= 0.0 and base.year not in fills:
+    sells_at_gain = zero_year.forced_brokerage_draw > 0.0 and base.sale_gain_fraction > 0.0
+    if zero_draw <= 0.0 and not sells_at_gain and base.year not in fills:
         return None
 
-    accounts = waterfall_accounts(zero_year, zero_year.brokerage_balance)
+    basis = zero_year.brokerage_balance * (1.0 - base.sale_gain_fraction)
+    accounts = waterfall_accounts(zero_year, basis)
     # The unclamped need (income_needed floors at 0 and splits slack into
     # excess_rmd), net of the penalty the solver grosses up for itself.
     need0 = (
         zero_year.income_needed - zero_year.excess_rmd - zero_year.forced_early_withdrawal_penalty
     )
-    draw0 = _ira_draw(need0, accounts, zero_year)
+    legs0 = _waterfall_legs(need0, accounts, zero_year)
 
-    def solve(conv: float, extra_draw: float) -> tuple[ConversionResult, float]:
-        priced = _price(conv + extra_draw)
+    def _price(amount: float, gain: float) -> ConversionResult:
+        return all_in_at_conversion(
+            hh, base, amount, net_inv_income, ltcg_eligible=ltcg_eligible, extra_gain=gain
+        )
+
+    def _extra(need: float) -> _Legs:
+        legs = _waterfall_legs(need, accounts, zero_year)
+        return _Legs(
+            max(legs.draw - legs0.draw, 0.0),
+            max(legs.gain - legs0.gain, 0.0),
+            max(legs.penalty - legs0.penalty, 0.0),
+        )
+
+    def solve(conv: float, extra: _Legs) -> tuple[ConversionResult, _Legs]:
+        priced = _price(conv + extra.draw, extra.gain)
         for _ in range(_MAX_PASSES):
-            need = need0 + _extra_need(priced)
-            new_draw = max(_ira_draw(need, accounts, zero_year) - draw0, 0.0)
-            settled = abs(new_draw - extra_draw) < _TOLERANCE
-            extra_draw = new_draw
-            priced = _price(conv + extra_draw)
+            new = _extra(need0 + _extra_need(priced))
+            settled = (
+                abs(new.draw - extra.draw) < _TOLERANCE and abs(new.gain - extra.gain) < _TOLERANCE
+            )
+            extra = new
+            priced = _price(conv + extra.draw, extra.gain)
             if settled:
                 break
-        return priced, extra_draw
+        return priced, extra
 
     return solve
 
@@ -199,7 +244,7 @@ def draw_aware_irmaa_safe_max(
     best = 0
     while lo <= hi:
         mid = (lo + hi) // 2
-        if solve(float(mid * STEP), 0.0)[0].magi <= irmaa_tier1_threshold:
+        if solve(float(mid * STEP), _NO_EXTRA)[0].magi <= irmaa_tier1_threshold:
             best = mid
             lo = mid + 1
         else:
@@ -233,7 +278,7 @@ def draw_aware_boundary(
     lo, hi = 0.0, blind_boundary
     for _ in range(40):
         mid = (lo + hi) / 2
-        if measure(solve(mid, 0.0)[0]) <= target:
+        if measure(solve(mid, _NO_EXTRA)[0]) <= target:
             lo = mid
         else:
             hi = mid
