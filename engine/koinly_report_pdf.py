@@ -21,6 +21,7 @@ still parsed when unambiguous and cross-checked (mismatch -> provenance note).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Sequence
@@ -76,6 +77,31 @@ class KoinlyReport:
     parser_version: str = PARSER_VERSION
     provenance: dict[str, Any] = field(default_factory=dict)
     owner_key: str | None = None
+
+    @property
+    def override_key(self) -> str:
+        """The account-override key for this report: the printed holder name,
+        else a fingerprint of the report's own figures.
+
+        A nameless report has no account number, so without a fingerprint
+        every nameless report shares one key and no override can tell them
+        apart (issue #38). captured_at is left out, so a re-scan of the same
+        PDF keeps its key.
+        """
+        if self.owner_key:
+            return self.owner_key
+        identity = json.dumps(
+            [
+                self.tax_year,
+                self.crypto_stcg,
+                self.crypto_ltcg,
+                self.crypto_income,
+                self.provenance,
+            ],
+            sort_keys=True,
+            default=str,
+        )
+        return "unnamed-" + hashlib.sha256(identity.encode()).hexdigest()[:12]
 
     def to_dict(self) -> dict[str, Any]:
         return {

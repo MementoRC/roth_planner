@@ -137,18 +137,25 @@ class TestTwo403bsOneOwner:
         assert res.accounts == [old_a, new_b]  # A kept (newer), B updated
         assert res.kept_newer == [(old_a, new_a)]
 
-    def test_pdf_403b_matches_one_synced_403b_the_other_is_added_or_rejected(self) -> None:
+    def test_pdf_403b_is_not_paired_by_guess_with_one_of_two_synced_403bs(self) -> None:
         pdf = _pdf_403b("2026-10-09")
         pdf_owner = pdf.owner
         x = _acct("403b", pdf_owner, "PLAN X", as_of="2026-10-06", source="sync_time")
         y = _acct("403b", pdf_owner, "PLAN Y", as_of="2026-10-06", source="sync_time")
         res = merge_sync([pdf], [x, y])
-        # PDF is newer: it is kept, X (matched to it) is rejected, and Y is a genuinely
-        # new account (the PDF is matched only once) so it is added.
-        assert pdf in res.accounts
-        assert y in res.accounts
-        assert x not in res.accounts
-        assert res.kept_newer == [(pdf, x)]
+        # Issue #38: neither synced label names the PDF's plan and there are two
+        # of them, so which one is the PDF plan is unknown: nothing is paired
+        # (pairing the wrong one would overwrite or reject the wrong balance).
+        assert res.accounts == [pdf, x, y]
+        assert res.kept_newer == []
+
+    def test_pdf_403b_matches_the_synced_403b_naming_its_plan(self) -> None:
+        pdf = _pdf_403b("2026-10-09")
+        x = _acct("403b", pdf.owner, "PLAN X", as_of="2026-10-06", source="sync_time")
+        same = _acct("403b", pdf.owner, "ACME CORP 403B", as_of="2026-10-06", source="sync_time")
+        res = merge_sync([pdf], [x, same])
+        assert res.accounts == [pdf, x]
+        assert res.kept_newer == [(pdf, same)]
 
     def test_force_replace_touches_only_the_matched_403b(self) -> None:
         pdf = _pdf_403b()

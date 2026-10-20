@@ -10,6 +10,7 @@ Pure: no Streamlit, no I/O.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,17 +62,74 @@ AccountKey = tuple[str, str, str]
 def account_key(acct: AccountSummary) -> AccountKey:
     """Identity of an account across sources: (account_type, owner, account_name).
 
-    A 403(b) is keyed by (type, owner) alone: NetBenefits names it by plan
-    ("Acme Corp 403(b) Plan") while FinExtract uses the raw custodian label,
-    so the names never match, and replace_owner_403b already treats one
-    owner's 403(b) as a single account.
+    A 403(b) is keyed by its name too, so one owner's two plans never share a
+    key (issue #38). A NetBenefits plan name and a FinExtract custodian label
+    for the same plan differ; :func:`_match_incoming` bridges them by
+    :func:`plan_identity` instead of by key.
     """
-    name = "" if acct.account_type == "403b" else acct.account_name
-    return (acct.account_type, acct.owner, name)
-
-
-def _full_key(acct: AccountSummary) -> AccountKey:
     return (acct.account_type, acct.owner, acct.account_name)
+
+
+_PLAN_NOISE = re.compile(r"403\s*\(?b\)?|\bplan\b", re.IGNORECASE)
+
+
+def plan_identity(name: str) -> str:
+    """Plan name reduced to its distinguishing words: ``"PLAN A 403B"`` and
+    ``"Plan A 403(b) Plan"`` both become ``"a"``."""
+    return " ".join(re.findall(r"[a-z0-9]+", _PLAN_NOISE.sub(" ", name.lower())))
+
+
+def _statement_403b_candidates(
+    existing: list[AccountSummary], inc: AccountSummary, taken: set[int]
+) -> list[int]:
+    return [
+        j
+        for j, ex in enumerate(existing)
+        if j not in taken
+        and ex.account_type == "403b"
+        and ex.owner == inc.owner
+        and ex.as_of_source == "statement"
+    ]
+
+
+def _match_403b_by_plan(
+    existing: list[AccountSummary],
+    incoming: list[AccountSummary],
+    matches: list[int | None],
+    taken: set[int],
+) -> None:
+    """Pass 2 of :func:`_match_incoming`, in place.
+
+    A still-unmatched incoming 403(b) matches an unmatched statement-sourced
+    403(b) of the same owner naming the same plan (:func:`plan_identity`).
+    Failing that, the two are paired by owner alone only when that is
+    unambiguous: the owner has exactly one such statement 403(b) left and the
+    sync reports exactly one unmatched 403(b) for them. Otherwise nothing is
+    guessed: pairing the wrong plans would overwrite one plan's balance with
+    another's, while leaving both is a visible double count.
+    """
+    pending = [
+        i for i, inc in enumerate(incoming) if matches[i] is None and inc.account_type == "403b"
+    ]
+    for i in pending:
+        inc = incoming[i]
+        same_plan = [
+            j
+            for j in _statement_403b_candidates(existing, inc, taken)
+            if plan_identity(existing[j].account_name) == plan_identity(inc.account_name)
+        ]
+        if same_plan:
+            matches[i] = same_plan[0]
+            taken.add(same_plan[0])
+    for i in pending:
+        if matches[i] is not None:
+            continue
+        inc = incoming[i]
+        cands = _statement_403b_candidates(existing, inc, taken)
+        rivals = [k for k in pending if matches[k] is None and incoming[k].owner == inc.owner]
+        if len(cands) == 1 and rivals == [i]:
+            matches[i] = cands[0]
+            taken.add(cands[0])
 
 
 def _match_incoming(
@@ -80,31 +138,20 @@ def _match_incoming(
     """For each incoming account, the index of the existing account it updates.
 
     Pass 1 matches by (type, owner, name), so two FinExtract 403(b)s of one
-    owner stay distinct. Pass 2 lets a still-unmatched incoming 403(b) match a
-    statement-sourced 403(b) of the same owner by (type, owner) alone, since a
-    PDF plan name never equals the custodian's label. Each existing account is
-    matched at most once.
+    owner stay distinct. Pass 2 (:func:`_match_403b_by_plan`) lets a
+    still-unmatched incoming 403(b) match a statement-sourced 403(b) of the
+    same owner, since a PDF plan name rarely equals the custodian's label.
+    Each existing account is matched at most once.
     """
     matches: list[int | None] = [None] * len(incoming)
     taken: set[int] = set()
     for i, inc in enumerate(incoming):
         for j, ex in enumerate(existing):
-            if j not in taken and _full_key(ex) == _full_key(inc):
+            if j not in taken and account_key(ex) == account_key(inc):
                 matches[i] = j
                 taken.add(j)
                 break
-    for i, inc in enumerate(incoming):
-        if matches[i] is not None or inc.account_type != "403b":
-            continue
-        for j, ex in enumerate(existing):
-            if (
-                j not in taken
-                and ex.as_of_source == "statement"
-                and account_key(ex) == account_key(inc)
-            ):
-                matches[i] = j
-                taken.add(j)
-                break
+    _match_403b_by_plan(existing, incoming, matches, taken)
     return matches
 
 
@@ -151,7 +198,8 @@ def force_replace(accounts: list[AccountSummary], incoming: AccountSummary) -> l
     """Replace the cached account *incoming* was matched against ("Use anyway").
 
     Same matching as :func:`merge_sync`: the same-named account, else (for a
-    403(b)) the owner's statement-sourced 403(b). Other accounts are untouched.
+    403(b)) the owner's statement-sourced 403(b) of the same plan, or their
+    only one. Other accounts are untouched.
     """
     idx = _match_incoming(accounts, [incoming])[0]
     kept = [a for j, a in enumerate(accounts) if j != idx]
