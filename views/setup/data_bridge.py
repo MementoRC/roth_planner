@@ -43,7 +43,7 @@ from engine.data_sources.committed import (
     load_committed,
     save_committed,
 )
-from engine.data_sources.orchestrator import stamp_bundle_scalars
+from engine.data_sources.orchestrator import BUNDLE_SCALARS_KEY, stamp_bundle_scalars
 from engine.data_sources.paths import COMMITTED_PATH
 from engine.data_sources.record import discard_pdf_balance_candidates, record_magi_candidates
 from engine.demo_mode import is_demo_mode
@@ -614,13 +614,14 @@ def slots_with_replaced_accounts(plan: ImportPlan, selected: frozenset[str]) -> 
 def _stamp_bundle_scalars_in_baseline(scalar_updates: dict) -> None:
     """Label imported balances/SS/price ``Backup import`` in the committed baseline.
 
-    Without a baseline (first load) or with an unreadable one, nothing is
-    touched and the imported values are handled by the normal first-load or
-    reconcile path (audit-1018 F-21).
+    With an unreadable baseline nothing is touched. With no baseline yet (first
+    load) the values are staged for the migrating resolve, which labels them
+    ``Backup import`` too (audit-1018 F-21, issue #43).
     """
     try:
         committed_json = load_committed(COMMITTED_PATH)
         if committed_json is None:
+            st.session_state[BUNDLE_SCALARS_KEY] = dict(scalar_updates)
             return
         if stamp_bundle_scalars(committed_json, scalar_updates, datetime.now()):
             save_committed(COMMITTED_PATH, committed_json)
