@@ -229,6 +229,10 @@ class ConversionPlan:
     # bracket-fill plan to room_22 regardless of its actual target (issue
     # #465).
     bracket_target: int | None = None
+    # Issue #56: False projects each planned conversion in full instead of
+    # capping it at the bracket room (scenario._base_headroom). Oracle/testing
+    # use only -- no UI path sets it, so the default keeps the cap.
+    bracket_cap: bool = True
 
 
 @dataclass
