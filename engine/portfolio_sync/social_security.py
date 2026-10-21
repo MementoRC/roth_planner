@@ -63,16 +63,38 @@ def match_fra_estimate(
     return min(estimates, key=lambda e: abs(e.retirement_age - fra_age))
 
 
+class CorruptSSACacheError(Exception):
+    """save_ssa_snapshot() found ``.ssa_cache.json`` unreadable and refused to write.
+
+    Same convention as ``CorruptPortfolioCacheError``: the other owner's saved
+    estimates would be lost if the bad file were replaced by a fresh one.
+    """
+
+    def __init__(self, path: str | Path, cause: Exception) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"SSA cache at {path!r} is corrupt: {cause!r}")
+
+
 def save_ssa_snapshot(snap: SSASnapshot, *, owner: str) -> None:
-    """Save *snap* under *owner* ('you' or 'spouse') in the shared SSA cache file."""
+    """Save *snap* under *owner* ('you' or 'spouse') in the shared SSA cache file.
+
+    Raises CorruptSSACacheError (without writing) if the file exists but is
+    unreadable or not a JSON object.
+    """
     existing: dict[str, Any] = {}
     if _SSA_CACHE_PATH.exists():
         try:
-            existing = read_pii_json(_SSA_CACHE_PATH)
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-        if not isinstance(existing, dict):
-            existing = {}
+            loaded = read_pii_json(_SSA_CACHE_PATH)
+        except FileNotFoundError:  # absent, or hidden in demo mode
+            loaded = {}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise CorruptSSACacheError(_SSA_CACHE_PATH, exc) from exc
+        if not isinstance(loaded, dict):
+            raise CorruptSSACacheError(
+                _SSA_CACHE_PATH, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
+            )
+        existing = loaded
     existing[owner] = asdict(snap)
     write_pii_json(_SSA_CACHE_PATH, existing)
 

@@ -140,12 +140,15 @@ class TestF43NonObjectCache:
         p = tmp_path / ".ssa.json"
         p.write_text("[1, 2]")
         monkeypatch.setattr(ssa_mod, "_SSA_CACHE_PATH", p)
-        ssa_mod.save_ssa_snapshot(SSASnapshot(), owner="you")
-        assert "you" in json.loads(p.read_text())
+        # Issue #39: a non-object cache is preserved, not replaced.
+        with pytest.raises(ssa_mod.CorruptSSACacheError):
+            ssa_mod.save_ssa_snapshot(SSASnapshot(), owner="you")
+        assert p.read_text() == "[1, 2]"
 
     def test_save_snapshot_over_list_cache(self, tmp_path, monkeypatch) -> None:
         p = tmp_path / ".portfolio_cache.json"
         p.write_text("[1, 2]")
         monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", p)
-        portfolio_mod.save_snapshot(PortfolioSnapshot())
-        assert isinstance(json.loads(p.read_text()), dict)
+        with pytest.raises(portfolio_mod.CorruptPortfolioCacheError):
+            portfolio_mod.save_snapshot(PortfolioSnapshot())
+        assert p.read_text() == "[1, 2]"

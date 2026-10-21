@@ -164,7 +164,9 @@ class ExerciseSchedule:
                     )
 
         for yr, p in self.price_by_year.items():
-            if p < 0:
+            if not math.isfinite(p):
+                messages.append(f"year {yr}: non-finite price {p}")
+            elif p < 0:
                 messages.append(f"year {yr}: negative price {p}")
 
         return messages

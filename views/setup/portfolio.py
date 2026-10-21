@@ -40,6 +40,7 @@ from engine.portfolio_sync import (
     save_ytd_snapshot,
 )
 from engine.portfolio_sync.as_of import merge_sync
+from engine.portfolio_sync.portfolio import CorruptPortfolioCacheError
 from models.household import Household
 from models.sourced import Source
 from models.ytd_income import YTDSnapshot
@@ -108,7 +109,7 @@ def sync_portfolio_from_finextract(hh: Household) -> PortfolioSyncOutcome:
         kept_newer = merged.kept_newer
     try:
         save_snapshot(snap)
-    except EmptySnapshotWriteRefusedError as exc:
+    except (EmptySnapshotWriteRefusedError, CorruptPortfolioCacheError) as exc:
         # PS-2b: the write was refused to protect a populated cache. Route into
         # the same failure branch the caller already handles for an unreachable
         # server, rather than reporting a sync that did not persist.

@@ -53,6 +53,7 @@ from engine.pdf_ledger import (
 from engine.pdf_owner import learn_owner, load_owner_map, resolve_owner, save_owner_map
 from engine.portfolio_sync import PortfolioSnapshot, load_snapshot, save_snapshot, save_ytd_snapshot
 from engine.portfolio_sync.as_of import AccountKey, account_key, as_of_label
+from engine.portfolio_sync.portfolio import CorruptPortfolioCacheError
 from engine.portfolio_sync.shapes import AccountSummary
 from engine.portfolio_sync.ytd import apply_brokerage_totals
 from engine.ssa_statement_pdf import (
@@ -86,6 +87,19 @@ from views._shared import (
     run_folder_scan,
     run_uploaded_scan,
 )
+
+
+def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
+    """Persist *snap*; on an unreadable cache file show an error and return False."""
+    try:
+        save_snapshot(snap)
+    except CorruptPortfolioCacheError:
+        st.error(
+            "The portfolio cache file is unreadable; it was left untouched and this "
+            "statement was not applied."
+        )
+        return False
+    return True
 
 
 class ScanRenderContext(NamedTuple):
@@ -1256,7 +1270,8 @@ def _render_netbenefits_review(
             disabled=not identity_set,
         ):
             outcome = apply_netbenefits_statement(snap, stmt, owner, force=True)
-            save_snapshot(outcome.snapshot)
+            if not _save_snapshot_or_report(outcome.snapshot):
+                continue
             st.session_state["portfolio_snapshot"] = outcome.snapshot
             record_ira_balance_candidate(
                 outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
@@ -1419,8 +1434,9 @@ def _render_ira_statement_review(
         apply_label = "Use anyway" if preview.kept_newer is not None else "Apply IRA balance"
         if st.button(apply_label, key=f"ira_statement_apply_{i}", disabled=not identity_set):
             outcome = apply_ira_statement(snap, rec, owner, force=True, replaces=link_key)
+            if not _save_snapshot_or_report(outcome.snapshot):
+                continue
             save_link_map(remember_link(rec, link_key or NEW, link_map))
-            save_snapshot(outcome.snapshot)
             st.session_state["portfolio_snapshot"] = outcome.snapshot
             record = (
                 record_roth_balance_candidate

@@ -52,6 +52,7 @@ from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
 from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
 from engine.portfolio_sync.portfolio import (
+    CorruptPortfolioCacheError,
     EmptySnapshotWriteRefusedError,
     load_snapshot,
     save_snapshot,
@@ -657,6 +658,12 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
             "saved portfolio, and nothing on disk was changed. Re-export from the "
             "sender with its portfolio section populated, or clear the portfolio "
             "deliberately from Portfolio Sync first."
+        )
+        return
+    except CorruptPortfolioCacheError:
+        st.error(
+            "Import refused: the saved portfolio cache file is unreadable, so it was "
+            "left untouched. Repair or remove .portfolio_cache.json, then import again."
         )
         return
 

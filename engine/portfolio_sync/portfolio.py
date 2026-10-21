@@ -149,6 +149,21 @@ class EmptySnapshotWriteRefusedError(RuntimeError):
     """
 
 
+class CorruptPortfolioCacheError(Exception):
+    """save_snapshot() found ``.portfolio_cache.json`` unreadable and refused to write.
+
+    Mirrors ``CorruptCommittedCacheError`` / ``CorruptCandidateStoreError``:
+    overwriting a corrupt (or non-object) cache with a fresh snapshot would
+    destroy the only copy of whatever bytes are on disk, including the
+    FinExtract-owned ``equity_sales`` / ``sources`` sections (audit-1018 W8 follow-up).
+    """
+
+    def __init__(self, path: str | Path, cause: Exception) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"portfolio cache at {path!r} is corrupt: {cause!r}")
+
+
 def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -> None:
     """Save portfolio snapshot to disk as JSON.
 
@@ -167,17 +182,24 @@ def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -
     pass it explicitly rather than depend on the inference.
 
     Raises:
+        CorruptPortfolioCacheError: the cache exists but is unreadable or not a
+            JSON object; the file is left untouched.
         EmptySnapshotWriteRefusedError: the write would drop every account from a
             cache that currently holds some, and emptiness was not verified.
     """
     existing: dict[str, Any] = {}
     if _CACHE_PATH.exists():
         try:
-            existing = read_pii_json(_CACHE_PATH)
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-        if not isinstance(existing, dict):
-            existing = {}
+            loaded = read_pii_json(_CACHE_PATH)
+        except FileNotFoundError:  # absent, or hidden in demo mode
+            loaded = {}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise CorruptPortfolioCacheError(_CACHE_PATH, exc) from exc
+        if not isinstance(loaded, dict):
+            raise CorruptPortfolioCacheError(
+                _CACHE_PATH, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
+            )
+        existing = loaded
 
     if allow_empty is None:
         allow_empty = snap.server_available
