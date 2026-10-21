@@ -1782,7 +1782,12 @@ def _solve_waterfall_year(
         waterfall_baseline_aca_magi = zero_conv_outcome.yr.aca_magi
         waterfall_baseline_taxable = zero_conv_outcome.yr.taxable_income
 
-        conversion_cap = min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
+        # Issue #56: plan.bracket_cap=False (oracle use) projects the plan in full.
+        conversion_cap = (
+            min(planned_conversion, max(0.0, _base_headroom(zero_conv_nd)))
+            if plan.bracket_cap
+            else planned_conversion
+        )
 
         # === MAGI-ceiling enforcement (irmaa_safe / aca_safe plans ONLY) ===
         # `plan.magi_strategy` (set by auto_fill_irmaa_safe/auto_fill_aca) is
