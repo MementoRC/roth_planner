@@ -43,7 +43,7 @@ from engine.data_sources.committed import (
     load_committed,
     save_committed,
 )
-from engine.data_sources.orchestrator import stamp_bundle_scalars
+from engine.data_sources.orchestrator import BUNDLE_SCALARS_KEY, stamp_bundle_scalars
 from engine.data_sources.paths import COMMITTED_PATH
 from engine.data_sources.record import discard_pdf_balance_candidates, record_magi_candidates
 from engine.demo_mode import is_demo_mode
@@ -52,6 +52,7 @@ from engine.pdf_ledger import load_ledger as _load_pdf_ledger
 from engine.pdf_ledger import save_ledger as _save_pdf_ledger
 from engine.portfolio_sync import PortfolioSnapshot, load_ytd_snapshot, save_ytd_snapshot
 from engine.portfolio_sync.portfolio import (
+    CorruptPortfolioCacheError,
     EmptySnapshotWriteRefusedError,
     load_snapshot,
     save_snapshot,
@@ -613,13 +614,14 @@ def slots_with_replaced_accounts(plan: ImportPlan, selected: frozenset[str]) -> 
 def _stamp_bundle_scalars_in_baseline(scalar_updates: dict) -> None:
     """Label imported balances/SS/price ``Backup import`` in the committed baseline.
 
-    Without a baseline (first load) or with an unreadable one, nothing is
-    touched and the imported values are handled by the normal first-load or
-    reconcile path (audit-1018 F-21).
+    With an unreadable baseline nothing is touched. With no baseline yet (first
+    load) the values are staged for the migrating resolve, which labels them
+    ``Backup import`` too (audit-1018 F-21, issue #43).
     """
     try:
         committed_json = load_committed(COMMITTED_PATH)
         if committed_json is None:
+            st.session_state[BUNDLE_SCALARS_KEY] = dict(scalar_updates)
             return
         if stamp_bundle_scalars(committed_json, scalar_updates, datetime.now()):
             save_committed(COMMITTED_PATH, committed_json)
@@ -657,6 +659,12 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
             "saved portfolio, and nothing on disk was changed. Re-export from the "
             "sender with its portfolio section populated, or clear the portfolio "
             "deliberately from Portfolio Sync first."
+        )
+        return
+    except CorruptPortfolioCacheError:
+        st.error(
+            "Import refused: the saved portfolio cache file is unreadable, so it was "
+            "left untouched. Repair or remove .portfolio_cache.json, then import again."
         )
         return
 

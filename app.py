@@ -27,7 +27,7 @@ from engine.data_sources.record import record_magi_candidates, record_ss_fra_can
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
-from engine.upload_merge import SCALAR_KEYS  # noqa: E402
+from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
 from views.setup._state import _drain_pending_defaults  # noqa: E402
 
@@ -58,6 +58,11 @@ def _seed_session_state() -> None:
     # SCALAR_KEYS/persisted-export field; see that registry entry's note).
     for _spec in SCALAR_REGISTRY:
         st.session_state.setdefault(_spec.session_key, scalar_default(_spec.session_key))
+    # A persisted file can carry NaN/negative expenses (json.loads accepts NaN);
+    # sanitize at the source so no page ever computes on them (audit-1018 F-33).
+    st.session_state["living_expenses"] = sanitize_living_expenses(
+        st.session_state["living_expenses"]
+    )
     # Complex (non-scalar) persisted keys: seed from `defaults` so a saved
     # value survives a fresh session. (Audit 2026-07-22: these were hardcoded
     # to empty — survivor=None, inherited_iras=[], account_type_overrides
@@ -84,6 +89,15 @@ def _seed_session_state() -> None:
         st.session_state.setdefault("instance_owner", load_instance_owner())
     except CorruptInstanceOwnerError:
         st.session_state.setdefault("instance_owner", None)
+    # Issue #43: remember what the governed fields were seeded with so the
+    # first resolve does not read an untouched seed as a manual edit.
+    from engine.data_sources.orchestrator import SEED_VALUES_KEY, SOURCED_SESSION_KEYS
+
+    st.session_state[SEED_VALUES_KEY] = {
+        attr: st.session_state[key]
+        for attr, key in SOURCED_SESSION_KEYS.items()
+        if attr != "prior_year_magi" and isinstance(st.session_state.get(key), (int, float))
+    }
     st.session_state.setdefault("_seeded", True)
 
 
@@ -230,7 +244,9 @@ from engine.data_sources.committed import (  # noqa: E402
     save_committed,
 )
 from engine.data_sources.orchestrator import (  # noqa: E402
+    BUNDLE_SCALARS_KEY,
     MAGI_CLEARED_KEY,
+    SEED_VALUES_KEY,
     AppResolveResult,
     resolve_for_app,
     session_keys_for_writeback,
@@ -492,6 +508,8 @@ def get_household() -> Household:
         committed_json,
         recorded_at=datetime.now(),
         cleared_magi_years=_cleared_magi,
+        unedited_seed=st.session_state.get(SEED_VALUES_KEY),
+        bundle_scalars=st.session_state.get(BUNDLE_SCALARS_KEY),
     )
     hh = app_res.result.household
     # Committed-baseline household (post apply_committed) kept for the
@@ -501,6 +519,8 @@ def get_household() -> Household:
     # (save suppressed below) keep the flag so it applies on a later render.
     if _corrupt_committed_path is None:
         st.session_state.pop(MAGI_CLEARED_KEY, None)
+        st.session_state.pop(SEED_VALUES_KEY, None)
+        st.session_state.pop(BUNDLE_SCALARS_KEY, None)
 
     # Growth profiles are NOT a sourced field — still derive them live from
     # the snapshot every load. A data-bridge import counts too (audit-1008

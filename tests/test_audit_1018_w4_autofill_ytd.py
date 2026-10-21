@@ -90,6 +90,14 @@ def test_rmd_squeeze_sizes_fill_12_with_the_ytd_it_projects_with() -> None:
     assert all(_ytd_arg(c) == _YTD for c in calls["fill"])
 
 
+def test_asset_location_sizes_fill_12_with_the_ytd_and_nii_dashboard_uses() -> None:
+    # issue #41: the Asset Location schedule must match the Dashboard's Fill 12%.
+    calls = _run("views.asset_location")
+    assert calls["fill"], "asset_location did not call auto_fill_12"
+    assert all(_ytd_arg(c) == _YTD for c in calls["fill"])
+    assert all(_nii_arg(c) == _NII for c in calls["fill"])
+
+
 def test_planner_auto_fill_button_sizes_with_the_ytd_it_projects_with() -> None:
     calls = _run("views.planner", click="🎯 Auto-Fill to 12%")
     assert calls["fill"], "Auto-Fill button did not call auto_fill_12"

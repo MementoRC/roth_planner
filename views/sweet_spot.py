@@ -18,12 +18,13 @@ from engine.sweet_spot_compute import (
     base_income_for_year,
     compute_marginal_costs,
     compute_multi_year_summary,
-    estimate_ltcg_eligible,
     fills_for_year,
     find_sweet_spots,
     forced_draw_fills,
     magi_boundary_conversion,
     sweet_spot_conversion_window,
+    sweet_spot_ltcg_eligible,
+    zero_conversion_gain_fractions,
     zero_conversion_sale_gains,
     zero_conversion_years,
 )
@@ -119,13 +120,22 @@ def render(hh: Household) -> None:
     _sale_gains = zero_conversion_sale_gains(hh, _zero_years)
     # Issue #1: in a forced-draw year the Fill cards / table read what "Fill X%"
     # converts (the auto-fill's joint solve), so they equal the Planner's Fill.
-    _fills = forced_draw_fills(hh, ytd=_ytd, net_inv_income=net_inv_income, ira_draws=_ira_draws)
+    # Issue #40: the gate deciding those years sees the same sale gain.
+    _fills = forced_draw_fills(
+        hh,
+        ytd=_ytd,
+        net_inv_income=net_inv_income,
+        ira_draws=_ira_draws,
+        sale_gains=_sale_gains,
+    )
+    _selected_ytd = _ytd if selected_year == hh.base_year else None
     base = base_income_for_year(
         hh,
         selected_year,
-        ytd=_ytd if selected_year == hh.base_year else None,
+        ytd=_selected_ytd,
         ira_draw=_selected_draw,
         sale_gain=_sale_gains.get(selected_year, 0.0),
+        sale_gain_fraction=zero_conversion_gain_fractions(hh, _zero_years).get(selected_year, 0.0),
     )
 
     # --- Info bar ---
@@ -134,9 +144,8 @@ def render(hh: Household) -> None:
     c2.metric("Combined SS", fmt_dollars(base.combined_ss))
     c3.metric("Deductions", fmt_dollars(base.total_ded))
 
-    _ltcg_eligible = estimate_ltcg_eligible(
-        hh, selected_year, ytd=_ytd if selected_year == hh.base_year else None
-    )
+    # Issue #40: the zero-conversion sale gain stacks with the year's LTCG.
+    _ltcg_eligible = sweet_spot_ltcg_eligible(hh, base, _selected_ytd)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
     if _selected_draw > 0:
         st.caption(
@@ -185,6 +194,24 @@ def render(hh: Household) -> None:
     )
 
     marginal_data = compute_marginal_costs(results)
+    # Issue #22: in a forced-draw year the conversion's tax is paid by an extra
+    # IRA withdrawal, itself taxed; its tax is drawn as its own traces.
+    _has_funding = any(v > 0 for v in marginal_data.marginal_funding_draw)
+    _has_penalty = any(v > 0 for v in marginal_data.marginal_penalty)
+    if _has_funding or _has_penalty:
+        _penalty_note = (
+            " Part of that withdrawal comes from an IRA owner under 59½, so it also "
+            "owes the 10% early-withdrawal penalty (10% Penalty trace, included in "
+            "the total and the All-In Costs below)."
+            if _has_penalty
+            else ""
+        )
+        st.caption(
+            "This year the conversion's tax is paid by an extra traditional-IRA "
+            "withdrawal, and that withdrawal is taxed too: Fed Tax is the tax on "
+            "the conversion itself, Tax-Funding Draw the tax on the withdrawal "
+            "that pays it." + _penalty_note
+        )
 
     fig_m = go.Figure()
     fig_m.add_trace(
@@ -197,6 +224,28 @@ def render(hh: Household) -> None:
             hovertemplate="Fed Tax: $%{y:.0f} per $1K<extra></extra>",
         )
     )
+    if _has_funding:
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_funding_draw,
+                name="Tax-Funding Draw",
+                stackgroup="one",
+                line={"color": "#60a5fa"},
+                hovertemplate="Tax-Funding Draw: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
+    if _has_penalty:
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_penalty,
+                name="10% Penalty",
+                stackgroup="one",
+                line={"color": "#1e3a8a"},
+                hovertemplate="10% Penalty: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
     fig_m.add_trace(
         go.Scatter(
             x=convs,
@@ -426,7 +475,10 @@ def render(hh: Household) -> None:
 
     # --- Cumulative all-in cost chart ---
     st.markdown("### Cumulative All-In Cost")
-    st.caption("Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking) at each conversion level.")
+    st.caption(
+        "Total cost (tax + IRMAA + ACA + NIIT + LTCG stacking + any 10% "
+        "early-withdrawal penalty) at each conversion level."
+    )
 
     fig_c = go.Figure()
     fig_c.add_trace(
@@ -475,6 +527,16 @@ def render(hh: Household) -> None:
                 name="LTCG Stacking",
                 stackgroup="one",
                 line={"color": "#06b6d4"},
+            )
+        )
+    if any(r.penalty_tax > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.penalty_tax for r in results],
+                name="10% Penalty",
+                stackgroup="one",
+                line={"color": "#1e3a8a"},
             )
         )
 

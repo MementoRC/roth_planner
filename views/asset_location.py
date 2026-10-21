@@ -7,6 +7,7 @@ compounding and reduces future RMD pressure on the remaining (slower-growing) IR
 import plotly.graph_objects as go
 import streamlit as st
 
+from config.scalar_registry import scalar_default
 from engine.asset_location import project_asset_location
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
@@ -39,7 +40,12 @@ def render(hh: Household):
         bond_return = st.slider("Bond Return %", 2.0, 6.0, 4.0, 0.5) / 100
 
     # Use the auto-fill 12% plan as the conversion schedule
-    plan = auto_fill_12(hh)
+    # issue #41 (audit-1018 F-10): size Fill 12% exactly as the Dashboard does,
+    # with the sidebar-gated YTD snapshot and the Assumptions NII estimate.
+    _apply_ytd = st.session_state.get("apply_ytd_to_projection", False)
+    _ytd = st.session_state.get("ytd_snapshot") if _apply_ytd else None
+    _nii = int(st.session_state.get("net_inv_income", scalar_default("net_inv_income")))
+    plan = auto_fill_12(hh, _ytd, _nii)
     # Combine your + spouse conversions into a single annual amount
     all_years = set(plan.your_conversions.keys()) | set(plan.spouse_conversions.keys())
     annual_conv = {

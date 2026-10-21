@@ -15,6 +15,8 @@ import stat
 import warnings
 from pathlib import Path
 
+from engine.demo_mode import is_demo_mode
+
 PUBKEY_PATH = Path.home() / ".finextract" / "data-bridge.pub"
 PRIVKEY_PATH = Path.home() / ".finextract" / "data-bridge.priv"
 
@@ -193,7 +195,11 @@ def write_keypair(pubkey: bytes, privkey: bytes, *, force: bool = False) -> None
     - crypto-security-10: privkey is written BEFORE pubkey so that a crash
       between the two writes leaves the sensitive key on disk (recoverable)
       rather than only the public key.
+    - Demo mode (audit-1018 W9b, issue #43): a no-op -- demo mode never touches
+      personal files.
     """
+    if is_demo_mode():
+        return
     PUBKEY_PATH.parent.mkdir(parents=True, exist_ok=True)
     exclusive = not force
     # crypto-security-10: write privkey first — crash between writes preserves

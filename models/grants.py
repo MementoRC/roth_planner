@@ -4,6 +4,7 @@ import cycle (config.defaults needs StockGrant, household needs config.loader).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -18,10 +19,16 @@ class StockGrant:
     grant_id: str = ""  # FinExtract grant identifier for per-grant attribution
 
     def spread(self, price: float) -> float:
-        return max(price - self.strike, 0) * self.shares
+        return self.per_share_spread(price) * self.shares
 
     def per_share_spread(self, price: float) -> float:
-        """Per-share intrinsic value at ``price`` (unclamped by share count)."""
+        """Per-share intrinsic value at ``price`` (unclamped by share count).
+
+        A non-finite price (NaN, +/-inf) has no intrinsic value: 0.0, never NaN
+        (``max(nan, 0.0)`` returns nan, which would poison income totals).
+        """
+        if not math.isfinite(price):
+            return 0.0
         return max(price - self.strike, 0.0)
 
     def key(self) -> str:

@@ -26,11 +26,14 @@ per-partial-module package pattern going forward.
 
 from __future__ import annotations
 
+from typing import Any
+
 import streamlit as st
 
 from config.scalar_registry import TERMINAL_IRA_TAX_RATE_BOUNDS, scalar_default
 from engine.aca import derive_couple_benchmark_annual
 from engine.data_sources.orchestrator import MAGI_CLEARED_KEY
+from engine.upload_merge import sanitize_living_expenses
 from models.household import Household
 from views.optimizer_panel import terminal_rate_pct
 
@@ -163,6 +166,18 @@ def _render_survivor_scenario(container, base_year: int) -> None:
             st.session_state["survivor"] = None
 
 
+def _finite_int(value: Any, default: int = 0) -> int:
+    """``int(value)``, or *default* when it is NaN/infinite or not a number.
+
+    Session state can hold a NaN balance (``json.loads`` accepts bare ``NaN``),
+    and ``int(float("nan"))`` raises, which would take the whole tab down.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _render_inherited_iras(container, base_year: int) -> None:
     """Render the Inherited IRAs expander in the Joint sub-tab."""
 
@@ -185,7 +200,7 @@ def _render_inherited_iras(container, base_year: int) -> None:
                 "Balance ($)",
                 min_value=0,
                 max_value=100_000_000,
-                value=_clamp(int(entry.get("balance", 0)), 0, 100_000_000),
+                value=_clamp(_finite_int(entry.get("balance", 0)), 0, 100_000_000),
                 step=10_000,
                 format="%d",
                 key=f"iira_balance_{idx}",
@@ -300,7 +315,7 @@ def render_assumptions_partial(hh: Household, container) -> None:
     st.session_state.living_expenses = container.number_input(
         "Annual Living Expenses",
         min_value=0,
-        value=_clamp(int(st.session_state.living_expenses), 0),
+        value=_clamp(int(sanitize_living_expenses(st.session_state.living_expenses)), 0),
         step=5_000,
         format="%d",
     )

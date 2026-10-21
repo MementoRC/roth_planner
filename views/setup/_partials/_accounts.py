@@ -19,6 +19,7 @@ import streamlit as st
 from config.scalar_registry import scalar_default
 from engine.data_sources.record import record_ss_fra_candidate
 from engine.portfolio_sync import fetch_ssa_snapshot, match_fra_estimate, save_ssa_snapshot
+from engine.portfolio_sync.social_security import CorruptSSACacheError
 from engine.ssa_statement_pdf import benefit_comparison, load_ssa_pdf_estimates
 from engine.upload_merge import synced_account_sums
 from models.household import Household
@@ -71,7 +72,10 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
         field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
     )
     st.session_state[f"ssa_snapshot_{owner}"] = snap
-    save_ssa_snapshot(snap, owner=owner)
+    try:
+        save_ssa_snapshot(snap, owner=owner)
+    except CorruptSSACacheError:
+        return "SSA cache file is unreadable; it was left untouched and this sync was not saved."
     return None
 
 

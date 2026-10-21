@@ -73,6 +73,8 @@ def load_instance_owner() -> str | None:
         return None
     try:
         raw = INSTANCE_OWNER_PATH.read_text()
+    except UnicodeDecodeError as exc:  # non-UTF-8 bytes: corrupt, not a first run
+        raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
     except OSError:
         return None
     try:

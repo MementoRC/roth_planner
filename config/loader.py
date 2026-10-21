@@ -120,7 +120,7 @@ def _load_overrides_from_json(path: Path) -> Mapping[str, object]:
     """
     try:
         data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):  # ValueError covers JSONDecodeError and non-UTF-8 bytes
         return {}
     if not isinstance(data, dict):
         return {}
@@ -229,7 +229,7 @@ def save_user_defaults(data: dict) -> None:
     # defaults, so the 2019 grant had no strike and was skipped).
     existing: dict = {}
     if path.exists():
-        with contextlib.suppress(OSError, json.JSONDecodeError):
+        with contextlib.suppress(OSError, ValueError):
             loaded = json.loads(path.read_text())
             if isinstance(loaded, dict):
                 # Rewrite pre-rename keys so the merged file carries only
