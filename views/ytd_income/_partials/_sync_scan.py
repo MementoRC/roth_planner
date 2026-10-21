@@ -30,11 +30,15 @@ from engine.ira_statement_balance import (
     pick_latest_ira_records,
     to_ira_account_summary,
 )
+from engine.koinly_report_pdf import KoinlyReport
 from engine.netbenefits_statement_pdf import (
     NetBenefitsStatement,
     apply_netbenefits_statement,
     default_netbenefits_owner,
+    matching_403bs,
     pick_latest_netbenefits,
+    renamed_plan_candidates,
+    to_account_summary,
 )
 from engine.pdf_import import PdfImportResult
 from engine.pdf_ledger import (
@@ -181,6 +185,75 @@ def _warn_on_holder_name_mismatch(
     return True
 
 
+def _brokerage_owner(
+    rec: BrokerageStatementRecord,
+    account_overrides: dict[tuple[str, str], str],
+    instance_owner: str,
+    owner_map: dict[str, str],
+) -> str:
+    """Whose brokerage statement this is: an override, else the learned
+    holder name, else the instance owner -- the Koinly loop's order, so a
+    statement with no override lands on its named holder instead of the
+    instance owner (issue #38). The account number, never the
+    ``"<broker>:"`` dict key, is the override key."""
+    return resolve_account_owner(
+        rec.broker,
+        rec.account_number,
+        account_overrides,
+        instance_owner,
+        holder_key=rec.owner_key,
+        owner_map=owner_map,
+    )
+
+
+_LEGACY_KOINLY_KEY = "unknown"
+
+
+def _koinly_override_key(
+    report: KoinlyReport, account_overrides: dict[tuple[str, str], str]
+) -> str:
+    """The override key a Koinly report resolves under.
+
+    A nameless report's key is its own fingerprint, so an override can tell
+    two nameless reports apart (issue #38). Before that every nameless report
+    shared ``("koinly", "unknown")``; an override saved under that key (no
+    code path writes one, but a hand-edited store may hold it) still applies
+    to a nameless report with no override of its own, so upgrading never
+    re-attributes data.
+    """
+    key = report.override_key
+    if (
+        report.owner_key is None
+        and ("koinly", key) not in account_overrides
+        and ("koinly", _LEGACY_KOINLY_KEY) in account_overrides
+    ):
+        return _LEGACY_KOINLY_KEY
+    return key
+
+
+def _warn_on_brokerage_holder_mismatch(
+    rec: BrokerageStatementRecord,
+    account_overrides: dict[tuple[str, str], str],
+    instance_owner: str,
+    owner_map: dict[str, str],
+) -> bool:
+    """Record a mismatch when the holder name's learned owner differs from
+    the account's SET owner (its override, else this instance's default).
+
+    Compared against the set owner, not :func:`_brokerage_owner`'s answer:
+    that answer already follows the name, so comparing with it would never
+    warn and the user would lose the signal that an account with no
+    confirmed owner was filed by its holder name alone. Confirming either
+    way in the panel (learn the name, or save an override) clears it.
+    """
+    set_owner = resolve_account_owner(
+        rec.broker, rec.account_number, account_overrides, instance_owner
+    )
+    return _warn_on_holder_name_mismatch(
+        rec.owner_key, set_owner, owner_map, rec.account_number, (rec.broker, rec.account_number)
+    )
+
+
 def _render_holder_name_mismatches(instance_owner: str) -> None:
     """Persistent panel for every holder-name mismatch recorded by
     ``_warn_on_holder_name_mismatch``. Called on EVERY render (never nested
@@ -222,10 +295,20 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
             del mismatches[entry_id]
             continue
 
+        if (broker, account_key) in fresh_overrides:
+            filed = f"but this account is set to '{resolved_now}'"
+        elif broker == "koinly":
+            filed = f"but this instance attributes it to '{resolved_now}'"
+        else:
+            # Brokerage with no override: filed under the named holder
+            # (issue #38), which differs from this instance's default owner.
+            filed = (
+                f"so it was filed under '{named_now}', not this instance's "
+                f"default owner '{resolved_now}'"
+            )
         st.warning(
             f"Account {entry['account_label']}: holder name '{entry['owner_key']}' "
-            f"maps to '{named_now}' but this instance attributes it to "
-            f"'{resolved_now}'. Which is correct?"
+            f"maps to '{named_now}' {filed}. Which is correct?"
         )
         if st.button(f"Holder name is {resolved_now}", key=f"holder_mismatch_name_{entry_id}"):
             save_owner_map(learn_owner(entry["owner_key"], resolved_now, fresh_owner_map))
@@ -394,13 +477,8 @@ def _apply_scan_result(
         for rec in stmt_taxable_now.values():
             # rec.account_number, not the dict key: a second broker's
             # same-number account is keyed "<broker>:<number>".
-            account_number = rec.account_number
-            resolved = resolve_account_owner(
-                rec.broker, account_number, account_overrides, instance_owner
-            )
-            _warn_on_holder_name_mismatch(
-                rec.owner_key, resolved, owner_map, account_number, (rec.broker, account_number)
-            )
+            resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
+            _warn_on_brokerage_holder_mismatch(rec, account_overrides, instance_owner, owner_map)
             ledger = write_brokerage_contribution(ledger, resolved, rec)
 
         save_ledger(ledger)
@@ -423,9 +501,10 @@ def _apply_scan_result(
         from engine.koinly_report_pdf import save_koinly_report
 
         for report in result.koinly_reports:
+            override_key = _koinly_override_key(report, account_overrides)
             resolved = resolve_account_owner(
                 "koinly",
-                report.owner_key or "unknown",
+                override_key,
                 account_overrides,
                 instance_owner,
                 holder_key=report.owner_key,
@@ -436,7 +515,7 @@ def _apply_scan_result(
                 resolved,
                 owner_map,
                 f"Koinly {report.tax_year}",
-                ("koinly", report.owner_key or "unknown"),
+                ("koinly", override_key),
             )
             ledger = write_koinly_contribution(ledger, resolved, report)
 
@@ -1242,7 +1321,8 @@ def _render_netbenefits_review(
             key=f"netbenefits_owner_{qid}",
             horizontal=True,
         )
-        replaced = [a for a in snap.accounts if a.account_type == "403b" and a.owner == owner]
+        replaces = _render_renamed_plan_choice(snap, stmt, owner, qid)
+        replaced = matching_403bs(snap, to_account_summary(stmt, owner), replaces=replaces)
         if replaced:
             st.caption(
                 md_dollars(
@@ -1255,9 +1335,9 @@ def _render_netbenefits_review(
                 )
             )
         else:
-            st.caption("Adds a 403(b) account — none is on file for this person yet.")
+            st.caption("Adds a 403(b) account — no plan on file for this person matches it.")
 
-        preview = apply_netbenefits_statement(snap, stmt, owner)
+        preview = apply_netbenefits_statement(snap, stmt, owner, replaces=replaces)
         if preview.kept_newer is not None:
             st.warning(
                 f"403(b) ({owner}) kept: cache is {as_of_label(preview.kept_newer)}, newer than "
@@ -1269,7 +1349,7 @@ def _render_netbenefits_review(
             key=f"netbenefits_apply_{i}",
             disabled=not identity_set,
         ):
-            outcome = apply_netbenefits_statement(snap, stmt, owner, force=True)
+            outcome = apply_netbenefits_statement(snap, stmt, owner, force=True, replaces=replaces)
             if not _save_snapshot_or_report(outcome.snapshot):
                 continue
             st.session_state["portfolio_snapshot"] = outcome.snapshot
@@ -1289,6 +1369,35 @@ def _render_netbenefits_review(
             "Applying is unavailable until this planner instance has an "
             "owner — set it in **Review Changes**."
         )
+
+
+_SEPARATE_PLAN_LABEL = "No — it's a separate plan"
+
+
+def _render_renamed_plan_choice(
+    snap: PortfolioSnapshot, stmt: NetBenefitsStatement, owner: str, qid: str
+) -> str | None:
+    """Ask whether a statement matching no plan on file renames one of them.
+
+    NetBenefits prints no plan or account number, so a plan renamed between
+    statements looks like a new plan and would sit beside the old one as a
+    double count (issue #38). Only the user can tell, so this asks, and the
+    default is "separate plan": a wrong replace loses a plan, a wrong add is a
+    visible double count. Returns the chosen plan's name, or ``None``.
+    """
+    candidates = renamed_plan_candidates(snap, to_account_summary(stmt, owner))
+    if not candidates:
+        return None
+    names = [a.account_name for a in candidates]
+    cand_sig = hashlib.sha256(repr(names).encode()).hexdigest()[:8]
+    chosen = st.selectbox(
+        "Is this a renamed plan already on file?",
+        [None, *names],
+        index=0,
+        format_func=lambda n: _SEPARATE_PLAN_LABEL if n is None else n,
+        key=f"netbenefits_renamed_{qid}_{owner}_{cand_sig}",
+    )
+    return chosen if isinstance(chosen, str) else None
 
 
 _NO_LINK_LABEL = "None — it's a separate account"
@@ -1613,9 +1722,7 @@ def _render_scan_review(
             )
         off_year = off_year_statement_note(
             rec,
-            resolve_account_owner(
-                rec.broker, rec.account_number, account_overrides, instance_owner
-            ),
+            _brokerage_owner(rec, account_overrides, instance_owner, owner_map),
             st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year,
         )
         if off_year:
@@ -1685,9 +1792,7 @@ def _render_scan_review(
         for rec in stmt_taxable.values():
             note = off_year_statement_note(
                 rec,
-                resolve_account_owner(
-                    rec.broker, rec.account_number, account_overrides, instance_owner
-                ),
+                _brokerage_owner(rec, account_overrides, instance_owner, owner_map),
                 snap_year,
             )
             if note:
@@ -1713,16 +1818,9 @@ def _render_scan_review(
         ):
             _apply_had_mismatch = False
             for rec in stmt_taxable.values():
-                account_number = rec.account_number  # never the "<broker>:" key
-                resolved = resolve_account_owner(
-                    rec.broker, account_number, account_overrides, instance_owner
-                )
-                if _warn_on_holder_name_mismatch(
-                    rec.owner_key,
-                    resolved,
-                    owner_map,
-                    account_number,
-                    (rec.broker, account_number),
+                resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
+                if _warn_on_brokerage_holder_mismatch(
+                    rec, account_overrides, instance_owner, owner_map
                 ):
                     _apply_had_mismatch = True
                 ledger = write_brokerage_contribution(ledger, resolved, rec)

@@ -73,10 +73,11 @@ class TestIsNewerOrEqual:
 
 
 class TestAccountKey:
-    def test_403b_keys_ignore_account_name(self) -> None:
+    def test_403b_keys_include_the_plan_name(self) -> None:
+        # Issue #38: one owner's two plans must not share a key.
         a = _acct("403b", "spouse", "Acme Corp 403(b) Plan")
         b = _acct("403b", "spouse", "FIDELITY NETBENEFITS X123")
-        assert account_key(a) == account_key(b)
+        assert account_key(a) != account_key(b)
 
     def test_403b_keys_differ_by_owner(self) -> None:
         assert account_key(_acct("403b", "you")) != account_key(_acct("403b", "spouse"))

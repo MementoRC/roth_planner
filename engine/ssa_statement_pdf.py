@@ -50,15 +50,20 @@ class SsaStatement:
     fra_age: int  # whole years ("66 and 10 months" -> 66)
     estimates: dict[int, float] = field(default_factory=dict)  # claim age -> $/month
     fra_months: int = 0  # months past fra_age ("66 and 10 months" -> 10)
+    # The printed row for the exact FRA ("66 and 10 months $2,100"), if any.
+    fra_estimate: float | None = None
 
     @property
     def fra_monthly(self) -> float:
         """The benefit at full retirement age.
 
-        SSA prints whole-year rows only. When FRA is *fra_age* plus some
-        months, the *fra_age* row is a claim that many months EARLY (reduced
-        5/9 of 1% per month), so the FRA amount is derived by undoing that.
+        A printed exact-FRA row ("66 and 10 months $X") is used as is.
+        Otherwise, when FRA is *fra_age* plus some months, the whole-year
+        *fra_age* row is a claim that many months EARLY (reduced 5/9 of 1%
+        per month), so the FRA amount is derived by undoing that.
         """
+        if self.fra_estimate is not None:
+            return self.fra_estimate
         at_fra_age = self.estimates[self.fra_age]
         if not self.fra_months:
             return at_fra_age
@@ -79,7 +84,8 @@ def is_ssa_statement(text: str) -> bool:
 _DATE = r"(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}"
 _HEADER_RE = re.compile(rf"^Your Social Security Statement\n(?:(.+?)\s+)?({_DATE})$", re.MULTILINE)
 _FRA_RE = re.compile(r"Your full retirement age is (\d{2})\b(?: and (\d{1,2}) months?)?")
-_ESTIMATE_RE = re.compile(r"^(6[2-9]|70) \$([\d,]+)$", re.MULTILINE)
+# "67 $2,027" or, for a months-past-the-year FRA, "66 and 10 months $2,100".
+_ESTIMATE_RE = re.compile(r"^(6[2-9]|70)(?: and (\d{1,2}) months?)? \$([\d,]+)$", re.MULTILINE)
 
 _STALE_AFTER_DAYS = 365
 _EARLY_REDUCTION_PER_MONTH = 5 / 900  # 5/9 of 1% for each month claimed before FRA
@@ -101,11 +107,19 @@ def parse_ssa_statement_text(pages: Sequence[str]) -> SsaStatement:
     if fra is None:
         raise SsaStatementParseError("SSA statement: could not find the full retirement age.")
 
-    estimates: dict[int, float] = {}
-    for m in _ESTIMATE_RE.finditer(page_1):
-        estimates.setdefault(int(m.group(1)), float(m.group(2).replace(",", "")))
     fra_age = int(fra.group(1))
-    if fra_age not in estimates:
+    fra_months = int(fra.group(2) or 0)
+    estimates: dict[int, float] = {}
+    fra_estimate: float | None = None
+    for m in _ESTIMATE_RE.finditer(page_1):
+        age, months = int(m.group(1)), int(m.group(2) or 0)
+        amount = float(m.group(3).replace(",", ""))
+        if not months:
+            estimates.setdefault(age, amount)
+        elif (age, months) == (fra_age, fra_months) and fra_estimate is None:
+            fra_estimate = amount
+        # Any other "N and M months" row has no whole-year slot; it is skipped.
+    if fra_age not in estimates and fra_estimate is None:
         raise SsaStatementParseError(
             f"SSA statement: could not find the benefit estimate at age {fra_age}."
         )
@@ -116,7 +130,8 @@ def parse_ssa_statement_text(pages: Sequence[str]) -> SsaStatement:
         statement_date=datetime.strptime(header.group(2), "%B %d, %Y").date().isoformat(),
         fra_age=fra_age,
         estimates=estimates,
-        fra_months=int(fra.group(2) or 0),
+        fra_months=fra_months,
+        fra_estimate=fra_estimate,
     )
 
 
@@ -212,9 +227,14 @@ def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement, *, path: Path | None 
         "statement_date": stmt.statement_date,
         "fra_age": stmt.fra_age,
         "fra_months": stmt.fra_months,
+        "fra_estimate": stmt.fra_estimate,
         "estimates": {str(age): amount for age, amount in stmt.estimates.items()},
     }
     write_pii_json(target, existing)
+
+
+def _optional_float(value: object) -> float | None:
+    return None if value is None else float(str(value))
 
 
 def load_ssa_pdf_estimates(owner: str, *, path: Path | None = None) -> SsaStatement | None:
@@ -232,6 +252,7 @@ def load_ssa_pdf_estimates(owner: str, *, path: Path | None = None) -> SsaStatem
             fra_age=int(entry["fra_age"]),
             estimates={int(age): float(v) for age, v in entry["estimates"].items()},
             fra_months=int(entry.get("fra_months", 0)),
+            fra_estimate=_optional_float(entry.get("fra_estimate")),
         )
     except (json.JSONDecodeError, OSError, AttributeError, KeyError, TypeError, ValueError):
         return None

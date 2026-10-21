@@ -1408,6 +1408,17 @@ def load_account_type_overrides() -> dict[str, str]:
     return result
 
 
+def _sole_holder(
+    by_account: dict[str, BrokerageStatementRecord], rec: BrokerageStatementRecord
+) -> bool:
+    """True when no other broker in *by_account* holds *rec*'s account number."""
+    return all(
+        other.broker == rec.broker
+        for other in by_account.values()
+        if other.account_number == rec.account_number
+    )
+
+
 def apply_account_type_overrides(
     by_account: dict[str, BrokerageStatementRecord],
     overrides: dict[str, str],
@@ -1427,7 +1438,10 @@ def apply_account_type_overrides(
     result: dict[str, BrokerageStatementRecord] = {}
     for account_number, rec in by_account.items():
         override = overrides.get(_override_key(rec.broker, rec.account_number))
-        if override is None:  # legacy bare-number entry not yet migrated
+        if override is None and _sole_holder(by_account, rec):
+            # Legacy bare-number entry not yet migrated: it names no broker,
+            # so it applies only when no other broker's account here has the
+            # same number (issue #38); otherwise the user is asked again.
             override = overrides.get(rec.account_number)
         if override is not None and override not in ACCOUNT_TYPES:
             result[account_number] = rec

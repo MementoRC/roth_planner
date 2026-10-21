@@ -26,7 +26,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from engine.pdf_owner import resolve_owner
-from engine.portfolio_sync.as_of import is_newer_or_equal
+from engine.portfolio_sync.as_of import is_newer_or_equal, plan_identity
 from engine.portfolio_sync.shapes import AccountSummary, Holding, PortfolioSnapshot
 from models.ytd_income import iso_day
 
@@ -348,13 +348,24 @@ def parse_netbenefits_text(pages: Sequence[str]) -> NetBenefitsStatement:
 def pick_latest_netbenefits(
     statements: Iterable[NetBenefitsStatement],
 ) -> list[NetBenefitsStatement]:
-    """Keep the newest statement (by period end) per plan and holder."""
-    latest: dict[tuple[str, str | None], NetBenefitsStatement] = {}
+    """Keep the newest statement (by period end) per plan and named holder.
+
+    Statements with no printed holder name cannot be told apart -- two
+    participants of one plan would collapse -- so they are never merged:
+    each distinct one stays queued for the user to assign (as
+    ``pick_latest_ssa`` does, audit-1018 F-15).
+    """
+    latest: dict[tuple[str, str], NetBenefitsStatement] = {}
+    nameless: list[NetBenefitsStatement] = []
     for stmt in statements:
+        if stmt.owner_key is None:
+            if stmt not in nameless:
+                nameless.append(stmt)
+            continue
         key = (stmt.plan_name, stmt.owner_key)
         if key not in latest or stmt.period_end > latest[key].period_end:
             latest[key] = stmt
-    return list(latest.values())
+    return [*latest.values(), *nameless]
 
 
 def to_account_summary(stmt: NetBenefitsStatement, owner: str) -> AccountSummary:
@@ -392,25 +403,32 @@ def to_account_summary(stmt: NetBenefitsStatement, owner: str) -> AccountSummary
     return acct
 
 
-_PLAN_NOISE = re.compile(r"403\s*\(?b\)?|\bplan\b", re.IGNORECASE)
+def _owned_403bs(snap: PortfolioSnapshot, owner: str) -> list[AccountSummary]:
+    return [a for a in snap.accounts if a.account_type == "403b" and a.owner == owner]
 
 
-def _plan_id(name: str) -> str:
-    """Plan name reduced to its distinguishing words: ``"PLAN A 403B"`` and
-    ``"Plan A 403(b) Plan"`` both become ``"a"``."""
-    return " ".join(re.findall(r"[a-z0-9]+", _PLAN_NOISE.sub(" ", name.lower())))
-
-
-def matching_403bs(snap: PortfolioSnapshot, account: AccountSummary) -> list[AccountSummary]:
+def matching_403bs(
+    snap: PortfolioSnapshot, account: AccountSummary, *, replaces: str | None = None
+) -> list[AccountSummary]:
     """The owner's 403(b)s that *account* (one plan) replaces.
 
-    Those naming the same plan. Failing that, the owner's only 403(b) when it
-    is custodian-labelled (a FinExtract sync names it its own way, never by
-    plan); a statement-sourced 403(b) of another plan is never replaced, and
-    neither is any plan when the owner holds several unmatched ones.
+    *replaces* is the name of an owner's 403(b) the user said this plan is
+    (a plan renamed between statements -- NetBenefits prints no plan or
+    account number, so a rename cannot be recognized on its own); when it
+    names one on file, that is the match. Otherwise: those naming the same
+    plan. Failing that, the owner's only 403(b) when it is custodian-labelled
+    (a FinExtract sync names it its own way, never by plan); a
+    statement-sourced 403(b) of another plan is never replaced, and neither
+    is any plan when the owner holds several unmatched ones.
     """
-    owned = [a for a in snap.accounts if a.account_type == "403b" and a.owner == account.owner]
-    same_plan = [a for a in owned if _plan_id(a.account_name) == _plan_id(account.account_name)]
+    owned = _owned_403bs(snap, account.owner)
+    if replaces is not None:
+        chosen = [a for a in owned if a.account_name == replaces]
+        if chosen:
+            return chosen
+    same_plan = [
+        a for a in owned if plan_identity(a.account_name) == plan_identity(account.account_name)
+    ]
     if same_plan:
         return same_plan
     if len(owned) == 1 and (owned[0].as_of_source != "statement" or not owned[0].account_name):
@@ -418,18 +436,30 @@ def matching_403bs(snap: PortfolioSnapshot, account: AccountSummary) -> list[Acc
     return []
 
 
-def replace_owner_403b(
+def renamed_plan_candidates(
     snap: PortfolioSnapshot, account: AccountSummary
-) -> tuple[PortfolioSnapshot, list[AccountSummary]]:
-    """Return a copy of *snap* whose 403(b) for ``account.owner`` is *account*.
+) -> list[AccountSummary]:
+    """The owner's statement-sourced 403(b)s *account* might be a renamed
+    version of: only when nothing matches it outright (see
+    :func:`matching_403bs`). The user picks one, or none; it is never guessed."""
+    if matching_403bs(snap, account):
+        return []
+    return [a for a in _owned_403bs(snap, account.owner) if a.as_of_source == "statement"]
 
-    Only the plan *account* describes is removed and returned (see
-    ``matching_403bs``) so the caller can show what was replaced; the owner's
-    other 403(b) plans, other owners' accounts and every other account type
-    (the Rollover IRA, Roth, brokerage) are untouched. *snap* itself is not
-    modified.
+
+def replace_owner_403b(
+    snap: PortfolioSnapshot, account: AccountSummary, *, replaces: str | None = None
+) -> tuple[PortfolioSnapshot, list[AccountSummary]]:
+    """Return a copy of *snap* with *account* in place of the 403(b) plan it
+    describes for ``account.owner``.
+
+    Only the matching plan (see ``matching_403bs``; *replaces* names a
+    renamed plan) is removed and returned so the caller can show what was
+    replaced; the owner's other 403(b) plans, other owners' accounts and
+    every other account type (the Rollover IRA, Roth, brokerage) are
+    untouched. *snap* itself is not modified.
     """
-    replaced = matching_403bs(snap, account)
+    replaced = matching_403bs(snap, account, replaces=replaces)
     kept = [a for a in snap.accounts if not any(a is r for r in replaced)]
     return dataclasses.replace(snap, accounts=[*kept, account]), replaced
 
@@ -467,19 +497,25 @@ class NetBenefitsApplyOutcome:
 
 
 def apply_netbenefits_statement(
-    snap: PortfolioSnapshot, stmt: NetBenefitsStatement, owner: str, *, force: bool = False
+    snap: PortfolioSnapshot,
+    stmt: NetBenefitsStatement,
+    owner: str,
+    *,
+    force: bool = False,
+    replaces: str | None = None,
 ) -> NetBenefitsApplyOutcome:
     """Replace *owner*'s 403(b) in *snap* with *stmt* and total their pre-tax
     balance -- the value the ``your_ira``/``spouse_ira`` candidate carries.
 
-    Newer as-of wins: when the cached 403(b) for *owner* is dated after the
-    statement's period end, nothing is replaced and ``kept_newer`` is set,
-    unless ``force`` (the user's "Use anyway").
+    *replaces* names the plan on file this statement renames (see
+    ``matching_403bs``). Newer as-of wins: when the cached 403(b) for *owner*
+    is dated after the statement's period end, nothing is replaced and
+    ``kept_newer`` is set, unless ``force`` (the user's "Use anyway").
     """
     new_acct = to_account_summary(stmt, owner)
     detail = f"NetBenefits 403(b) PDF — {stmt.plan_name}, as of {stmt.period_end}"
     field_key = "your_ira" if owner == "you" else "spouse_ira"
-    cached = matching_403bs(snap, new_acct)
+    cached = matching_403bs(snap, new_acct, replaces=replaces)
     newest = max(cached, key=lambda a: a.as_of, default=None)
     if newest is not None and not force and not is_newer_or_equal(new_acct, newest):
         return NetBenefitsApplyOutcome(
@@ -491,7 +527,7 @@ def apply_netbenefits_statement(
             kept_newer=newest,
             new_account=new_acct,
         )
-    new_snap, replaced = replace_owner_403b(snap, new_acct)
+    new_snap, replaced = replace_owner_403b(snap, new_acct, replaces=replaces)
     return NetBenefitsApplyOutcome(
         snapshot=new_snap,
         replaced=replaced,

@@ -44,7 +44,7 @@ from engine.instance_identity import (
     load_instance_owner,
     save_instance_owner,
 )
-from engine.pdf_owner import OwnerRole
+from engine.pdf_owner import OwnerRole, load_owner_map
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
@@ -83,6 +83,11 @@ def _render_attribution_table(instance_owner: str) -> None:
     if not by_account:
         return
     overrides = load_account_overrides()
+    # The same owner the scan writes the ledger under (issue #38): override,
+    # then learned holder name, then the instance owner. Showing only
+    # override-or-instance would hide a learned owner and make picking the
+    # instance owner a no-op.
+    owner_map = load_owner_map()
     # Collapsed by default: this is correction UI, not primary flow. Expanded,
     # nine accounts is ~350px of selectboxes wedged between Command Center's
     # owner gate and the two import sections a first-time user actually came
@@ -99,7 +104,14 @@ def _render_attribution_table(instance_owner: str) -> None:
             "set by their source."
         )
         for account_number, rec in sorted(by_account.items()):
-            resolved = resolve_account_owner(rec.broker, account_number, overrides, instance_owner)
+            resolved = resolve_account_owner(
+                rec.broker,
+                account_number,
+                overrides,
+                instance_owner,
+                holder_key=rec.owner_key,
+                owner_map=owner_map,
+            )
             col_label, col_owner, col_clear = st.columns([3, 2, 1])
             col_label.caption(f"{account_number} ({rec.broker}, {rec.account_type})")
             choice = col_owner.selectbox(
