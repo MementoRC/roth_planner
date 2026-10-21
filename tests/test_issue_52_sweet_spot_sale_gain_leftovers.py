@@ -12,6 +12,8 @@ Synthetic households only. run_scenario is the oracle.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from engine.aca_irmaa_compute import _swept_federal_tax, compute_cost_curves
@@ -181,4 +183,39 @@ def test_sale_year_ltcg_delta_matches_conversion_ltcg_cost(conv: float) -> None:
     # The extra sale's own gain tax is in brokerage_gain_tax, not the attribution.
     gain_tax_delta = oracle.brokerage_gain_tax - zero.brokerage_gain_tax
     assert gain_tax_delta > oracle.conversion_ltcg_cost + 100.0
-    assert _priced(hh, conv).ltcg_delta == pytest.approx(oracle.conversion_ltcg_cost, abs=TOL)
+    priced = _priced(hh, conv)
+    assert priced.ltcg_delta == pytest.approx(oracle.conversion_ltcg_cost, abs=TOL)
+    # The rest of the change in brokerage_gain_tax is the forced sale's own
+    # gain tax, still a cost of converting and reported on its own component.
+    assert priced.sale_gain_tax == pytest.approx(
+        gain_tax_delta - oracle.conversion_ltcg_cost, abs=TOL
+    )
+
+
+def _year_cost(yr: YearResult) -> float:
+    """Every cost the all-in claims: federal tax (incl. the 10% penalty and any
+    ACA clawback), the brokerage-gain tax, NIIT, the ACA subsidy loss and IRMAA."""
+    return yr.federal_tax_amt + yr.brokerage_gain_tax + yr.niit_cost + yr.aca_loss + yr.irmaa_cost
+
+
+@pytest.mark.parametrize(
+    ("make_hh", "conv"),
+    [
+        (_big_sale_hh, 60_000.0),
+        (_big_sale_hh, 100_000.0),
+        (_big_sale_hh, 150_000.0),
+        (_slack_hh, 100_000.0),
+        (_slack_hh, 120_000.0),
+    ],
+)
+def test_sale_year_all_in_matches_run_scenario_total_cost(
+    make_hh: Callable[[], Household], conv: float
+) -> None:
+    # The true oracle: what converting adds to the year's whole tax bill. No
+    # IRMAA in these years (under 65, or MAGI below tier 1).
+    hh = make_hh()
+    zero = _scenario_year(hh, 0.0)
+    oracle = _scenario_year(hh, conv)
+    assert oracle.irmaa_cost == zero.irmaa_cost == 0.0
+    expected = _year_cost(oracle) - _year_cost(zero)
+    assert _priced(hh, conv).all_in == pytest.approx(expected, abs=TOL)

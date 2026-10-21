@@ -188,6 +188,10 @@ class ConversionResult:
     # but included in all_in.
     funding_draw_tax: float = 0.0
     penalty_tax: float = 0.0
+    # Issue #52: LTCG tax on the gain of the extra brokerage sale the
+    # conversion forces, stacked at the without-conversion start (in all_in;
+    # ltcg_delta + sale_gain_tax is the change in brokerage_gain_tax).
+    sale_gain_tax: float = 0.0
 
 
 @dataclass
@@ -219,6 +223,8 @@ class MarginalCosts:
     marginal_ltcg: list[float]
     marginal_funding_draw: list[float]
     marginal_penalty: list[float]
+    # Issue #52: tax on the gain of the extra brokerage sale (part of marginals).
+    marginal_sale_gain_tax: list[float]
 
 
 @dataclass
@@ -905,8 +911,9 @@ def all_in_at_conversion(
     the extra brokerage sale its tax forces (sweet_spot_draw_curve). It joins
     the with-conversion side only, as preferential income: MAGI, provisional
     income, NIIT MAGI, net investment income and the LTCG stack, never the
-    ordinary bracket base. Issue #52: the LTCG stack is the exception -- both
-    sides stack it, matching run_scenario's conversion_ltcg_cost.
+    ordinary bracket base. Issue #52: in the LTCG stack both sides carry it, so
+    ltcg_delta matches run_scenario's conversion_ltcg_cost; the gain's own tax
+    is reported on sale_gain_tax (in all_in).
     """
     ya, sa = base.ya, base.sa
     year: int = base.year
@@ -1062,18 +1069,22 @@ def all_in_at_conversion(
         unused_deduction=max(0.0, total_ded - gross),
     )
     # Issue #52: extra_gain is restacked at the without-conversion start too, as
-    # run_scenario's conversion_ltcg_cost restacks the SAME ltcg_eligible: the
-    # delta is the conversion's bracket-stacking cost, not the extra sale's own
-    # gain tax (that stays in brokerage_gain_tax, outside all_in_cost).
+    # run_scenario's conversion_ltcg_cost restacks the SAME ltcg_eligible, so
+    # ltcg_delta is the conversion's bracket-stacking cost. The extra sale's own
+    # gain tax at that start is sale_gain_tax; both are costs of converting and
+    # together equal the change in run_scenario's brokerage_gain_tax.
+    _base_unused = max(0.0, base_total_ded - base_gross)
     ltcg_without = _ltcg_stack_tax(
-        base_taxable,
-        ltcg_eligible + extra_gain,
-        _ltcg_thr,
-        unused_deduction=max(0.0, base_total_ded - base_gross),
+        base_taxable, ltcg_eligible + extra_gain, _ltcg_thr, _base_unused
     )
     ltcg_delta = ltcg_with - ltcg_without
+    sale_gain_tax = (
+        ltcg_without - _ltcg_stack_tax(base_taxable, ltcg_eligible, _ltcg_thr, _base_unused)
+        if extra_gain > 0.0
+        else 0.0
+    )
 
-    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta + ltcg_delta
+    all_in = conv_tax + irmaa_delta + aca_loss + niit_delta + ltcg_delta + sale_gain_tax
 
     return ConversionResult(
         conv=conv,
@@ -1083,6 +1094,7 @@ def all_in_at_conversion(
         niit_delta=niit_delta,
         ltcg_delta=ltcg_delta,
         all_in=all_in,
+        sale_gain_tax=sale_gain_tax,
         magi=magi,
         niit_magi=niit_magi,
         taxable_inc=taxable_inc,
@@ -1212,6 +1224,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
     marginal_ltcg = [0.0]
     marginal_funding = [0.0]
     marginal_penalty = [0.0]
+    marginal_sale_gain = [0.0]
 
     def _own_tax(r: ConversionResult) -> float:
         return r.conv_tax - r.funding_draw_tax
@@ -1227,6 +1240,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
         marginal_aca.append((cur.aca_loss - prev.aca_loss) / STEP * 1000)
         marginal_niit.append((cur.niit_delta - prev.niit_delta) / STEP * 1000)
         marginal_ltcg.append((cur.ltcg_delta - prev.ltcg_delta) / STEP * 1000)
+        marginal_sale_gain.append((cur.sale_gain_tax - prev.sale_gain_tax) / STEP * 1000)
 
     return MarginalCosts(
         marginals=marginals,
@@ -1237,6 +1251,7 @@ def compute_marginal_costs(results: list[ConversionResult]) -> MarginalCosts:
         marginal_ltcg=marginal_ltcg,
         marginal_funding_draw=marginal_funding,
         marginal_penalty=marginal_penalty,
+        marginal_sale_gain_tax=marginal_sale_gain,
     )
 
 
