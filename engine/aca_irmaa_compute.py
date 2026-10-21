@@ -25,7 +25,7 @@ from engine.scenario_types import YearResult
 from engine.sweet_spot_compute import (
     _ltcg_stack_tax,
     base_income_for_year,
-    estimate_ltcg_eligible,
+    sweet_spot_ltcg_eligible,
     zero_conversion_sale_gains,
     zero_conversion_years,
 )
@@ -305,8 +305,15 @@ def compute_cost_curves(
     investment income, if `ytd` is supplied) before every NIIT computation below.
     Pre-fix, this function fed the raw manual value only, under-counting NIIT
     whenever the household has forecast brokerage income or opted-in YTD actuals.
+
+    Issue #52: the base carries the zero-conversion waterfall's brokerage-sale
+    gain, so the LTCG stack (:func:`sweet_spot_ltcg_eligible`) and the auto NII
+    are the ones Sweet Spot uses.
     """
-    auto_nii = base_income_for_year(hh, year, ytd=ytd).net_investment_income_addl
+    zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+    _, sale_gain = _zero_conversion_adds(hh, zero_years, year)
+    year_base = base_income_for_year(hh, year, ytd=ytd, sale_gain=sale_gain)
+    auto_nii = year_base.net_investment_income_addl
     total_nii = net_inv_income + auto_nii
     _your_on_aca = aca_applies(hh.your_age_in(year), hh.your_aca_enrolled)
     _spouse_on_aca = aca_applies(hh.spouse_age_in(year), hh.spouse_aca_enrolled)
@@ -371,7 +378,7 @@ def compute_cost_curves(
         if anyone_on_aca and not hh.aca_enhanced_subsidies_active
         else None
     )
-    _preferential = estimate_ltcg_eligible(hh, year, ytd=ytd)
+    _preferential = sweet_spot_ltcg_eligible(hh, year_base, ytd)
 
     # IRMAA 2-year lookback: income realized in `year` is judged against the
     # thresholds published for, and paid in, year + 2. ACA (below) stays on `year`

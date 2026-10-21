@@ -291,6 +291,18 @@ def render(hh: Household) -> None:
                 hovertemplate="LTCG Stacking: $%{y:.0f} per $1K<extra></extra>",
             )
         )
+    # Issue #52: tax on the gain of the extra brokerage sale the conversion forces.
+    if any(v > 0 for v in marginal_data.marginal_sale_gain_tax):
+        fig_m.add_trace(
+            go.Scatter(
+                x=convs,
+                y=marginal_data.marginal_sale_gain_tax,
+                name="Forced-Sale Gain Tax",
+                stackgroup="one",
+                line={"color": "#0e7490"},
+                hovertemplate="Forced-Sale Gain Tax: $%{y:.0f} per $1K<extra></extra>",
+            )
+        )
 
     # Add bracket boundary lines
     # Issue #4: the 12% / 22% lines sit at the cards' fills (draw-aware in a
@@ -527,6 +539,16 @@ def render(hh: Household) -> None:
                 name="LTCG Stacking",
                 stackgroup="one",
                 line={"color": "#06b6d4"},
+            )
+        )
+    if any(r.sale_gain_tax > 0 for r in results):
+        fig_c.add_trace(
+            go.Scatter(
+                x=convs,
+                y=[r.sale_gain_tax for r in results],
+                name="Forced-Sale Gain Tax",
+                stackgroup="one",
+                line={"color": "#0e7490"},
             )
         )
     if any(r.penalty_tax > 0 for r in results):
