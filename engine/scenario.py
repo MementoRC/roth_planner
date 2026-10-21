@@ -128,8 +128,13 @@ def _project_year(
     waterfall_baseline_magi: float | None = None,
     waterfall_baseline_aca_magi: float | None = None,
     waterfall_baseline_taxable: float | None = None,
+    irmaa_fallback_magi: float | None = None,
 ) -> _YearOutcome:
     """Compute a single projection year — verbatim extraction of the run_scenario loop body.
+
+    `irmaa_fallback_magi` (issue #54): the MAGI IRMAA reads when the year has no
+    lookback MAGI -- the year's zero-conversion MAGI, see
+    :func:`_irmaa_fallback_magi`. None falls back to this year's own MAGI.
 
     `magi_history` and `inherited_balances` are mutated in place, exactly as
     they were when this code lived inline in the run_scenario loop.
@@ -777,7 +782,9 @@ def _project_year(
         # Fallback: lookback year predates the projection window and no anchor provided.
         # Use this year's projected MAGI as a same-year approximation
         # (only reached for yr_idx < 2 when prior_year_magi is empty).
-        magi_for_irmaa = yr.magi
+        # Issue #54: in a conversion year it is the ZERO-conversion MAGI, so a
+        # conversion's IRMAA lands only at Y+2 (via magi_history), not in Y too.
+        magi_for_irmaa = irmaa_fallback_magi if irmaa_fallback_magi is not None else yr.magi
     # irmaa_for_year() adds +2 internally for the 2-year MAGI lookback;
     # pass income-year ages (ya - 2, sa - 2) so Medicare-year ages come out correctly.
     # H1 fix: in survivor years, map the survivor's age into the primary slot that
@@ -1396,6 +1403,7 @@ def _solve_waterfall_year(
     magi_history: dict[int, float],
     inherited_balances: list[float],
     baseline: _YearOutcome,
+    irmaa_fallback_magi: float | None = None,
 ) -> _YearOutcome:
     """Solve the IRA-withdrawal waterfall for a shortfall year and re-run
     `_project_year` once more with the solved draws (stage 3b activation).
@@ -1451,6 +1459,7 @@ def _solve_waterfall_year(
             list(inherited_balances),
             brokerage_basis=brokerage_basis,
             conversion_cap=conversion_cap,
+            irmaa_fallback_magi=irmaa_fallback_magi,
         )
 
     def _solve_draw(nd: _YearOutcome, conversion_cap: float | None) -> WaterfallDraw:
@@ -1513,6 +1522,7 @@ def _solve_waterfall_year(
                 forced_your_ira_draw=your_probe,
                 forced_spouse_ira_draw=spouse_probe,
                 conversion_cap=conversion_cap,
+                irmaa_fallback_magi=irmaa_fallback_magi,
             )
             # audit-1008 F-15: NIIT is now a cash outflow too, so a draw that
             # raises MAGI past the §1411 threshold is grossed up for it.
@@ -1563,6 +1573,7 @@ def _solve_waterfall_year(
                 forced_spouse_roth_draw=d.roth_draw - your_roth_draw,
                 forced_early_withdrawal_penalty=d.early_withdrawal_penalty,
                 conversion_cap=conversion_cap,
+                irmaa_fallback_magi=irmaa_fallback_magi,
             )
             raised = d.brokerage_draw + d.your_ira_draw + d.spouse_ira_draw + d.roth_draw
             return check.yr.income_needed - raised - d.unfunded
@@ -1682,6 +1693,7 @@ def _solve_waterfall_year(
             forced_spouse_roth_draw=_pr_spouse_roth,
             forced_early_withdrawal_penalty=_pdraw.early_withdrawal_penalty,
             conversion_cap=conversion_cap,
+            irmaa_fallback_magi=irmaa_fallback_magi,
         )
         return _magi_for_strategy(strategy, _probe)
 
@@ -1763,6 +1775,7 @@ def _solve_waterfall_year(
             forced_spouse_roth_draw=_zc_spouse_roth_draw,
             forced_early_withdrawal_penalty=zero_conv_draw.early_withdrawal_penalty,
             conversion_cap=0.0,
+            irmaa_fallback_magi=irmaa_fallback_magi,
         )
         waterfall_baseline_tax = zero_conv_outcome.yr.federal_tax_amt
         waterfall_baseline_magi = zero_conv_outcome.yr.magi
@@ -1877,6 +1890,7 @@ def _solve_waterfall_year(
         waterfall_baseline_magi=waterfall_baseline_magi,
         waterfall_baseline_aca_magi=waterfall_baseline_aca_magi,
         waterfall_baseline_taxable=waterfall_baseline_taxable,
+        irmaa_fallback_magi=irmaa_fallback_magi,
     )
     # The solver's own residual/convergence flag is authoritative -- it
     # accounts for the brokerage + IRA + Roth allocation as a whole, which
@@ -2096,6 +2110,7 @@ def project_year_step(
     """
     cpi = hh.cpi_assumption
     surv: SurvivorScenario | None = hh.survivor
+    irmaa_fallback = _irmaa_fallback_magi(yr_idx, hh, plan, ytd, net_inv_income, state)
     inherited_balances = state.inherited_balances
     magi_history = state.magi_history
     # IRA-withdrawal-waterfall (stage 3b): baseline call with every hook
@@ -2123,6 +2138,7 @@ def project_year_step(
         magi_history,
         _inherited_baseline,
         brokerage_basis=state.brokerage_basis,
+        irmaa_fallback_magi=irmaa_fallback,
     )
     if outcome.yr.income_needed > 0:
         outcome = _solve_waterfall_year(
@@ -2145,6 +2161,7 @@ def project_year_step(
             magi_history,
             inherited_balances,
             outcome,
+            irmaa_fallback,
         )
     else:
         inherited_balances[:] = _inherited_baseline
@@ -2207,6 +2224,7 @@ def project_year_with_draw(
     if draw is None:
         draw = WaterfallDraw(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, True)
     your_roth_draw = min(draw.roth_draw, state.your_roth)
+    irmaa_fallback = _irmaa_fallback_magi(yr_idx, hh, plan, ytd, net_inv_income, state)
     return _project_year(
         yr_idx,
         hh,
@@ -2232,7 +2250,40 @@ def project_year_with_draw(
         forced_your_roth_draw=your_roth_draw,
         forced_spouse_roth_draw=draw.roth_draw - your_roth_draw,
         forced_early_withdrawal_penalty=draw.early_withdrawal_penalty,
+        irmaa_fallback_magi=irmaa_fallback,
     )
+
+
+def _irmaa_fallback_magi(
+    yr_idx: int,
+    hh: Household,
+    plan: ConversionPlan,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    state: ProjectionState,
+) -> float | None:
+    """Issue #54: the MAGI a year with no lookback MAGI prices its IRMAA on.
+
+    None when real lookback MAGI exists (prior_year_magi or magi_history for
+    Y-2) or the plan converts nothing this year; the year's own MAGI is then
+    the estimate, as before. Otherwise the year's ZERO-conversion MAGI --
+    excluding the conversion and the draw/sale it forces -- from the same
+    per-year solve on an isolated copy of ``state``, so a conversion's IRMAA
+    lands only at Y+2 (through magi_history), never in Y as well.
+    """
+    year = hh.base_year + yr_idx
+    income_year = year - 2
+    if income_year in hh.prior_year_magi or income_year in state.magi_history:
+        return None
+    if plan.your_conversions.get(year, 0.0) + plan.spouse_conversions.get(year, 0.0) <= 0.0:
+        return None
+    zero_plan = dataclasses.replace(
+        plan,
+        your_conversions={**plan.your_conversions, year: 0.0},
+        spouse_conversions={**plan.spouse_conversions, year: 0.0},
+    )
+    zero = project_year_step(yr_idx, hh, zero_plan, ytd, net_inv_income, state.copy())
+    return zero.yr.magi
 
 
 def run_no_conversion(
