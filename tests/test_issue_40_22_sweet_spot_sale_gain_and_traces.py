@@ -129,14 +129,15 @@ def test_sale_year_curve_prices_the_gain_as_preferential() -> None:
     assert aware.conv_tax == pytest.approx(blind.conv_tax, abs=0.01)
 
 
-def test_sale_year_ltcg_delta_matches_run_scenario_gain_tax() -> None:
+def test_sale_year_ltcg_delta_matches_run_scenario_ltcg_cost() -> None:
+    # Issue #52: the oracle is conversion_ltcg_cost (here equal to the change in
+    # brokerage_gain_tax, as the zero-conversion stack sits in the 0% band).
     hh = _sale_hh()
     base = _setup(hh)[2]
     le = sweet_spot_ltcg_eligible(hh, base, None)
     conv = 150_000.0
     aware = _sweep(hh, [0.0, conv], le)[1]
-    with_conv = _scenario_year(hh, conv).brokerage_gain_tax
-    oracle = with_conv - _scenario_year(hh, 0.0).brokerage_gain_tax
+    oracle = _scenario_year(hh, conv).conversion_ltcg_cost
     assert oracle > 0.0
     assert aware.ltcg_delta == pytest.approx(oracle, abs=25.0)
 
