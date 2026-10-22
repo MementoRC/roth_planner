@@ -99,6 +99,17 @@ class TestStatementPdfs:
         assert rec.owner_key == "Pat Example"
         assert rec.missing_fields == ()
 
+    def test_vanguard_roth_ira_second_account(self) -> None:
+        rec = _broker_record("vanguard_roth_ira_acct2_2026q2.pdf")
+        assert (rec.broker, rec.account_type, rec.account_number) == (
+            "vanguard",
+            "roth_ira",
+            "XXXX0002",
+        )
+        assert rec.ending_value == 50_000.00
+        assert rec.owner_key == "Pat Example"
+        assert rec.missing_fields == ()
+
     def test_fidelity_traditional_ira(self) -> None:
         rec = _broker_record("fidelity_traditional_ira_2026q2.pdf")
         assert (rec.broker, rec.account_type, rec.account_number) == (
@@ -145,6 +156,13 @@ class TestStatementPdfs:
         assert sum(h.value for h in stmt.holdings) == pytest.approx(100_000.00)
         assert sum(stmt.source_balances.values()) == pytest.approx(100_000.00)
 
+    def test_netbenefits_403b_renamed(self) -> None:
+        [stmt] = _scan("netbenefits_403b_renamed_2026h1.pdf").netbenefits_statements
+        assert stmt.owner_key == "SAM EXAMPLE"
+        assert stmt.plan_name == "Example State University 403b"
+        assert stmt.ending_balance == pytest.approx(100_000.00)
+        assert stmt.warnings == []
+
     def test_ssa_statement(self) -> None:
         [stmt] = _scan("ssa_statement_2026.pdf").ssa_statements
         assert stmt.owner_key == "PAT EXAMPLE"
@@ -164,6 +182,8 @@ class TestStatementPdfs:
         ("name", "kind"),
         [
             ("vanguard_roth_ira_2026q2.pdf", DocKind.BROKERAGE),
+            ("vanguard_roth_ira_acct2_2026q2.pdf", DocKind.BROKERAGE),
+            ("netbenefits_403b_renamed_2026h1.pdf", DocKind.NETBENEFITS),
             ("fidelity_traditional_ira_2026q2.pdf", DocKind.BROKERAGE),
             ("ibkr_traditional_ira_2026q2.pdf", DocKind.BROKERAGE),
             ("fidelity_taxable_2025.pdf", DocKind.BROKERAGE),
