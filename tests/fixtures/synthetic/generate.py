@@ -128,6 +128,10 @@ June $300.00 $0.00 $0.00 $0.00 $0.00 $0.00
 Year-to-date 600.00 0.00 0.00 0.00 0.00 0.00""",
 ]
 
+# A second Pat account (XXXX0002); same holder name, so it picks up the owner
+# learned from the first.
+VANGUARD_ROTH_IRA_ACCT2 = [p.replace("XXXX0001", "XXXX0002") for p in VANGUARD_ROTH_IRA]
+
 FIDELITY_TRADITIONAL_IRA = [
     """1 FIDELITY ROLLOVER IRA PAT EXAMPLE - ROLLOVER IRA - FIDELITY 999-000001 $396,000.00 $400,000.00
 INVESTMENT REPORT
@@ -246,6 +250,12 @@ Dividends & Interest $1,000.00
 {_NB_FOOTER.format(n=3)}""",
 ]
 
+# The same plan under a new name, so a second statement for the same person
+# raises the "Is this a renamed plan already on file?" prompt (#38).
+NETBENEFITS_403B_RENAMED = [
+    p.replace("Example College 403b", "Example State University 403b") for p in NETBENEFITS_403B
+]
+
 SSA_STATEMENT = [
     """Your Social Security Statement
 PAT EXAMPLE March 2, 2026
@@ -328,7 +338,9 @@ PDF_FIXTURES: dict[str, list[str]] = {
     "vanguard_roth_ira_2026q2.pdf": VANGUARD_ROTH_IRA,
     "fidelity_traditional_ira_2026q2.pdf": FIDELITY_TRADITIONAL_IRA,
     "ibkr_traditional_ira_2026q2.pdf": IBKR_TRADITIONAL_IRA,
+    "vanguard_roth_ira_acct2_2026q2.pdf": VANGUARD_ROTH_IRA_ACCT2,
     "netbenefits_403b_2026h1.pdf": NETBENEFITS_403B,
+    "netbenefits_403b_renamed_2026h1.pdf": NETBENEFITS_403B_RENAMED,
     "ssa_statement_2026.pdf": SSA_STATEMENT,
     "form_1040_2025.pdf": FORM_1040_2025,
 }

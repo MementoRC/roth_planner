@@ -28,10 +28,12 @@ bundle.
 | File | What it is | Parsed as |
 |---|---|---|
 | `vanguard_roth_ira_2026q2.pdf` | Vanguard Roth IRA, Pat | roth_ira, $50,000 ending value |
+| `vanguard_roth_ira_acct2_2026q2.pdf` | second Vanguard Roth IRA, Pat, account XXXX0002 | roth_ira, $50,000 |
 | `fidelity_traditional_ira_2026q2.pdf` | Fidelity Rollover IRA, Pat | traditional_ira, $400,000 |
 | `ibkr_traditional_ira_2026q2.pdf` | IBKR Rollover IRA, Pat | traditional_ira, $100,000 |
 | `fidelity_taxable_2025.pdf` | Fidelity taxable account, Pat, period ends 2025-12-31 | taxable, dividends $3,000 (prior year) |
 | `netbenefits_403b_2026h1.pdf` | NetBenefits 403(b), Sam | 403(b), $100,000 |
+| `netbenefits_403b_renamed_2026h1.pdf` | the 403(b) above under a new plan name | 403(b), $100,000, "Example State University 403b" |
 | `ssa_statement_2026.pdf` | SSA statement, Pat | FRA 67, $2,000/mo at FRA |
 | `form_1040_2025.pdf` | 2025 Form 1040 | AGI $150,000, MAGI $151,000 |
 | `synthetic_backup_v5.json` | v5 backup, plaintext | 4 accounts, 2 ACME grants, YTD |
@@ -60,7 +62,8 @@ identity to **Me**.
    - Expect: **Apply to YTD snapshot** leaves interest and dividends at 0.
 
 1. **Import Statements queue** (📥 Import Statements). Upload the six
-   2026/2025 statement PDFs at once (all but `fidelity_taxable_2025.pdf`).
+   2026/2025 statement PDFs at once (all but `fidelity_taxable_2025.pdf` and
+   the two `*_acct2`/`*_renamed` copies).
    - Expect: the queue lists the SSA statement, the NetBenefits 403(b), the
      2025 1040 and three IRA statements, with nothing unrecognised and no
      errors.
@@ -110,3 +113,23 @@ identity to **Me**.
    - Expect: the grid re-seeds with two lots: 2019 · $50 · 1,000 sh and
      2020 · $60 · 2,000 sh. Neither row should be the demo grants, and no
      cell should be stuck at 0 from the previous layout.
+6. **Renamed 403(b) prompt** (#38). Fresh session. Upload
+   `netbenefits_403b_2026h1.pdf`, scan, choose "spouse", **Apply 403(b)
+   balance**. Then upload `netbenefits_403b_renamed_2026h1.pdf`, scan, choose
+   "spouse".
+   - Expect: "Is this a renamed plan already on file?" with "No — it's a
+     separate plan" (default) and "Example College 403b".
+   - Expect: picking "Example College 403b" changes the caption to "Replaces:
+     Example College 403b $100,000 (as of 2026-06-30 · statement)".
+7. **Holder-name mismatch** (#38). Fresh session, identity **Me**. Upload
+   `vanguard_roth_ira_2026q2.pdf`, scan, choose "spouse", **Apply IRA
+   balance** (this learns "Pat Example" → spouse).
+   - Expect: scanning `vanguard_roth_ira_acct2_2026q2.pdf` pre-selects
+     "spouse" on its IRA card. IRA cards never show the mismatch warning.
+   - Upload `fidelity_taxable_2025.pdf`, scan, tick "Use Z12-345678 anyway",
+     **Apply to YTD snapshot**.
+   - Expect: "Account Z12-345678: holder name 'PAT EXAMPLE' maps to 'spouse'
+     so it was filed under 'spouse', not this instance's default owner 'you'.
+     Which is correct?" with buttons "Holder name is you" and "Account is
+     actually spouse"; the latter clears it.
+   - Steps 6-7 browser-verified 2026-10-22 on a local stlite build.
