@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from engine.store.backend import Backend, Row
-from engine.store.errors import CorruptStoreError, StoreError
+from engine.store.errors import CorruptStoreError, StoreError, StoreUnavailableError
 
 META_NAMESPACE = "_meta"
 SINGLE_KEY = "_"
@@ -137,7 +137,16 @@ class Store:
             value = _read(namespace, key, row)
             if row.schema_version == namespace_spec(namespace).version:
                 return value
-            return self._upgrade_in_place(namespace, key)
+            inside_outer = self._depth > 0
+            try:
+                return self._upgrade_in_place(namespace, key)
+            except StoreUnavailableError:
+                # A read must not fail just because its write-back cannot run (locked or
+                # read-only DB): return the upgraded value without persisting it. But inside
+                # an outer transaction the failure belongs to that transaction, so re-raise.
+                if inside_outer:
+                    raise
+                return _upgrade(namespace, key, row, value)
 
     def _upgrade_in_place(self, namespace: str, key: str) -> Any:
         """Read, upgrade and write back one row in a single transaction."""

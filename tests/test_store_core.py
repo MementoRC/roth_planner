@@ -149,6 +149,38 @@ def test_upgraders_run_on_read_and_write_back(mem_store):
     assert json.loads(row.payload) == {"b": 4, "c": 40}
 
 
+class _PutFails(DictBackend):
+    armed = False
+
+    def put(self, namespace: str, key: str, row: Row) -> None:
+        if self.armed:
+            raise StoreUnavailableError("test", "database is locked")
+        super().put(namespace, key, row)
+
+
+def _old_version_store() -> tuple[Store, _PutFails]:
+    backend = _PutFails()
+    store = Store(backend)
+    register_namespace("ns", version=2, upgraders={1: lambda v: v + 1})
+    _raw(store, "ns", "1", version=1)
+    backend.armed = True
+    return store, backend
+
+
+def test_read_survives_a_failing_upgrade_write_back():
+    store, backend = _old_version_store()
+    assert store.get("ns") == 2
+    row = backend.get("ns", SINGLE_KEY)
+    assert row is not None
+    assert (row.payload, row.schema_version) == ("1", 1)
+
+
+def test_failing_upgrade_write_back_inside_an_outer_transaction_propagates():
+    store, _ = _old_version_store()
+    with pytest.raises(StoreUnavailableError), store.transaction():
+        store.get("ns")
+
+
 class _TracingBackend(DictBackend):
     def __init__(self) -> None:
         super().__init__()
