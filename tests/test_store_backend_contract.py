@@ -7,16 +7,21 @@ from collections.abc import Iterator
 import pytest
 
 from engine.store.backend import Backend, DictBackend, Row
+from engine.store.sqlite_backend import MEMORY, SqliteBackend
 
 ROW_A = Row('{"a": 1}', 1, "2026-01-01T00:00:00+00:00")
 ROW_B = Row('{"b": 2}', 1, "2026-01-02T00:00:00+00:00")
 
-BACKEND_KINDS = ["dict"]
+BACKEND_KINDS = ["dict", "sqlite-memory", "sqlite-file"]
 
 
 def _make(kind: str, tmp_path) -> Backend:
     if kind == "dict":
         return DictBackend()
+    if kind == "sqlite-memory":
+        return SqliteBackend(MEMORY)
+    if kind == "sqlite-file":
+        return SqliteBackend(tmp_path / "contract.db")
     raise AssertionError(kind)
 
 
