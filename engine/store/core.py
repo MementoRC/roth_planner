@@ -46,11 +46,17 @@ def register_namespace(
     """Declare *name*'s schema *version*; ``upgraders[v]`` turns a v payload into v+1."""
     if name == META_NAMESPACE:
         raise ValueError(f"{META_NAMESPACE!r} is reserved for store bookkeeping")
+    if version < 1:
+        raise ValueError(f"{name}: version must be >= 1, got {version}")
     steps = dict(upgraders or {})
     missing = [v for v in range(1, version) if v not in steps]
     if missing:
         raise ValueError(f"{name}: no upgrader from version(s) {missing}")
-    _NAMESPACES[name] = NamespaceSpec(version, steps)
+    spec = NamespaceSpec(version, steps)
+    existing = _NAMESPACES.get(name)
+    if existing is not None and existing != spec:
+        raise ValueError(f"{name}: already registered with a different version or upgraders")
+    _NAMESPACES[name] = spec
 
 
 def namespace_spec(name: str) -> NamespaceSpec:
@@ -61,11 +67,33 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _decode(namespace: str, key: str, row: Row) -> Any:
+def _read(namespace: str, key: str, row: Row) -> Any:
+    """Decode *row*, raising :class:`CorruptStoreError` if this app cannot read it."""
+    version = namespace_spec(namespace).version
+    if row.schema_version > version:
+        raise CorruptStoreError(
+            namespace,
+            key,
+            f"schema_version {row.schema_version} is newer than this app ({version})",
+        )
+    if row.schema_version < 1:
+        raise CorruptStoreError(namespace, key, f"invalid schema_version {row.schema_version}")
     try:
         return json.loads(row.payload)
     except ValueError as exc:
         raise CorruptStoreError(namespace, key, str(exc)) from exc
+
+
+def _upgrade(namespace: str, key: str, row: Row, value: Any) -> Any:
+    spec = namespace_spec(namespace)
+    for version in range(row.schema_version, spec.version):
+        try:
+            value = spec.upgraders[version](value)
+        except Exception as exc:
+            raise CorruptStoreError(
+                namespace, key, f"upgrade v{version}→v{version + 1} failed: {exc}"
+            ) from exc
+    return value
 
 
 class Store:
@@ -106,22 +134,23 @@ class Store:
             row = self.backend.get(namespace, key)
             if row is None:
                 return None
-            spec = namespace_spec(namespace)
-            if row.schema_version > spec.version:
-                raise CorruptStoreError(
-                    namespace,
-                    key,
-                    f"schema_version {row.schema_version} is newer than this app ({spec.version})",
-                )
-            if row.schema_version < 1:
-                raise CorruptStoreError(
-                    namespace, key, f"invalid schema_version {row.schema_version}"
-                )
-            value = _decode(namespace, key, row)
-            if row.schema_version < spec.version:
-                for version in range(row.schema_version, spec.version):
-                    value = spec.upgraders[version](value)
-                self.put(namespace, value, key=key)
+            value = _read(namespace, key, row)
+            if row.schema_version == namespace_spec(namespace).version:
+                return value
+            return self._upgrade_in_place(namespace, key)
+
+    def _upgrade_in_place(self, namespace: str, key: str) -> Any:
+        """Read, upgrade and write back one row in a single transaction."""
+        version = namespace_spec(namespace).version
+        with self.transaction():
+            row = self.backend.get(namespace, key)  # re-read: a writer may have got in first
+            if row is None:
+                return None
+            value = _read(namespace, key, row)
+            if row.schema_version == version:
+                return value
+            value = _upgrade(namespace, key, row, value)
+            self.backend.put(namespace, key, Row(json.dumps(value), version, _now()))
             return value
 
     def has(self, namespace: str, *, key: str = SINGLE_KEY) -> bool:
@@ -141,7 +170,7 @@ class Store:
             if not replace_corrupt:
                 existing = self.backend.get(namespace, key)
                 if existing is not None:
-                    _decode(namespace, key, existing)
+                    _read(namespace, key, existing)
             row = Row(payload, namespace_spec(namespace).version, _now())
             self.backend.put(namespace, key, row)
 

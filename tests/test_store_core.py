@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -111,6 +112,18 @@ def test_put_refuses_to_overwrite_a_corrupt_row_unless_told(mem_store):
     assert mem_store.get("ns") == {"fresh": True}
 
 
+@pytest.mark.parametrize(("version", "payload"), [(5, "1"), (0, "1"), (-1, "1")])
+def test_put_refuses_to_overwrite_unreadable_versions_unless_told(mem_store, version, payload):
+    _raw(mem_store, "ns", payload, version=version)
+    with pytest.raises(CorruptStoreError):
+        mem_store.put("ns", 2)
+    row = mem_store.backend.get("ns", SINGLE_KEY)
+    assert row is not None
+    assert (row.payload, row.schema_version) == (payload, version)
+    mem_store.put("ns", 2, replace_corrupt=True)
+    assert mem_store.get("ns") == 2
+
+
 def test_unserializable_value_writes_nothing(mem_store):
     mem_store.put("ns", {"ok": 1})
     with pytest.raises(TypeError):
@@ -118,17 +131,100 @@ def test_unserializable_value_writes_nothing(mem_store):
     assert mem_store.get("ns") == {"ok": 1}
 
 
+def _rename_a_to_b(value):
+    return {"b": value["a"]}
+
+
+def _derive_c_from_b(value):
+    return {**value, "c": value["b"] * 10}
+
+
 def test_upgraders_run_on_read_and_write_back(mem_store):
-    register_namespace(
-        "ns",
-        version=3,
-        upgraders={1: lambda v: {**v, "two": True}, 2: lambda v: {**v, "three": True}},
-    )
-    _raw(mem_store, "ns", '{"one": true}', version=1)
-    assert mem_store.get("ns") == {"one": True, "two": True, "three": True}
+    register_namespace("ns", version=3, upgraders={1: _rename_a_to_b, 2: _derive_c_from_b})
+    _raw(mem_store, "ns", '{"a": 4}', version=1)
+    assert mem_store.get("ns") == {"b": 4, "c": 40}
     row = mem_store.backend.get("ns", SINGLE_KEY)
     assert row is not None
     assert row.schema_version == 3
+    assert json.loads(row.payload) == {"b": 4, "c": 40}
+
+
+class _TracingBackend(DictBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def begin(self) -> None:
+        self.calls.append("begin")
+        super().begin()
+
+    def commit(self) -> None:
+        self.calls.append("commit")
+        super().commit()
+
+    def rollback(self) -> None:
+        self.calls.append("rollback")
+        super().rollback()
+
+
+def test_upgrade_write_back_happens_inside_one_transaction():
+    backend = _TracingBackend()
+    store = Store(backend)
+    register_namespace("ns", version=2, upgraders={1: lambda v: v + 1})
+    _raw(store, "ns", "1", version=1)
+    assert store.get("ns") == 2
+    assert backend.calls == ["begin", "commit"]
+
+
+def test_upgrade_does_not_clobber_a_row_that_became_current_meanwhile():
+    class _RacingBackend(DictBackend):
+        raced = False
+
+        def get(self, namespace: str, key: str) -> Row | None:
+            row = super().get(namespace, key)
+            if not self.raced:
+                self.raced = True  # a concurrent writer lands right after our first read
+                super().put(namespace, key, Row("100", 2, "2026-01-02T00:00:00+00:00"))
+            return row
+
+    backend = _RacingBackend()
+    store = Store(backend)
+    register_namespace("ns", version=2, upgraders={1: lambda v: v + 1})
+    _raw(store, "ns", "1", version=1)
+    assert store.get("ns") == 100
+    row = backend.get("ns", SINGLE_KEY)
+    assert row is not None
+    assert row.payload == "100"
+
+
+def test_failing_upgrader_is_wrapped_and_writes_nothing(mem_store):
+    def boom(value):
+        raise KeyError("a")
+
+    register_namespace("ns", version=3, upgraders={1: lambda v: v, 2: boom})
+    _raw(mem_store, "ns", '{"x": 1}', version=1)
+    with pytest.raises(CorruptStoreError, match=r"upgrade v2→v3 failed") as info:
+        mem_store.get("ns")
+    assert isinstance(info.value.__cause__, KeyError)
+    row = mem_store.backend.get("ns", SINGLE_KEY)
+    assert row is not None
+    assert (row.payload, row.schema_version) == ('{"x": 1}', 1)
+
+
+def test_depth_returns_to_zero_after_a_failed_transaction():
+    backend = _TracingBackend()
+    store = Store(backend)
+    with pytest.raises(RuntimeError):
+        _write_then_fail(store)
+    backend.calls.clear()
+    with pytest.raises(RuntimeError):
+        _write_then_fail(store)
+    assert backend.calls == ["begin", "rollback"]
+    assert store.get("a") is None
+    with store.transaction():
+        store.put("a", 1)
+    assert backend.calls[-2:] == ["begin", "commit"]
+    assert store.get("a") == 1
 
 
 def test_put_stamps_the_namespace_version(mem_store):
@@ -153,6 +249,20 @@ def test_register_namespace_validates_its_arguments():
         register_namespace("ns", version=3, upgraders={1: lambda v: v})
     with pytest.raises(ValueError, match="reserved"):
         register_namespace(META_NAMESPACE)
+    with pytest.raises(ValueError, match="version"):
+        register_namespace("ns", version=0)
+
+
+def test_re_registering_is_idempotent_only_when_identical():
+    step = _rename_a_to_b
+    register_namespace("ns", version=2, upgraders={1: step})
+    register_namespace("ns", version=2, upgraders={1: step})
+    with pytest.raises(ValueError, match="already registered"):
+        register_namespace("ns", version=3, upgraders={1: step, 2: _derive_c_from_b})
+    with pytest.raises(ValueError, match="already registered"):
+        register_namespace("ns", version=2, upgraders={1: _derive_c_from_b})
+    register_namespace("plain")
+    register_namespace("plain")
 
 
 def test_null_backend_store_reads_absent_and_drops_writes():
