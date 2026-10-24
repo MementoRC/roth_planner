@@ -182,6 +182,9 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
     )
 
+    # The SQLite store file: never let a test reach the repo-root database.
+    monkeypatch.setenv("ROTH_PLANNER_DB", str(_tmp(".roth_planner.db")))
+
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
     # writes to the owning submodule too, but patch both ends explicitly.
