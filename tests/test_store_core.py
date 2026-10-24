@@ -91,6 +91,17 @@ def test_failed_commit_rolls_back_and_leaves_the_connection_usable():
     backend.close()
 
 
+class _RollbackFails(DictBackend):
+    def rollback(self) -> None:
+        raise StoreUnavailableError("mem", "rollback failed")
+
+
+def test_failing_rollback_never_masks_the_body_exception():
+    store = Store(_RollbackFails())
+    with pytest.raises(RuntimeError, match="body"), store.transaction():
+        raise RuntimeError("body")
+
+
 def test_corrupt_row_raises_with_its_location(mem_store):
     _raw(mem_store, "ns", "{not json", key="k")
     with pytest.raises(CorruptStoreError) as info:

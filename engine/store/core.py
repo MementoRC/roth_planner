@@ -116,7 +116,8 @@ class Store:
             except BaseException:
                 self._depth -= 1
                 if outermost:
-                    self.backend.rollback()
+                    with suppress(StoreError):
+                        self.backend.rollback()
                 raise
             self._depth -= 1
             if outermost:

@@ -328,19 +328,19 @@ def _forbid_real_cache_writes(_redirect_cache_paths_to_tmp):
 
 
 @pytest.fixture(autouse=True)
-def _clean_namespaces(monkeypatch):
-    """Each test sees an empty namespace registry (no cross-test registrations)."""
+def _isolate_namespaces(monkeypatch):
+    """Copy, don't empty: test-time registrations are discarded, import-time ones survive."""
     import engine.store.core as store_core
 
-    monkeypatch.setattr(store_core, "_NAMESPACES", {})
+    monkeypatch.setattr(store_core, "_NAMESPACES", dict(store_core._NAMESPACES))
 
 
 @pytest.fixture(autouse=True)
-def _empty_registry(monkeypatch):
-    """Each test sees an empty legacy-file registry."""
+def _isolate_legacy_registry(monkeypatch):
+    """Copy, don't empty: test-time registrations are discarded, import-time ones survive."""
     import engine.store.legacy_files as store_legacy_files
 
-    monkeypatch.setattr(store_legacy_files, "_REGISTRY", {})
+    monkeypatch.setattr(store_legacy_files, "_REGISTRY", dict(store_legacy_files._REGISTRY))
 
 
 @pytest.fixture(autouse=True)
