@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
@@ -28,7 +29,11 @@ _T = TypeVar("_T")
 
 
 class SqliteBackend:
-    """One autocommit connection; :meth:`begin` opens ``BEGIN IMMEDIATE``."""
+    """One autocommit connection; :meth:`begin` opens ``BEGIN IMMEDIATE``.
+
+    The connection is shared across threads, so every call holds an RLock and
+    a transaction keeps it from :meth:`begin` until :meth:`commit`/:meth:`rollback`.
+    """
 
     def __init__(self, location: Path | str) -> None:
         self.location = str(location)
@@ -48,7 +53,13 @@ class SqliteBackend:
                 conn.close()
             raise StoreUnavailableError(self.location, str(exc)) from exc
         self._conn = conn
-        self._tighten_side_files()
+        self._lock = threading.RLock()
+        self._tx_owner: int | None = None
+        try:
+            self._tighten_side_files()
+        except StoreUnavailableError:
+            conn.close()
+            raise
 
     def _run(self, fn: Callable[[], _T]) -> _T:
         try:
@@ -57,62 +68,104 @@ class SqliteBackend:
             raise StoreUnavailableError(self.location, str(exc)) from exc
 
     def begin(self) -> None:
-        self._run(lambda: self._conn.execute("BEGIN IMMEDIATE"))
+        # The lock taken here is held across the whole transaction so other
+        # threads sharing this connection cannot interleave with it; commit()
+        # or rollback() on the owning thread releases it.
+        self._lock.acquire()
+        try:
+            self._run(lambda: self._conn.execute("BEGIN IMMEDIATE"))
+        except BaseException:
+            self._lock.release()
+            raise
+        self._tx_owner = threading.get_ident()
 
     def commit(self) -> None:
-        self._run(lambda: self._conn.execute("COMMIT"))
-        self._tighten_side_files()
+        with self._lock:
+            if not self._conn.in_transaction:
+                return
+            self._run(lambda: self._conn.execute("COMMIT"))
+            self._tighten_side_files(strict=False)
+            self._release_transaction()
 
     def rollback(self) -> None:
-        self._run(lambda: self._conn.execute("ROLLBACK"))
+        with self._lock:
+            if not self._conn.in_transaction:
+                return
+            try:
+                self._run(lambda: self._conn.execute("ROLLBACK"))
+            finally:
+                self._release_transaction()
+
+    def _release_transaction(self) -> None:
+        """Drop the lock hold taken by begin(), only if this thread made it."""
+        if self._tx_owner == threading.get_ident():
+            self._tx_owner = None
+            self._lock.release()
 
     def get(self, namespace: str, key: str) -> Row | None:
-        found = self._run(
-            lambda: self._conn.execute(
-                "SELECT payload, schema_version, updated_at FROM documents"
-                " WHERE namespace = ? AND key = ?",
-                (namespace, key),
-            ).fetchone()
-        )
+        with self._lock:
+            found = self._run(
+                lambda: self._conn.execute(
+                    "SELECT payload, schema_version, updated_at FROM documents"
+                    " WHERE namespace = ? AND key = ?",
+                    (namespace, key),
+                ).fetchone()
+            )
         return None if found is None else Row(found[0], found[1], found[2])
 
     def put(self, namespace: str, key: str, row: Row) -> None:
-        self._run(
-            lambda: self._conn.execute(
-                "INSERT INTO documents (namespace, key, payload, schema_version, updated_at)"
-                " VALUES (?, ?, ?, ?, ?)"
-                " ON CONFLICT (namespace, key) DO UPDATE SET payload = excluded.payload,"
-                " schema_version = excluded.schema_version, updated_at = excluded.updated_at",
-                (namespace, key, row.payload, row.schema_version, row.updated_at),
+        with self._lock:
+            self._run(
+                lambda: self._conn.execute(
+                    "INSERT INTO documents (namespace, key, payload, schema_version, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?)"
+                    " ON CONFLICT (namespace, key) DO UPDATE SET payload = excluded.payload,"
+                    " schema_version = excluded.schema_version, updated_at = excluded.updated_at",
+                    (namespace, key, row.payload, row.schema_version, row.updated_at),
+                )
             )
-        )
 
     def delete(self, namespace: str, key: str) -> None:
-        self._run(
-            lambda: self._conn.execute(
-                "DELETE FROM documents WHERE namespace = ? AND key = ?", (namespace, key)
+        with self._lock:
+            self._run(
+                lambda: self._conn.execute(
+                    "DELETE FROM documents WHERE namespace = ? AND key = ?", (namespace, key)
+                )
             )
-        )
 
     def keys(self, namespace: str) -> list[str]:
-        rows = self._run(
-            lambda: self._conn.execute(
-                "SELECT key FROM documents WHERE namespace = ? ORDER BY key", (namespace,)
-            ).fetchall()
-        )
+        with self._lock:
+            rows = self._run(
+                lambda: self._conn.execute(
+                    "SELECT key FROM documents WHERE namespace = ? ORDER BY key", (namespace,)
+                ).fetchall()
+            )
         return [row[0] for row in rows]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
-    def _tighten_side_files(self) -> None:
+    def _tighten_side_files(self, *, strict: bool = True) -> None:
+        """chmod the WAL side files to 0600.
+
+        A vanished file is fine. Any other OSError is fatal while opening
+        (``strict``: the store would be left readable) but best effort after a
+        commit, where the data is already durable.
+        """
         if not self._is_file:
             return
         base = Path(self.location)
         for suffix in _SIDE_SUFFIXES:
             side = base.with_name(base.name + suffix)
-            if side.exists() and not side.is_symlink():
-                os.chmod(side, 0o600)
+            try:
+                if not side.is_symlink():
+                    os.chmod(side, 0o600)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                if strict:
+                    raise StoreUnavailableError(self.location, str(exc)) from exc
 
 
 def _prepare_db_file(path: Path) -> None:

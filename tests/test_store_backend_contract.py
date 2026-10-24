@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 
 import pytest
@@ -78,3 +79,30 @@ def test_rollback_discards_every_write_since_begin(backend):
     backend.rollback()
     assert backend.get("ns", "keep") == ROW_A
     assert backend.get("ns", "new") is None
+
+
+def test_commit_and_rollback_without_begin_are_noops(backend):
+    backend.put("ns", "k", ROW_A)
+    backend.commit()
+    backend.rollback()
+    assert backend.get("ns", "k") == ROW_A
+
+
+def test_sqlite_transaction_blocks_other_threads_until_commit():
+    backend = SqliteBackend(MEMORY)
+    done = threading.Event()
+
+    def other_writer() -> None:
+        backend.put("ns", "other", ROW_B)
+        done.set()
+
+    backend.begin()
+    backend.put("ns", "mine", ROW_A)
+    worker = threading.Thread(target=other_writer)
+    worker.start()
+    assert not done.wait(0.2)
+    backend.commit()
+    assert done.wait(2)
+    worker.join(2)
+    assert backend.keys("ns") == ["mine", "other"]
+    backend.close()
