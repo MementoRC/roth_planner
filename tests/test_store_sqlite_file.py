@@ -22,6 +22,8 @@ def _mode(path) -> int:
 
 def test_new_database_file_is_owner_only(tmp_path):
     path = tmp_path / "store.db"
+    path.touch()
+    path.chmod(0o644)
     SqliteBackend(path).close()
     assert _mode(path) == 0o600
 
@@ -29,30 +31,38 @@ def test_new_database_file_is_owner_only(tmp_path):
 def test_wal_side_files_are_owner_only_after_a_commit(tmp_path):
     path = tmp_path / "store.db"
     backend = SqliteBackend(path)
-    backend.begin()
-    backend.put("ns", "k", ROW)
-    backend.commit()
-    sides = [path.with_name(path.name + s) for s in ("-wal", "-shm")]
-    present = [p for p in sides if p.exists()]
-    assert present, "WAL mode should leave side files while the connection is open"
-    assert all(_mode(p) == 0o600 for p in present)
-    backend.close()
+    try:
+        backend.begin()
+        backend.put("ns", "k", ROW)
+        backend.commit()
+        sides = [path.with_name(path.name + s) for s in ("-wal", "-shm")]
+        assert all(p.exists() for p in sides), "WAL mode should leave side files while open"
+        for p in sides:
+            p.chmod(0o644)
+        backend.begin()
+        backend.put("ns", "k2", ROW)
+        backend.commit()
+        assert all(_mode(p) == 0o600 for p in sides)
+    finally:
+        backend.close()
 
 
 def test_symlinked_path_is_refused_and_target_untouched(tmp_path):
     target = tmp_path / "elsewhere.db"
     link = tmp_path / "store.db"
     link.symlink_to(target)
-    with pytest.raises(StoreUnavailableError):
+    with pytest.raises(StoreUnavailableError) as ei:
         SqliteBackend(link)
+    assert ei.value.location == str(link)
     assert not target.exists()
 
 
 def test_garbage_file_reports_storage_unavailable(tmp_path):
     path = tmp_path / "store.db"
     path.write_bytes(b"this is not a sqlite database " * 50)
-    with pytest.raises(StoreUnavailableError):
+    with pytest.raises(StoreUnavailableError) as ei:
         SqliteBackend(path)
+    assert ei.value.location == str(path)
 
 
 def test_newer_layout_reports_storage_unavailable(tmp_path):
@@ -60,8 +70,9 @@ def test_newer_layout_reports_storage_unavailable(tmp_path):
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA user_version = 99")
     conn.close()
-    with pytest.raises(StoreUnavailableError, match="newer"):
+    with pytest.raises(StoreUnavailableError, match="newer") as ei:
         SqliteBackend(path)
+    assert ei.value.location == str(path)
 
 
 def test_rows_survive_reopening(tmp_path):
@@ -90,17 +101,20 @@ def test_second_writer_waits_for_the_first(tmp_path):
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
 
-    first.begin()
-    first.put("ns", "a", ROW)
-    worker = threading.Thread(target=write_second)
-    worker.start()
-    started.wait()
-    time.sleep(0.2)
-    assert worker.is_alive(), "second writer should be blocked by the first transaction"
-    first.commit()
-    worker.join(timeout=5)
-    assert not errors
-    assert second.get("ns", "a") == ROW
-    assert first.get("ns", "b") == ROW
-    first.close()
-    second.close()
+    try:
+        first.begin()
+        first.put("ns", "a", ROW)
+        worker = threading.Thread(target=write_second, daemon=True)
+        worker.start()
+        started.wait()
+        time.sleep(0.2)
+        assert worker.is_alive(), "second writer should be blocked by the first transaction"
+        first.commit()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert not errors
+        assert second.get("ns", "a") == ROW
+        assert first.get("ns", "b") == ROW
+    finally:
+        first.close()
+        second.close()
