@@ -54,6 +54,9 @@ REQUIREMENTS = [
     # install step at all. pdfminer.six is still a genuine runtime dependency
     # of pdfplumber and DOES have a WASM wheel, so it stays listed here.
     "pdfminer.six==20251230",
+    # sqlite3: Pyodide ships the stdlib module as a separate package; engine/store
+    # uses it for the per-session in-memory store (falls back to a dict without it).
+    "sqlite3",
 ]  # pynacl: needed by engine/data_bridge_crypto for V2 sealed-box upload on public site
 
 # Packages whose pure-Python source is vendored directly into the file map
