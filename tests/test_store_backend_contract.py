@@ -96,13 +96,38 @@ def test_sqlite_transaction_blocks_other_threads_until_commit():
         backend.put("ns", "other", ROW_B)
         done.set()
 
-    backend.begin()
-    backend.put("ns", "mine", ROW_A)
-    worker = threading.Thread(target=other_writer)
-    worker.start()
-    assert not done.wait(0.2)
-    backend.commit()
-    assert done.wait(2)
-    worker.join(2)
-    assert backend.keys("ns") == ["mine", "other"]
-    backend.close()
+    worker = threading.Thread(target=other_writer, daemon=True)
+    try:
+        backend.begin()
+        backend.put("ns", "mine", ROW_A)
+        worker.start()
+        assert not done.wait(0.2)
+        backend.commit()
+        assert done.wait(2)
+        assert backend.keys("ns") == ["mine", "other"]
+    finally:
+        backend.rollback()
+        worker.join(2)
+        backend.close()
+
+
+@pytest.mark.parametrize("end", ["commit", "rollback"])
+def test_sqlite_lock_is_released_after_an_auto_rollback(end):
+    backend = SqliteBackend(MEMORY)
+    done = threading.Event()
+
+    def other_writer() -> None:
+        backend.put("ns", "other", ROW_B)
+        done.set()
+
+    worker = threading.Thread(target=other_writer, daemon=True)
+    try:
+        backend.begin()
+        backend._conn.execute("ROLLBACK")  # SQLite ended the transaction on its own
+        getattr(backend, end)()
+        worker.start()
+        assert done.wait(2)
+    finally:
+        backend.rollback()
+        worker.join(2)
+        backend.close()

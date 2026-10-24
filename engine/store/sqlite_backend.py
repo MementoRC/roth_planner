@@ -82,14 +82,22 @@ class SqliteBackend:
     def commit(self) -> None:
         with self._lock:
             if not self._conn.in_transaction:
+                # SQLite may have rolled back on its own; still drop begin()'s hold.
+                self._release_transaction()
                 return
-            self._run(lambda: self._conn.execute("COMMIT"))
-            self._tighten_side_files(strict=False)
-            self._release_transaction()
+            try:
+                self._run(lambda: self._conn.execute("COMMIT"))
+                self._tighten_side_files(strict=False)
+            finally:
+                # A failed COMMIT that leaves the transaction open keeps the
+                # hold for the caller's rollback().
+                if not self._conn.in_transaction:
+                    self._release_transaction()
 
     def rollback(self) -> None:
         with self._lock:
             if not self._conn.in_transaction:
+                self._release_transaction()
                 return
             try:
                 self._run(lambda: self._conn.execute("ROLLBACK"))
