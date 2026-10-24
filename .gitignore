@@ -75,6 +75,13 @@ agents/
 .tax_pdf_cache.json
 ai_docs/
 
+# engine/store document database (spec 2026-10-23) and its WAL side files
+.roth_planner.db
+.roth_planner.db-wal
+.roth_planner.db-shm
+# one-time JSON migration backups (PR 2)
+.json_backup/
+
 # Deep-audit reports (local-only artifacts, never commit)
 AUDIT_*.md
 

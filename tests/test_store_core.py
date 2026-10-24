@@ -7,7 +7,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from engine.store import core
 from engine.store.backend import DictBackend, NullBackend, Row
 from engine.store.core import META_NAMESPACE, SINGLE_KEY, Store, register_namespace
 from engine.store.errors import CorruptStoreError, StoreUnavailableError
@@ -19,11 +18,6 @@ def mem_store(request) -> Iterator[Store]:
     backend = SqliteBackend(MEMORY) if request.param == "sqlite" else DictBackend()
     yield Store(backend)
     backend.close()
-
-
-@pytest.fixture(autouse=True)
-def _clean_namespaces(monkeypatch):
-    monkeypatch.setattr(core, "_NAMESPACES", {})
 
 
 def _raw(store: Store, namespace: str, payload: str, version: int = 1, key: str = SINGLE_KEY):

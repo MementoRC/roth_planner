@@ -78,6 +78,9 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
     _demo_mode_mod.DEMO_MODE_PATH,
+    _REPO_ROOT / ".roth_planner.db",
+    _REPO_ROOT / ".roth_planner.db-wal",
+    _REPO_ROOT / ".roth_planner.db-shm",
 ]
 
 
@@ -322,6 +325,54 @@ def _forbid_real_cache_writes(_redirect_cache_paths_to_tmp):
             "Test touched a real repo-root cache file (must be redirected/mocked): "
             + "; ".join(offenders)
         )
+
+
+@pytest.fixture(autouse=True)
+def _clean_namespaces(monkeypatch):
+    """Each test sees an empty namespace registry (no cross-test registrations)."""
+    import engine.store.core as store_core
+
+    monkeypatch.setattr(store_core, "_NAMESPACES", {})
+
+
+@pytest.fixture(autouse=True)
+def _empty_registry(monkeypatch):
+    """Each test sees an empty legacy-file registry."""
+    import engine.store.legacy_files as store_legacy_files
+
+    monkeypatch.setattr(store_legacy_files, "_REGISTRY", {})
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(_redirect_cache_paths_to_tmp):
+    """Every test gets a fresh in-memory Store; nothing reaches a real database."""
+    import engine.store as store_pkg
+    from engine.store.core import Store
+    from engine.store.sqlite_backend import MEMORY, SqliteBackend
+
+    store = Store(SqliteBackend(MEMORY))
+    store_pkg.set_store(store)
+    yield store
+    store_pkg.set_store(None)
+    store_pkg._reset_cached_stores()
+    store.backend.close()
+
+
+@pytest.fixture
+def store(_isolated_store):
+    """The test's Store (same object get_store() returns)."""
+    return _isolated_store
+
+
+@pytest.fixture
+def file_store(tmp_path):
+    """A Store over a real SQLite file in tmp_path, closed at teardown."""
+    from engine.store.core import Store
+    from engine.store.sqlite_backend import SqliteBackend
+
+    backend = SqliteBackend(tmp_path / "store.db")
+    yield Store(backend)
+    backend.close()
 
 
 def _command_center_cache_files() -> list[Path]:

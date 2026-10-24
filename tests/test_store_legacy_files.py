@@ -6,7 +6,6 @@ import json
 
 import pytest
 
-from engine.store import legacy_files
 from engine.store.core import SINGLE_KEY
 from engine.store.legacy_files import (
     LegacyFile,
@@ -14,11 +13,6 @@ from engine.store.legacy_files import (
     registered,
     single_document_reader,
 )
-
-
-@pytest.fixture(autouse=True)
-def _empty_registry(monkeypatch):
-    monkeypatch.setattr(legacy_files, "_REGISTRY", {})
 
 
 def test_registry_is_empty_in_pr1():

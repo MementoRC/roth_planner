@@ -32,11 +32,13 @@ def test_local_default_is_one_file_store_at_db_path(no_override, tmp_path):
 def test_demo_mode_reads_absent_drops_writes_and_spares_the_real_store(no_override):
     get_store().put("ns", {"real": 1})
     enter_demo_mode()
-    demo = get_store()
-    assert isinstance(demo.backend, NullBackend)
-    assert demo.get("ns") is None
-    demo.put("ns", {"demo": 1})
-    leave_demo_mode()
+    try:
+        demo = get_store()
+        assert isinstance(demo.backend, NullBackend)
+        assert demo.get("ns") is None
+        demo.put("ns", {"demo": 1})
+    finally:
+        leave_demo_mode()
     assert get_store().get("ns") == {"real": 1}
 
 
