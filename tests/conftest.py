@@ -78,6 +78,9 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
     _demo_mode_mod.DEMO_MODE_PATH,
+    _REPO_ROOT / ".roth_planner.db",
+    _REPO_ROOT / ".roth_planner.db-wal",
+    _REPO_ROOT / ".roth_planner.db-shm",
 ]
 
 
@@ -181,6 +184,9 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(
         _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
     )
+
+    # The SQLite store file: never let a test reach the repo-root database.
+    monkeypatch.setenv("ROTH_PLANNER_DB", str(_tmp(".roth_planner.db")))
 
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
@@ -319,6 +325,54 @@ def _forbid_real_cache_writes(_redirect_cache_paths_to_tmp):
             "Test touched a real repo-root cache file (must be redirected/mocked): "
             + "; ".join(offenders)
         )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_namespaces(monkeypatch):
+    """Copy, don't empty: test-time registrations are discarded, import-time ones survive."""
+    import engine.store.core as store_core
+
+    monkeypatch.setattr(store_core, "_NAMESPACES", dict(store_core._NAMESPACES))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_legacy_registry(monkeypatch):
+    """Copy, don't empty: test-time registrations are discarded, import-time ones survive."""
+    import engine.store.legacy_files as store_legacy_files
+
+    monkeypatch.setattr(store_legacy_files, "_REGISTRY", dict(store_legacy_files._REGISTRY))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(_redirect_cache_paths_to_tmp):
+    """Every test gets a fresh in-memory Store; nothing reaches a real database."""
+    import engine.store as store_pkg
+    from engine.store.core import Store
+    from engine.store.sqlite_backend import MEMORY, SqliteBackend
+
+    store = Store(SqliteBackend(MEMORY))
+    store_pkg.set_store(store)
+    yield store
+    store_pkg.set_store(None)
+    store_pkg._reset_cached_stores()
+    store.backend.close()
+
+
+@pytest.fixture
+def store(_isolated_store):
+    """The test's Store (same object get_store() returns)."""
+    return _isolated_store
+
+
+@pytest.fixture
+def file_store(tmp_path):
+    """A Store over a real SQLite file in tmp_path, closed at teardown."""
+    from engine.store.core import Store
+    from engine.store.sqlite_backend import SqliteBackend
+
+    backend = SqliteBackend(tmp_path / "store.db")
+    yield Store(backend)
+    backend.close()
 
 
 def _command_center_cache_files() -> list[Path]:

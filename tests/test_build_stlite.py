@@ -156,3 +156,9 @@ class TestVendoredVersionGuard:
         monkeypatch.setattr(mod, "VENDORED_PDFPLUMBER_VERSION", "999.0.0")
         with pytest.raises(SystemExit, match="does not"):
             mod._collect_vendored_packages()
+
+
+def test_stlite_requirements_ship_sqlite3() -> None:
+    """engine/store wants sqlite3 in the browser; without it Store falls back to DictBackend."""
+    mod = _load_build_stlite_mod()
+    assert "sqlite3" in mod.REQUIREMENTS
