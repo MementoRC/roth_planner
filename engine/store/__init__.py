@@ -2,13 +2,15 @@
 
 ``get_store()`` picks the backend on every call (cheap):
 
-1. a store installed with :func:`set_store` (tests) wins;
-2. demo mode -> a null store: reads absent, writes dropped (audit-1018 D2);
+1. demo mode -> a null store: reads absent, writes dropped (audit-1018 D2).
+   Checked first so a store installed by a test sees what the app would:
+   nothing in demo mode, the untouched store after leaving it;
+2. a store installed with :func:`set_store` (tests);
 3. Pyodide/stlite -> one in-memory store per session (SQLite if ``sqlite3``
    imports, else a dict), lost on refresh like today's in-memory files;
-4. otherwise -> the ``.roth_planner.db`` file (``ROTH_PLANNER_DB`` overrides).
-
-PR 2 adds the one-time JSON migration to step 4, under the same lock.
+4. otherwise -> the ``.roth_planner.db`` file (``ROTH_PLANNER_DB`` overrides),
+   opened once per process; the first open imports the legacy JSON files
+   (see :mod:`engine.store.migrate_json`).
 """
 
 from __future__ import annotations
@@ -60,10 +62,10 @@ def set_store(store: Store | None) -> None:
 
 def get_store() -> Store:
     """The Store for the current environment; see the module docstring."""
-    if _override is not None:
-        return _override
     if is_demo_mode():
         return _null_store
+    if _override is not None:
+        return _override
     if is_pyodide():
         return _get_session_store()
     return _get_file_store()

@@ -61,3 +61,16 @@ def test_pyodide_without_sqlite3_falls_back_to_the_dict_backend(no_override, mon
 def test_tests_never_point_at_the_repo_root_database(tmp_path):
     assert store_pkg.db_path() != store_pkg._DEFAULT_DB_PATH
     assert store_pkg.db_path().is_relative_to(tmp_path)
+
+
+def test_demo_mode_hides_an_installed_store(store):
+    store.put("ns", {"real": 1})
+    enter_demo_mode()
+    try:
+        assert isinstance(get_store().backend, NullBackend)
+        assert get_store().get("ns") is None
+        get_store().put("ns", {"demo": 1})
+    finally:
+        leave_demo_mode()
+    assert get_store() is store
+    assert store.get("ns") == {"real": 1}
