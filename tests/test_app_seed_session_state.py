@@ -86,7 +86,7 @@ def _run_seed_session_state(
     """
     text = APP_PATH.read_text()
     start = text.index("def _seed_session_state()")
-    end = text.index("\n\n\n# Shared state: household parameters")
+    end = text.index("\n\n\n# Open the store before")
     source = text[start:end]
     fake_st = _FakeSt()
 
@@ -94,7 +94,7 @@ def _run_seed_session_state(
         if calls is not None:
             calls.append("load_instance_owner")
         if instance_owner is _CORRUPT:
-            raise CorruptInstanceOwnerError(".instance_owner.json", ValueError("bad"))
+            raise CorruptInstanceOwnerError("instance_owner", ValueError("bad"))
         return instance_owner
 
     namespace: dict[str, Any] = {

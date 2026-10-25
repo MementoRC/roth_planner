@@ -34,7 +34,6 @@ import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.account_link as _account_link_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
-import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
@@ -57,7 +56,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
     _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
-    _instance_identity_mod.INSTANCE_OWNER_PATH,
+    _REPO_ROOT / ".instance_owner.json",
     _REPO_ROOT / ".ubs_activity_cache.json",
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
@@ -139,7 +138,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
     )
-    monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
     monkeypatch.setattr(_demo_mode_mod, "DEMO_MODE_PATH", _tmp(".demo_mode"))
 
     # The SQLite store file: never let a test reach the repo-root database.

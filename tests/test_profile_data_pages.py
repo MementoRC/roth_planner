@@ -227,37 +227,38 @@ def test_import_ytd_sync_lives_in_legacy_expander(monkeypatch):
 _OWNER_GATE_TEXT = "owner on **Review Changes**"
 
 
-def test_import_with_corrupt_owner_has_no_legacy_expander():
+def test_import_with_corrupt_owner_has_no_legacy_expander(corrupt_row):
     # An unset owner now auto-defaults to "you" (and unlocks Legacy); only a
-    # corrupt identity file keeps the Legacy expander hidden.
-    import engine.instance_identity as instance_identity_mod
+    # corrupt identity keeps the Legacy expander hidden.
+    from engine.store.namespaces import INSTANCE_OWNER
 
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+    corrupt_row(INSTANCE_OWNER)
     at = _run(PAGE_FUNCS["import"])
     assert not [e for e in at.expander if e.label == "Legacy: FinExtract"]
 
 
-def test_import_fresh_session_has_no_owner_gate_and_scanner_is_present():
-    import engine.instance_identity as instance_identity_mod
+def test_import_fresh_session_has_no_owner_gate_and_scanner_is_present(store):
+    from engine.store.namespaces import INSTANCE_OWNER
 
-    assert not instance_identity_mod.INSTANCE_OWNER_PATH.exists()
+    assert not store.has(INSTANCE_OWNER)
     at = _run(PAGE_FUNCS["import"])
     assert not at.exception, [e.value for e in at.exception]
     assert not [i for i in at.info if _OWNER_GATE_TEXT in i.value]
     assert "pdf_upload_0" in {w.key for w in at.get("file_uploader")}
-    assert instance_identity_mod.INSTANCE_OWNER_PATH.exists()
+    assert store.has(INSTANCE_OWNER)
 
 
-def test_import_with_corrupt_owner_keeps_gate_and_leaves_file_untouched():
-    import engine.instance_identity as instance_identity_mod
+def test_import_with_corrupt_owner_keeps_gate_and_leaves_row_untouched(store, corrupt_row):
+    from engine.store import SINGLE_KEY
+    from engine.store.namespaces import INSTANCE_OWNER
+    from tests.conftest import CORRUPT_PAYLOAD
 
-    path = instance_identity_mod.INSTANCE_OWNER_PATH
-    path.write_text("{not json")
+    corrupt_row(INSTANCE_OWNER)
     at = _run(PAGE_FUNCS["import"])
     assert not at.exception, [e.value for e in at.exception]
     assert len([i for i in at.info if _OWNER_GATE_TEXT in i.value]) == 1
     assert "pdf_upload_0" not in {w.key for w in at.get("file_uploader")}
-    assert path.read_text() == "{not json"
+    assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == CORRUPT_PAYLOAD
 
 
 def test_backup_fresh_session_defaults_owner_so_export_is_enabled():

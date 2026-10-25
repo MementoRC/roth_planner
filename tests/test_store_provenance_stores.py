@@ -17,8 +17,13 @@ from engine.data_sources.committed import (
     save_committed,
 )
 from engine.data_sources.record import discard_pdf_balance_candidates, record_ira_balance_candidate
+from engine.instance_identity import (
+    CorruptInstanceOwnerError,
+    load_instance_owner,
+    save_instance_owner,
+)
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, TRUST_CHOICES
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, INSTANCE_OWNER, TRUST_CHOICES
 from models.sourced import Provenance, Source, SourcedValue
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -120,3 +125,26 @@ class TestTrustChoicesStore:
         with pytest.raises(CorruptChoiceMapError, match="NOT_A_SOURCE"):
             ChoiceMap().save()
         assert store.get(TRUST_CHOICES) == wrong
+
+
+class TestInstanceOwnerStore:
+    def test_round_trip_keeps_the_versioned_document(self, store):
+        save_instance_owner("spouse")
+        assert store.get(INSTANCE_OWNER) == {"version": 1, "instance_owner": "spouse"}
+        assert load_instance_owner() == "spouse"
+
+    def test_absent_is_unset(self):
+        assert load_instance_owner() is None
+
+    def test_corrupt_row_raises_and_refuses_a_save(self, store, corrupt_row):
+        payload = corrupt_row(INSTANCE_OWNER)
+        with pytest.raises(CorruptInstanceOwnerError, match="corrupt store row"):
+            load_instance_owner()
+        with pytest.raises(CorruptInstanceOwnerError, match="corrupt store row"):
+            save_instance_owner("you")
+        assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == payload
+
+    def test_an_invalid_owner_value_is_corrupt(self, store):
+        store.put(INSTANCE_OWNER, {"version": 1, "instance_owner": "household"})
+        with pytest.raises(CorruptInstanceOwnerError, match="invalid instance_owner"):
+            load_instance_owner()

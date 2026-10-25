@@ -253,7 +253,7 @@ def test_setup_widget_key_set_unchanged(monkeypatch) -> None:
     assert not extra, f"New/unexpected widget keys appeared on the six pages: {sorted(extra)}"
 
 
-def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(monkeypatch) -> None:
+def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(monkeypatch, corrupt_row) -> None:
     """Corrupt identity: the correction control and the PDF Statements body
     are absent; the bundle import card still renders in full.
 
@@ -264,10 +264,10 @@ def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(monkeypatch) ->
     identity_set for the import sections. Together with the test above, this
     still covers every key in EXPECTED_WIDGET_KEYS.
     """
-    import engine.instance_identity as instance_identity_mod
+    from engine.store.namespaces import INSTANCE_OWNER
 
     _neutralize_disk_sources(monkeypatch)
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+    corrupt_row(INSTANCE_OWNER)
 
     expected = (
         (EXPECTED_WIDGET_KEYS | _NEW_LINK_KEYS | _OWNER_GATE_LINK_KEYS)

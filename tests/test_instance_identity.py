@@ -2,65 +2,43 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+
+from engine.store import SINGLE_KEY
+from engine.store.namespaces import INSTANCE_OWNER
+from tests.conftest import CORRUPT_PAYLOAD
 
 
 class TestInstanceOwnerRoundTrip:
-    def test_save_load_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_load_round_trip(self) -> None:
         import engine.instance_identity as mod
 
-        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / ".instance_owner.json")
         mod.save_instance_owner("you")
         assert mod.load_instance_owner() == "you"
 
-    def test_load_missing_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_missing_returns_none(self) -> None:
         import engine.instance_identity as mod
 
-        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / "nope.json")
         assert mod.load_instance_owner() is None
 
-    def test_load_corrupt_raises_and_is_not_overwritten(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_corrupt_raises_and_is_not_overwritten(self, store, corrupt_row) -> None:
         import engine.instance_identity as mod
 
-        bad = tmp_path / ".instance_owner.json"
-        bad.write_text("{not json")
-        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", bad)
+        corrupt_row(INSTANCE_OWNER)
         with pytest.raises(mod.CorruptInstanceOwnerError):
             mod.load_instance_owner()
-        assert bad.read_text() == "{not json"
+        assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == CORRUPT_PAYLOAD
 
-    def test_save_rejects_household(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_rejects_household(self) -> None:
         import engine.instance_identity as mod
 
-        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", tmp_path / ".instance_owner.json")
         with pytest.raises(ValueError, match="Invalid instance owner"):
             mod.save_instance_owner("household")
 
-    def test_save_refuses_to_clobber_corrupt_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_save_refuses_to_clobber_corrupt_row(self, store, corrupt_row) -> None:
         import engine.instance_identity as mod
 
-        bad = tmp_path / ".instance_owner.json"
-        bad.write_text("{not json")
-        monkeypatch.setattr(mod, "INSTANCE_OWNER_PATH", bad)
+        corrupt_row(INSTANCE_OWNER)
         with pytest.raises(mod.CorruptInstanceOwnerError):
             mod.save_instance_owner("you")
-        assert bad.read_text() == "{not json"
-
-
-class TestInstanceOwnerPathIsGloballyRedirected:
-    def test_no_local_monkeypatch_still_avoids_the_real_repo_file(self) -> None:
-        """Proves tests/conftest.py's autouse _redirect_cache_paths_to_tmp
-        fixture redirects INSTANCE_OWNER_PATH on its own. Before that
-        registration exists, this call touches the real repo-root
-        .instance_owner.json and _forbid_real_cache_writes fails the test."""
-        from engine.instance_identity import save_instance_owner
-
-        save_instance_owner("you")
+        assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == CORRUPT_PAYLOAD

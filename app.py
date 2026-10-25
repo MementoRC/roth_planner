@@ -119,6 +119,10 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("_seeded", True)
 
 
+# Open the store before any cached snapshot is read: the first open imports the
+# legacy JSON files, and an unavailable database stops here with one banner.
+render_store_notice()
+
 # Shared state: household parameters
 _seed_session_state()
 
@@ -128,10 +132,6 @@ _seed_session_state()
 # for why (Streamlit forbids assigning to a widget-backed session_state key
 # after that widget already exists in the run).
 _drain_pending_defaults()
-
-# Open the store before any cached snapshot is read: the first open imports the
-# legacy JSON files, and an unavailable database stops here with one banner.
-render_store_notice()
 
 # Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
 # personal cache below is skipped, so the reset cannot be silently undone and

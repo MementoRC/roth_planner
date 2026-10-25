@@ -532,15 +532,18 @@ def test_command_center_update_control_changes_owner_and_persists() -> None:
     assert at.session_state["instance_owner"] == "spouse"
 
 
-def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten() -> None:
-    """A corrupt ``.instance_owner.json`` must NOT be auto-defaulted (that
+def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
+    store, corrupt_row
+) -> None:
+    """A corrupt saved instance owner must NOT be auto-defaulted (that
     would either raise inside ``save_instance_owner`` or, if it somehow
-    succeeded, destroy the only copy of whatever is on disk) -- the render
-    path must leave the file byte-identical and surface a visible error."""
-    import engine.instance_identity as instance_identity_mod
+    succeeded, destroy the only copy of whatever is stored) -- the render
+    path must leave the row byte-identical and surface a visible error."""
+    from engine.store import SINGLE_KEY
+    from engine.store.namespaces import INSTANCE_OWNER
+    from tests.conftest import CORRUPT_PAYLOAD
 
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
-    before = instance_identity_mod.INSTANCE_OWNER_PATH.read_text()
+    corrupt_row(INSTANCE_OWNER)
 
     def _render() -> None:
         import streamlit as st
@@ -555,7 +558,7 @@ def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten() 
     at.run()
 
     assert not at.exception
-    assert instance_identity_mod.INSTANCE_OWNER_PATH.read_text() == before
+    assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == CORRUPT_PAYLOAD
     assert any("unreadable" in e.value.lower() for e in at.error)
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is True

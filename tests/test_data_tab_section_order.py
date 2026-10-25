@@ -105,7 +105,9 @@ def test_review_titles_command_center_once_as_a_header(monkeypatch) -> None:
     assert "Command Center" not in [s.value for s in at.subheader]
 
 
-def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(monkeypatch) -> None:
+def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(
+    monkeypatch, corrupt_row
+) -> None:
     """Corrupt identity => PDF Statements is replaced by the gate; 1040 Import is not.
 
     A genuinely MISSING .instance_owner.json no longer reaches this branch:
@@ -119,9 +121,9 @@ def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(monkeypatc
     owner to attribute scanned accounts to, so it keeps the gate, with a link
     to the page that sets the owner.
     """
-    import engine.instance_identity as instance_identity_mod
+    from engine.store.namespaces import INSTANCE_OWNER
 
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+    corrupt_row(INSTANCE_OWNER)
 
     at = _run(monkeypatch, _IMPORT)
     assert not at.exception

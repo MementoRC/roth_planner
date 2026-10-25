@@ -601,7 +601,7 @@ def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypat
 
     def _raise_corrupt() -> str | None:
         raise instance_identity_mod.CorruptInstanceOwnerError(
-            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+            "instance_owner", ValueError("bad json")
         )
 
     download_button_spy = MagicMock(return_value=False)
@@ -651,7 +651,7 @@ def test_import_works_and_names_file_slot_when_identity_corrupt(monkeypatch) -> 
 
     def _raise_corrupt() -> str | None:
         raise instance_identity_mod.CorruptInstanceOwnerError(
-            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+            "instance_owner", ValueError("bad json")
         )
 
     # Both readers of identity: the view's own and operator_slot()'s.

@@ -1,9 +1,7 @@
 """Durable machine-local record of which person this planner instance belongs to.
 
-Pure module: stdlib only. No streamlit, no other engine imports beyond
-engine.pdf_owner's role vocabulary (mirrors engine/data_sources/paths.py's
-purity rule). Sits directly in engine/, not engine/data_sources/, so
-_REPO_ROOT climbs one fewer parent than paths.py does.
+No streamlit. Saved in the document store, namespace ``instance_owner``, as
+``{"version": 1, "instance_owner": owner}``.
 
 An "instance" is a single deployment/session of this planner (a dev laptop
 install, one browser's session on the public site). This value is defaulted
@@ -18,21 +16,15 @@ per-account concept).
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 
-from engine.demo_mode import is_demo_mode
 from engine.pdf_owner import OwnerRole
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-
-INSTANCE_OWNER_PATH = _REPO_ROOT / ".instance_owner.json"
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import INSTANCE_OWNER
 
 _VALID_INSTANCE_OWNERS = frozenset({OwnerRole.YOU.value, OwnerRole.SPOUSE.value})
 
 __all__ = [
-    "INSTANCE_OWNER_PATH",
     "CorruptInstanceOwnerError",
     "load_instance_owner",
     "save_instance_owner",
@@ -40,14 +32,14 @@ __all__ = [
 
 
 class CorruptInstanceOwnerError(Exception):
-    """Raised when INSTANCE_OWNER_PATH exists but its content is not a valid
+    """Raised when the saved instance owner is not a valid
     instance_owner payload (truncated/malformed JSON, missing key, or an
     invalid value).
 
-    Deliberately NOT the same outcome as a missing file: a missing file means
+    Deliberately NOT the same outcome as no saved owner: no saved owner means
     "this instance has never been assigned an owner yet" -- safe for a
-    caller to treat as a first-run prompt case. A file that exists but fails
-    to parse means real data is sitting on disk in an unreadable state, and
+    caller to treat as a first-run prompt case. A saved owner that fails
+    to parse means real data is sitting in the store in an unreadable state, and
     silently treating it as "unset" would let save_instance_owner clobber the
     only copy. Mirrors
     engine.data_sources.committed.CorruptCommittedCacheError's shape exactly.
@@ -60,56 +52,44 @@ class CorruptInstanceOwnerError(Exception):
 
 
 def load_instance_owner() -> str | None:
-    """Return the persisted instance owner ("you"/"spouse"), or None if unset.
+    """Return the saved instance owner ("you"/"spouse"), or None if unset.
 
-    None means "this instance has no identity yet" -- callers must treat
-    that as a first-run prompt case, never silently default it. Raises
-    CorruptInstanceOwnerError if the file exists but its content is
-    unreadable or invalid -- callers must not silently re-prompt over broken
-    data (see CorruptInstanceOwnerError's docstring). Demo mode
-    (audit-1018 W9b) reads as unset.
+    None means "this instance has no identity yet": callers must treat that as
+    a first-run case, never silently default it. Raises
+    CorruptInstanceOwnerError if the saved owner is unreadable or invalid, so
+    callers never re-prompt over broken data.
     """
-    if is_demo_mode():
+    try:
+        payload = get_store().get(INSTANCE_OWNER)
+    except CorruptStoreError as exc:
+        raise CorruptInstanceOwnerError(INSTANCE_OWNER, exc) from exc
+    if payload is None:
         return None
     try:
-        raw = INSTANCE_OWNER_PATH.read_text()
-    except UnicodeDecodeError as exc:  # non-UTF-8 bytes: corrupt, not a first run
-        raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
-    except OSError:
-        return None
-    try:
-        payload = json.loads(raw)
         owner = payload["instance_owner"]
         if owner not in _VALID_INSTANCE_OWNERS:
             raise ValueError(f"invalid instance_owner value {owner!r}")
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-        raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
+    except (KeyError, ValueError, TypeError) as exc:
+        raise CorruptInstanceOwnerError(INSTANCE_OWNER, exc) from exc
     return str(owner)
 
 
 def save_instance_owner(owner: str) -> None:
-    """Persist *owner* ("you" or "spouse" only) atomically.
+    """Save *owner* ("you" or "spouse" only).
 
-    Rejects "household" and any other value -- an instance belongs to one
-    person, never a joint identity (see module docstring). Pre-checks that
-    an existing file still parses before writing: if it exists but is
-    corrupt, this raises rather than silently clobbering the only copy of
-    whatever is on disk (mirrors
-    engine.data_sources.committed.save_committed's audit-0809 #11 guard).
-    Writes via a tmp file + os.replace() so a crash mid-write cannot
-    truncate a previously-good file.
+    Rejects "household" and any other value: an instance belongs to one
+    person (see module docstring). Refuses, with CorruptInstanceOwnerError,
+    to replace a saved owner that cannot be read (mirrors save_committed's
+    audit-0809 #11 guard). The check and the write are one transaction.
     """
     if owner not in _VALID_INSTANCE_OWNERS:
         raise ValueError(
             f"Invalid instance owner {owner!r}, must be one of {sorted(_VALID_INSTANCE_OWNERS)}"
         )
-    if is_demo_mode():  # audit-1018 W9b: the personal file stays untouched in demo mode
-        return
-    if INSTANCE_OWNER_PATH.exists():
+    store = get_store()
+    with store.transaction():
         try:
-            json.loads(INSTANCE_OWNER_PATH.read_text())
-        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
-            raise CorruptInstanceOwnerError(INSTANCE_OWNER_PATH, exc) from exc
-    tmp_path = INSTANCE_OWNER_PATH.with_name(f"{INSTANCE_OWNER_PATH.name}.tmp-{os.getpid()}")
-    tmp_path.write_text(json.dumps({"version": 1, "instance_owner": owner}))
-    os.replace(tmp_path, INSTANCE_OWNER_PATH)
+            store.get(INSTANCE_OWNER)
+        except CorruptStoreError as exc:
+            raise CorruptInstanceOwnerError(INSTANCE_OWNER, exc) from exc
+        store.put(INSTANCE_OWNER, {"version": 1, "instance_owner": owner})

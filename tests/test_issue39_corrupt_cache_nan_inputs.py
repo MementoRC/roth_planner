@@ -17,7 +17,7 @@ import engine.portfolio_sync.portfolio as portfolio_mod
 import engine.portfolio_sync.social_security as ssa_mod
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import PORTFOLIO, SSA
+from engine.store.namespaces import INSTANCE_OWNER, PORTFOLIO, SSA
 from engine.upload_merge import build_user_defaults_session_updates, sanitize_living_expenses
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
@@ -70,10 +70,8 @@ def test_save_ssa_snapshot_keeps_other_owner(store):
 # --- non-UTF-8 read_text gaps ---------------------------------------------------
 
 
-def test_load_instance_owner_non_utf8_is_corrupt_not_crash(tmp_path, monkeypatch):
-    path = tmp_path / ".instance_owner.json"
-    path.write_bytes(BAD_BYTES)
-    monkeypatch.setattr(identity, "INSTANCE_OWNER_PATH", path)
+def test_load_instance_owner_undecodable_row_is_corrupt_not_crash(corrupt_row):
+    corrupt_row(INSTANCE_OWNER)
     with pytest.raises(identity.CorruptInstanceOwnerError):
         identity.load_instance_owner()
 
