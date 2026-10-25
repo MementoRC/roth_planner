@@ -362,6 +362,31 @@ class TestRenderWhileSavingIsDisabled:
         assert "saving is disabled" in banners[0]
 
 
+_CORRUPT_CANDIDATE_WARNING = "Your candidate store is unreadable"
+
+
+class TestCorruptCandidateStoreAtBoot:
+    @pytest.mark.parametrize("cached", ["ssa", "form_1040"])
+    def test_boot_recording_warns_once_instead_of_crashing(self, store, corrupt_row, cached):
+        """A cached SSA snapshot / 1040 record records a candidate onto the corrupt row."""
+        payload = corrupt_row(CANDIDATE_STORE)
+        if cached == "ssa":
+            save_ssa_snapshot(_ssa_snapshot(1_000.0), owner="you")
+        else:
+            save_pdf_tax_records(_form_1040(50_000.0))
+
+        at = AppTest.from_file(str(_APP), default_timeout=60)
+        at.session_state["_suppress_snapshot_autoload"] = True
+        at.session_state["your_fra_age"] = 67
+        at.session_state["nav_page"] = "overview"
+        at.run()
+
+        assert not at.exception, [e.value for e in at.exception]
+        warnings = [w.value for w in at.warning if _CORRUPT_CANDIDATE_WARNING in w.value]
+        assert len(warnings) == 1
+        assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload
+
+
 def _spy_refusals(
     monkeypatch, module, names: tuple[str, ...], refused: list[str] | None = None
 ) -> list[str]:

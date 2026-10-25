@@ -24,6 +24,7 @@ from config.scalar_registry import (  # noqa: E402
     scalar_default,
     session_key_for_config_key,
 )
+from engine.data_sources.candidate_store import CorruptCandidateStoreError  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
@@ -59,12 +60,35 @@ def _report_refused_save(exc: StoreUnavailableError) -> None:
     _boot_store_errors.append(exc)
 
 
+_CORRUPT_CANDIDATE_STORE_WARNING = (
+    "⚠️ Your candidate store is unreadable (corrupt or truncated) and could "
+    "contain data with no other copy. It has been left untouched and will NOT be "
+    "overwritten this session — restore it from a backup if you have one, or "
+    "contact support before deleting it."
+)
+# Set once this run has shown the corrupt-candidate-store warning.
+_candidate_store_warned: list[bool] = []
+
+
+def _warn_corrupt_candidate_store() -> None:
+    """Warn that the saved candidate store is unreadable, at most once per run."""
+    if not _candidate_store_warned:
+        st.warning(_CORRUPT_CANDIDATE_STORE_WARNING)
+        _candidate_store_warned.append(True)
+
+
 def _boot_record(record: Callable[[], object]) -> None:
-    """Record a boot-time candidate; a refused save is dropped (see _report_refused_save)."""
+    """Record a boot-time candidate; a refused save is dropped (see _report_refused_save).
+
+    A corrupt saved candidate store refuses the save too: the row is kept and
+    the user gets the corrupt-candidate-store warning instead of a traceback.
+    """
     try:
         record()
     except StoreUnavailableError as exc:
         _report_refused_save(exc)
+    except CorruptCandidateStoreError:
+        _warn_corrupt_candidate_store()
 
 
 def _seed_session_state() -> None:
@@ -282,10 +306,7 @@ if page != "backup":
     st.session_state.pop("_generated_priv_b64", None)
 
 # Build household from session state
-from engine.data_sources.candidate_store import (  # noqa: E402
-    CandidateStore,
-    CorruptCandidateStoreError,
-)
+from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError  # noqa: E402
 from engine.data_sources.committed import (  # noqa: E402
     CorruptCommittedCacheError,
@@ -421,12 +442,7 @@ def _save_resolution(
     try:
         store.save()
     except CorruptCandidateStoreError:
-        st.warning(
-            "⚠️ Your candidate store is unreadable (corrupt or truncated) and could "
-            "contain data with no other copy. It has been left untouched and will NOT be "
-            "overwritten this session — restore it from a backup if you have one, or "
-            "contact support before deleting it."
-        )
+        _warn_corrupt_candidate_store()
     # audit-1008 F-45: same guard for the trust-choice map.
     try:
         choices.save()
