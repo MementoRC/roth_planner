@@ -6,9 +6,12 @@ All values are synthetic.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 import pytest
+from streamlit.testing.v1 import AppTest
 
+import engine.store as store_pkg
 from engine.account_attribution import (
     CorruptAccountAttributionError,
     delete_account_override,
@@ -30,7 +33,13 @@ from engine.instance_identity import (
     save_instance_owner,
 )
 from engine.pdf_owner import load_owner_map, save_owner_map
-from engine.store import SINGLE_KEY, CorruptStoreError
+from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
+from engine.portfolio_sync.social_security import save_ssa_snapshot
+from engine.store import SINGLE_KEY, CorruptStoreError, Store, set_store
+from engine.store.backend import RoutedBackend
+from engine.store.json_readonly import JsonReadOnlyBackend
+from engine.store.legacy_files import registered
+from engine.store.migrate_json import MigrationResult
 from engine.store.namespaces import (
     ACCOUNT_ATTRIBUTION,
     CANDIDATE_STORE,
@@ -40,6 +49,8 @@ from engine.store.namespaces import (
     PDF_OWNER_MAP,
     TRUST_CHOICES,
 )
+from engine.store.sqlite_backend import MEMORY, SqliteBackend
+from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from models.sourced import Provenance, Source, SourcedValue
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -214,3 +225,132 @@ class TestOwnerMapAndLinkMapStores:
             save_owner_map({})
         with pytest.raises(CorruptStoreError, match="ira_account_links"):
             save_link_map({})
+
+
+_APP = Path(__file__).resolve().parent.parent / "app.py"
+_PR3_STORES = (
+    ACCOUNT_ATTRIBUTION,
+    CANDIDATE_STORE,
+    COMMITTED,
+    INSTANCE_OWNER,
+    IRA_ACCOUNT_LINKS,
+    PDF_OWNER_MAP,
+    TRUST_CHOICES,
+)
+
+
+def _ssa_snapshot(amount: float) -> SSASnapshot:
+    return SSASnapshot(
+        estimates=[SSABenefitEstimate(67, "2034-01-01", "retirement", amount)],
+        server_available=True,
+    )
+
+
+def _form_1040(agi: float) -> dict[int, Form1040Record]:
+    return {
+        2024: Form1040Record(
+            tax_year=2024,
+            agi=agi,
+            tax_exempt_interest=0.0,
+            taxable_ss=0.0,
+            qualified_dividends=0.0,
+            ordinary_dividends=0.0,
+            feie=0.0,
+            magi=agi,
+            filing_status=None,
+            captured_at="2026-01-01T00:00:00",
+        )
+    }
+
+
+@pytest.fixture
+def store_refusing_saves(tmp_path):
+    """A store whose PR 3 namespaces read JSON (none here) and refuse every save."""
+    entries = [e for e in registered() if e.namespace in _PR3_STORES]
+    read_only = JsonReadOnlyBackend(tmp_path, entries, reason="importing .x.json failed")
+    store = Store(RoutedBackend(SqliteBackend(MEMORY), dict.fromkeys(_PR3_STORES, read_only)))
+    set_store(store)
+    yield store
+    store.backend.close()
+
+
+@pytest.fixture
+def store_saving_disabled(store_refusing_saves, monkeypatch):
+    """What a failed PR 3 import leaves: the import banner, and saves refused."""
+    monkeypatch.setattr(
+        store_pkg,
+        "_migration_result",
+        MigrationResult(failed_file=".x.json", error="JSONDecodeError: x", read_only=_PR3_STORES),
+    )
+    return store_refusing_saves
+
+
+def _storage_banners(at: AppTest) -> list[str]:
+    errors = [e.value for e in at.error]
+    return [e for e in errors if "Storage unavailable" in e or "Saved data" in e]
+
+
+def _no_storage_banner(at: AppTest) -> bool:
+    return not _storage_banners(at)
+
+
+class TestRenderWhileSavingIsDisabled:
+    @pytest.mark.parametrize("page", ["review", "import", "overview"])
+    def test_page_renders_with_only_the_import_banner(self, store_saving_disabled, page):
+        at = AppTest.from_file(str(_APP), default_timeout=60)
+        at.session_state["_suppress_snapshot_autoload"] = True
+        at.session_state["nav_page"] = page
+        at.run()
+        assert not at.exception
+        assert any("Could not import .x.json" in e.value for e in at.error)
+        assert _no_storage_banner(at)
+
+    def test_review_page_still_offers_sync_everything(self, store_saving_disabled):
+        at = AppTest.from_file(str(_APP), default_timeout=60)
+        at.session_state["_suppress_snapshot_autoload"] = True
+        at.session_state["nav_page"] = "review"
+        at.run()
+        assert not at.exception
+        assert at.button(key="sync_everything_btn") is not None
+
+    @pytest.mark.parametrize("cached", ["ssa", "form_1040"])
+    def test_boot_candidate_recording_is_skipped_quietly(
+        self, store_saving_disabled, monkeypatch, cached
+    ):
+        """A cached SSA snapshot / 1040 record makes app.py record a candidate at boot."""
+        import engine.data_sources.record as record_mod
+
+        calls: list[str] = []
+        for name in ("record_ss_fra_candidate", "record_magi_candidates"):
+            real = getattr(record_mod, name)
+
+            def spy(*args, _real=real, _name=name, **kwargs):
+                calls.append(_name)
+                return _real(*args, **kwargs)
+
+            monkeypatch.setattr(record_mod, name, spy)
+        if cached == "ssa":
+            save_ssa_snapshot(_ssa_snapshot(1_000.0), owner="you")
+        else:
+            save_pdf_tax_records(_form_1040(50_000.0))
+
+        at = AppTest.from_file(str(_APP), default_timeout=60)
+        at.session_state["_suppress_snapshot_autoload"] = True
+        at.session_state["your_fra_age"] = 67
+        at.run()
+
+        assert calls, "the boot-time candidate recording was not reached"
+        assert not at.exception
+        assert _no_storage_banner(at)
+
+    def test_other_refused_saves_show_one_storage_banner(self, store_refusing_saves):
+        """No failed import: a refused save is not quiet, but boot and resolve share one banner."""
+        save_pdf_tax_records(_form_1040(50_000.0))
+        at = AppTest.from_file(str(_APP), default_timeout=60)
+        at.session_state["_suppress_snapshot_autoload"] = True
+        at.session_state["nav_page"] = "overview"
+        at.run()
+        assert not at.exception
+        banners = _storage_banners(at)
+        assert len(banners) == 1
+        assert "saving is disabled" in banners[0]

@@ -50,6 +50,23 @@ def _boot_read(read: Callable[[], _T], default: _T) -> _T:
         return default
 
 
+def _report_refused_save(exc: StoreUnavailableError) -> None:
+    """A refused save: quiet while a failed import disabled saving, else the one banner."""
+    if saving_disabled():
+        return  # render_store_notice() already shows the failed-import banner
+    if not _boot_store_errors:
+        st.error(store_error_message(exc))
+    _boot_store_errors.append(exc)
+
+
+def _boot_record(record: Callable[[], object]) -> None:
+    """Record a boot-time candidate; a refused save is dropped (see _report_refused_save)."""
+    try:
+        record()
+    except StoreUnavailableError as exc:
+        _report_refused_save(exc)
+
+
 def _seed_session_state() -> None:
     """Seed session state from synthetic defaults (or user overrides)."""
     if st.session_state.get("_seeded"):
@@ -190,12 +207,14 @@ if not _DEMO_MODE and "ssa_snapshot_you" not in st.session_state:
                 # your_ss_fra is a sourced field (Wave 2 Part C); a direct write
                 # here would bypass the freeze-until-confirm gate exactly like
                 # the portfolio_snapshot autoload above.
-                record_ss_fra_candidate(
-                    "your_ss_fra",
-                    _your_fra_match.monthly_amount,
-                    Source.FINEXTRACT_LIVE,
-                    "SSA statement (cached)",
-                    datetime.now(),
+                _boot_record(
+                    lambda: record_ss_fra_candidate(
+                        "your_ss_fra",
+                        _your_fra_match.monthly_amount,
+                        Source.FINEXTRACT_LIVE,
+                        "SSA statement (cached)",
+                        datetime.now(),
+                    )
                 )
 
 if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
@@ -208,12 +227,14 @@ if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
         if _spouse_fra_age is not None:
             _spouse_fra_match = match_fra_estimate(_cached_ssa_spouse.estimates, _spouse_fra_age)
             if _spouse_fra_match is not None:
-                record_ss_fra_candidate(
-                    "spouse_ss_fra",
-                    _spouse_fra_match.monthly_amount,
-                    Source.FINEXTRACT_LIVE,
-                    "SSA statement (cached)",
-                    datetime.now(),
+                _boot_record(
+                    lambda: record_ss_fra_candidate(
+                        "spouse_ss_fra",
+                        _spouse_fra_match.monthly_amount,
+                        Source.FINEXTRACT_LIVE,
+                        "SSA statement (cached)",
+                        datetime.now(),
+                    )
                 )
 
 # Record the on-disk 1040 PDF cache as Source.PDF candidates for Command
@@ -225,14 +246,16 @@ if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
 # adds the FEIE back (audit-1008 F-59).
 _pdf_records = {} if _DEMO_MODE else _boot_read(load_pdf_tax_records, {})
 if _pdf_records:
-    record_magi_candidates(
-        {
-            yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
-            for yr, rec in _pdf_records.items()
-        },
-        Source.PDF,
-        "1040 PDF cache",
-        datetime.now(),
+    _boot_record(
+        lambda: record_magi_candidates(
+            {
+                yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
+                for yr, rec in _pdf_records.items()
+            },
+            Source.PDF,
+            "1040 PDF cache",
+            datetime.now(),
+        )
     )
 
 st.sidebar.title("🎯 Roth Planner")
@@ -323,12 +346,12 @@ def _current_pending_review() -> set[str]:
         return published
     try:
         committed_json = load_committed()
-    except CorruptCommittedCacheError:
+        store = CandidateStore.load()
+        choices = ChoiceMap.load()
+    except (CorruptCommittedCacheError, StoreError):
         return published
     if committed_json is not None:
         apply_committed(base, committed_json)
-    store = CandidateStore.load()
-    choices = ChoiceMap.load()
     return set(resolve(base, store, choices).pending_review)
 
 
@@ -348,14 +371,28 @@ def _persist_resolution(
     choices: ChoiceMap,
     committed_unreadable: bool,
 ) -> None:
-    """Write the committed baseline, candidate store and trust choices back to disk.
+    """Save the committed baseline, candidate store and trust choices to the store.
 
-    Skipped entirely in demo mode (audit-1018 F-28): the in-memory state is built
-    from demo seeds, and persisting it would overwrite the parked personal files
-    and stamp the seeds as MANUAL.
+    Skipped in demo mode (audit-1018 F-28): the state is built from demo seeds,
+    and saving it would stamp them MANUAL. When a failed JSON import has
+    disabled saving, the refusal is quiet, because render_store_notice()
+    already shows that banner on every run. Any other unavailable-storage
+    error gets the one storage banner (shared with the boot-time reads).
     """
     if _DEMO_MODE:
         return
+    try:
+        _save_resolution(app_res, store, choices, committed_unreadable)
+    except StoreUnavailableError as exc:
+        _report_refused_save(exc)
+
+
+def _save_resolution(
+    app_res: AppResolveResult,
+    store: CandidateStore,
+    choices: ChoiceMap,
+    committed_unreadable: bool,
+) -> None:
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
     # audit-0809 #11: if the on-disk committed file was corrupt (see above),
