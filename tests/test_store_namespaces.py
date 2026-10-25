@@ -33,6 +33,8 @@ EXPECTED: dict[str, str] = {
     "trust_choices": ".trust_choices.json",
     "instance_owner": ".instance_owner.json",
     "account_attribution": ".account_attribution.json",
+    "pdf_owner_map": ".pdf_owner_map.json",
+    "ira_account_links": ".ira_account_links.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -54,6 +56,8 @@ MOVED_MODULES: list[str] = [
     "engine.data_sources.choices",
     "engine.instance_identity",
     "engine.account_attribution",
+    "engine.pdf_owner",
+    "engine.account_link",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -102,6 +106,10 @@ STORE_FUNCTIONS: list[str] = [
     "engine.account_attribution:load_account_overrides",
     "engine.account_attribution:save_account_override",
     "engine.account_attribution:delete_account_override",
+    "engine.pdf_owner:load_owner_map",
+    "engine.pdf_owner:save_owner_map",
+    "engine.account_link:load_link_map",
+    "engine.account_link:save_link_map",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path", "store_path"}

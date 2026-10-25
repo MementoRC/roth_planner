@@ -8,8 +8,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 ENGINE = Path(__file__).resolve().parent.parent / "engine"
 
 # Stores that stay files (spec, owner decisions). config/loader.py
@@ -91,7 +89,6 @@ def test_no_engine_function_takes_a_store_path_parameter():
     assert offenders == []
 
 
-@pytest.mark.xfail(strict=True, reason="dotfile constants remain until Task 8")
 def test_no_engine_module_keeps_a_dotfile_json_path_constant():
     offenders = [
         f"{name}: {hit}"

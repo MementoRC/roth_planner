@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from engine.pdf_owner import (
@@ -15,6 +13,8 @@ from engine.pdf_owner import (
     resolve_owner,
     save_owner_map,
 )
+from engine.store import SINGLE_KEY, CorruptStoreError
+from engine.store.namespaces import PDF_OWNER_MAP
 
 
 class TestOwnerRoles:
@@ -42,30 +42,22 @@ class TestNormalizeOwnerKey:
 
 
 class TestOwnerMapRoundTrip:
-    def test_save_load_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import engine.pdf_owner as mod
-
-        monkeypatch.setattr(mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json")
+    def test_save_load_round_trip(self) -> None:
         save_owner_map({"john q sample": "you"})
         assert load_owner_map() == {"john q sample": "you"}
 
-    def test_load_missing_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import engine.pdf_owner as mod
-
-        monkeypatch.setattr(mod, "_OWNER_MAP_PATH", tmp_path / "nope.json")
+    def test_load_missing_returns_empty(self) -> None:
         assert load_owner_map() == {}
 
-    def test_load_corrupt_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import engine.pdf_owner as mod
-
-        bad = tmp_path / ".pdf_owner_map.json"
-        bad.write_text("{not json")
-        monkeypatch.setattr(mod, "_OWNER_MAP_PATH", bad)
+    def test_load_corrupt_returns_empty(self, corrupt_row) -> None:
+        corrupt_row(PDF_OWNER_MAP)
         assert load_owner_map() == {}
+
+    def test_save_refuses_a_corrupt_row(self, store, corrupt_row) -> None:
+        payload = corrupt_row(PDF_OWNER_MAP)
+        with pytest.raises(CorruptStoreError, match="pdf_owner_map"):
+            save_owner_map({"john q sample": "you"})
+        assert store.backend.get(PDF_OWNER_MAP, SINGLE_KEY).payload == payload
 
 
 class TestResolveOwner:

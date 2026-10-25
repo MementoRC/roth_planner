@@ -1412,7 +1412,6 @@ class TestBrokerageStatementSync:
         dict in session_state under 'statement_by_account' (verified via the same
         __setitem__ call-tracking pattern used elsewhere in this file, since the
         session_state mock's .get() is not linked to bracket-assignment)."""
-        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -1453,7 +1452,6 @@ class TestBrokerageStatementSync:
             patch("engine.brokerage_statement_pdf.load_account_type_overrides", return_value={}),
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             sync_scan_mod.render_sync_scan_partial(hh)
@@ -1474,7 +1472,6 @@ class TestBrokerageStatementSync:
         """Clicking 'Scan folder' must auto-apply a taxable account's parsed
         interest/dividends straight into the YTD snapshot and persist it via
         save_ytd_snapshot — no separate 'Apply to YTD snapshot' click required."""
-        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -1516,7 +1513,6 @@ class TestBrokerageStatementSync:
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch.object(ytd_income_mod, "save_ytd_snapshot"),
             patch.object(sync_scan_mod, "save_ytd_snapshot") as mock_save_snapshot,
-            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             sync_scan_mod.render_sync_scan_partial(hh)
@@ -1785,7 +1781,6 @@ class TestBrokerageStatementSync:
     def test_scan_persists_to_cache_via_save_statement_records(self, tmp_path, monkeypatch):
         """After a successful scan, save_statement_records is called with the
         parsed-and-latest-per-account dict so the scan survives an app restart."""
-        import engine.pdf_owner as owner_mod
         from engine.brokerage_statement_pdf import BrokerageStatementRecord
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -1827,7 +1822,6 @@ class TestBrokerageStatementSync:
             patch("engine.brokerage_statement_pdf.save_statement_records") as mock_save_records,
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             sync_scan_mod.render_sync_scan_partial(hh)
@@ -2009,9 +2003,7 @@ class TestOwnerAttributionScanFlow:
     Task 6 retired -- resolve_account_owner (engine/account_attribution.py)
     is now the sole non-interactive attribution authority."""
 
-    def _run_scan(self, hh, mock_st, canned_result, owner_map_path, tmp_path, monkeypatch):
-        import engine.pdf_owner as owner_mod
-
+    def _run_scan(self, hh, mock_st, canned_result, tmp_path, monkeypatch):
         # validate_local_folder requires the scanned folder to be under
         # Path.home(); pytest's tmp_path lives under /tmp, so home must be
         # repointed here (mirrors the pattern used by TestBrokerageStatementSync
@@ -2027,7 +2019,6 @@ class TestOwnerAttributionScanFlow:
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
         ):
             sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
@@ -2058,7 +2049,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result1,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2077,7 +2067,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st2,
             result2,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2109,7 +2098,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2133,7 +2121,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2146,7 +2133,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st2,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2177,7 +2163,6 @@ class TestOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2219,9 +2204,7 @@ class TestBrokerageOwnerAttributionScanFlow:
     statements must ADD to interest_ytd/ordinary_dividends_ytd/etc., not
     overwrite them -- the same fix already proven for Koinly in Task 6."""
 
-    def _run_scan(self, hh, mock_st, canned_result, owner_map_path, tmp_path, monkeypatch):
-        import engine.pdf_owner as owner_mod
-
+    def _run_scan(self, hh, mock_st, canned_result, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         with (
             patch.object(ytd_income_mod, "st", mock_st),
@@ -2232,7 +2215,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
         ):
             sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
@@ -2257,7 +2239,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result1,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2276,7 +2257,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             hh,
             mock_st2,
             result2,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2299,7 +2279,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2312,7 +2291,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             hh,
             mock_st2,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2337,7 +2315,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             hh,
             mock_st1,
             result,
-            tmp_path / ".pdf_owner_map.json",
             tmp_path,
             monkeypatch,
         )
@@ -2360,9 +2337,7 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
     per the instance-identity plan's Task 6, which retired the 2026-07-13
     manual owner-confirm selectbox this class previously drove."""
 
-    def _run_scan(self, hh, mock_st, canned_result, owner_map_path, tmp_path, monkeypatch):
-        import engine.pdf_owner as owner_mod
-
+    def _run_scan(self, hh, mock_st, canned_result, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         with (
             patch.object(ytd_income_mod, "st", mock_st),
@@ -2373,7 +2348,6 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
             patch.object(sync_scan_mod, "is_pyodide", return_value=False),
             patch("engine.pdf_import.scan_pdf_folder", return_value=canned_result),
             patch("engine.portfolio_sync.save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
         ):
             sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
@@ -2407,8 +2381,7 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
             ],
             koinly_reports=[_koinly_report("john q sample", 100.0, 200.0, 50.0)],
         )
-        owner_map_path = tmp_path / ".pdf_owner_map.json"
-        self._run_scan(hh, mock_st, result, owner_map_path, tmp_path, monkeypatch)
+        self._run_scan(hh, mock_st, result, tmp_path, monkeypatch)
 
         # Both loops applied their fields to the SAME snapshot in one render.
         final_snap = mock_st.session_state.ytd_snapshot

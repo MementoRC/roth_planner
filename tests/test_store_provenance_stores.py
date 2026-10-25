@@ -15,6 +15,7 @@ from engine.account_attribution import (
     load_account_overrides,
     save_account_override,
 )
+from engine.account_link import NEW, load_link_map, save_link_map
 from engine.data_sources.candidate_store import CandidateStore, CorruptCandidateStoreError
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
 from engine.data_sources.committed import (
@@ -28,12 +29,15 @@ from engine.instance_identity import (
     load_instance_owner,
     save_instance_owner,
 )
-from engine.store import SINGLE_KEY
+from engine.pdf_owner import load_owner_map, save_owner_map
+from engine.store import SINGLE_KEY, CorruptStoreError
 from engine.store.namespaces import (
     ACCOUNT_ATTRIBUTION,
     CANDIDATE_STORE,
     COMMITTED,
     INSTANCE_OWNER,
+    IRA_ACCOUNT_LINKS,
+    PDF_OWNER_MAP,
     TRUST_CHOICES,
 )
 from models.sourced import Provenance, Source, SourcedValue
@@ -181,3 +185,32 @@ class TestAccountAttributionStore:
         with pytest.raises(CorruptAccountAttributionError, match="corrupt store row"):
             delete_account_override("synthbroker", "ACCT-1")
         assert store.backend.get(ACCOUNT_ATTRIBUTION, SINGLE_KEY).payload == payload
+
+
+class TestOwnerMapAndLinkMapStores:
+    def test_owner_map_round_trip(self, store):
+        save_owner_map({"owner a": "you"})
+        assert store.get(PDF_OWNER_MAP) == {"owner a": "you"}
+        assert load_owner_map() == {"owner a": "you"}
+
+    def test_link_map_round_trip_saves_account_keys_as_lists(self, store):
+        link_map = {
+            "synthbroker|X1234": ("trad_ira", "you", "IRA X1234"),
+            "synthbroker|X5678": NEW,
+        }
+        save_link_map(link_map)
+        assert store.get(IRA_ACCOUNT_LINKS) == {
+            "synthbroker|X1234": ["trad_ira", "you", "IRA X1234"],
+            "synthbroker|X5678": "NEW",
+        }
+        assert load_link_map() == link_map
+
+    def test_corrupt_rows_read_empty_and_refuse_a_save(self, store, corrupt_row):
+        corrupt_row(PDF_OWNER_MAP)
+        corrupt_row(IRA_ACCOUNT_LINKS)
+        assert load_owner_map() == {}
+        assert load_link_map() == {}
+        with pytest.raises(CorruptStoreError, match="pdf_owner_map"):
+            save_owner_map({})
+        with pytest.raises(CorruptStoreError, match="ira_account_links"):
+            save_link_map({})

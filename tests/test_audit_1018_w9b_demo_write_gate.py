@@ -67,8 +67,6 @@ def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
         "user_defaults": loader._USER_DEFAULTS_PATH,
-        "owner_map": owner_mod._OWNER_MAP_PATH,
-        "link_map": link_mod._ACCOUNT_LINK_PATH,
     }
 
 
@@ -80,6 +78,8 @@ _FILLED_NAMESPACES = frozenset(
         "trust_choices",
         "instance_owner",
         "account_attribution",
+        "pdf_owner_map",
+        "ira_account_links",
         "portfolio",
         "ytd",
         "ssa",

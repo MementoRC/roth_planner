@@ -115,8 +115,6 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
 def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
     """Drives views/ytd_income.py's "Scan folder" handler against the fixed
     scan_pdf_folder result. Returns (mock_st, persisted pdf cache dict)."""
-    import engine.pdf_owner as owner_mod
-
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     hh = _stub_hh()
@@ -150,7 +148,6 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
         patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
         patch.object(ytd_income_mod, "save_ytd_snapshot"),
         patch.object(sync_scan_mod, "save_ytd_snapshot"),
-        patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
     ):
         # recorded_at is real datetime.now() here -- not asserted (A0/A2 only
         # golden the value/source/detail, matching record_magi_candidates'
@@ -424,8 +421,6 @@ class TestA2RewiredYtdIncomeView:
         assert len(setitem_calls) == 1, "run_folder_scan must be the ONLY _pdf_1040_scanned writer"
 
     def test_single_scan_pdf_folder_call(self, tmp_path, monkeypatch):
-        import engine.pdf_owner as owner_mod
-
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         hh = _stub_hh()
@@ -451,7 +446,6 @@ class TestA2RewiredYtdIncomeView:
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch.object(ytd_income_mod, "save_ytd_snapshot"),
             patch.object(sync_scan_mod, "save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             sync_scan_mod.render_sync_scan_partial(hh)
