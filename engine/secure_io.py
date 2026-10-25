@@ -13,8 +13,10 @@ Provides :func:`write_pii_json` which atomically creates a file with mode
 Pattern mirrors ``engine.data_bridge_keys._write_keyfile`` (PR #172 precedent).
 
 Demo mode is handled by the document store's null store (engine.store), not
-here. Since every store moved to the database, these helpers only read the
-legacy JSON files during the one-time import.
+here. Every store now lives in the database. The read helpers serve the legacy
+JSON files for the one-time import and, after a failed import, on every call
+through the read-only fallback. ``write_pii_json`` has no production callers
+left; the PR 4 cleanup deletes it.
 """
 
 from __future__ import annotations

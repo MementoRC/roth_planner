@@ -332,7 +332,7 @@ _run_state: dict[str, Household] = {}  # per script run (Streamlit re-executes t
 def _current_pending_review() -> set[str]:
     """Pending-review field keys as of NOW (after the page body ran).
 
-    Re-runs the pure ``resolve()`` against the on-disk committed baseline,
+    Re-runs the pure ``resolve()`` against the saved committed baseline,
     candidate store and trust choices, so candidates recorded or confirmed by
     the page body in this run are counted. Falls back to the value
     get_household() published when state is missing or unreadable.
@@ -394,7 +394,7 @@ def _save_resolution(
 ) -> None:
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
-    # audit-0809 #11: if the on-disk committed file was corrupt (see above),
+    # audit-0809 #11: if the saved committed baseline was corrupt (see above),
     # app_res.committed_changed is still True here (resolve_for_app treated
     # committed_json=None as "first load" and freshly migrated one) — but
     # saving now would overwrite the still-intact corrupt file with the
@@ -413,7 +413,7 @@ def _save_resolution(
             "contact support before deleting it."
         )
     # audit-0823: mirror the committed-baseline guard above — a corrupt
-    # on-disk candidate store must not be silently clobbered by the
+    # saved candidate store must not be silently clobbered by the
     # in-memory store (which, per CandidateStore.load's resilience, would
     # be EMPTY on a corrupt read). store.save() itself refuses this write
     # (see CorruptCandidateStoreError's docstring); this except is what
@@ -532,7 +532,7 @@ def get_household() -> Household:
     )
 
     # Demo mode (audit-1018 F-28): the personal committed baseline, candidate
-    # store and trust choices are parked on disk. Resolve against empty
+    # store and trust choices stay parked in the real store. Resolve against empty
     # in-memory ones (the "first load" path, so the demo seeds are the baseline)
     # and write none of them back -- demo values must never overwrite personal
     # files or be stamped MANUAL there.

@@ -21,14 +21,10 @@ import pytest  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# --- audit-0805 W1: forbid any test from touching a real repo-root cache ---
-# Import the modules that own each repo-root dotfile-cache constant and record
-# their CURRENT (literal, pre-any-monkeypatch) value at conftest import time —
-# i.e. before any test module has had a chance to run and monkeypatch one of
-# these away. This is the ground-truth watch-list; stage 2 adds a redirect
-# fixture that patches these same module attributes to a tmp_path so
-# production code never reaches the real path, but the watch-list itself
-# below is captured once and is immune to that later patching.
+# --- audit-0805 W1: forbid any test from touching a real repo-root store file.
+# The stores live in the database now; the literals below are their legacy JSON
+# files (still watched, so no test reads or moves the developer's files), plus
+# the files that stay files.
 import config.loader as _config_loader_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
@@ -77,7 +73,7 @@ def _patch_default(monkeypatch: pytest.MonkeyPatch, func, param_name: str, value
     A plain ``monkeypatch.setattr(module, "SOME_CONST", tmp)`` does NOT
     retroactively change a default value that was already baked into a
     function object's ``__defaults__``/``__kwdefaults__`` at module-import
-    time (e.g. ``def f(store_path=CANDIDATE_STORE_PATH)``) — this patches the
+    time (e.g. ``def f(overrides_path=".dividend_rates.json")``) — this patches the
     function object itself instead, so callers that omit the argument still
     get redirected.
     """
@@ -103,24 +99,16 @@ def _patch_default(monkeypatch: pytest.MonkeyPatch, func, param_name: str, value
 
 @pytest.fixture(autouse=True)
 def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Redirect every repo-root cache-file constant to a per-test tmp dir.
+    """Redirect every file a test could reach to a per-test tmp dir.
 
     Runs before ``_forbid_real_cache_writes`` (which depends on it below) so
     production code is already redirected by the time the guard starts its
-    before-snapshot. Patches:
-
-    1. The owning module's attribute (what each function reads at call time).
-    2. Every OTHER module's own ``from ... import <CONST>`` binding (a
-       separate copy, frozen at that module's import time) — found via
-       grep across the repo.
-    3. Every function whose default parameter value was ALSO baked from one
-       of these constants at module-import time (``__defaults__`` /
-       ``__kwdefaults__`` do not see attribute patches after the fact).
+    before-snapshot. Redirects: ``.user_defaults.json``, the demo marker,
+    ``ROTH_PLANNER_DB``, the legacy folder, and the ``forecast_portfolio``
+    dividend-rates default (via ``_patch_default``).
 
     Existing per-test ``monkeypatch.setattr(...)`` calls on these same
-    targets simply override this fixture's value for that test (whichever
-    fixture/test code runs later during setup wins) — nothing here removes
-    or conflicts with them.
+    targets simply override this fixture's value for that test.
     """
     cache_dir = tmp_path / "_redirected_caches"
     cache_dir.mkdir(exist_ok=True)

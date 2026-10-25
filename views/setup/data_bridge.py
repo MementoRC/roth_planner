@@ -976,7 +976,7 @@ def _handle_personal_exports() -> None:
             if identity_set:
                 # Poisons-the-receiver defence: an export built from a
                 # spouse-owned instance while identity is unset (or degraded
-                # by a corrupt .instance_owner.json -- _this_instance_owner()
+                # by a corrupt saved instance owner -- _this_instance_owner()
                 # collapses both to None) would stamp "you" onto a bundle
                 # that belongs to the other person, mislabelling every
                 # account the RECEIVING instance imports it into. Skip the
