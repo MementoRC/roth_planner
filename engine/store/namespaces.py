@@ -27,6 +27,9 @@ STATEMENT_ACCOUNT_OVERRIDES = declare_store(
     "statement_account_overrides", ".statement_account_overrides.json"
 )
 
+UBS_ACTIVITY = declare_store("ubs_activity", ".ubs_activity_cache.json")
+EXERCISE_SCHEDULE = declare_store("exercise_schedule", ".exercise_schedule_cache.json")
+
 _LEDGER_SECTIONS = ("koinly", "brokerage")
 
 

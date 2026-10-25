@@ -9,6 +9,11 @@ import pytest
 
 import engine.brokerage_statement_pdf as bsp
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
+from engine.exercise_schedule_store import (
+    clear_exercise_schedule,
+    load_exercise_schedule,
+    save_exercise_schedule,
+)
 from engine.koinly_report_pdf import KoinlyReport, load_koinly_report, save_koinly_report
 from engine.pdf_ledger import load_ledger, save_ledger
 from engine.portfolio_sync.portfolio import (
@@ -36,6 +41,7 @@ from engine.ssa_statement_pdf import (
 from engine.store import SINGLE_KEY, CorruptStoreError, StoreUnavailableError
 from engine.store.namespaces import (
     BROKERAGE_STATEMENTS,
+    EXERCISE_SCHEDULE,
     KOINLY,
     PDF_LEDGER,
     PORTFOLIO,
@@ -44,6 +50,7 @@ from engine.store.namespaces import (
     STATEMENT_ACCOUNT_OVERRIDES,
     STATEMENT_FOLDER,
     TAX_PDF,
+    UBS_ACTIVITY,
     YTD,
 )
 from engine.tax import load_prior_year_agi, load_prior_year_federal_tax
@@ -53,6 +60,8 @@ from engine.tax_return_pdf import (
     load_pdf_tax_records,
     save_pdf_tax_records,
 )
+from engine.ubs_activity_store import UbsActivityStoreError, load_ubs_orders, save_ubs_orders
+from models.exercise_schedule import ExerciseSchedule
 from models.ytd_income import YTDSnapshot
 
 
@@ -352,3 +361,50 @@ class TestPdfLedgerStore:
         # The failed save rolled back: spouse's row was not deleted either.
         assert store.keys(PDF_LEDGER) == ["spouse", "you"]
         assert store.backend.get(PDF_LEDGER, "you").payload == payload
+
+
+class TestUbsActivityStore:
+    def test_round_trip(self, store):
+        save_ubs_orders([])
+        assert store.get(UBS_ACTIVITY) == []
+        assert load_ubs_orders() == []
+
+    def test_absent_reads_empty(self):
+        assert load_ubs_orders() == []
+
+    def test_corrupt_row_raises_and_is_not_overwritten(self, store, corrupt_row):
+        payload = corrupt_row(UBS_ACTIVITY)
+        with pytest.raises(UbsActivityStoreError):
+            load_ubs_orders()
+        with pytest.raises(UbsActivityStoreError):
+            save_ubs_orders([])
+        assert store.backend.get(UBS_ACTIVITY, SINGLE_KEY).payload == payload
+
+    def test_wrong_shape_is_corrupt(self, store):
+        store.put(UBS_ACTIVITY, {"not": "a list"})
+        with pytest.raises(UbsActivityStoreError):
+            load_ubs_orders()
+
+
+class TestExerciseScheduleStore:
+    def test_round_trip_and_clear(self, store):
+        schedule = ExerciseSchedule()
+        schedule.set_shares("g1", 2026, 100)
+        schedule.set_price(2026, 50.0)
+        save_exercise_schedule(schedule)
+        assert store.has(EXERCISE_SCHEDULE)
+        loaded = load_exercise_schedule()
+        assert loaded is not None
+        assert loaded.shares_by_grant_year == schedule.shares_by_grant_year
+        clear_exercise_schedule()
+        assert not store.has(EXERCISE_SCHEDULE)
+        assert load_exercise_schedule() is None
+
+    def test_corrupt_or_wrong_version_reads_none(self, store, corrupt_row):
+        store.put(
+            EXERCISE_SCHEDULE,
+            {"version": 999, "shares_by_grant_year": {}, "price_by_year": {}},
+        )
+        assert load_exercise_schedule() is None
+        corrupt_row(EXERCISE_SCHEDULE)
+        assert load_exercise_schedule() is None

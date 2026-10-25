@@ -23,7 +23,6 @@ from streamlit.testing.v1 import AppTest
 from config.loader import load_defaults, save_user_defaults
 from engine.data_sources.candidate_store import CandidateStore
 from engine.exercise_schedule_store import load_exercise_schedule
-from engine.exercise_schedule_store import save_exercise_schedule as _real_save_exercise_schedule
 from engine.market_quote import QuoteResult
 from models.household import GrowthProfile, Household, project_price
 from models.sourced import Source
@@ -342,7 +341,7 @@ class TestExercisePagePriceCellsUseConfirmedPrice:
         assert at.number_input(key="oe_price_2028").value == pytest.approx(192.0 * 1.07**2)
 
 
-def _render_household_loading_schedule(cache_path) -> None:
+def _render_household_loading_schedule() -> None:
     # NOTE: AppTest.from_function execs only this function's own source, so
     # the module-level ``Path`` import is unavailable at annotation-eval time
     # -- deliberately unannotated (private test helper) for that reason.
@@ -358,7 +357,7 @@ def _render_household_loading_schedule(cache_path) -> None:
         stock_price_now=192.0,
         grants=[StockGrant(year=2019, strike=100.0, shares=1000, expiry_year=2028, grant_id="g1")],
     )
-    hh.exercise_schedule = load_exercise_schedule(cache_path)
+    hh.exercise_schedule = load_exercise_schedule()
     render(hh)
 
 
@@ -368,18 +367,7 @@ class TestSaveOnlyPersistsDivergentPrices:
     "assumed" cells must not be persisted (the root cause of the "stuck at old
     price" bug: a stale flat price shadowing a later live-quote fetch)."""
 
-    def test_all_cells_at_projected_default_persist_no_overrides(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import views.option_exercise as oe_module
-
-        cache_path = tmp_path / "cache.json"
-        monkeypatch.setattr(
-            oe_module,
-            "save_exercise_schedule",
-            lambda schedule: _real_save_exercise_schedule(schedule, path=cache_path),
-        )
-
+    def test_all_cells_at_projected_default_persist_no_overrides(self) -> None:
         at = AppTest.from_function(_render_household_with_one_grant)
         at.run()
         assert not at.exception
@@ -388,24 +376,13 @@ class TestSaveOnlyPersistsDivergentPrices:
         at.run()
         assert not at.exception
 
-        saved = load_exercise_schedule(cache_path)
+        saved = load_exercise_schedule()
         assert saved is not None
         assert saved.price_by_year == {}
         assert 2026 not in saved.price_by_year
         assert 2028 not in saved.price_by_year
 
-    def test_one_manually_edited_cell_is_persisted_alone(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import views.option_exercise as oe_module
-
-        cache_path = tmp_path / "cache.json"
-        monkeypatch.setattr(
-            oe_module,
-            "save_exercise_schedule",
-            lambda schedule: _real_save_exercise_schedule(schedule, path=cache_path),
-        )
-
+    def test_one_manually_edited_cell_is_persisted_alone(self) -> None:
         at = AppTest.from_function(_render_household_with_one_grant)
         at.run()
         assert not at.exception
@@ -418,7 +395,7 @@ class TestSaveOnlyPersistsDivergentPrices:
         at.run()
         assert not at.exception
 
-        saved = load_exercise_schedule(cache_path)
+        saved = load_exercise_schedule()
         assert saved is not None
         assert saved.price_by_year == {2026: pytest.approx(500.0)}
         assert 2028 not in saved.price_by_year
@@ -430,13 +407,6 @@ class TestSaveOnlyPersistsDivergentPrices:
         cells must not leave behind stale price_by_year entries that shadow a
         subsequent live-quote fetch."""
         import views.option_exercise as oe_module
-
-        cache_path = tmp_path / "cache.json"
-        monkeypatch.setattr(
-            oe_module,
-            "save_exercise_schedule",
-            lambda schedule: _real_save_exercise_schedule(schedule, path=cache_path),
-        )
 
         at = AppTest.from_function(_render_household_with_one_grant)
         at.run()
@@ -453,9 +423,7 @@ class TestSaveOnlyPersistsDivergentPrices:
 
         monkeypatch.setattr(oe_module, "handle_stock_quote_fetch", _patched_handler)
 
-        at2 = AppTest.from_function(
-            _render_household_loading_schedule, kwargs={"cache_path": cache_path}
-        )
+        at2 = AppTest.from_function(_render_household_loading_schedule)
         at2.run()
         assert not at2.exception
 

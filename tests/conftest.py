@@ -37,12 +37,10 @@ import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
-import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
-import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
 import views._shared as _views_shared_mod  # noqa: E402
 import views.option_exercise._partials._helpers as _option_exercise_helpers_mod  # noqa: E402
 import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
@@ -63,11 +61,11 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _paths_mod.CANDIDATE_STORE_PATH,
     _paths_mod.TRUST_CHOICES_PATH,
     _paths_mod.COMMITTED_PATH,
-    _exercise_schedule_store_mod._EXERCISE_SCHEDULE_CACHE_PATH,
+    _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
     _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
     _instance_identity_mod.INSTANCE_OWNER_PATH,
-    _ubs_activity_store_mod._UBS_ACTIVITY_CACHE_PATH,
+    _REPO_ROOT / ".ubs_activity_cache.json",
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
     _demo_mode_mod.DEMO_MODE_PATH,
@@ -147,20 +145,12 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_paths_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_paths_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
-    monkeypatch.setattr(
-        _exercise_schedule_store_mod,
-        "_EXERCISE_SCHEDULE_CACHE_PATH",
-        _tmp(".exercise_schedule_cache.json"),
-    )
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
     monkeypatch.setattr(
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
     )
     monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
     monkeypatch.setattr(_demo_mode_mod, "DEMO_MODE_PATH", _tmp(".demo_mode"))
-    monkeypatch.setattr(
-        _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
-    )
 
     # The SQLite store file: never let a test reach the repo-root database.
     monkeypatch.setenv("ROTH_PLANNER_DB", str(_tmp(".roth_planner.db")))
@@ -236,15 +226,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         "overrides_path",
         _tmp(".dividend_rates.json"),
     )
-
-    # 4. exercise_schedule_store functions bake ``path=`` at definition time, so
-    # app.py's load_exercise_schedule() would otherwise read the REAL cache.
-    for _fn in (
-        _exercise_schedule_store_mod.save_exercise_schedule,
-        _exercise_schedule_store_mod.load_exercise_schedule,
-        _exercise_schedule_store_mod.clear_exercise_schedule,
-    ):
-        _patch_default(monkeypatch, _fn, "path", _tmp(".exercise_schedule_cache.json"))
 
 
 def _diff_cache_snapshots(

@@ -25,6 +25,8 @@ EXPECTED: dict[str, str] = {
     "statement_folder": ".statement_folder_config.json",
     "statement_account_overrides": ".statement_account_overrides.json",
     "pdf_ledger": ".pdf_import_ledger.json",
+    "ubs_activity": ".ubs_activity_cache.json",
+    "exercise_schedule": ".exercise_schedule_cache.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -37,6 +39,8 @@ MOVED_MODULES: list[str] = [
     "engine.ssa_statement_pdf",
     "engine.brokerage_statement_pdf",
     "engine.pdf_ledger",
+    "engine.ubs_activity_store",
+    "engine.exercise_schedule_store",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -63,6 +67,11 @@ STORE_FUNCTIONS: list[str] = [
     "engine.brokerage_statement_pdf:load_account_type_overrides",
     "engine.pdf_ledger:save_ledger",
     "engine.pdf_ledger:load_ledger",
+    "engine.ubs_activity_store:save_ubs_orders",
+    "engine.ubs_activity_store:load_ubs_orders",
+    "engine.exercise_schedule_store:save_exercise_schedule",
+    "engine.exercise_schedule_store:load_exercise_schedule",
+    "engine.exercise_schedule_store:clear_exercise_schedule",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

@@ -31,6 +31,7 @@ from engine.data_sources.candidate_store import CandidateStore, CorruptCandidate
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
 from engine.dividend_forecast import Position, forecast_portfolio
 from engine.exercise_schedule_store import load_exercise_schedule
+from engine.store.namespaces import EXERCISE_SCHEDULE
 from models.exercise_schedule import ExerciseSchedule
 from models.sourced import Provenance, Source
 
@@ -300,11 +301,10 @@ def test_f47_valid_entries_survive_next_to_a_bad_one(tmp_path: Path) -> None:
         {"price_by_year": None},
     ],
 )
-def test_f48_wrong_shape_schedule_cache_returns_none(tmp_path: Path, payload: dict) -> None:
-    path = tmp_path / ".exercise_schedule_cache.json"
-    path.write_text(json.dumps({"version": ExerciseSchedule().to_dict()["version"], **payload}))
+def test_f48_wrong_shape_schedule_cache_returns_none(store, payload: dict) -> None:
+    store.put(EXERCISE_SCHEDULE, {"version": ExerciseSchedule().to_dict()["version"], **payload})
 
-    assert load_exercise_schedule(path) is None
+    assert load_exercise_schedule() is None
 
 
 def test_f48_from_dict_rejects_wrong_shape_with_value_error() -> None:

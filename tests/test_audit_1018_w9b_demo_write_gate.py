@@ -56,8 +56,10 @@ from engine.portfolio_sync import (
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.secure_io import read_pii_bytes, read_pii_json, write_pii_json
+from engine.store import get_store
 from engine.store.core import Store
 from engine.store.legacy_files import registered
+from engine.store.namespaces import EXERCISE_SCHEDULE
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from models.ytd_income import YTDSnapshot
 
@@ -75,8 +77,6 @@ def _personal_paths() -> dict[str, Path]:
         "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
         "owner_map": owner_mod._OWNER_MAP_PATH,
         "link_map": link_mod._ACCOUNT_LINK_PATH,
-        "ubs": ubs_mod._UBS_ACTIVITY_CACHE_PATH,
-        "exercise_schedule": exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH,
     }
 
 
@@ -176,7 +176,7 @@ def personal_files(monkeypatch, store):
         }
     )
     ubs_mod.save_ubs_orders([])
-    write_pii_json(exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH, {"version": 1})
+    get_store().put(EXERCISE_SCHEDULE, {"version": 1})
     before = _persisted(store)
     assert all(v is not None for v in before["files"].values()), "fixture left a file unwritten"
     on_db = {entry.namespace for entry in registered()} & _FILLED_NAMESPACES
@@ -209,7 +209,7 @@ def _run_write_paths() -> None:
     brokerage_mod.save_account_type_override("ACCT-2", "roth_ira")
     brokerage_mod.save_statement_records({})
     ubs_mod.save_ubs_orders([])
-    write_pii_json(exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH, {"version": 2})
+    get_store().put(EXERCISE_SCHEDULE, {"version": 2})
     clear_exercise_schedule()
 
 
