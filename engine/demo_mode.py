@@ -1,11 +1,10 @@
 """Demo-mode marker (audit-1018 D2): "Reset to demo" parks the personal data.
 
-While the marker file exists the app treats every personal on-disk cache
-(committed baseline, candidate store, trust choices, portfolio / YTD / SSA /
-1040 caches, PDF ledger, ``.user_defaults.json``) as absent and writes none of
-them, so demo values can never overwrite or masquerade as personal data. The
-personal files stay on disk untouched; :func:`leave_demo_mode` removes the
-marker and they come back.
+While the marker file exists, ``engine.store.get_store()`` serves a null store
+(every saved store reads as absent and nothing is written), and
+``.user_defaults.json`` / ``.dividend_rates.json`` are ignored, so demo values
+can never overwrite or masquerade as personal data. The personal data stays
+untouched; :func:`leave_demo_mode` removes the marker and it comes back.
 
 A marker file (not session state) so the mode survives a restart of a local
 run. The stlite build has no localStorage, but its worker has a writable

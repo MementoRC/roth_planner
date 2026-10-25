@@ -30,13 +30,14 @@ this file's round-trip tests cover those too per the plan's Task 7 item.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 from streamlit.testing.v1 import AppTest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.sourced import Provenance, Source
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -44,17 +45,13 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    # audit-0805 W1: re-import at call time (not the module-level binding
-    # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_json = {
         "prior_year_magi": {
             "data": {"2024": 200_000.0},
             "prov": {"2024": Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()},
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -62,8 +59,8 @@ def _seed_pending_prior_year_magi_2024() -> None:
         290_000.0,
         Provenance(Source.PDF, _RECORDED_AT, "Form 1040 PDF"),
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
 def _render_assumptions_with_pending(pending: set[str]) -> None:
@@ -92,17 +89,13 @@ def _slider_by_label(at: AppTest, label: str):
     return next(w for w in at.slider if w.label == label)
 
 
-def test_assumptions_partial_renders_without_exception_when_nothing_pending(
-    clean_command_center_caches,
-) -> None:
+def test_assumptions_partial_renders_without_exception_when_nothing_pending() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
 
 
-def test_assumptions_partial_does_not_render_magi_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_assumptions_partial_does_not_render_magi_card_even_when_pending() -> None:
     """Task-7 reversal regression: render_assumptions_partial must NOT
     render the prior_year_magi.2024 trust/manual/confirm governance card,
     even though it is pending review. That card renders exclusively in
@@ -122,7 +115,7 @@ def test_assumptions_partial_does_not_render_magi_card_even_when_pending(
 # --- Unkeyed-widget sentinel round-trip tests (Owner decision 5) ------------
 
 
-def test_growth_rate_round_trip(clean_command_center_caches) -> None:
+def test_growth_rate_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -131,7 +124,7 @@ def test_growth_rate_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["growth_rate"] == 9.5
 
 
-def test_living_expenses_round_trip(clean_command_center_caches) -> None:
+def test_living_expenses_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -140,7 +133,7 @@ def test_living_expenses_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["living_expenses"] == 72_000
 
 
-def test_aca_benchmark_premium_round_trip(clean_command_center_caches) -> None:
+def test_aca_benchmark_premium_round_trip() -> None:
     at = AppTest.from_function(
         _render_assumptions_with_pending, kwargs={"pending": set()}, default_timeout=60
     )
@@ -154,7 +147,7 @@ def test_aca_benchmark_premium_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["aca_benchmark_premium_annual"] == 18_400
 
 
-def test_aca_benchmark_defaults_to_derive(clean_command_center_caches) -> None:
+def test_aca_benchmark_defaults_to_derive() -> None:
     """Default (fresh) state: the override checkbox is unchecked and the
     field stays None -- 'derive', not a hardcoded flat figure."""
     at = AppTest.from_function(
@@ -171,7 +164,7 @@ def test_aca_benchmark_defaults_to_derive(clean_command_center_caches) -> None:
     assert "national-average estimate" in caption_text
 
 
-def test_aca_benchmark_uncheck_reverts_to_derive_not_zero(clean_command_center_caches) -> None:
+def test_aca_benchmark_uncheck_reverts_to_derive_not_zero() -> None:
     """Clearing an override must land back on None ('derive'), not 0.0 --
     0.0 is a distinct legitimate override meaning 'no ACA premium exposure'."""
     at = AppTest.from_function(
@@ -193,7 +186,7 @@ def test_aca_benchmark_uncheck_reverts_to_derive_not_zero(clean_command_center_c
     assert at.session_state["aca_benchmark_premium_annual"] != 0.0
 
 
-def test_aca_enhanced_subsidies_active_round_trip(clean_command_center_caches) -> None:
+def test_aca_enhanced_subsidies_active_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -202,7 +195,7 @@ def test_aca_enhanced_subsidies_active_round_trip(clean_command_center_caches) -
     assert at.session_state["aca_enhanced_subsidies_active"] is True
 
 
-def test_advance_aptc_round_trip(clean_command_center_caches) -> None:
+def test_advance_aptc_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -211,7 +204,7 @@ def test_advance_aptc_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["advance_aptc_annual"] == 4_200
 
 
-def test_medicare_part_b_base_monthly_round_trip(clean_command_center_caches) -> None:
+def test_medicare_part_b_base_monthly_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -220,7 +213,7 @@ def test_medicare_part_b_base_monthly_round_trip(clean_command_center_caches) ->
     assert at.session_state["medicare_part_b_base_monthly"] == 215.75
 
 
-def test_cpi_assumption_round_trip(clean_command_center_caches) -> None:
+def test_cpi_assumption_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -229,7 +222,7 @@ def test_cpi_assumption_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["cpi_assumption"] == 0.031
 
 
-def test_prior_year_magi_anchor_round_trip(clean_command_center_caches) -> None:
+def test_prior_year_magi_anchor_round_trip() -> None:
     """Household() defaults base_year=2026, so the anchor's two number_inputs
     are labeled "2024 filed MAGI" / "2025 filed MAGI"."""
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
@@ -242,7 +235,7 @@ def test_prior_year_magi_anchor_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["prior_year_magi"] == {2024: 210_000.0, 2025: 225_000.0}
 
 
-def test_prior_year_magi_anchor_zero_flags_year_as_cleared(clean_command_center_caches) -> None:
+def test_prior_year_magi_anchor_zero_flags_year_as_cleared() -> None:
     """audit-1008 F-64: setting a year back to 0 must flag it for app.py so
     the committed anchor is removed, not just popped from session."""
     from engine.data_sources.orchestrator import MAGI_CLEARED_KEY
@@ -267,7 +260,7 @@ def test_prior_year_magi_anchor_zero_flags_year_as_cleared(clean_command_center_
 # --- Survivor scenario / Inherited IRAs round-trip tests ---------------------
 
 
-def test_survivor_scenario_round_trip(clean_command_center_caches) -> None:
+def test_survivor_scenario_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -279,7 +272,7 @@ def test_survivor_scenario_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["survivor"] == {"who_dies": "spouse", "death_year": 2044}
 
 
-def test_survivor_scenario_disable_clears_scenario(clean_command_center_caches) -> None:
+def test_survivor_scenario_disable_clears_scenario() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -290,7 +283,7 @@ def test_survivor_scenario_disable_clears_scenario(clean_command_center_caches) 
     assert at.session_state["survivor"] is None
 
 
-def test_inherited_iras_add_and_edit_round_trip(clean_command_center_caches) -> None:
+def test_inherited_iras_add_and_edit_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -311,7 +304,7 @@ def test_inherited_iras_add_and_edit_round_trip(clean_command_center_caches) -> 
     assert entry["owner"] == "spouse"
 
 
-def test_inherited_iras_remove_round_trip(clean_command_center_caches) -> None:
+def test_inherited_iras_remove_round_trip() -> None:
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
@@ -324,7 +317,7 @@ def test_inherited_iras_remove_round_trip(clean_command_center_caches) -> None:
     assert at.session_state["inherited_iras"] == []
 
 
-def test_inherited_iras_remove_preserves_survivor_values(clean_command_center_caches) -> None:
+def test_inherited_iras_remove_preserves_survivor_values() -> None:
     """audit-0802 F6: removing an early inherited-IRA row must not corrupt the
     surviving rows with the removed row's stale position-keyed widget values."""
     at = AppTest.from_function(_render_assumptions_with_pending, kwargs={"pending": set()})
@@ -384,7 +377,7 @@ def _render_assumptions_with_iira_growth_rate(growth_rate: float) -> None:
     render_assumptions_partial(Household(), st)
 
 
-def test_iira_growth_rate_clamps_above_max(clean_command_center_caches) -> None:
+def test_iira_growth_rate_clamps_above_max() -> None:
     """Persisted growth_rate=0.20 (20%) is above the widget's 15.0 max_value."""
     at = AppTest.from_function(
         _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": 0.20}
@@ -394,7 +387,7 @@ def test_iira_growth_rate_clamps_above_max(clean_command_center_caches) -> None:
     assert at.number_input(key="iira_rate_0").value == 15.0
 
 
-def test_iira_growth_rate_clamps_below_min(clean_command_center_caches) -> None:
+def test_iira_growth_rate_clamps_below_min() -> None:
     """Persisted growth_rate=-0.05 (-5%) is below the widget's 0.0 min_value."""
     at = AppTest.from_function(
         _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": -0.05}
@@ -404,7 +397,7 @@ def test_iira_growth_rate_clamps_below_min(clean_command_center_caches) -> None:
     assert at.number_input(key="iira_rate_0").value == 0.0
 
 
-def test_iira_growth_rate_in_range_value_unchanged(clean_command_center_caches) -> None:
+def test_iira_growth_rate_in_range_value_unchanged() -> None:
     """Non-regression: an in-range persisted growth_rate round-trips unclamped."""
     at = AppTest.from_function(
         _render_assumptions_with_iira_growth_rate, kwargs={"growth_rate": 0.045}

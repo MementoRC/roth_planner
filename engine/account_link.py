@@ -4,24 +4,23 @@ A FinExtract sync names an account its own way (``Rollover IRA<digits>``, a raw
 IBKR id, a long Vanguard registration string), so a statement-sourced account
 keyed ``<Broker> <label> <number>`` would count the same IRA twice. The user
 picks which account a statement replaces; the choice is remembered per
-statement identity (``"<broker>|<account number>"``) in a gitignored local map,
-like ``.pdf_owner_map.json`` (engine/pdf_owner.py).
+statement identity (``"<broker>|<account number>"``) in the document store
+(namespace ``ira_account_links``), like the PDF owner map (engine/pdf_owner.py).
 
-Pure functions + a small JSON cache, no Streamlit.
+Pure functions + one document-store row, no Streamlit.
 """
 
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
 from typing import Literal
 
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.ira_statement_balance import to_ira_account_summary
 from engine.portfolio_sync.as_of import AccountKey, account_key
 from engine.portfolio_sync.shapes import AccountSummary, PortfolioSnapshot
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import IRA_ACCOUNT_LINKS
 
 NEW: Literal["NEW"] = "NEW"  # remembered choice: "a separate account"
 
@@ -112,25 +111,22 @@ def remember_link(rec: BrokerageStatementRecord, choice: LinkChoice, link_map: L
 
 
 # ---------------------------------------------------------------------------
-# JSON cache -- statement identity -> linked account key (or "NEW")
+# Statement identity -> linked account key (or "NEW"),
+# document store namespace ``ira_account_links``
 # ---------------------------------------------------------------------------
-
-_ACCOUNT_LINK_PATH = Path(__file__).resolve().parent.parent / ".ira_account_links.json"
 
 
 def save_link_map(link_map: LinkMap) -> None:
-    write_pii_json(
-        _ACCOUNT_LINK_PATH,
+    get_store().put(
+        IRA_ACCOUNT_LINKS,
         {k: (v if isinstance(v, str) else list(v)) for k, v in link_map.items()},
     )
 
 
 def load_link_map() -> LinkMap:
-    if not _ACCOUNT_LINK_PATH.exists():
-        return {}
     try:
-        raw = read_pii_json(_ACCOUNT_LINK_PATH)
-    except (json.JSONDecodeError, OSError):
+        raw = get_store().get(IRA_ACCOUNT_LINKS)
+    except CorruptStoreError:
         return {}
     if not isinstance(raw, dict):
         return {}

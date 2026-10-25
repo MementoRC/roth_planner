@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 from datetime import datetime
 
 import pytest
@@ -11,6 +10,7 @@ import pytest
 from engine.data_sources.committed import load_committed, migrate_committed, save_committed
 from engine.data_sources.confirm import confirm_as_is
 from engine.data_sources.seed_defaults import seed_default_fields
+from engine.store.namespaces import COMMITTED
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source
@@ -86,21 +86,18 @@ def test_missing_grants_raises() -> None:
 
 
 def _seed_fresh_demo_baseline() -> None:
-    from engine.data_sources.paths import COMMITTED_PATH
-
     hh = Household()
     committed = migrate_committed(hh, _THEN, default_fields=seed_default_fields(hh))
-    save_committed(COMMITTED_PATH, committed)
+    save_committed(committed)
 
 
 def _badge_script() -> None:
     import views._shared as shared
     from engine.data_sources.committed import apply_committed, load_committed
-    from engine.data_sources.paths import COMMITTED_PATH
     from models.household import Household
 
     hh = Household()
-    committed = load_committed(COMMITTED_PATH)
+    committed = load_committed()
     assert committed is not None
     apply_committed(hh, committed)
     shared.render_completeness_badge(hh)
@@ -117,13 +114,11 @@ def _row(at, label: str) -> str:  # noqa: ANN001
     return line
 
 
-def test_button_confirms_field_without_changing_value() -> None:
+def test_button_confirms_field_without_changing_value(store) -> None:
     from streamlit.testing.v1 import AppTest
 
-    from engine.data_sources.paths import COMMITTED_PATH
-
     _seed_fresh_demo_baseline()
-    value_before = json.loads(COMMITTED_PATH.read_text())["your_ira"]["value"]
+    value_before = store.get(COMMITTED)["your_ira"]["value"]
 
     at = AppTest.from_function(_badge_script, default_timeout=60).run()
     assert not at.exception
@@ -139,7 +134,7 @@ def test_button_confirms_field_without_changing_value() -> None:
     assert _pct(at) > pct_before
     assert not [b for b in at.button if b.key == "confirm_asis_your_ira"]
 
-    persisted = load_committed(COMMITTED_PATH)
+    persisted = load_committed()
     assert persisted is not None
     assert persisted["your_ira"]["value"] == value_before
     assert Provenance.from_json(persisted["your_ira"]).source == Source.MANUAL

@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as paths_mod
 import views.navigation as navigation_mod
 from engine.data_sources.record import record_magi_candidates
 from models.sourced import Source
@@ -28,7 +27,6 @@ def _run(monkeypatch: pytest.MonkeyPatch, *, record: bool, stop: bool = False) -
                 Source.PDF,
                 "synthetic",
                 datetime(2026, 1, 1),
-                store_path=paths_mod.CANDIDATE_STORE_PATH,
             )
         if stop:
             import streamlit as st
@@ -43,9 +41,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, *, record: bool, stop: bool = False) -
     return at
 
 
-def test_badge_counts_candidate_recorded_by_page_body_same_run(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_badge_counts_candidate_recorded_by_page_body_same_run(monkeypatch) -> None:
     at = _run(monkeypatch, record=True)
     badges = _badges(at)
     assert len(badges) == 1
@@ -53,18 +49,17 @@ def test_badge_counts_candidate_recorded_by_page_body_same_run(
     assert len(at.session_state["_pending_review"]) == 1
 
 
-def test_badge_still_drawn_when_page_body_stops(clean_command_center_caches, monkeypatch) -> None:
+def test_badge_still_drawn_when_page_body_stops(monkeypatch) -> None:
     record_magi_candidates(
         {2031: 123456.0},
         Source.PDF,
         "synthetic",
         datetime(2026, 1, 1),
-        store_path=paths_mod.CANDIDATE_STORE_PATH,
     )
     at = _run(monkeypatch, record=False, stop=True)
     assert len(_badges(at)) == 1
 
 
-def test_no_badge_when_nothing_pending(clean_command_center_caches, monkeypatch) -> None:
+def test_no_badge_when_nothing_pending(monkeypatch) -> None:
     at = _run(monkeypatch, record=False)
     assert _badges(at) == []

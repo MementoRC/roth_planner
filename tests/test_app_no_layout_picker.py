@@ -20,7 +20,7 @@ APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
 @pytest.fixture
-def app_test(clean_command_center_caches, monkeypatch) -> AppTest:
+def app_test(monkeypatch) -> AppTest:
     """A fresh, already-``.run()`` ``AppTest`` of the real app.py.
 
     Neutralizes the same local-disk sources of non-determinism as

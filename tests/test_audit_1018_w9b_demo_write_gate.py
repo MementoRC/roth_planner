@@ -2,10 +2,11 @@
 
 W9 made the app skip the disk autoload and the committed-baseline write in demo
 mode, but the low-level persisters still wrote (and read) the personal caches.
-W9b gates them at the choke points: ``engine.secure_io.write_pii_json`` /
-``read_pii_json`` / ``read_pii_bytes`` plus the stores that do not go through them
-(committed baseline, candidate store, trust choices, instance owner, account
-attribution, the exercise-schedule delete, the dividend-rate overrides).
+W9b gated the persisters one by one. Since the move to the document store,
+``engine.store.get_store()`` returns a null store in demo mode (reads absent,
+writes dropped) for every store, so these tests prove the stores' rows are
+untouched. The files that stay files gate themselves: ``.user_defaults.json``
+(config.loader) and ``.dividend_rates.json`` (engine.dividend_forecast).
 
 Every file under test lives in tmp_path (tests/conftest.py redirects the cache
 constants) and all values are synthetic.
@@ -21,14 +22,11 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import config.loader as loader
-import engine.account_attribution as attribution_mod
 import engine.account_link as link_mod
 import engine.brokerage_statement_pdf as brokerage_mod
-import engine.data_sources.paths as paths_mod
 import engine.demo_mode as demo_mod
 import engine.dividend_forecast as dividend_mod
 import engine.exercise_schedule_store as exercise_store_mod
-import engine.instance_identity as identity_mod
 import engine.pdf_owner as owner_mod
 import engine.portfolio_sync.social_security as ssa_mod
 import engine.tax_return_pdf as tax_pdf_mod
@@ -55,7 +53,6 @@ from engine.portfolio_sync import (
     save_ytd_snapshot,
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
-from engine.secure_io import read_pii_bytes, read_pii_json, write_pii_json
 from engine.store import get_store
 from engine.store.core import Store
 from engine.store.legacy_files import registered
@@ -69,20 +66,20 @@ APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
-        "committed": paths_mod.COMMITTED_PATH,
-        "candidates": paths_mod.CANDIDATE_STORE_PATH,
-        "choices": paths_mod.TRUST_CHOICES_PATH,
         "user_defaults": loader._USER_DEFAULTS_PATH,
-        "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
-        "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
-        "owner_map": owner_mod._OWNER_MAP_PATH,
-        "link_map": link_mod._ACCOUNT_LINK_PATH,
     }
 
 
 # The database namespaces personal_files fills (checked once each store has moved).
 _FILLED_NAMESPACES = frozenset(
     {
+        "committed",
+        "candidate_store",
+        "trust_choices",
+        "instance_owner",
+        "account_attribution",
+        "pdf_owner_map",
+        "ira_account_links",
         "portfolio",
         "ytd",
         "ssa",
@@ -143,9 +140,9 @@ def _ssa(amount: float) -> SSASnapshot:
 def personal_files(monkeypatch, store):
     """Fill every personal file with synthetic content via the REAL savers."""
     monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
-    save_committed(paths_mod.COMMITTED_PATH, {})
-    CandidateStore().save(paths_mod.CANDIDATE_STORE_PATH)
-    ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
+    save_committed({})
+    CandidateStore().save()
+    ChoiceMap().save()
     loader._USER_DEFAULTS_PATH.write_text(json.dumps({"your_age": 71}))
     save_instance_owner("you")
     save_account_override("synthbroker", "ACCT-1", "spouse")
@@ -187,12 +184,12 @@ def personal_files(monkeypatch, store):
 def _run_write_paths() -> None:
     """Drive the main persisting paths with DIFFERENT values than the fixture's."""
     now = datetime(2026, 3, 1)
-    save_committed(paths_mod.COMMITTED_PATH, {"your_ira": 5})
+    save_committed({"your_ira": 5})
     cand = CandidateStore()
-    cand.save(paths_mod.CANDIDATE_STORE_PATH)
+    cand.save()
     record_ira_balance_candidate("your_ira", 123_456.0, "synthetic", now)
     record_stock_quote_candidate(12.34)
-    ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
+    ChoiceMap().save()
     loader.save_user_defaults({"your_age": 99})
     save_instance_owner("spouse")
     save_account_override("synthbroker", "ACCT-1", "you")
@@ -240,8 +237,8 @@ class TestDemoModeWritesNothing:
         assert ubs_mod.load_ubs_orders() == []
         assert load_instance_owner() is None
         assert load_account_overrides() == {}
-        assert load_committed(paths_mod.COMMITTED_PATH) is None
-        assert not CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).load_corrupt
+        assert load_committed() is None
+        assert not CandidateStore.load().load_corrupt
         assert exercise_store_mod.load_exercise_schedule() is None
 
     def test_dividend_rate_overrides_are_hidden_and_not_read(self, tmp_path):
@@ -252,21 +249,6 @@ class TestDemoModeWritesNothing:
         assert dividend_mod._load_overrides(overrides) == {}
         demo_mod.leave_demo_mode()
         assert dividend_mod._load_overrides(overrides)
-
-    def test_secure_io_choke_point_is_inert_in_demo_mode(self, tmp_path):
-        target = tmp_path / "x.json"
-        write_pii_json(target, {"a": 1})
-        before = target.read_bytes()
-        demo_mod.enter_demo_mode()
-        write_pii_json(target, {"a": 2})
-        write_pii_json(tmp_path / "new.json", {"a": 3})
-        assert target.read_bytes() == before
-        assert not (tmp_path / "new.json").exists()
-        assert not list(tmp_path.glob("*.tmp-*"))
-        with pytest.raises(FileNotFoundError):
-            read_pii_json(target)
-        with pytest.raises(FileNotFoundError):
-            read_pii_bytes(target)
 
     def test_the_marker_itself_stays_writable(self):
         demo_mod.enter_demo_mode()
@@ -291,7 +273,7 @@ class TestLeavingDemoModeRestoresPersonalFiles:
         assert ytd.wages_ytd == 250_000.0
         assert load_instance_owner() == "you"
         assert load_account_overrides() == {("synthbroker", "ACCT-1"): "spouse"}
-        assert load_committed(paths_mod.COMMITTED_PATH) == {}
+        assert load_committed() == {}
         assert load_ledger()["brokerage"] == {"you": {"ACCT-1": {"value": 1}}}
         assert loader.load_defaults()["your_age"] == 71
         assert owner_mod.load_owner_map() == {"SYNTH NAME": "you"}

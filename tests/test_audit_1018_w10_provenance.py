@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -15,6 +14,8 @@ from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import load_committed, migrate_committed, save_committed
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import resolve_for_app
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedValue
 
@@ -25,14 +26,12 @@ _NOW = datetime(2026, 7, 24, 12, 0, 0)
 
 
 def test_f21_bundle_imported_scalars_are_committed_as_backup_import(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import views.setup.data_bridge as db
 
-    committed_path = tmp_path / "committed.json"
     baseline = Household(your_ira=500_000, spouse_ira=400_000, stock_price_now=100.0)
-    save_committed(committed_path, migrate_committed(baseline, _NOW))
-    monkeypatch.setattr(db, "COMMITTED_PATH", committed_path, raising=False)
+    save_committed(migrate_committed(baseline, _NOW))
 
     result = SimpleNamespace(
         scalar_updates={"your_ira": 654_321, "stock_price": 111},
@@ -66,7 +65,7 @@ def test_f21_bundle_imported_scalars_are_committed_as_backup_import(
 
     # Next run: the staged values are drained into the session, then reconciled.
     session_hh = Household(your_ira=654_321, spouse_ira=400_000, stock_price_now=111.0)
-    committed = load_committed(committed_path)
+    committed = load_committed()
     assert committed is not None
     res = resolve_for_app(
         session_hh, None, {}, CandidateStore(), ChoiceMap(), committed, _NOW + timedelta(minutes=1)
@@ -142,32 +141,25 @@ def test_f32_confirm_field_still_allows_negative_magi() -> None:
     assert committed["prior_year_magi"]["data"]["2023"] == -5000.0
 
 
-def test_f32_confirm_click_with_negative_value_commits_nothing(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f32_confirm_click_with_negative_value_commits_nothing(store) -> None:
     import views.setup._partials._governance as gov
 
-    committed_path = tmp_path / "committed.json"
-    monkeypatch.setattr(gov, "COMMITTED_PATH", committed_path)
-    monkeypatch.setattr(gov, "TRUST_CHOICES_PATH", tmp_path / "choices.json")
     committed_json: dict = {}
 
     ok = gov._handle_confirm_click("your_roth", committed_json, ChoiceMap(), [], None, -5000.0)
 
     assert ok is False
     assert "your_roth" not in committed_json
-    assert not committed_path.exists()
+    assert not store.has(COMMITTED)
 
 
 def _seed_pending_roth() -> None:
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed = {"your_roth": SourcedValue(1_000.0, Provenance(Source.UNKNOWN, _NOW)).to_json()}
-    COMMITTED_PATH.write_text(json.dumps(committed))
+    get_store().put(COMMITTED, committed)
     store = CandidateStore()
     store.record_candidate("your_roth", 12_345.0, Provenance(Source.PDF, _NOW, "stale stmt"))
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
 def _render_card() -> None:
@@ -180,7 +172,7 @@ def _render_card() -> None:
     render_command_center(Household())
 
 
-def test_f32_widget_has_zero_floor_and_empty_default(clean_command_center_caches) -> None:
+def test_f32_widget_has_zero_floor_and_empty_default() -> None:
     _seed_pending_roth()
     at = AppTest.from_function(_render_card)
     at.run()
@@ -190,16 +182,14 @@ def test_f32_widget_has_zero_floor_and_empty_default(clean_command_center_caches
     assert manual.value is None
 
 
-def test_f32_typed_zero_commits_zero_not_the_stale_candidate(clean_command_center_caches) -> None:
-    from engine.data_sources.paths import COMMITTED_PATH
-
+def test_f32_typed_zero_commits_zero_not_the_stale_candidate() -> None:
     _seed_pending_roth()
     at = AppTest.from_function(_render_card)
     at.run()
     at.number_input(key="manual_your_roth").set_value(0.0)
     at.button(key="confirm_your_roth").click().run()
     assert not at.exception
-    committed = load_committed(COMMITTED_PATH)
+    committed = load_committed()
     assert committed is not None
     assert committed["your_roth"]["value"] == 0.0
     assert committed["your_roth"]["source"] == "MANUAL"

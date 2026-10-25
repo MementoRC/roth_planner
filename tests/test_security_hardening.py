@@ -1,4 +1,4 @@
-"""Regression tests for security hardening: cache file permissions (0o600)."""
+"""Regression tests for security hardening of the PII file helpers."""
 
 from __future__ import annotations
 
@@ -6,31 +6,6 @@ import os
 import stat
 
 import pytest
-
-from engine.data_sources.committed import save_committed
-
-
-class TestCacheFilePermissions:
-    """PII cache files still on disk must be written with mode 0o600: the committed baseline."""
-
-    def test_committed_cache_mode_600(self, tmp_path):
-        """A fresh committed baseline must not be world-readable."""
-        cache_file = tmp_path / ".committed.json"
-        save_committed(cache_file, {"fields": {}})
-        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
-
-    def test_committed_cache_mode_600_tightens_existing_loose_file(self, tmp_path):
-        """An already-0o644 baseline must be tightened by the next save.
-
-        save_committed writes a temp file then os.replace()s it onto the
-        target, so the replacement inode's mode is what survives -- this
-        proves a pre-existing world-readable file does not stay that way.
-        """
-        cache_file = tmp_path / ".committed.json"
-        cache_file.write_text("{}")
-        cache_file.chmod(0o644)
-        save_committed(cache_file, {"fields": {}})
-        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
 
 
 class TestWritePiiJsonONofollow:

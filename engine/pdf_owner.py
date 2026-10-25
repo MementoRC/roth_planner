@@ -9,18 +9,17 @@ that are inherently shared (the 1040, jointly-held brokerage accounts):
 - "household" -- joint documents and jointly-held accounts/crypto.
 
 Import-time only -- see docs/superpowers/specs/2026-07-13-spouse-pdf-owner-
-attribution-design.md. Pure functions + a small JSON cache, no Streamlit
+attribution-design.md. Pure functions + one document-store row (namespace ``pdf_owner_map``), no Streamlit
 import (engine/ purity rule).
 """
 
 from __future__ import annotations
 
-import json
 import re
 from enum import StrEnum
-from pathlib import Path
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import PDF_OWNER_MAP
 
 
 class OwnerRole(StrEnum):
@@ -78,22 +77,18 @@ def learn_owner(key: str | None, role: str, owner_map: dict[str, str]) -> dict[s
 
 
 # ---------------------------------------------------------------------------
-# JSON cache -- learned name/email -> owner role map
+# Learned name/email -> owner role map (document store namespace ``pdf_owner_map``)
 # ---------------------------------------------------------------------------
-
-_OWNER_MAP_PATH = Path(__file__).resolve().parent.parent / ".pdf_owner_map.json"
 
 
 def save_owner_map(owner_map: dict[str, str]) -> None:
-    write_pii_json(_OWNER_MAP_PATH, owner_map)
+    get_store().put(PDF_OWNER_MAP, owner_map)
 
 
 def load_owner_map() -> dict[str, str]:
-    if not _OWNER_MAP_PATH.exists():
-        return {}
     try:
-        raw = read_pii_json(_OWNER_MAP_PATH)
-    except (json.JSONDecodeError, OSError):
+        raw = get_store().get(PDF_OWNER_MAP)
+    except CorruptStoreError:
         return {}
     if not isinstance(raw, dict):
         return {}

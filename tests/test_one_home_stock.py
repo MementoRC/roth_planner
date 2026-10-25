@@ -7,13 +7,13 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as paths_mod
 import engine.portfolio_sync as portfolio_sync_mod
 import engine.tax_return_pdf as tax_return_pdf_mod
 import views.setup.data_bridge as data_bridge_mod
 from config.loader import load_defaults
 from engine.data_sources.record import record_stock_quote_candidate
 from engine.market_quote import QuoteResult
+from engine.store.namespaces import CANDIDATE_STORE
 from views.navigation import resolve_page
 from views.option_exercise._partials._helpers import handle_stock_quote_fetch
 
@@ -22,7 +22,7 @@ OE_PAGE = "options"
 
 
 @pytest.fixture(autouse=True)
-def _isolated_app(clean_command_center_caches, monkeypatch):
+def _isolated_app(monkeypatch):
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
@@ -87,12 +87,12 @@ def test_option_exercise_shows_price_and_growth_read_only():
     )
 
 
-def test_fetch_records_candidate_but_does_not_touch_session_price(tmp_path, monkeypatch):
+def test_fetch_records_candidate_but_does_not_touch_session_price(store, monkeypatch):
     monkeypatch.setattr(st, "session_state", {})
-    result = handle_stock_quote_fetch(store_path=tmp_path / "cands.json", fetcher=_ok_quote)
+    result = handle_stock_quote_fetch(fetcher=_ok_quote)
     assert result.ok
     assert "_stock_quote_price" not in st.session_state
-    assert (tmp_path / "cands.json").exists()
+    assert store.has(CANDIDATE_STORE)
 
 
 def test_stale_quote_key_is_ignored_by_the_page():
@@ -122,14 +122,14 @@ def test_assumed_cells_reproject_when_growth_changes():
 
 
 def test_pending_disappears_once_price_equals_candidate():
-    record_stock_quote_candidate(199.5, store_path=paths_mod.CANDIDATE_STORE_PATH)
+    record_stock_quote_candidate(199.5)
     at = _run(OE_PAGE, stock_price=199.5)
     assert not at.exception, [e.value for e in at.exception]
     assert not any("Pending" in m.value for m in at.markdown)
 
 
 def test_page_shows_pending_candidate_and_keeps_confirmed_price():
-    record_stock_quote_candidate(199.5, store_path=paths_mod.CANDIDATE_STORE_PATH)
+    record_stock_quote_candidate(199.5)
     at = _run(OE_PAGE, stock_price=150)
     assert not at.exception, [e.value for e in at.exception]
     assert any("Pending \\$199.50" in m.value and "Review Changes" in m.value for m in at.markdown)

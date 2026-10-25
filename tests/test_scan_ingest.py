@@ -21,13 +21,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import engine.data_sources.paths as _paths_mod
 import views.ytd_income as ytd_income_mod
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.pdf_import import PdfImportResult
-from engine.store.namespaces import TAX_PDF
+from engine.store.namespaces import CANDIDATE_STORE, TAX_PDF
 from engine.tax_return_pdf import Form1040Record
 from models.household import Household
 from models.sourced import Source
@@ -113,28 +112,9 @@ def _make_mock_st(ytd: YTDSnapshot) -> MagicMock:
     return mock_st
 
 
-@pytest.fixture
-def clean_candidate_store():
-    """CANDIDATE_STORE_PATH is repo-root-anchored (engine.data_sources.paths) --
-    same isolation approach as tests/test_pdf_magi_candidate_flow.py. Cleans up
-    BEFORE (not just after) to guard against a leftover file from a prior
-    interrupted suite run (mirrors tests/conftest.py's
-    clean_command_center_caches pattern).
-
-    audit-0809 F18: reads ``_paths_mod.CANDIDATE_STORE_PATH`` at CALL time
-    (not a module-level ``from ... import CANDIDATE_STORE_PATH`` binding,
-    which freezes the real repo-root path at collection time and escapes
-    conftest.py's autouse ``_redirect_cache_paths_to_tmp`` fixture)."""
-    _paths_mod.CANDIDATE_STORE_PATH.unlink(missing_ok=True)
-    yield
-    _paths_mod.CANDIDATE_STORE_PATH.unlink(missing_ok=True)
-
-
 def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
     """Drives views/ytd_income.py's "Scan folder" handler against the fixed
     scan_pdf_folder result. Returns (mock_st, persisted pdf cache dict)."""
-    import engine.pdf_owner as owner_mod
-
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     hh = _stub_hh()
@@ -168,7 +148,6 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
         patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
         patch.object(ytd_income_mod, "save_ytd_snapshot"),
         patch.object(sync_scan_mod, "save_ytd_snapshot"),
-        patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
     ):
         # recorded_at is real datetime.now() here -- not asserted (A0/A2 only
         # golden the value/source/detail, matching record_magi_candidates'
@@ -186,17 +165,10 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
 class TestA0CurrentScanHandlerGolden:
     """Pins the CURRENT (pre-refactor) ytd_income.py scan handler's outcome."""
 
-    def test_records_magi_candidate_for_scanned_1040(
-        self, tmp_path, monkeypatch, clean_candidate_store
-    ):
+    def test_records_magi_candidate_for_scanned_1040(self, tmp_path, monkeypatch):
         _run_ytd_scan(tmp_path, monkeypatch)
 
-        # audit-0805 W1: re-import at test-run time (not the module-level
-        # binding frozen at collection) to see tests/conftest.py's per-test
-        # cache-path redirect.
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         candidate = candidates[0]
@@ -204,16 +176,14 @@ class TestA0CurrentScanHandlerGolden:
         assert candidate.prov.source == Source.PDF
         assert candidate.prov.detail == "Form 1040 PDF"
 
-    def test_persists_merged_pdf_tax_cache(self, tmp_path, monkeypatch, clean_candidate_store):
+    def test_persists_merged_pdf_tax_cache(self, tmp_path, monkeypatch):
         _mock_st, persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
         assert set(persisted) == {_GOLDEN_YEAR}
         assert persisted[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
         assert persisted[_GOLDEN_YEAR].tax_year == _GOLDEN_YEAR
 
-    def test_writes_pdf_1040_scanned_session_key(
-        self, tmp_path, monkeypatch, clean_candidate_store
-    ):
+    def test_writes_pdf_1040_scanned_session_key(self, tmp_path, monkeypatch):
         mock_st, _persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
         setitem_calls = [
@@ -239,16 +209,14 @@ class TestA1ScanAndRecordPureHelper:
         source = Path(mod.__file__).read_text()
         assert "import streamlit" not in source
 
-    def test_records_same_magi_candidate(self, tmp_path, clean_candidate_store):
+    def test_records_same_magi_candidate(self, tmp_path):
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert isinstance(result, ScanIngestResult)
         assert result.magi_candidates_recorded == 1
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         assert candidates[0].value == _GOLDEN_IRMAA_MAGI
@@ -256,13 +224,8 @@ class TestA1ScanAndRecordPureHelper:
         assert candidates[0].prov.detail == "Form 1040 PDF"
 
     def test_persists_same_merged_pdf_cache(self, tmp_path, store):
-        store_path = tmp_path / "scan_ingest_candidates.json"
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
-            result = scan_and_record(
-                tmp_path,
-                store_path=store_path,
-                recorded_at=_RECORDED_AT,
-            )
+            result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert set(result.pdf_cache) == {_GOLDEN_YEAR}
         assert result.pdf_cache[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
@@ -271,7 +234,7 @@ class TestA1ScanAndRecordPureHelper:
         assert set(raw) == {str(_GOLDEN_YEAR)}
         assert Form1040Record.from_dict(raw[str(_GOLDEN_YEAR)]).magi == _GOLDEN_MAGI
 
-    def test_counts_and_raw_result(self, tmp_path, clean_candidate_store):
+    def test_counts_and_raw_result(self, tmp_path):
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
@@ -284,14 +247,14 @@ class TestA1ScanAndRecordPureHelper:
         assert result.raw.form_1040_records == {_GOLDEN_YEAR: _FORM_1040}
         assert result.files_scanned == 2
 
-    def test_no_form_1040_records_records_nothing(self, tmp_path, clean_candidate_store):
+    def test_no_form_1040_records_records_nothing(self, tmp_path):
         empty_result = PdfImportResult(brokerage_records=[_BROKERAGE_REC])
         with patch("engine.pdf_import.scan_pdf_folder", return_value=empty_result):
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert result.magi_candidates_recorded == 0
         assert result.pdf_cache == {}
-        store = CandidateStore.load(_paths_mod.CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         assert not store.has_candidates(f"prior_year_magi.{_GOLDEN_YEAR}")
 
 
@@ -301,25 +264,19 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
     same parsed documents -- both delegate to the same ``_record_scan_result``
     core, but this pins that they stay in lockstep from the outside too."""
 
-    def test_same_pdf_cache_and_magi_candidate(self, tmp_path, clean_candidate_store, store):
+    def test_same_pdf_cache_and_magi_candidate(self, tmp_path, store):
         from engine.data_sources.scan_ingest import scan_documents_and_record
 
-        folder_store_path = tmp_path / "folder_candidates.json"
-        docs_store_path = tmp_path / "docs_candidates.json"
-
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
-            folder_result = scan_and_record(
-                tmp_path,
-                store_path=folder_store_path,
-                recorded_at=_RECORDED_AT,
-            )
+            folder_result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
         folder_doc = store.get(TAX_PDF)
+        folder_store = CandidateStore.load()
         store.delete(TAX_PDF)
+        store.delete(CANDIDATE_STORE)
 
         with patch("engine.pdf_import.scan_pdf_documents", return_value=_fixed_result()):
             docs_result = scan_documents_and_record(
                 [("statement.pdf", b"irrelevant-bytes-classification-is-mocked")],
-                store_path=docs_store_path,
                 recorded_at=_RECORDED_AT,
             )
 
@@ -329,8 +286,7 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
 
         assert store.get(TAX_PDF) == folder_doc
 
-        folder_store = CandidateStore.load(folder_store_path)
-        docs_store = CandidateStore.load(docs_store_path)
+        docs_store = CandidateStore.load()
         folder_candidates = folder_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         docs_candidates = docs_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert [c.value for c in folder_candidates] == [c.value for c in docs_candidates]
@@ -354,13 +310,9 @@ class TestRunUploadedScanMatchesRunFolderScan:
     ``_pdf_1040_scanned`` session key as ``run_folder_scan``, for the same
     parsed documents. Same repo-root-cache isolation pattern as
     ``_run_ytd_scan`` above (``Path.home`` monkeypatched to *tmp_path*; the
-    1040 records go to the per-test in-memory store; ``clean_candidate_store`` isolates
-    ``CANDIDATE_STORE_PATH``, which ``run_uploaded_scan`` -- like
-    ``run_folder_scan`` -- has no override parameter for)."""
+    1040 records go to the per-test in-memory store)."""
 
-    def test_writes_pdf_1040_scanned_session_key(
-        self, tmp_path, monkeypatch, clean_candidate_store
-    ):
+    def test_writes_pdf_1040_scanned_session_key(self, tmp_path, monkeypatch):
         import views._shared as shared_mod
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -411,23 +363,19 @@ class TestAuditHighIrmaaFeieScope:
         captured_at="2026-07-17T00:00:00+00:00",
     )
 
-    def test_recorded_candidate_includes_feie(self, tmp_path, clean_candidate_store):
+    def test_recorded_candidate_includes_feie(self, tmp_path):
         feie_result = PdfImportResult(form_1040_records={self._FEIE_YEAR: self._FEIE_FORM_1040})
         with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert result.magi_candidates_recorded == 1
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{self._FEIE_YEAR}")
         assert len(candidates) == 1
         # IRMAA MAGI = AGI + tax-exempt interest + FEIE = $220,000.
         assert candidates[0].value == 220_000.0
 
-    def test_resolved_household_irmaa_surcharge_matches_correct_magi(
-        self, tmp_path, clean_candidate_store
-    ):
+    def test_resolved_household_irmaa_surcharge_matches_correct_magi(self, tmp_path):
         from engine.data_sources.choices import ChoiceMap
         from engine.data_sources.resolver import resolve
         from engine.irmaa import irmaa_surcharge
@@ -436,9 +384,7 @@ class TestAuditHighIrmaaFeieScope:
         with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
             scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         result = resolve(Household(), store, ChoiceMap())
         resolved_magi = result.household.prior_year_magi[self._FEIE_YEAR]
 
@@ -453,13 +399,11 @@ class TestA2RewiredYtdIncomeView:
     golden is unchanged post-refactor) and additionally proves the scan is a
     SINGLE call to scan_pdf_folder (single entry point)."""
 
-    def test_golden_unchanged_after_rewire(self, tmp_path, monkeypatch, clean_candidate_store):
+    def test_golden_unchanged_after_rewire(self, tmp_path, monkeypatch):
         """Same assertions as TestA0 -- run against the (now rewired) view."""
         mock_st, persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         assert candidates[0].value == _GOLDEN_IRMAA_MAGI
@@ -476,9 +420,7 @@ class TestA2RewiredYtdIncomeView:
         ]
         assert len(setitem_calls) == 1, "run_folder_scan must be the ONLY _pdf_1040_scanned writer"
 
-    def test_single_scan_pdf_folder_call(self, tmp_path, monkeypatch, clean_candidate_store):
-        import engine.pdf_owner as owner_mod
-
+    def test_single_scan_pdf_folder_call(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         hh = _stub_hh()
@@ -504,7 +446,6 @@ class TestA2RewiredYtdIncomeView:
             patch("engine.portfolio_sync.fetch_option_exercises") as mock_fetch_ex,
             patch.object(ytd_income_mod, "save_ytd_snapshot"),
             patch.object(sync_scan_mod, "save_ytd_snapshot"),
-            patch.object(owner_mod, "_OWNER_MAP_PATH", tmp_path / ".pdf_owner_map.json"),
         ):
             mock_fetch_ex.return_value = MagicMock(server_available=False)
             sync_scan_mod.render_sync_scan_partial(hh)

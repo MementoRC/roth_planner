@@ -8,7 +8,7 @@ silently skipping the Command Center confirm.
 F-64: "Leave 0 to use projected MAGI" popped the year from session, but
 reconcile never deletes committed years, so the anchor snapped back.
 
-W11 follow-up: ``save_committed`` only checked that the existing file was
+W11 follow-up: ``save_committed`` only checked that the saved baseline was
 valid JSON, so a valid-JSON-but-wrong-shape baseline (which
 ``load_committed`` / ``apply_committed`` cannot use) was silently replaced.
 
@@ -17,7 +17,6 @@ All figures are synthetic.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 import pytest
@@ -32,6 +31,7 @@ from engine.data_sources.committed import (
 from engine.data_sources.orchestrator import resolve_for_app
 from engine.data_sources.record import record_magi_candidates
 from engine.data_sources.resolver import magi_field_key
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
 from models.household import Household
 from models.sourced import Source
 
@@ -41,27 +41,27 @@ T0 = datetime(2026, 10, 1, 12, 0, 0)
 class _App:
     """Mimic app.py get_household(): session -> Household -> resolve -> writeback."""
 
-    def __init__(self, tmp_path, session_magi: dict[int, float]):
-        self.store_path = tmp_path / "candidates.json"
+    def __init__(self, store, session_magi: dict[int, float]):
+        self.doc_store = store
         self.session_magi = dict(session_magi)
         self.committed: dict | None = None
         self.cleared: set[int] = set()
 
     def rerun(self):
         hh = Household(prior_year_magi=dict(self.session_magi))
-        store = CandidateStore.load(self.store_path)
+        cands = CandidateStore.load()
         res = resolve_for_app(
             hh,
             None,
             {},
-            store,
+            cands,
             ChoiceMap(),
             self.committed,
             recorded_at=T0,
             cleared_magi_years=set(self.cleared),
         )
-        if self.store_path.exists() or store.field_keys():
-            store.save(self.store_path)
+        if self.doc_store.has(CANDIDATE_STORE) or cands.field_keys():
+            cands.save()
         self.cleared.clear()
         self.committed = res.committed_json
         resolved = res.result.household.prior_year_magi
@@ -80,11 +80,11 @@ class _App:
 # ---------------------------------------------------------------- F-46
 
 
-def test_unconfirmed_new_year_candidate_stays_pending_across_reruns(tmp_path):
-    app = _App(tmp_path, {2024: 111_000.0})
+def test_unconfirmed_new_year_candidate_stays_pending_across_reruns(store):
+    app = _App(store, {2024: 111_000.0})
     app.rerun()  # migration
     app.rerun()
-    record_magi_candidates({2025: 150_000.0}, Source.PDF, "1040 scan", T0, app.store_path)
+    record_magi_candidates({2025: 150_000.0}, Source.PDF, "1040 scan", T0)
 
     for _ in range(4):
         res = app.rerun()
@@ -93,8 +93,8 @@ def test_unconfirmed_new_year_candidate_stays_pending_across_reruns(tmp_path):
         assert app.committed_prov(2025) is None
 
 
-def test_genuine_manual_entry_for_new_year_is_still_committed(tmp_path):
-    app = _App(tmp_path, {2024: 111_000.0})
+def test_genuine_manual_entry_for_new_year_is_still_committed(store):
+    app = _App(store, {2024: 111_000.0})
     app.rerun()
     app.session_magi[2025] = 99_000.0  # user types a new year in Setup
     app.rerun()
@@ -102,10 +102,10 @@ def test_genuine_manual_entry_for_new_year_is_still_committed(tmp_path):
     assert app.committed_prov(2025) == "MANUAL"
 
 
-def test_manual_value_differing_from_pending_candidate_is_committed(tmp_path):
-    app = _App(tmp_path, {2024: 111_000.0})
+def test_manual_value_differing_from_pending_candidate_is_committed(store):
+    app = _App(store, {2024: 111_000.0})
     app.rerun()
-    record_magi_candidates({2025: 150_000.0}, Source.PDF, "1040 scan", T0, app.store_path)
+    record_magi_candidates({2025: 150_000.0}, Source.PDF, "1040 scan", T0)
     app.rerun()  # candidate written back to session
     app.session_magi[2025] = 140_000.0  # user overrides it
     app.rerun()
@@ -116,8 +116,8 @@ def test_manual_value_differing_from_pending_candidate_is_committed(tmp_path):
 # ---------------------------------------------------------------- F-64
 
 
-def test_leave_zero_clears_a_committed_anchor(tmp_path):
-    app = _App(tmp_path, {})
+def test_leave_zero_clears_a_committed_anchor(store):
+    app = _App(store, {})
     app.rerun()  # migration with nothing
     app.session_magi[2024] = 2_500_000.0  # typo
     app.rerun()
@@ -136,8 +136,8 @@ def test_leave_zero_clears_a_committed_anchor(tmp_path):
         assert 2024 not in dict(res.result.household.prior_year_magi)
 
 
-def test_clearing_one_year_keeps_the_other(tmp_path):
-    app = _App(tmp_path, {})
+def test_clearing_one_year_keeps_the_other(store):
+    app = _App(store, {})
     app.rerun()
     app.session_magi.update({2024: 2_500_000.0, 2025: 150_000.0})
     app.rerun()
@@ -148,10 +148,10 @@ def test_clearing_one_year_keeps_the_other(tmp_path):
     assert dict(res.result.household.prior_year_magi) == {2025: 150_000.0}
 
 
-def test_clear_also_drops_that_years_candidates(tmp_path):
-    app = _App(tmp_path, {})
+def test_clear_also_drops_that_years_candidates(store):
+    app = _App(store, {})
     app.rerun()
-    record_magi_candidates({2024: 150_000.0}, Source.PDF, "1040 scan", T0, app.store_path)
+    record_magi_candidates({2024: 150_000.0}, Source.PDF, "1040 scan", T0)
     app.rerun()
     assert 2024 in app.session_magi
     app.session_magi.pop(2024)
@@ -159,12 +159,12 @@ def test_clear_also_drops_that_years_candidates(tmp_path):
     res = app.rerun()
     assert 2024 not in dict(res.result.household.prior_year_magi)
     assert magi_field_key(2024) not in res.result.pending_review
-    assert not CandidateStore.load(app.store_path).has_candidates(magi_field_key(2024))
+    assert not CandidateStore.load().has_candidates(magi_field_key(2024))
 
 
-def test_empty_session_without_clear_flag_does_not_wipe_committed(tmp_path):
+def test_empty_session_without_clear_flag_does_not_wipe_committed(store):
     """A fresh browser session seeds prior_year_magi={} — not a clear."""
-    app = _App(tmp_path, {2024: 111_000.0})
+    app = _App(store, {2024: 111_000.0})
     app.rerun()
     app.session_magi = {}
     app.rerun()
@@ -177,38 +177,35 @@ def test_empty_session_without_clear_flag_does_not_wipe_committed(tmp_path):
 @pytest.mark.parametrize(
     "content",
     [
-        "[1, 2, 3]",
-        '"just a string"',
-        json.dumps({"your_ira": "not-a-payload"}),
-        json.dumps({"prior_year_magi": {"data": {"2024": 1.0}}}),
+        [1, 2, 3],
+        "just a string",
+        {"your_ira": "not-a-payload"},
+        {"prior_year_magi": {"data": {"2024": 1.0}}},
     ],
 )
-def test_save_committed_refuses_wrong_shape_file(tmp_path, content):
-    path = tmp_path / "committed.json"
-    path.write_text(content)
+def test_save_committed_refuses_wrong_shape_row(store, content):
+    store.put(COMMITTED, content)
     with pytest.raises(CorruptCommittedCacheError):
-        save_committed(path, {})
-    assert path.read_text() == content
+        save_committed({})
+    assert store.get(COMMITTED) == content
 
 
 @pytest.mark.parametrize(
     "content",
     [
-        "[1, 2, 3]",
-        json.dumps({"your_ira": "not-a-payload"}),
+        [1, 2, 3],
+        {"your_ira": "not-a-payload"},
     ],
 )
-def test_load_committed_flags_wrong_shape_file(tmp_path, content):
-    path = tmp_path / "committed.json"
-    path.write_text(content)
+def test_load_committed_flags_wrong_shape_row(store, content):
+    store.put(COMMITTED, content)
     with pytest.raises(CorruptCommittedCacheError):
-        load_committed(path)
+        load_committed()
 
 
-def test_save_committed_overwrites_valid_baseline(tmp_path):
-    path = tmp_path / "committed.json"
-    app = _App(tmp_path, {2024: 111_000.0})
+def test_save_committed_overwrites_valid_baseline(store):
+    app = _App(store, {2024: 111_000.0})
     app.rerun()
-    save_committed(path, app.committed)
-    save_committed(path, app.committed)
-    assert load_committed(path) == app.committed
+    save_committed(app.committed)
+    save_committed(app.committed)
+    assert load_committed() == app.committed

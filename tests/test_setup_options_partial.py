@@ -17,7 +17,6 @@ same fields too.
 from __future__ import annotations
 
 import dataclasses
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +25,8 @@ from streamlit.testing.v1 import AppTest
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.resolver import GRANTS_KEY
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.grants import StockGrant
 from models.sourced import Provenance, Source, SourcedValue
 
@@ -34,27 +35,21 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
-    # audit-0805 W1: re-import at call time (not the module-level binding
-    # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
 def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
     committed_json = {
         GRANTS_KEY: {
@@ -62,7 +57,7 @@ def _seed_pending_grants() -> None:
             "prov": [Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()],
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     candidate_grants = [
         StockGrant(year=2019, strike=98.0, shares=200, expiry_year=2029),
@@ -74,8 +69,8 @@ def _seed_pending_grants() -> None:
         candidate_grants,
         Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync"),
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
 def _render_options_with_pending(pending: set[str]) -> None:
@@ -92,18 +87,14 @@ def _render_options_with_pending(pending: set[str]) -> None:
     render_options_partial(Household(), st)
 
 
-def test_options_partial_renders_without_exception_when_nothing_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_renders_without_exception_when_nothing_pending() -> None:
     at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
     assert any("No grants loaded" in i.value for i in at.info)
 
 
-def test_options_partial_does_not_render_stock_price_now_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_does_not_render_stock_price_now_card_even_when_pending() -> None:
     """Task-5 reversal regression: render_options_partial must NOT render
     the stock_price_now trust/manual/confirm governance card, even though it
     is pending review. That card renders exclusively in
@@ -134,7 +125,7 @@ def _render_stock_price_widget(stock_price: float = 100) -> None:
     render_stock_price_widget(st)
 
 
-def test_stock_price_widget_stock_price_round_trip(clean_command_center_caches) -> None:
+def test_stock_price_widget_stock_price_round_trip() -> None:
     """Unkeyed-widget safety net (Owner decision 5): drive a distinct sentinel
     value through the plain stock_price number_input and confirm
     session_state.stock_price reflects it, catching a typo'd attribute name.
@@ -155,9 +146,7 @@ def test_stock_price_widget_stock_price_round_trip(clean_command_center_caches) 
 # no user interaction. Must FAIL on unmodified source.
 
 
-def test_stock_price_negative_persisted_value_does_not_crash(
-    clean_command_center_caches,
-) -> None:
+def test_stock_price_negative_persisted_value_does_not_crash() -> None:
     at = AppTest.from_function(_render_stock_price_widget, kwargs={"stock_price": -50})
     at.run()
     assert not at.exception
@@ -165,9 +154,7 @@ def test_stock_price_negative_persisted_value_does_not_crash(
     assert widget.value == 0
 
 
-def test_options_partial_does_not_render_grants_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_does_not_render_grants_card_even_when_pending() -> None:
     """Task-5 reversal regression: render_options_partial must NOT render
     the grants trust/manual/confirm governance card, even though it is
     pending review. That card renders exclusively in
@@ -212,9 +199,7 @@ def test_options_partial_does_not_render_grants_card_even_when_pending(
 _APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
-def test_stock_price_widget_renders_once_under_data_tab(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_stock_price_widget_renders_once_under_data_tab(monkeypatch) -> None:
     """Owner decision 6 (as amended by PR B, 2026-09): the Stock Price widget
     lives on Profile › Assumptions now, rendered by
     ``render_stock_price_widget`` — no longer co-located with the

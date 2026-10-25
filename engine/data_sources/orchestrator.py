@@ -274,7 +274,7 @@ def resolve_for_app(
         store.discard(magi_field_key(year))
 
     if committed_json is None:
-        # First load with no committed baseline on disk: replicate the OLD
+        # First load with no saved committed baseline: replicate the OLD
         # behavior (session + snapshot overwrite of sourced fields) as the
         # baseline so migration is a numeric no-op.
         base = copy.deepcopy(session_hh)

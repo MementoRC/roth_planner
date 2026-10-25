@@ -62,7 +62,6 @@ from engine.data_sources.committed import (
     save_committed,
 )
 from engine.data_sources.confirm import confirm_as_is
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import (
     ScanIngestResult,
@@ -309,12 +308,12 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
             candidates_recorded=0, server_available=False, error=outcome.snap.error
         )
 
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
         "grant_strikes", {}
     )
     record_snapshot_candidates(store, outcome.snap, strikes, datetime.now())
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
 
     scalar_recorded = _count_candidates_from(
         store, _PORTFOLIO_CANDIDATE_FIELDS, Source.FINEXTRACT_LIVE
@@ -493,7 +492,7 @@ def _confirm_as_is_and_save(field_key: str) -> bool:
     """Re-stamp *field_key* as a MANUAL confirmation in the committed baseline.
 
     Same persistence path as the Command Center's Confirm button
-    (``load_committed`` -> mutate -> ``save_committed(COMMITTED_PATH)``); the
+    (``load_committed`` -> mutate -> ``save_committed()``); the
     next ``get_household()`` picks it up via ``resolve_for_app``. Warns and
     returns False when there is nothing to confirm or the baseline is unreadable.
     """
@@ -501,14 +500,14 @@ def _confirm_as_is_and_save(field_key: str) -> bool:
         st.info("Demo mode: nothing is saved. Leave demo mode to confirm your own values.")
         return False
     try:
-        committed_json = load_committed(COMMITTED_PATH)
+        committed_json = load_committed()
         if committed_json is None:
             st.warning("No committed baseline to confirm against yet.")
             return False
         confirm_as_is(committed_json, field_key, datetime.now())
-        save_committed(COMMITTED_PATH, committed_json)
+        save_committed(committed_json)
     except CorruptCommittedCacheError:
-        st.warning(f"Committed baseline at `{COMMITTED_PATH}` is unreadable; left untouched.")
+        st.warning("Committed baseline is unreadable; left untouched.")
         return False
     except ValueError as exc:
         st.warning(str(exc))

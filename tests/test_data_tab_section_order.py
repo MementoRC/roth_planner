@@ -88,7 +88,7 @@ def _run(monkeypatch, target: str, owner: str | None = None) -> AppTest:
     return at
 
 
-def test_import_sections_render_in_order(clean_command_center_caches, monkeypatch) -> None:
+def test_import_sections_render_in_order(monkeypatch) -> None:
     at = _run(monkeypatch, _IMPORT)
     assert not at.exception
 
@@ -96,9 +96,7 @@ def test_import_sections_render_in_order(clean_command_center_caches, monkeypatc
     assert rendered == ["PDF Statements", "1040 Import"]
 
 
-def test_review_titles_command_center_once_as_a_header(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_review_titles_command_center_once_as_a_header(monkeypatch) -> None:
     """Command Center self-titles via st.header; the page must not double it."""
     at = _run(monkeypatch, _REVIEW)
     assert not at.exception
@@ -108,13 +106,13 @@ def test_review_titles_command_center_once_as_a_header(
 
 
 def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(
-    clean_command_center_caches, monkeypatch
+    monkeypatch, corrupt_row
 ) -> None:
     """Corrupt identity => PDF Statements is replaced by the gate; 1040 Import is not.
 
-    A genuinely MISSING .instance_owner.json no longer reaches this branch:
+    A genuinely MISSING saved instance owner no longer reaches this branch:
     render_command_center auto-defaults such an instance to "you" (and persists
-    that), so this seeds a corrupt file instead, the only remaining state where
+    that), so this seeds a corrupt store row instead, the only remaining state where
     identity stays unset.
 
     Bundle import does not depend on identity (spec 2026-09-20 §5: a v5 file
@@ -123,9 +121,9 @@ def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(
     owner to attribute scanned accounts to, so it keeps the gate, with a link
     to the page that sets the owner.
     """
-    import engine.instance_identity as instance_identity_mod
+    from engine.store.namespaces import INSTANCE_OWNER
 
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
+    corrupt_row(INSTANCE_OWNER)
 
     at = _run(monkeypatch, _IMPORT)
     assert not at.exception
@@ -136,7 +134,7 @@ def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(
     assert "pdf_upload_0" not in {w.key for w in at.get("file_uploader")}
 
 
-def test_1040_import_survives_a_missing_owner(clean_command_center_caches, monkeypatch) -> None:
+def test_1040_import_survives_a_missing_owner(monkeypatch) -> None:
     """The 1040 importer is not owner-gated and never was, so it gets its own card."""
     at = _run(monkeypatch, _IMPORT)
     assert not at.exception
@@ -144,9 +142,7 @@ def test_1040_import_survives_a_missing_owner(clean_command_center_caches, monke
     assert "1040 Import" in [s.value for s in at.subheader]
 
 
-def test_import_renders_the_scan_body_once_an_owner_is_set(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_import_renders_the_scan_body_once_an_owner_is_set(monkeypatch) -> None:
     """The counterpart to the gate test: without it, the gate assertion would
     still pass if the real body had simply stopped rendering in every state."""
     at = _run(monkeypatch, _IMPORT, owner="you")
@@ -156,9 +152,7 @@ def test_import_renders_the_scan_body_once_an_owner_is_set(
     assert "pdf_upload_0" in {w.key for w in at.get("file_uploader")}
 
 
-def test_backup_bundle_import_renders_with_and_without_an_owner(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_backup_bundle_import_renders_with_and_without_an_owner(monkeypatch) -> None:
     """Bundle import does not depend on identity, so its uploader always renders."""
     for owner in (None, "you"):
         at = _run(monkeypatch, _BACKUP, owner=owner)
@@ -166,9 +160,7 @@ def test_backup_bundle_import_renders_with_and_without_an_owner(
         assert "bundle_upload" in {w.key for w in at.get("file_uploader")}, owner
 
 
-def test_pdf_1040_import_runs_after_the_scan_in_the_same_pass(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_pdf_1040_import_runs_after_the_scan_in_the_same_pass(monkeypatch) -> None:
     """Regression for the one-rerun lag: ``render_sync_scan_partial`` writes
     ``st.session_state["_pdf_1040_scanned"]``; ``_render_pdf_1040_import`` reads
     that key and returns early when empty (``views/setup/parameters.py``). If

@@ -3,11 +3,8 @@ apply_ira_statement(replaces=...)). Synthetic names and round amounts only."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from engine import account_link as mod
 from engine.account_link import (
     NEW,
     link_candidates,
@@ -22,6 +19,7 @@ from engine.ira_statement_balance import apply_ira_statement, to_ira_account_sum
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
 from engine.portfolio_sync.as_of import account_key, merge_sync
 from engine.portfolio_sync.shapes import Holding
+from engine.store.namespaces import IRA_ACCOUNT_LINKS
 from engine.upload_merge import derive_ira_balances, synced_account_sums
 
 
@@ -226,20 +224,18 @@ class TestLinkMapStore:
         save_link_map(link_map)
         assert load_link_map() == link_map
 
-    def test_missing_and_corrupt_files_load_empty(self) -> None:
+    def test_missing_and_corrupt_rows_load_empty(self, store, corrupt_row) -> None:
         assert load_link_map() == {}
-        mod._ACCOUNT_LINK_PATH.write_text("not json")
+        corrupt_row(IRA_ACCOUNT_LINKS)
         assert load_link_map() == {}
-        mod._ACCOUNT_LINK_PATH.write_text("[1]")
+        store.delete(IRA_ACCOUNT_LINKS)
+        store.put(IRA_ACCOUNT_LINKS, [1])
         assert load_link_map() == {}
+        assert store.get(IRA_ACCOUNT_LINKS) == [1]
 
-    def test_malformed_entries_are_dropped(self) -> None:
-        mod._ACCOUNT_LINK_PATH.write_text('{"a|1": ["x"], "b|2": "NEW"}')
+    def test_malformed_entries_are_dropped(self, store) -> None:
+        store.put(IRA_ACCOUNT_LINKS, {"a|1": ["x"], "b|2": "NEW"})
         assert load_link_map() == {"b|2": NEW}
-
-    def test_path_is_redirected_away_from_the_repo(self) -> None:
-        repo_root = Path(__file__).resolve().parent.parent
-        assert repo_root not in mod._ACCOUNT_LINK_PATH.parents
 
 
 @pytest.mark.parametrize("n", ["", "ab"])

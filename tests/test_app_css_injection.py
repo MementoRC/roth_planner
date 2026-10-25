@@ -51,7 +51,7 @@ def test_inject_app_css_targets_sidebar_nav_buttons(monkeypatch) -> None:
 
 
 @pytest.fixture
-def app_test(clean_command_center_caches, monkeypatch) -> AppTest:
+def app_test(monkeypatch) -> AppTest:
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
     import views.setup.data_bridge as data_bridge_mod

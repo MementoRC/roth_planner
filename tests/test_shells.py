@@ -129,9 +129,7 @@ def _number_input_by_label(at: AppTest, label: str):
 # --- Key-set parity: editing touches the same session_state key -------------
 
 
-def test_your_ira_edit_updates_same_session_state_key(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_your_ira_edit_updates_same_session_state_key(monkeypatch) -> None:
     """Setting ``your_ira`` on Household & Accounts must update the identical
     ``session_state["your_ira"]`` key — proves it doesn't fork the data
     model onto a differently-named key.
@@ -148,9 +146,7 @@ def test_your_ira_edit_updates_same_session_state_key(
 # --- 1040 PDF import section: parity fix -------------------------------------
 
 
-def test_1040_import_section_renders_without_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_1040_import_section_renders_without_exception(monkeypatch) -> None:
     """The "Import 1040 PDF" workflow (``_render_pdf_1040_import``) is
     reachable from the shell. With no scanned record pending, it should
     render its "scan on YTD Income" caption without exception.
@@ -159,7 +155,7 @@ def test_1040_import_section_renders_without_exception(
     assert not at.exception
 
 
-def test_1040_import_section_reuses_widget_key(clean_command_center_caches, monkeypatch) -> None:
+def test_1040_import_section_reuses_widget_key(monkeypatch) -> None:
     """With a scanned 1040 record pending, the confirmation selectbox must
     carry the EXACT SAME key Classic's copy of this widget used
     (``_pdf_1040_filing_status_2024``) — proving this section reuses the
@@ -588,7 +584,7 @@ def test_import_statement_agrees_with_applied_slot_for_both_choices(
 def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypatch) -> None:
     """Corrupt-identity companion to
     ``test_export_disabled_and_build_skipped_when_instance_owner_unset``: a
-    genuinely corrupt ``.instance_owner.json`` must degrade through
+    genuinely corrupt saved instance owner (store row) must degrade through
     ``_this_instance_owner()``'s ``except CorruptInstanceOwnerError: return
     None`` handler to the exact same "unset" treatment -- export gated and
     ``build_bundle`` never called -- rather than crashing the tab or, worse,
@@ -605,7 +601,7 @@ def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypat
 
     def _raise_corrupt() -> str | None:
         raise instance_identity_mod.CorruptInstanceOwnerError(
-            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+            "instance_owner", ValueError("bad json")
         )
 
     download_button_spy = MagicMock(return_value=False)
@@ -642,7 +638,7 @@ def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypat
 
 def test_import_works_and_names_file_slot_when_identity_corrupt(monkeypatch) -> None:
     """Replaces test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt
-    (bridge v5, plan B5). A genuinely corrupt ``.instance_owner.json`` must
+    (bridge v5, plan B5). A genuinely corrupt saved instance owner must
     neither crash the panel nor block the import, now that identity does not
     gate it. The old concern -- a statement confidently naming a target GUESSED
     from a corrupt identity -- no longer applies: the slot named before Apply
@@ -655,7 +651,7 @@ def test_import_works_and_names_file_slot_when_identity_corrupt(monkeypatch) -> 
 
     def _raise_corrupt() -> str | None:
         raise instance_identity_mod.CorruptInstanceOwnerError(
-            instance_identity_mod.INSTANCE_OWNER_PATH, ValueError("bad json")
+            "instance_owner", ValueError("bad json")
         )
 
     # Both readers of identity: the view's own and operator_slot()'s.
@@ -746,9 +742,7 @@ def _patch_state_autosave(monkeypatch):
     return spy
 
 
-def test_shell_autosave_reaches_save_user_defaults(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_reaches_save_user_defaults(monkeypatch) -> None:
     """audit-0823 M2: a page must persist session edits.
 
     Without this, edits made through the page vanish on restart.
@@ -759,9 +753,7 @@ def test_shell_autosave_reaches_save_user_defaults(
     assert spy.called, "page did not reach save_user_defaults"
 
 
-def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_suppressed_by_snapshot_autoload_guard(monkeypatch) -> None:
     """``_suppress_snapshot_autoload=True`` must suppress the save -- the
     sentinel is session-wide, not shell-specific (app.py:108/122,
     views/setup/_state.py:212). Uses ``_run_shell`` (not the no-suppress
@@ -773,9 +765,7 @@ def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
     assert not spy.called, "page called save_user_defaults despite _suppress_snapshot_autoload=True"
 
 
-def test_shell_autosave_payload_carries_session_edited_value(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_payload_carries_session_edited_value(monkeypatch) -> None:
     """Non-vacuous companion to test_shell_autosave_reaches_save_user_defaults:
     proves the ACTUAL payload dict reaching save_user_defaults carries a
     session-edited value, not merely that the function was called with

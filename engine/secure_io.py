@@ -11,6 +11,12 @@ Provides :func:`write_pii_json` which atomically creates a file with mode
    symlink cannot redirect the write to an attacker-controlled location.
 
 Pattern mirrors ``engine.data_bridge_keys._write_keyfile`` (PR #172 precedent).
+
+Demo mode is handled by the document store's null store (engine.store), not
+here. Every store now lives in the database. The read helpers serve the legacy
+JSON files for the one-time import and, after a failed import, on every call
+through the read-only fallback. ``write_pii_json`` has no production callers
+left; the PR 4 cleanup deletes it.
 """
 
 from __future__ import annotations
@@ -21,8 +27,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-
-from engine.demo_mode import is_demo_mode
 
 
 def write_pii_json(path: Path, obj: Any, *, indent: int = 2) -> None:
@@ -36,12 +40,7 @@ def write_pii_json(path: Path, obj: Any, *, indent: int = 2) -> None:
     the process umask.  ``os.O_NOFOLLOW`` causes ``os.open`` to raise
     ``OSError`` (ELOOP) if *path* is a symlink, closing the symlink-follow
     attack surface.
-
-    Demo mode (audit-1018 W9b, owner decision D2): a no-op -- the personal files
-    stay untouched until the user leaves demo mode.
     """
-    if is_demo_mode():
-        return
     payload = json.dumps(obj, indent=indent).encode()
     target = Path(path)
     if target.is_symlink():
@@ -75,12 +74,7 @@ def read_pii_bytes(path: Path) -> bytes:
     file's raw content (e.g. re-emitting a PII cache for encrypted export) rather
     than parsed JSON. A pre-planted symlink at *path* makes ``os.open`` raise
     ``OSError`` (ELOOP), so the read cannot be redirected to an attacker file.
-
-    Demo mode (audit-1018 W9b): every file reads as absent (``FileNotFoundError``),
-    the same outcome the callers already handle for a fresh install.
     """
-    if is_demo_mode():
-        raise FileNotFoundError(errno.ENOENT, "hidden in demo mode", str(path))
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         chunks: list[bytes] = []

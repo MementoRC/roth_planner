@@ -30,6 +30,15 @@ STATEMENT_ACCOUNT_OVERRIDES = declare_store(
 UBS_ACTIVITY = declare_store("ubs_activity", ".ubs_activity_cache.json")
 EXERCISE_SCHEDULE = declare_store("exercise_schedule", ".exercise_schedule_cache.json")
 
+# Provenance and mapping stores.
+COMMITTED = declare_store("committed", ".committed_household.json")
+CANDIDATE_STORE = declare_store("candidate_store", ".candidate_store.json")
+TRUST_CHOICES = declare_store("trust_choices", ".trust_choices.json")
+INSTANCE_OWNER = declare_store("instance_owner", ".instance_owner.json")
+ACCOUNT_ATTRIBUTION = declare_store("account_attribution", ".account_attribution.json")
+PDF_OWNER_MAP = declare_store("pdf_owner_map", ".pdf_owner_map.json")
+IRA_ACCOUNT_LINKS = declare_store("ira_account_links", ".ira_account_links.json")
+
 _LEDGER_SECTIONS = ("koinly", "brokerage")
 
 

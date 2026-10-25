@@ -4,13 +4,13 @@ Pure module: stdlib + models/ + engine.data_sources.choices/resolver only.
 No streamlit imports.
 
 ``confirm_field`` is the sole function invoked by the Command Center's
-"Confirm" button. It mutates a committed_json payload (the on-disk shape
+"Confirm" button. It mutates a committed_json payload (the saved shape
 produced/consumed by engine.data_sources.committed.extract_committed /
 load_committed / save_committed) to freeze one field at a user-chosen value
 and source, and records the trust choice so future resolve() calls default
 to that source. It mirrors engine.data_sources.resolver.confirm's semantics
 but operates directly on the JSON payload instead of a Household instance,
-since the Command Center works with the on-disk committed_json directly.
+since the Command Center works with the saved committed_json directly.
 """
 
 from __future__ import annotations

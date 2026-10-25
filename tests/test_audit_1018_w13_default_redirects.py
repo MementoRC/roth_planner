@@ -1,6 +1,7 @@
-"""audit-1018 W13 (F-50, F-52): the autouse conftest redirect must reach every
-function whose default argument was baked from a personal repo-root file at
-import time (``monkeypatch.setattr`` on the constant cannot reach those).
+"""audit-1018 W13 (F-52): the autouse conftest redirect must reach the
+dividend-forecast function whose default argument was baked from a personal
+repo-root file at import time (``monkeypatch.setattr`` on the constant cannot
+reach it).
 
 All paths here are synthetic.
 """
@@ -12,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-import engine.data_sources.record as record_mod
 import engine.dividend_forecast as dividend_forecast_mod
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -20,22 +20,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _default(func, name: str) -> Path:
     return Path(inspect.signature(func).parameters[name].default)
-
-
-@pytest.mark.parametrize(
-    "func",
-    [
-        record_mod.record_magi_candidates,
-        record_mod.record_ss_fra_candidate,
-        record_mod.record_stock_quote_candidate,
-        record_mod.record_ira_balance_candidate,
-        record_mod.record_roth_balance_candidate,
-    ],
-)
-def test_record_functions_default_store_is_redirected(func) -> None:
-    store = _default(func, "store_path")
-    assert store.name == ".candidate_store.json"
-    assert store.resolve().parent != _REPO_ROOT, f"{func.__name__} would write the real store"
 
 
 def test_forecast_portfolio_default_overrides_is_redirected() -> None:

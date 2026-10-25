@@ -1,9 +1,9 @@
 """Per-account owner-attribution overrides, keyed by (broker, account_number).
 
-Holds account numbers, so persisted via engine.secure_io's PII helpers (0o600
-+ O_NOFOLLOW). NOTE: this is filesystem hardening only, NOT encryption -- the
-file itself is plaintext JSON, readable by anyone with local access to this
-machine/account, same as engine/pdf_owner.py's .pdf_owner_map.json.
+Holds account numbers. Saved in the document store (namespace
+``account_attribution``), whose file is mode 0600. That is filesystem hardening
+only, NOT encryption: the database is plaintext, readable by anyone with local
+access to this machine/account.
 
 Narrower and account-scoped compared to engine/instance_identity.py's
 per-instance default: resolve_account_owner() falls back to instance_owner
@@ -12,15 +12,12 @@ whenever no per-account override exists.
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
+from typing import Any
 
-from engine.demo_mode import is_demo_mode
 from engine.pdf_owner import OWNER_ROLES, resolve_owner
-from engine.secure_io import read_pii_json, write_pii_json
-
-_ACCOUNT_ATTRIBUTION_PATH = Path(__file__).resolve().parent.parent / ".account_attribution.json"
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import ACCOUNT_ATTRIBUTION
 
 _KEY_DELIMITER = "|"
 
@@ -35,16 +32,15 @@ __all__ = [
 
 class CorruptAccountAttributionError(Exception):
     """Raised by ``save_account_override``/``delete_account_override`` when
-    ``_ACCOUNT_ATTRIBUTION_PATH`` exists but its content is not valid JSON
-    (truncated/malformed write, e.g. process killed mid-write).
+    the saved overrides cannot be read.
 
     Mirrors ``CorruptCommittedCacheError`` (engine/data_sources/committed.py,
     audit-0809 #11 / PR #442) and ``CandidateStore.save``'s
     ``CorruptCandidateStoreError`` (engine/data_sources/candidate_store.py,
-    audit-0823 / PR #447): ``load_account_overrides`` tolerates a corrupt
-    file by degrading to ``{}`` (callers depend on that resilience -- a
+    audit-0823 / PR #447): ``load_account_overrides`` tolerates an unreadable
+    row by degrading to ``{}`` (callers depend on that resilience -- a
     broken cache must not crash the app), but if a write then merged onto
-    that degraded empty dict and saved it, every prior override on disk
+    that degraded empty dict and saved it, every saved override
     would be permanently destroyed and replaced with just the one entry
     being written. Once this plan's account-attribution table retires the
     interactive owner-confirm selectboxes, ``resolve_account_owner`` becomes
@@ -55,7 +51,7 @@ class CorruptAccountAttributionError(Exception):
     def __init__(self, path: str | Path, cause: Exception) -> None:
         self.path = path
         self.cause = cause
-        super().__init__(f"account attribution store at {path!r} is corrupt: {cause!r}")
+        super().__init__(f"account attribution store ({path}) is corrupt: {cause!r}")
 
 
 def _encode_key(broker: str, account_number: str) -> str:
@@ -77,7 +73,7 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     """Return {(broker, account_number): owner}.
 
     Read-path only: any read/parse failure or wrong shape degrades to {}
-    rather than raising, so a broken cache file can't crash the app
+    rather than raising, so an unreadable row can't crash the app
     (mirrors engine/pdf_owner.py's load_owner_map tolerant shape). This is
     deliberately NOT mirrored on the write path -- see
     CorruptAccountAttributionError's docstring for why a write must raise
@@ -85,7 +81,7 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
 
     audit-0823: the value vocabulary is closed on the way IN as well as the
     way out. ``save_account_override`` validates its ``owner`` argument, but
-    the store is plaintext JSON on disk, so a hand edit, a truncated legacy
+    an imported legacy file, a truncated legacy
     entry, or a future role rename can still put an unknown value there.
     Entries whose owner is not in ``OWNER_ROLES`` are dropped exactly as
     undecodable keys already are, because consumers treat the loaded
@@ -97,17 +93,13 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     persists verbatim. Dropping the entry degrades that account to the
     instance owner -- the same outcome as if no override had been recorded.
     """
-    if is_demo_mode() or not _ACCOUNT_ATTRIBUTION_PATH.exists():
-        return {}
     try:
-        raw = read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
-    except (json.JSONDecodeError, OSError):
+        return _decode_overrides(_read_overrides())
+    except CorruptAccountAttributionError:
         return {}
-    if not isinstance(raw, dict):
-        return {}
-    overrides_raw = raw.get("overrides")
-    if not isinstance(overrides_raw, dict):
-        return {}
+
+
+def _decode_overrides(overrides_raw: dict[str, Any]) -> dict[tuple[str, str], str]:
     result: dict[tuple[str, str], str] = {}
     for key, owner in overrides_raw.items():
         decoded = _decode_key(str(key))
@@ -116,71 +108,64 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     return result
 
 
-def _refuse_if_corrupt() -> None:
-    """Raise CorruptAccountAttributionError if the store exists but its
-    current on-disk content fails to parse.
+def _read_overrides() -> dict[str, Any]:
+    """The saved ``overrides`` mapping (``{}`` if absent).
 
-    Called by both write paths before they merge onto whatever
-    ``load_account_overrides()`` (tolerant) returns, so a corrupt file
-    stops the write instead of being silently replaced by a fresh dict
-    holding only the one entry being saved/deleted (see
-    CorruptAccountAttributionError's docstring). A missing file is not
-    corrupt -- first run, nothing to protect.
+    Raises CorruptAccountAttributionError if the row is undecodable or is not
+    a ``{"overrides": {...}}`` document. Both writers call this inside their
+    transaction, so a row the tolerant ``load_account_overrides()`` reads as
+    ``{}`` stops the write instead of being replaced by a fresh dict holding
+    only the one entry being saved or deleted (see
+    CorruptAccountAttributionError).
     """
-    if is_demo_mode() or not _ACCOUNT_ATTRIBUTION_PATH.exists():
-        return
     try:
-        read_pii_json(_ACCOUNT_ATTRIBUTION_PATH)
-    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
-        raise CorruptAccountAttributionError(_ACCOUNT_ATTRIBUTION_PATH, exc) from exc
+        raw = get_store().get(ACCOUNT_ATTRIBUTION)
+    except CorruptStoreError as exc:
+        raise CorruptAccountAttributionError(ACCOUNT_ATTRIBUTION, exc) from exc
+    if raw is None:
+        return {}
+    overrides_raw = raw.get("overrides") if isinstance(raw, dict) else None
+    if not isinstance(overrides_raw, dict):
+        raise CorruptAccountAttributionError(
+            ACCOUNT_ATTRIBUTION, ValueError("expected a JSON object with an 'overrides' object")
+        )
+    return overrides_raw
 
 
 def _write(overrides: dict[tuple[str, str], str]) -> None:
-    """Write *overrides* atomically via a tmp file + ``os.replace``.
-
-    Callers must call ``_refuse_if_corrupt()`` first -- this function does
-    not pre-check, it only writes. A no-op in demo mode (audit-1018 W9b): the
-    tmp-file + ``os.replace`` pair would otherwise replace the personal file.
-    """
-    if is_demo_mode():
-        return
     encoded = {
         _encode_key(broker, account_number): owner
         for (broker, account_number), owner in overrides.items()
     }
-    tmp_path = _ACCOUNT_ATTRIBUTION_PATH.with_name(
-        f"{_ACCOUNT_ATTRIBUTION_PATH.name}.tmp-{os.getpid()}"
-    )
-    write_pii_json(tmp_path, {"version": 1, "overrides": encoded})
-    os.replace(tmp_path, _ACCOUNT_ATTRIBUTION_PATH)
+    get_store().put(ACCOUNT_ATTRIBUTION, {"version": 1, "overrides": encoded})
 
 
 def save_account_override(broker: str, account_number: str, owner: str) -> None:
-    """Persist an override for ``(broker, account_number)``, atomically.
+    """Save an override for ``(broker, account_number)``.
 
-    Raises CorruptAccountAttributionError (without writing) if the file
-    already exists but fails to parse -- see that class's docstring for why
-    this refuses rather than clobbers.
+    Raises CorruptAccountAttributionError (without writing) if the saved
+    overrides cannot be read or are the wrong shape. The check and the write
+    are one transaction.
     """
     if owner not in OWNER_ROLES:
         raise ValueError(f"Invalid owner role {owner!r}, must be one of {sorted(OWNER_ROLES)}")
-    _refuse_if_corrupt()
-    overrides = load_account_overrides()
-    overrides[(broker, account_number)] = owner
-    _write(overrides)
+    with get_store().transaction():
+        overrides = _decode_overrides(_read_overrides())
+        overrides[(broker, account_number)] = owner
+        _write(overrides)
 
 
 def delete_account_override(broker: str, account_number: str) -> None:
-    """Remove any override for ``(broker, account_number)``, atomically.
+    """Remove any override for ``(broker, account_number)``.
 
-    Raises CorruptAccountAttributionError (without writing) if the file
-    already exists but fails to parse -- see that class's docstring for why
-    this refuses rather than clobbers.
+    Raises CorruptAccountAttributionError (without writing) if the saved
+    overrides cannot be read or are the wrong shape. The check and the write
+    are one transaction.
     """
-    _refuse_if_corrupt()
-    overrides = load_account_overrides()
-    overrides.pop((broker, account_number), None)
-    _write(overrides)
+    with get_store().transaction():
+        overrides = _decode_overrides(_read_overrides())
+        overrides.pop((broker, account_number), None)
+        _write(overrides)
 
 
 def resolve_account_owner(

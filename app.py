@@ -16,7 +16,6 @@ inject_app_css()
 
 from collections.abc import Callable  # noqa: E402
 from datetime import datetime  # noqa: E402
-from pathlib import Path  # noqa: E402
 from typing import TypeVar  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
@@ -25,10 +24,11 @@ from config.scalar_registry import (  # noqa: E402
     scalar_default,
     session_key_for_config_key,
 )
+from engine.data_sources.candidate_store import CorruptCandidateStoreError  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
-from engine.store import StoreError  # noqa: E402
+from engine.store import StoreError, StoreUnavailableError, saving_disabled  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
@@ -49,6 +49,46 @@ def _boot_read(read: Callable[[], _T], default: _T) -> _T:
             st.error(store_error_message(exc))
         _boot_store_errors.append(exc)
         return default
+
+
+def _report_refused_save(exc: StoreUnavailableError) -> None:
+    """A refused save: quiet while a failed import disabled saving, else the one banner."""
+    if saving_disabled():
+        return  # render_store_notice() already shows the failed-import banner
+    if not _boot_store_errors:
+        st.error(store_error_message(exc))
+    _boot_store_errors.append(exc)
+
+
+_CORRUPT_CANDIDATE_STORE_WARNING = (
+    "⚠️ Your candidate store is unreadable (corrupt or truncated) and could "
+    "contain data with no other copy. It has been left untouched and will NOT be "
+    "overwritten this session — restore it from a backup if you have one, or "
+    "contact support before deleting it."
+)
+# Set once this run has shown the corrupt-candidate-store warning.
+_candidate_store_warned: list[bool] = []
+
+
+def _warn_corrupt_candidate_store() -> None:
+    """Warn that the saved candidate store is unreadable, at most once per run."""
+    if not _candidate_store_warned:
+        st.warning(_CORRUPT_CANDIDATE_STORE_WARNING)
+        _candidate_store_warned.append(True)
+
+
+def _boot_record(record: Callable[[], object]) -> None:
+    """Record a boot-time candidate; a refused save is dropped (see _report_refused_save).
+
+    A corrupt saved candidate store refuses the save too: the row is kept and
+    the user gets the corrupt-candidate-store warning instead of a traceback.
+    """
+    try:
+        record()
+    except StoreUnavailableError as exc:
+        _report_refused_save(exc)
+    except CorruptCandidateStoreError:
+        _warn_corrupt_candidate_store()
 
 
 def _seed_session_state() -> None:
@@ -108,6 +148,11 @@ def _seed_session_state() -> None:
         st.session_state.setdefault("instance_owner", load_instance_owner())
     except CorruptInstanceOwnerError:
         st.session_state.setdefault("instance_owner", None)
+    except StoreUnavailableError as exc:
+        # Saving disabled by a failed import: its banner is already shown.
+        # Any other unavailable store gets the storage banner (once).
+        _report_refused_save(exc)
+        st.session_state.setdefault("instance_owner", None)
     # Issue #43: remember what the governed fields were seeded with so the
     # first resolve does not read an untouched seed as a manual edit.
     from engine.data_sources.orchestrator import SEED_VALUES_KEY, SOURCED_SESSION_KEYS
@@ -120,6 +165,10 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("_seeded", True)
 
 
+# Open the store before any cached snapshot is read: the first open imports the
+# legacy JSON files, and an unavailable database stops here with one banner.
+render_store_notice()
+
 # Shared state: household parameters
 _seed_session_state()
 
@@ -129,10 +178,6 @@ _seed_session_state()
 # for why (Streamlit forbids assigning to a widget-backed session_state key
 # after that widget already exists in the run).
 _drain_pending_defaults()
-
-# Open the store before any cached snapshot is read: the first open imports the
-# legacy JSON files, and an unavailable database stops here with one banner.
-render_store_notice()
 
 # Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
 # personal cache below is skipped, so the reset cannot be silently undone and
@@ -183,12 +228,14 @@ if not _DEMO_MODE and "ssa_snapshot_you" not in st.session_state:
                 # your_ss_fra is a sourced field (Wave 2 Part C); a direct write
                 # here would bypass the freeze-until-confirm gate exactly like
                 # the portfolio_snapshot autoload above.
-                record_ss_fra_candidate(
-                    "your_ss_fra",
-                    _your_fra_match.monthly_amount,
-                    Source.FINEXTRACT_LIVE,
-                    "SSA statement (cached)",
-                    datetime.now(),
+                _boot_record(
+                    lambda: record_ss_fra_candidate(
+                        "your_ss_fra",
+                        _your_fra_match.monthly_amount,
+                        Source.FINEXTRACT_LIVE,
+                        "SSA statement (cached)",
+                        datetime.now(),
+                    )
                 )
 
 if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
@@ -201,12 +248,14 @@ if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
         if _spouse_fra_age is not None:
             _spouse_fra_match = match_fra_estimate(_cached_ssa_spouse.estimates, _spouse_fra_age)
             if _spouse_fra_match is not None:
-                record_ss_fra_candidate(
-                    "spouse_ss_fra",
-                    _spouse_fra_match.monthly_amount,
-                    Source.FINEXTRACT_LIVE,
-                    "SSA statement (cached)",
-                    datetime.now(),
+                _boot_record(
+                    lambda: record_ss_fra_candidate(
+                        "spouse_ss_fra",
+                        _spouse_fra_match.monthly_amount,
+                        Source.FINEXTRACT_LIVE,
+                        "SSA statement (cached)",
+                        datetime.now(),
+                    )
                 )
 
 # Record the on-disk 1040 PDF cache as Source.PDF candidates for Command
@@ -218,14 +267,16 @@ if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
 # adds the FEIE back (audit-1008 F-59).
 _pdf_records = {} if _DEMO_MODE else _boot_read(load_pdf_tax_records, {})
 if _pdf_records:
-    record_magi_candidates(
-        {
-            yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
-            for yr, rec in _pdf_records.items()
-        },
-        Source.PDF,
-        "1040 PDF cache",
-        datetime.now(),
+    _boot_record(
+        lambda: record_magi_candidates(
+            {
+                yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
+                for yr, rec in _pdf_records.items()
+            },
+            Source.PDF,
+            "1040 PDF cache",
+            datetime.now(),
+        )
     )
 
 st.sidebar.title("🎯 Roth Planner")
@@ -255,10 +306,7 @@ if page != "backup":
     st.session_state.pop("_generated_priv_b64", None)
 
 # Build household from session state
-from engine.data_sources.candidate_store import (  # noqa: E402
-    CandidateStore,
-    CorruptCandidateStoreError,
-)
+from engine.data_sources.candidate_store import CandidateStore  # noqa: E402
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError  # noqa: E402
 from engine.data_sources.committed import (  # noqa: E402
     CorruptCommittedCacheError,
@@ -273,15 +321,6 @@ from engine.data_sources.orchestrator import (  # noqa: E402
     AppResolveResult,
     resolve_for_app,
     session_keys_for_writeback,
-)
-
-# Setup / Command Center cache paths (Wave 4: centralized in
-# engine/data_sources/paths.py so views/setup/command_center.py can share
-# them without importing from app.py).
-from engine.data_sources.paths import (  # noqa: E402
-    CANDIDATE_STORE_PATH,
-    COMMITTED_PATH,
-    TRUST_CHOICES_PATH,
 )
 from engine.data_sources.resolver import resolve  # noqa: E402
 from engine.data_sources.snapshot_ingest import (  # noqa: E402
@@ -314,7 +353,7 @@ _run_state: dict[str, Household] = {}  # per script run (Streamlit re-executes t
 def _current_pending_review() -> set[str]:
     """Pending-review field keys as of NOW (after the page body ran).
 
-    Re-runs the pure ``resolve()`` against the on-disk committed baseline,
+    Re-runs the pure ``resolve()`` against the saved committed baseline,
     candidate store and trust choices, so candidates recorded or confirmed by
     the page body in this run are counted. Falls back to the value
     get_household() published when state is missing or unreadable.
@@ -324,13 +363,21 @@ def _current_pending_review() -> set[str]:
     if base is None or _DEMO_MODE:
         return published
     try:
-        committed_json = load_committed(COMMITTED_PATH)
+        committed_json = load_committed()
+        store = CandidateStore.load()
+        choices = ChoiceMap.load()
     except CorruptCommittedCacheError:
+        # The candidate/choice loaders turn a corrupt row into a flag; a corrupt
+        # committed baseline is already warned about by get_household().
+        return published
+    except StoreUnavailableError as exc:
+        # Runs in _route_and_badge's finally, outside its StoreError catch, so
+        # the refusal goes through the one-banner rule (quiet while saving is
+        # disabled by a failed import).
+        _report_refused_save(exc)
         return published
     if committed_json is not None:
         apply_committed(base, committed_json)
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
     return set(resolve(base, store, choices).pending_review)
 
 
@@ -348,19 +395,33 @@ def _persist_resolution(
     app_res: AppResolveResult,
     store: CandidateStore,
     choices: ChoiceMap,
-    corrupt_committed_path: Path | None,
+    committed_unreadable: bool,
 ) -> None:
-    """Write the committed baseline, candidate store and trust choices back to disk.
+    """Save the committed baseline, candidate store and trust choices to the store.
 
-    Skipped entirely in demo mode (audit-1018 F-28): the in-memory state is built
-    from demo seeds, and persisting it would overwrite the parked personal files
-    and stamp the seeds as MANUAL.
+    Skipped in demo mode (audit-1018 F-28): the state is built from demo seeds,
+    and saving it would stamp them MANUAL. When a failed JSON import has
+    disabled saving, the refusal is quiet, because render_store_notice()
+    already shows that banner on every run. Any other unavailable-storage
+    error gets the one storage banner (shared with the boot-time reads).
     """
     if _DEMO_MODE:
         return
+    try:
+        _save_resolution(app_res, store, choices, committed_unreadable)
+    except StoreUnavailableError as exc:
+        _report_refused_save(exc)
+
+
+def _save_resolution(
+    app_res: AppResolveResult,
+    store: CandidateStore,
+    choices: ChoiceMap,
+    committed_unreadable: bool,
+) -> None:
     # Persist: write the migrated committed baseline only on first migration
     # (or when none existed), and always persist the candidate/choice stores.
-    # audit-0809 #11: if the on-disk committed file was corrupt (see above),
+    # audit-0809 #11: if the saved committed baseline was corrupt (see above),
     # app_res.committed_changed is still True here (resolve_for_app treated
     # committed_json=None as "first load" and freshly migrated one) — but
     # saving now would overwrite the still-intact corrupt file with the
@@ -369,39 +430,33 @@ def _persist_resolution(
     # see its docstring), so this early skip is defence in depth / an earlier,
     # more specific warning message rather than the only thing preventing the
     # clobber; kept so the app.py-level warning below still fires.
-    if app_res.committed_changed and corrupt_committed_path is None:
-        save_committed(COMMITTED_PATH, app_res.committed_json)
-    elif corrupt_committed_path is not None:
+    if app_res.committed_changed and not committed_unreadable:
+        save_committed(app_res.committed_json)
+    elif committed_unreadable:
         st.warning(
-            f"⚠️ Your committed baseline at `{corrupt_committed_path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
+            "⚠️ Your committed baseline is unreadable (corrupt or truncated) and could "
+            "contain data with no other copy. It has been left untouched and will NOT be "
+            "overwritten this session — restore it from a backup if you have one, or "
+            "contact support before deleting it."
         )
     # audit-0823: mirror the committed-baseline guard above — a corrupt
-    # on-disk candidate store must not be silently clobbered by the
+    # saved candidate store must not be silently clobbered by the
     # in-memory store (which, per CandidateStore.load's resilience, would
     # be EMPTY on a corrupt read). store.save() itself refuses this write
     # (see CorruptCandidateStoreError's docstring); this except is what
     # surfaces that refusal to the user instead of it failing silently.
     try:
-        store.save(CANDIDATE_STORE_PATH)
-    except CorruptCandidateStoreError as exc:
-        st.warning(
-            f"⚠️ Your candidate store at `{exc.path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
-        )
+        store.save()
+    except CorruptCandidateStoreError:
+        _warn_corrupt_candidate_store()
     # audit-1008 F-45: same guard for the trust-choice map.
     try:
-        choices.save(TRUST_CHOICES_PATH)
-    except CorruptChoiceMapError as exc:
+        choices.save()
+    except CorruptChoiceMapError:
         st.warning(
-            f"⚠️ Your saved source choices at `{exc.path}` are unreadable "
-            "(corrupt or truncated). The file has been left untouched and will NOT be "
-            "overwritten this session — restore it from a backup if you have one, or "
-            "delete it to start over with no saved choices."
+            "⚠️ Your saved source choices are unreadable (corrupt or truncated). They "
+            "have been left untouched and will NOT be overwritten this session — restore "
+            "them from a backup if you have one."
         )
 
 
@@ -499,26 +554,26 @@ def get_household() -> Household:
     )
 
     # Demo mode (audit-1018 F-28): the personal committed baseline, candidate
-    # store and trust choices are parked on disk. Resolve against empty
+    # store and trust choices stay parked in the real store. Resolve against empty
     # in-memory ones (the "first load" path, so the demo seeds are the baseline)
     # and write none of them back -- demo values must never overwrite personal
     # files or be stamped MANUAL there.
-    store = CandidateStore() if _DEMO_MODE else CandidateStore.load(CANDIDATE_STORE_PATH)
-    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load(TRUST_CHOICES_PATH)
+    store = CandidateStore() if _DEMO_MODE else CandidateStore.load()
+    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load()
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see
-    # CorruptCommittedCacheError's docstring. On a corrupt file we proceed
+    # CorruptCommittedCacheError's docstring. On a corrupt baseline we proceed
     # with committed_json=None (in-memory first-load path, so the app still
-    # renders) but set _corrupt_committed_path so the save below is
-    # suppressed for this run and the user is warned; the corrupt file on
-    # disk is left completely untouched (no delete/rename/overwrite).
-    _corrupt_committed_path: Path | None = None
+    # renders) but set _committed_unreadable so the save below is
+    # suppressed for this run and the user is warned; the unreadable row is
+    # left untouched.
+    _committed_unreadable = False
     committed_json: dict | None = None
     if not _DEMO_MODE:
         try:
-            committed_json = load_committed(COMMITTED_PATH)
+            committed_json = load_committed()
         except CorruptCommittedCacheError:
-            _corrupt_committed_path = COMMITTED_PATH
+            _committed_unreadable = True
 
     # audit-1008 F-64: years the Setup MAGI-anchor form set back to 0.
     _cleared_magi = st.session_state.get(MAGI_CLEARED_KEY) or ()
@@ -540,7 +595,7 @@ def get_household() -> Household:
     _run_state["baseline_hh"] = session_hh
     # The clear only sticks once the baseline is saved; on a corrupt baseline
     # (save suppressed below) keep the flag so it applies on a later render.
-    if _corrupt_committed_path is None:
+    if not _committed_unreadable:
         st.session_state.pop(MAGI_CLEARED_KEY, None)
         st.session_state.pop(SEED_VALUES_KEY, None)
         st.session_state.pop(BUNDLE_SCALARS_KEY, None)
@@ -572,7 +627,7 @@ def get_household() -> Household:
             # already used for these same fields.
             st.session_state[_session_key] = int(round(_value))
 
-    _persist_resolution(app_res, store, choices, _corrupt_committed_path)
+    _persist_resolution(app_res, store, choices, _committed_unreadable)
 
     # Expose the review gate to the sidebar/Command Center.
     st.session_state["_pending_review"] = app_res.result.pending_review
@@ -603,6 +658,8 @@ def _route_and_badge() -> None:
         route_target(page)(hh)
     except StoreError as exc:
         st.error(store_error_message(exc))
+        # Counted as this run's banner, so the pending recompute below adds none.
+        _boot_store_errors.append(exc)
     finally:
         pending = _current_pending_review()
         st.session_state["_pending_review"] = pending

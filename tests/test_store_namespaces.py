@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib
 import inspect
 import json
@@ -27,6 +28,13 @@ EXPECTED: dict[str, str] = {
     "pdf_ledger": ".pdf_import_ledger.json",
     "ubs_activity": ".ubs_activity_cache.json",
     "exercise_schedule": ".exercise_schedule_cache.json",
+    "committed": ".committed_household.json",
+    "candidate_store": ".candidate_store.json",
+    "trust_choices": ".trust_choices.json",
+    "instance_owner": ".instance_owner.json",
+    "account_attribution": ".account_attribution.json",
+    "pdf_owner_map": ".pdf_owner_map.json",
+    "ira_account_links": ".ira_account_links.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -41,6 +49,15 @@ MOVED_MODULES: list[str] = [
     "engine.pdf_ledger",
     "engine.ubs_activity_store",
     "engine.exercise_schedule_store",
+    "engine.data_sources.committed",
+    "engine.data_sources.candidate_store",
+    "engine.data_sources.record",
+    "engine.data_sources.scan_ingest",
+    "engine.data_sources.choices",
+    "engine.instance_identity",
+    "engine.account_attribution",
+    "engine.pdf_owner",
+    "engine.account_link",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -72,9 +89,30 @@ STORE_FUNCTIONS: list[str] = [
     "engine.exercise_schedule_store:save_exercise_schedule",
     "engine.exercise_schedule_store:load_exercise_schedule",
     "engine.exercise_schedule_store:clear_exercise_schedule",
+    "engine.data_sources.committed:load_committed",
+    "engine.data_sources.committed:save_committed",
+    "engine.data_sources.candidate_store:CandidateStore.load",
+    "engine.data_sources.candidate_store:CandidateStore.save",
+    "engine.data_sources.record:record_magi_candidates",
+    "engine.data_sources.record:record_ss_fra_candidate",
+    "engine.data_sources.record:record_ira_balance_candidate",
+    "engine.data_sources.record:record_roth_balance_candidate",
+    "engine.data_sources.record:record_stock_quote_candidate",
+    "engine.data_sources.record:discard_pdf_balance_candidates",
+    "engine.data_sources.choices:ChoiceMap.load",
+    "engine.data_sources.choices:ChoiceMap.save",
+    "engine.instance_identity:load_instance_owner",
+    "engine.instance_identity:save_instance_owner",
+    "engine.account_attribution:load_account_overrides",
+    "engine.account_attribution:save_account_override",
+    "engine.account_attribution:delete_account_override",
+    "engine.pdf_owner:load_owner_map",
+    "engine.pdf_owner:save_owner_map",
+    "engine.account_link:load_link_map",
+    "engine.account_link:save_link_map",
 ]
 
-_PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}
+_PATH_PARAMS = {"path", "cache_path", "pdf_cache_path", "store_path"}
 
 
 def test_registry_lists_exactly_the_stores_moved_so_far():
@@ -129,8 +167,8 @@ def test_moved_modules_keep_no_legacy_json_path():
 def test_store_functions_take_no_path_parameter():
     offenders = []
     for ref in STORE_FUNCTIONS:
-        module_name, func_name = ref.split(":")
-        func = getattr(importlib.import_module(module_name), func_name)
+        module_name, attr_path = ref.split(":")
+        func = functools.reduce(getattr, attr_path.split("."), importlib.import_module(module_name))
         offenders += [
             f"{ref}({p})" for p in inspect.signature(func).parameters if p in _PATH_PARAMS
         ]

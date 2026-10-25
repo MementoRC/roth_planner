@@ -60,7 +60,7 @@ def _fields(owner: str, snap, filing_status: str = "MFJ") -> dict:
     return {w.label: w for w in at.number_input}
 
 
-def test_403b_only_snapshot_unlocks_your_ira(clean_command_center_caches) -> None:
+def test_403b_only_snapshot_unlocks_your_ira() -> None:
     f = _fields("your", _snap(("you", "403b", 120_000.0)))
     ira = f["Your Trad IRA (synced)"]
     assert not ira.disabled
@@ -71,7 +71,7 @@ def test_403b_only_snapshot_unlocks_your_ira(clean_command_center_caches) -> Non
     assert not roth.help
 
 
-def test_spouse_only_snapshot(clean_command_center_caches) -> None:
+def test_spouse_only_snapshot() -> None:
     snap = _snap(("spouse", "trad_ira", 40_000.0))
     mine = _fields("your", snap)
     assert "Your Trad IRA" in mine
@@ -83,19 +83,19 @@ def test_spouse_only_snapshot(clean_command_center_caches) -> None:
     assert "Spouse Roth IRA" in spouse
 
 
-def test_no_snapshot_all_enabled(clean_command_center_caches) -> None:
+def test_no_snapshot_all_enabled() -> None:
     f = _fields("your", None)
     assert not f["Your Trad IRA"].disabled
     assert not f["Your Roth IRA"].disabled
 
 
-def test_single_filer_still_disables_spouse(clean_command_center_caches) -> None:
+def test_single_filer_still_disables_spouse() -> None:
     f = _fields("spouse", _snap(("spouse", "roth_ira", 5.0)), filing_status="Single")
     assert f["Spouse Trad IRA"].disabled
     assert f["Spouse Roth IRA (synced)"].disabled
 
 
-def test_trad_ira_and_403b_both_synced_escapes_dollars(clean_command_center_caches) -> None:
+def test_trad_ira_and_403b_both_synced_escapes_dollars() -> None:
     """Snapshot with both trad_ira and 403b for 'you'; help must escape all $."""
     snap = _snap(("you", "trad_ira", 75_000.0), ("you", "403b", 100_000.0))
     f = _fields("your", snap)

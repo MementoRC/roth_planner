@@ -6,7 +6,6 @@ Synthetic names and round amounts only.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -178,26 +177,20 @@ class TestPickLatest:
 
 
 class TestRecordRothCandidate:
-    def test_records_a_pdf_candidate(self, tmp_path: Path) -> None:
-        store = tmp_path / "store.json"
+    def test_records_a_pdf_candidate(self) -> None:
         assert record_roth_balance_candidate(
             "spouse_roth",
             22_000.4,
             "Vanguard Roth IRA PDF",
             datetime(2026, 10, 1),
-            store_path=store,
         )
-        [cand] = CandidateStore.load(store).candidates_for("spouse_roth")
+        [cand] = CandidateStore.load().candidates_for("spouse_roth")
         assert cand.value == 22_000.0
 
-    def test_rejects_a_non_roth_field(self, tmp_path: Path) -> None:
+    def test_rejects_a_non_roth_field(self) -> None:
         with pytest.raises(ValueError, match="your_roth"):
-            record_roth_balance_candidate(
-                "your_ira", 1.0, "x", datetime(2026, 1, 1), store_path=tmp_path / "s.json"
-            )
+            record_roth_balance_candidate("your_ira", 1.0, "x", datetime(2026, 1, 1))
 
-    def test_ira_recorder_still_rejects_roth_keys(self, tmp_path: Path) -> None:
+    def test_ira_recorder_still_rejects_roth_keys(self) -> None:
         with pytest.raises(ValueError, match="your_ira"):
-            record_ira_balance_candidate(
-                "your_roth", 1.0, "x", datetime(2026, 1, 1), store_path=tmp_path / "s.json"
-            )
+            record_ira_balance_candidate("your_roth", 1.0, "x", datetime(2026, 1, 1))

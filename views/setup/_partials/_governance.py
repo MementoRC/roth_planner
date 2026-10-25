@@ -26,7 +26,6 @@ from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError
 from engine.data_sources.committed import CorruptCommittedCacheError, save_committed
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import session_keys_for_writeback
-from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
 from models.sourced import Source
 
@@ -153,27 +152,27 @@ def _handle_confirm_click(
         st.warning(f"⚠️ Not confirmed: {exc}")
         return False
     # audit-0809 #11: save_committed() itself refuses to overwrite a
-    # committed cache file that exists on disk but fails to parse (see its
+    # saved committed baseline that fails to parse (see its
     # docstring) — that is the actual guard, not this call site. Catch the
     # refusal here so a Confirm click degrades to a warning instead of an
-    # unhandled exception, and leave the corrupt file untouched.
+    # unhandled exception, and leave it untouched.
     try:
-        save_committed(COMMITTED_PATH, committed_json)
+        save_committed(committed_json)
     except CorruptCommittedCacheError:
         st.warning(
-            f"⚠️ Could not save — the committed baseline at `{COMMITTED_PATH}` is "
-            "unreadable (corrupt or truncated) and was left untouched."
+            "⚠️ Could not save — the committed baseline is unreadable "
+            "(corrupt or truncated) and was left untouched."
         )
         return False
     # audit-1008 F-45: ChoiceMap.save refuses to overwrite an unreadable file.
     # The value itself is already committed above, so only the remembered
     # source choice is lost; warn and carry on with the confirm.
     try:
-        choices.save(TRUST_CHOICES_PATH)
+        choices.save()
     except CorruptChoiceMapError:
         st.warning(
-            f"⚠️ Saved source choices at `{TRUST_CHOICES_PATH}` are unreadable and were "
-            "left untouched, so this source choice was not remembered."
+            "⚠️ Saved source choices are unreadable and were left untouched, so this "
+            "source choice was not remembered."
         )
     _apply_confirm_to_session(field_key, value)
     st.success(f"Confirmed {_field_label(field_key)} from {source}.")

@@ -5,10 +5,9 @@ Uses ``streamlit.testing.v1.AppTest.from_function`` (mirrors the pattern in
 tests/test_optimizer_panel.py — the wrapped function must be fully
 self-contained, all imports/object construction inside its body).
 
-The Command Center's cache paths (``engine.data_sources.paths``) are
-repo-root-anchored regardless of cwd (matching every other engine/data_sources
-cache file), so this test seeds/cleans those exact files directly rather than
-using a tmp cwd — same isolation approach as tests/test_app_data_sources.py.
+The Command Center's stores live in each test's in-memory document store, so
+this test seeds them directly through the store modules — same isolation
+approach as tests/test_app_data_sources.py.
 
 Per-field governance-card tests for ``your_ira`` (accounts),
 ``stock_price_now``/``grants`` (options), and ``prior_year_magi.<year>``
@@ -24,7 +23,6 @@ test each, asserting their partial does NOT render these cards.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +34,8 @@ from engine.data_sources.committed import load_committed
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.pdf_import import PdfImportResult
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.sourced import Provenance, Source, SourcedValue
 from views._shared import (
     MarketQuoteSyncSummary,
@@ -47,17 +47,8 @@ from views._shared import (
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
-# clean_command_center_caches fixture is provided by tests/conftest.py (cleans
-# up the 3 Command Center cache files BEFORE and AFTER each test) -- do not
-# redeclare it here with the same name. A same-named local fixture silently
-# shadows the conftest one for every test in this module, and this file's
-# prior copy only cleaned up AFTER, leaking stale cache state into whichever
-# test ran next when a full-suite run was interrupted mid-test.
 
-
-def test_command_center_no_pending_shows_reconciled_message(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_no_pending_shows_reconciled_message() -> None:
     def _render_no_pending() -> None:
         import streamlit as st
 
@@ -108,9 +99,7 @@ def _render_sync_everything() -> None:
     render_command_center(Household())
 
 
-def test_sync_everything_button_invokes_handler_and_renders_summary(
-    clean_command_center_caches,
-) -> None:
+def test_sync_everything_button_invokes_handler_and_renders_summary() -> None:
     import views.setup.command_center as command_center_mod
 
     mock_sync = MagicMock(return_value=_canned_sync_everything_result())
@@ -136,9 +125,7 @@ def test_sync_everything_button_invokes_handler_and_renders_summary(
     assert at.metric[0].value == "3"
 
 
-def test_sync_everything_clears_suppress_snapshot_autoload_flag(
-    clean_command_center_caches,
-) -> None:
+def test_sync_everything_clears_suppress_snapshot_autoload_flag() -> None:
     """P4-1: Sync everything must clear the Reset-to-demo autoload-suppression flag.
 
     The only other code path that ever clears ``_suppress_snapshot_autoload``
@@ -182,24 +169,20 @@ def _render_command_center_with_pending(pending: set[str]) -> None:
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
         "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
-def test_command_center_renders_and_shows_pending_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_renders_and_shows_pending_candidate() -> None:
     _seed_pending_your_ira()
 
     at = AppTest.from_function(
@@ -213,9 +196,7 @@ def test_command_center_renders_and_shows_pending_candidate(
     assert "1,600,000" in rendered_text  # the currently-committed value
 
 
-def test_confirm_button_commits_chosen_source_and_syncs_session(
-    clean_command_center_caches,
-) -> None:
+def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
     _seed_pending_your_ira()
 
     at = AppTest.from_function(
@@ -229,14 +210,12 @@ def test_confirm_button_commits_chosen_source_and_syncs_session(
     assert not at.exception
     assert at.session_state["your_ira"] == 2_000_000.0
 
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == 2_000_000.0
     assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
 
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap.load()
     choice = choices.get("your_ira")
     assert choice is not None
     assert choice.source == Source.FINEXTRACT_LIVE
@@ -244,24 +223,20 @@ def test_confirm_button_commits_chosen_source_and_syncs_session(
 
 def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
-def test_command_center_shows_pending_stock_price_now_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_shows_pending_stock_price_now_candidate() -> None:
     _seed_pending_stock_price_now()
 
     at = AppTest.from_function(
@@ -275,9 +250,7 @@ def test_command_center_shows_pending_stock_price_now_candidate(
     assert "100" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key() -> None:
     """Bug 2 regression: the Household attr is stock_price_now, but the Setup
     number_input widget reads/writes session_state["stock_price"] (alias). The
     confirm handler must write the SAME aliased key, or the next
@@ -298,9 +271,7 @@ def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key(
     assert at.session_state["stock_price"] == 250.0
     assert "stock_price_now" not in at.session_state
 
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["stock_price_now"]["value"] == 250.0
     assert committed_json["stock_price_now"]["source"] == "FINEXTRACT_LIVE"
@@ -310,7 +281,6 @@ def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
     import dataclasses
 
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
     from models.grants import StockGrant
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
@@ -320,7 +290,7 @@ def _seed_pending_grants() -> None:
             "prov": [Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()],
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     candidate_grants = [
         StockGrant(year=2019, strike=98.0, shares=200, expiry_year=2029),
@@ -332,11 +302,11 @@ def _seed_pending_grants() -> None:
         candidate_grants,
         Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync"),
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
-def test_command_center_shows_pending_grants_candidate(clean_command_center_caches) -> None:
+def test_command_center_shows_pending_grants_candidate() -> None:
     _seed_pending_grants()
 
     at = AppTest.from_function(
@@ -350,9 +320,7 @@ def test_command_center_shows_pending_grants_candidate(clean_command_center_cach
     assert "1 grants" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_grants_commits_candidate_list(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_grants_commits_candidate_list() -> None:
     _seed_pending_grants()
 
     at = AppTest.from_function(
@@ -364,14 +332,12 @@ def test_command_center_confirm_grants_commits_candidate_list(
     at.button(key="confirm_grants").click().run()
 
     assert not at.exception
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert len(committed_json[GRANTS_KEY]["data"]) == 2
     assert {g["year"] for g in committed_json[GRANTS_KEY]["data"]} == {2019, 2021}
 
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap.load()
     choice = choices.get(GRANTS_KEY)
     assert choice is not None
     assert choice.source == Source.FINEXTRACT_LIVE
@@ -379,15 +345,13 @@ def test_command_center_confirm_grants_commits_candidate_list(
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
     committed_json = {
         "prior_year_magi": {
             "data": {"2024": 200_000.0},
             "prov": {"2024": Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()},
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -395,13 +359,11 @@ def _seed_pending_prior_year_magi_2024() -> None:
         290_000.0,
         Provenance(Source.PDF, _RECORDED_AT, "Form 1040 PDF"),
     )
-    store.save(CANDIDATE_STORE_PATH)
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    store.save()
+    ChoiceMap().save()
 
 
-def test_command_center_shows_pending_prior_year_magi_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_shows_pending_prior_year_magi_candidate() -> None:
     _seed_pending_prior_year_magi_2024()
 
     at = AppTest.from_function(
@@ -415,9 +377,7 @@ def test_command_center_shows_pending_prior_year_magi_candidate(
     assert "200,000" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_prior_year_magi_syncs_session_state(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_prior_year_magi_syncs_session_state() -> None:
     """Confirming prior_year_magi.2024 must update BOTH the on-disk committed
     JSON and st.session_state["prior_year_magi"] (int-keyed dict), and clear
     the field from _pending_review — same shape ``_apply_confirm_to_session``
@@ -437,17 +397,13 @@ def test_command_center_confirm_prior_year_magi_syncs_session_state(
     assert at.session_state["prior_year_magi"][2024] == 290_000.0
     assert "prior_year_magi.2024" not in at.session_state["_pending_review"]
 
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["prior_year_magi"]["data"]["2024"] == 290_000.0
     assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
 
 
-def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync() -> None:
     """Replaces the old gate-blocks-sync test: a genuinely unset instance no
     longer shows a blocking gate -- it auto-defaults to "you", persists that
     to disk without any user interaction, and enables Sync immediately. The
@@ -477,9 +433,7 @@ def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync(
     assert instance_identity_mod.load_instance_owner() == "you"
 
 
-def test_command_center_identity_set_shows_correction_control_and_enables_sync(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_command_center_identity_set_shows_correction_control_and_enables_sync(monkeypatch) -> None:
     """Non-vacuous by construction: identity is set on DISK (via
     ``save_instance_owner``), never in ``session_state`` directly, so
     ``render_command_center``'s ``st.session_state.get("instance_owner") or
@@ -523,9 +477,7 @@ def test_command_center_identity_set_shows_correction_control_and_enables_sync(
     spy.assert_called()
 
 
-def test_command_center_does_not_reset_existing_spouse_identity(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_does_not_reset_existing_spouse_identity() -> None:
     """An already-"spouse" instance must never be silently reset to "you" by
     the auto-default path -- that path only fires when owner is None."""
     import engine.instance_identity as instance_identity_mod
@@ -552,9 +504,7 @@ def test_command_center_does_not_reset_existing_spouse_identity(
     # contract -- only the auto-default and Update paths ever write that key).
 
 
-def test_command_center_update_control_changes_owner_and_persists(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_update_control_changes_owner_and_persists() -> None:
     """Picking "Spouse" in the correction control and clicking Update must
     persist the change to disk, readable back via ``load_instance_owner()``."""
     import engine.instance_identity as instance_identity_mod
@@ -583,16 +533,17 @@ def test_command_center_update_control_changes_owner_and_persists(
 
 
 def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
-    clean_command_center_caches,
+    store, corrupt_row
 ) -> None:
-    """A corrupt ``.instance_owner.json`` must NOT be auto-defaulted (that
+    """A corrupt saved instance owner must NOT be auto-defaulted (that
     would either raise inside ``save_instance_owner`` or, if it somehow
-    succeeded, destroy the only copy of whatever is on disk) -- the render
-    path must leave the file byte-identical and surface a visible error."""
-    import engine.instance_identity as instance_identity_mod
+    succeeded, destroy the only copy of whatever is stored) -- the render
+    path must leave the row byte-identical and surface a visible error."""
+    from engine.store import SINGLE_KEY
+    from engine.store.namespaces import INSTANCE_OWNER
+    from tests.conftest import CORRUPT_PAYLOAD
 
-    instance_identity_mod.INSTANCE_OWNER_PATH.write_text("{not json")
-    before = instance_identity_mod.INSTANCE_OWNER_PATH.read_text()
+    corrupt_row(INSTANCE_OWNER)
 
     def _render() -> None:
         import streamlit as st
@@ -607,16 +558,14 @@ def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
     at.run()
 
     assert not at.exception
-    assert instance_identity_mod.INSTANCE_OWNER_PATH.read_text() == before
+    assert store.backend.get(INSTANCE_OWNER, SINGLE_KEY).payload == CORRUPT_PAYLOAD
     assert any("unreadable" in e.value.lower() for e in at.error)
     sync_button = next(b for b in at.button if b.key == "sync_everything_btn")
     assert sync_button.disabled is True
     assert "instance_owner" not in at.session_state
 
 
-def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(monkeypatch) -> None:
     import views.setup.command_center as command_center_mod
 
     monkeypatch.setattr(
@@ -648,9 +597,7 @@ def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
     )
 
 
-def test_attribution_clear_actually_clears_and_does_not_resave(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_clear_actually_clears_and_does_not_resave(monkeypatch) -> None:
     """Regression for Defect 1 (Task 7 follow-up): Streamlit only honours a
     keyed widget's ``index=`` kwarg on its FIRST creation -- on every later
     rerun the persisted ``session_state[key]`` value wins. Without popping
@@ -704,9 +651,7 @@ def test_attribution_clear_actually_clears_and_does_not_resave(
     assert owner_box.value == "you"
 
 
-def test_attribution_save_corrupt_store_shows_error_not_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_save_corrupt_store_shows_error_not_exception(monkeypatch) -> None:
     """Regression for Defect 2 (save path): CorruptAccountAttributionError
     must degrade to a visible st.error, not crash the whole Command Center
     render -- mirrors this module's existing CorruptInstanceOwnerError and
@@ -753,9 +698,7 @@ def test_attribution_save_corrupt_store_shows_error_not_exception(
     assert any("account attribution store" in e.value.lower() for e in at.error)
 
 
-def test_attribution_expander_is_scoped_to_statement_accounts(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_expander_is_scoped_to_statement_accounts(monkeypatch) -> None:
     """#604: the expander lists statement-PDF accounts only, so its label and
     caption must say so rather than imply it covers every account."""
     import views.setup.command_center as command_center_mod
@@ -790,9 +733,7 @@ def test_attribution_expander_is_scoped_to_statement_accounts(
     assert any("imported from statement PDFs" in c.value for c in at.caption)
 
 
-def test_attribution_delete_corrupt_store_shows_error_not_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_delete_corrupt_store_shows_error_not_exception(monkeypatch) -> None:
     """Regression for Defect 2 (delete/Clear path): same as the save-path
     test above, but for delete_account_override raising on Clear."""
     import views.setup.command_center as command_center_mod
@@ -837,3 +778,58 @@ def test_attribution_delete_corrupt_store_shows_error_not_exception(
 
     assert not at.exception
     assert any("account attribution store" in e.value.lower() for e in at.error)
+
+
+class TestEnsureDefaultInstanceOwner:
+    """ensure_default_instance_owner: quiet only when saving is disabled."""
+
+    @staticmethod
+    def _patch(monkeypatch, *, disabled: bool, save_error: Exception | None = None):
+        import types
+
+        import views.setup.command_center as command_center_mod
+
+        state: dict = {}
+        monkeypatch.setattr(command_center_mod, "st", types.SimpleNamespace(session_state=state))
+        monkeypatch.setattr(command_center_mod, "saving_disabled", lambda: disabled)
+        if save_error is not None:
+            monkeypatch.setattr(
+                command_center_mod, "save_instance_owner", MagicMock(side_effect=save_error)
+            )
+        return command_center_mod, state
+
+    def test_refused_save_while_saving_disabled_leaves_owner_unset(self, monkeypatch) -> None:
+        from engine.store import StoreUnavailableError
+
+        mod, state = self._patch(
+            monkeypatch,
+            disabled=True,
+            save_error=StoreUnavailableError("x", "saving is disabled: importing .x.json failed"),
+        )
+        mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_other_unavailable_error_propagates(self, monkeypatch) -> None:
+        import pytest
+
+        from engine.store import StoreUnavailableError
+
+        mod, state = self._patch(
+            monkeypatch, disabled=False, save_error=StoreUnavailableError("x", "database is locked")
+        )
+        with pytest.raises(StoreUnavailableError, match="database is locked"):
+            mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_corrupt_identity_leaves_owner_unset(self, monkeypatch, corrupt_row) -> None:
+        from engine.store.namespaces import INSTANCE_OWNER
+
+        corrupt_row(INSTANCE_OWNER)
+        mod, state = self._patch(monkeypatch, disabled=False)
+        mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_unset_owner_defaults_to_you(self, monkeypatch) -> None:
+        mod, state = self._patch(monkeypatch, disabled=False)
+        mod.ensure_default_instance_owner()
+        assert state["instance_owner"] == "you"

@@ -18,16 +18,19 @@ user's persisted values on every fresh session.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any
 
 from config.scalar_registry import SCALAR_REGISTRY, scalar_default, session_key_for_config_key
 from engine.instance_identity import CorruptInstanceOwnerError
+from engine.store import StoreUnavailableError
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 _CORRUPT = object()
+_UNAVAILABLE = object()
 
 
 class _FakeSessionState:
@@ -64,10 +67,18 @@ class _FakeSessionState:
 class _FakeSt:
     def __init__(self) -> None:
         self.session_state = _FakeSessionState()
+        self.errors: list[str] = []
+
+    def error(self, message: str) -> None:
+        self.errors.append(message)
 
 
 def _run_seed_session_state(
-    defaults: dict, instance_owner: str | None = "you", calls: list[str] | None = None
+    defaults: dict,
+    instance_owner: Any = "you",
+    calls: list[str] | None = None,
+    saving_is_disabled: bool = False,
+    errors: list[str] | None = None,
 ) -> _FakeSessionState:
     """Extract and execute app.py's _seed_session_state against *defaults*.
 
@@ -85,16 +96,25 @@ def _run_seed_session_state(
     Returns the resulting fake session_state for assertions.
     """
     text = APP_PATH.read_text()
-    start = text.index("def _seed_session_state()")
-    end = text.index("\n\n\n# Shared state: household parameters")
-    source = text[start:end]
+    # _report_refused_save is exec'd from app.py too, so it sees the fakes below.
+    wanted = ("_report_refused_save", "_seed_session_state")
+    funcs = {
+        node.name: node
+        for node in ast.parse(text).body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
+    }
+    assert set(funcs) == set(wanted)
+    sources = [ast.get_source_segment(text, funcs[name]) for name in wanted]
+    assert all(src is not None for src in sources)
     fake_st = _FakeSt()
 
     def _fake_load_instance_owner() -> str | None:
         if calls is not None:
             calls.append("load_instance_owner")
         if instance_owner is _CORRUPT:
-            raise CorruptInstanceOwnerError(".instance_owner.json", ValueError("bad"))
+            raise CorruptInstanceOwnerError("instance_owner", ValueError("bad"))
+        if instance_owner is _UNAVAILABLE:
+            raise StoreUnavailableError("x", "locked")
         return instance_owner
 
     namespace: dict[str, Any] = {
@@ -107,9 +127,16 @@ def _run_seed_session_state(
         "session_key_for_config_key": session_key_for_config_key,
         "load_instance_owner": _fake_load_instance_owner,
         "CorruptInstanceOwnerError": CorruptInstanceOwnerError,
+        "StoreUnavailableError": StoreUnavailableError,
+        "saving_disabled": lambda: saving_is_disabled,
+        "store_error_message": lambda exc: f"banner: {exc}",
+        "_boot_store_errors": [],
     }
-    exec(compile(source, "<_seed_session_state>", "exec"), namespace)
+    for name, src in zip(wanted, sources, strict=True):
+        exec(compile(src or "", f"<{name}>", "exec"), namespace)
     namespace["_seed_session_state"]()
+    if errors is not None:
+        errors.extend(fake_st.errors)
     return fake_st.session_state
 
 
@@ -225,3 +252,38 @@ class TestSeedSessionStateInstanceOwner:
         assert calls == ["load_instance_owner"], "load_instance_owner was never invoked"
         assert "instance_owner" in state
         assert state.get("instance_owner") is None
+
+    def test_unavailable_store_with_saving_disabled_seeds_none_quietly(self) -> None:
+        """A failed import's banner is already shown, so no second banner."""
+        errors: list[str] = []
+        state = _run_seed_session_state(
+            {}, instance_owner=_UNAVAILABLE, saving_is_disabled=True, errors=errors
+        )
+        assert "instance_owner" in state
+        assert state.get("instance_owner") is None
+        assert errors == []
+
+    def test_other_unavailable_store_seeds_none_and_shows_the_banner(self) -> None:
+        errors: list[str] = []
+        state = _run_seed_session_state({}, instance_owner=_UNAVAILABLE, errors=errors)
+        assert "instance_owner" in state
+        assert state.get("instance_owner") is None
+        assert len(errors) == 1
+        assert "locked" in errors[0]
+
+
+class TestRenderStoreNoticeComesBeforeSeeding:
+    """The store opens (and its banner/stop happens) before the seed reads the owner."""
+
+    def test_call_order_in_app_module(self) -> None:
+        tree = ast.parse(APP_PATH.read_text())
+        order = [
+            node.value.func.id
+            for node in tree.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+        ]
+        assert "render_store_notice" in order
+        assert "_seed_session_state" in order
+        assert order.index("render_store_notice") < order.index("_seed_session_state")

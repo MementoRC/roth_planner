@@ -24,6 +24,7 @@ from config.loader import load_defaults, save_user_defaults
 from engine.data_sources.candidate_store import CandidateStore
 from engine.exercise_schedule_store import load_exercise_schedule
 from engine.market_quote import QuoteResult
+from engine.store.namespaces import CANDIDATE_STORE
 from models.household import GrowthProfile, Household, project_price
 from models.sourced import Source
 from views.option_exercise import handle_stock_quote_fetch
@@ -56,48 +57,35 @@ def _error_result(error: str = "HTTP 503") -> QuoteResult:
 class TestHandleStockQuoteFetchOk:
     """A successful fetch records a pending candidate and nothing else."""
 
-    def test_records_pending_market_quote_candidate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_records_pending_market_quote_candidate(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
-        result = handle_stock_quote_fetch(
-            store_path=store_path, fetcher=lambda _t: _ok_result(210.5)
-        )
+        result = handle_stock_quote_fetch(fetcher=lambda _t: _ok_result(210.5))
 
         assert result.ok
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         candidates = store.candidates_for("stock_price_now")
         assert len(candidates) == 1
         assert candidates[0].value == 210.5
         assert candidates[0].prov.source == Source.MARKET_QUOTE
 
-    def test_does_not_stash_price_in_session_state(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_does_not_stash_price_in_session_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
-        handle_stock_quote_fetch(store_path=store_path, fetcher=lambda _t: _ok_result(199.25))
+        handle_stock_quote_fetch(fetcher=lambda _t: _ok_result(199.25))
 
         assert "_stock_quote_price" not in st.session_state
 
-    def test_returns_the_quote_result(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_the_quote_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
-        result = handle_stock_quote_fetch(
-            store_path=store_path, fetcher=lambda _t: _ok_result(150.0)
-        )
+        result = handle_stock_quote_fetch(fetcher=lambda _t: _ok_result(150.0))
 
         assert result.price == 150.0
         assert result.ticker == "ACME"
@@ -106,45 +94,34 @@ class TestHandleStockQuoteFetchOk:
 class TestHandleStockQuoteFetchNotOk:
     """A failed fetch must not crash, not record a candidate, not stash a price."""
 
-    def test_no_candidate_recorded_on_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_candidate_recorded_on_failure(self, store, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
-        result = handle_stock_quote_fetch(
-            store_path=store_path, fetcher=lambda _t: _error_result("timeout")
-        )
+        result = handle_stock_quote_fetch(fetcher=lambda _t: _error_result("timeout"))
 
         assert not result.ok
         assert result.error == "timeout"
-        assert not store_path.exists()
+        assert not store.has(CANDIDATE_STORE)
 
-    def test_no_session_stash_on_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_session_stash_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
-        handle_stock_quote_fetch(store_path=store_path, fetcher=lambda _t: _error_result())
+        handle_stock_quote_fetch(fetcher=lambda _t: _error_result())
 
         assert "_stock_quote_price" not in st.session_state
 
-    def test_does_not_raise(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import streamlit as st
 
         monkeypatch.setattr(st, "session_state", {})
-        store_path = tmp_path / "candidate_store.json"
 
         # A stub fetcher standing in for a network failure -- never raises,
         # matching fetch_stock_quote's own contract.
-        result = handle_stock_quote_fetch(
-            store_path=store_path, fetcher=lambda _t: _error_result("connection refused")
-        )
+        result = handle_stock_quote_fetch(fetcher=lambda _t: _error_result("connection refused"))
         assert result.price is None
 
 
@@ -277,18 +254,17 @@ class TestExercisePagePriceCellsUseConfirmedPrice:
     ``hh.stock_price_now`` and explicit saved overrides are untouched."""
 
     def test_price_cells_stay_on_confirmed_price_after_fetch_click(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import views.option_exercise as oe_module
 
-        # Stand in for the network fetcher + candidate store path, but exercise
-        # the REAL handle_stock_quote_fetch (session-state stash + candidate
-        # record) so this is a true end-to-end reproduction of the bug.
-        store_path = tmp_path / "candidate_store.json"
+        # Stand in for the network fetcher, but exercise the REAL
+        # handle_stock_quote_fetch (session-state stash + candidate record) so
+        # this is a true end-to-end reproduction of the bug.
         original_handler = oe_module.handle_stock_quote_fetch
 
         def _patched_handler() -> QuoteResult:
-            return original_handler(store_path=store_path, fetcher=_stub_fetch_284)
+            return original_handler(fetcher=_stub_fetch_284)
 
         monkeypatch.setattr(oe_module, "handle_stock_quote_fetch", _patched_handler)
 
@@ -311,17 +287,16 @@ class TestExercisePagePriceCellsUseConfirmedPrice:
         assert future_after == pytest.approx(192.0 * 1.07**2)
 
     def test_explicit_saved_override_survives_a_fresh_fetch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A year the user explicitly saved a price for must NOT be clobbered
         by a subsequent live-quote fetch."""
         import views.option_exercise as oe_module
 
-        store_path = tmp_path / "candidate_store.json"
         original_handler = oe_module.handle_stock_quote_fetch
 
         def _patched_handler() -> QuoteResult:
-            return original_handler(store_path=store_path, fetcher=_stub_fetch_284)
+            return original_handler(fetcher=_stub_fetch_284)
 
         monkeypatch.setattr(oe_module, "handle_stock_quote_fetch", _patched_handler)
 
@@ -401,7 +376,7 @@ class TestSaveOnlyPersistsDivergentPrices:
         assert 2028 not in saved.price_by_year
 
     def test_saved_untouched_cells_reproject_on_a_later_fetch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Regression for the exact reported bug: a prior save of untouched
         cells must not leave behind stale price_by_year entries that shadow a
@@ -416,10 +391,8 @@ class TestSaveOnlyPersistsDivergentPrices:
 
         # A fresh "page load" that re-reads the just-saved schedule from disk
         # (mirrors app.py's ``hh.exercise_schedule = load_exercise_schedule()``).
-        store_path = tmp_path / "candidate_store.json"
-
         def _patched_handler() -> QuoteResult:
-            return handle_stock_quote_fetch(store_path=store_path, fetcher=_stub_fetch_284)
+            return handle_stock_quote_fetch(fetcher=_stub_fetch_284)
 
         monkeypatch.setattr(oe_module, "handle_stock_quote_fetch", _patched_handler)
 

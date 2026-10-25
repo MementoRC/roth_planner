@@ -38,13 +38,13 @@ from engine.brokerage_statement_pdf import load_statement_records
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
 from engine.instance_identity import (
     CorruptInstanceOwnerError,
     load_instance_owner,
     save_instance_owner,
 )
 from engine.pdf_owner import OwnerRole, load_owner_map
+from engine.store import StoreUnavailableError, saving_disabled
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
@@ -124,11 +124,11 @@ def _render_attribution_table(instance_owner: str) -> None:
             if choice != resolved:
                 try:
                     save_account_override(rec.broker, account_number, choice)
-                except CorruptAccountAttributionError as exc:
+                except CorruptAccountAttributionError:
                     st.error(
-                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                        "(corrupt or truncated); this override was NOT saved. Restore "
-                        "the file from a backup or contact support before retrying."
+                        "⚠️ Account attribution store is unreadable (corrupt or "
+                        "truncated); this override was NOT saved. Restore it from a "
+                        "backup or contact support before retrying."
                     )
                 else:
                     # No session-state pop needed here: on the immediate rerun,
@@ -144,11 +144,11 @@ def _render_attribution_table(instance_owner: str) -> None:
             ):
                 try:
                     delete_account_override(rec.broker, account_number)
-                except CorruptAccountAttributionError as exc:
+                except CorruptAccountAttributionError:
                     st.error(
-                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                        "(corrupt or truncated); this override was NOT cleared. Restore "
-                        "the file from a backup or contact support before retrying."
+                        "⚠️ Account attribution store is unreadable (corrupt or "
+                        "truncated); this override was NOT cleared. Restore it from a "
+                        "backup or contact support before retrying."
                     )
                 else:
                     # Streamlit only honours a keyed widget's index= kwarg on its
@@ -168,8 +168,11 @@ def _render_attribution_table(instance_owner: str) -> None:
 def ensure_default_instance_owner() -> None:
     """Default an UNSET instance owner to "you" and persist it (idempotent).
 
-    A corrupt identity file is never touched or defaulted: callers see it as
-    still-unset and keep their owner gate. No UI.
+    A corrupt identity is never touched or defaulted: callers see it as
+    still-unset and keep their owner gate. A save refused because a failed
+    JSON import disabled saving (its banner is already shown) leaves it unset
+    the same way. Any other StoreUnavailableError propagates to the page-level
+    storage banner. No UI.
     """
     try:
         if st.session_state.get("instance_owner") or load_instance_owner() is not None:
@@ -177,6 +180,10 @@ def ensure_default_instance_owner() -> None:
         save_instance_owner(OwnerRole.YOU.value)
     except CorruptInstanceOwnerError:
         return
+    except StoreUnavailableError:
+        if saving_disabled():
+            return
+        raise
     st.session_state["instance_owner"] = OwnerRole.YOU.value
 
 
@@ -208,9 +215,9 @@ def render_command_center(hh: Household) -> None:
 
     if identity_corrupt:
         st.error(
-            "⚠️ The instance-identity file is unreadable (corrupt or truncated), "
+            "⚠️ The saved instance owner is unreadable (corrupt or truncated), "
             "so this instance's owner could not be set. Scanning and syncing "
-            "stay unavailable until the file is restored or removed."
+            "stay unavailable until the saved owner is restored or cleared."
         )
 
     if identity_set:
@@ -232,9 +239,17 @@ def render_command_center(hh: Household) -> None:
                     OwnerRole.YOU.value if new_choice == "Me" else OwnerRole.SPOUSE.value
                 )
                 if resolved_owner != instance_owner:
-                    save_instance_owner(resolved_owner)
-                    st.session_state["instance_owner"] = resolved_owner
-                    st.rerun()
+                    try:
+                        save_instance_owner(resolved_owner)
+                    except CorruptInstanceOwnerError:
+                        st.error(
+                            "⚠️ The saved instance owner is unreadable (corrupt or "
+                            "truncated); the owner was NOT changed. Restore or clear "
+                            "the saved owner before retrying."
+                        )
+                    else:
+                        st.session_state["instance_owner"] = resolved_owner
+                        st.rerun()
 
     # disabled=True (not hidden) while identity is unset -- a hidden control
     # is indistinguishable from a missing feature (see views/planner.py's
@@ -256,12 +271,12 @@ def render_command_center(hh: Household) -> None:
     if not pending:
         st.success("All data sources reconciled ✓")
     else:
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
-        choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+        store = CandidateStore.load()
+        choices = ChoiceMap.load()
         # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
         # only) — save_committed() is the actual guard against overwriting it.
         try:
-            committed_json = load_committed(COMMITTED_PATH) or {}
+            committed_json = load_committed() or {}
         except CorruptCommittedCacheError:
             committed_json = {}
 

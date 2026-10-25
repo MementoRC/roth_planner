@@ -12,6 +12,7 @@ import pytest
 import engine.store as store_pkg
 from engine.demo_mode import enter_demo_mode, leave_demo_mode
 from engine.store import (
+    META_NAMESPACE,
     CorruptStoreError,
     StoreUnavailableError,
     get_store,
@@ -20,7 +21,7 @@ from engine.store import (
 )
 from engine.store.backend import DictBackend, NullBackend
 from engine.store.core import Store
-from engine.store.legacy_files import declare_store
+from engine.store.legacy_files import declare_store, registered
 from engine.store.migrate_json import BACKUP_DIR_NAME
 from engine.store.sqlite_backend import MEMORY, SqliteBackend
 
@@ -245,6 +246,21 @@ def test_starting_in_demo_mode_then_leaving_still_imports(no_override):
     assert not legacy.exists()
 
 
+def test_demo_mode_never_serves_the_json_fallback(no_override):
+    declare_store("t_good", ".t_good.json")
+    declare_store("t_bad", ".t_bad.json")
+    (_legacy_dir() / ".t_good.json").write_text(json.dumps({"a": 1}))
+    (_legacy_dir() / ".t_bad.json").write_text("{not json")
+    assert get_store().get("t_good") == {"a": 1}  # the read-only JSON fallback is live
+    enter_demo_mode()
+    try:
+        assert isinstance(get_store().backend, NullBackend)
+        assert get_store().get("t_good") is None
+    finally:
+        leave_demo_mode()
+    assert get_store().get("t_good") == {"a": 1}
+
+
 def test_pyodide_never_imports_json(no_override, monkeypatch):
     monkeypatch.setattr(store_pkg, "is_pyodide", lambda: True)
     declare_store("t_sel", ".t_sel.json")
@@ -275,3 +291,95 @@ def test_concurrent_first_calls_open_and_import_once(no_override):
     assert got[0] is got[1]
     assert got[0].get("t_sel") == {"a": 1}
     assert len(list((_legacy_dir() / BACKUP_DIR_NAME).glob("*/.t_sel.json"))) == 1
+
+
+def _pr3_legacy_cases() -> list:
+    """(namespace, synthetic legacy document, public loader, what it reads back) per PR 3 store."""
+    from datetime import datetime
+
+    from engine.account_attribution import load_account_overrides
+    from engine.account_link import load_link_map
+    from engine.data_sources.candidate_store import CandidateStore
+    from engine.data_sources.choices import ChoiceMap
+    from engine.data_sources.committed import load_committed
+    from engine.instance_identity import load_instance_owner
+    from engine.pdf_owner import load_owner_map
+    from engine.store import namespaces as ns
+    from models.sourced import Provenance, Source, SourcedValue
+
+    prov = Provenance(Source.PDF, datetime(2026, 1, 1, 12, 0, 0))
+    committed = {"your_ira": SourcedValue(1_000.0, prov).to_json()}
+    candidates = {"your_ira": {str(Source.PDF): {"value": 2_000.0, "prov": prov.to_json()}}}
+    choices = {"your_ira": {"source": str(Source.PDF), "locked_at": "2026-01-01T12:00:00"}}
+
+    def first_candidate() -> float:
+        return CandidateStore.load().candidates_for("your_ira")[0].value
+
+    def choice_source() -> object:
+        choice = ChoiceMap.load().get("your_ira")
+        return None if choice is None else choice.source
+
+    return [
+        pytest.param(ns.COMMITTED, committed, load_committed, committed, id="committed"),
+        pytest.param(ns.CANDIDATE_STORE, candidates, first_candidate, 2_000.0, id="candidates"),
+        pytest.param(ns.TRUST_CHOICES, choices, choice_source, Source.PDF, id="trust_choices"),
+        pytest.param(
+            ns.INSTANCE_OWNER,
+            {"version": 1, "instance_owner": "spouse"},
+            load_instance_owner,
+            "spouse",
+            id="instance_owner",
+        ),
+        pytest.param(
+            ns.ACCOUNT_ATTRIBUTION,
+            {"version": 1, "overrides": {"synthbroker|ACCT-1": "spouse"}},
+            load_account_overrides,
+            {("synthbroker", "ACCT-1"): "spouse"},
+            id="account_attribution",
+        ),
+        pytest.param(
+            ns.PDF_OWNER_MAP,
+            {"owner a": "you"},
+            load_owner_map,
+            {"owner a": "you"},
+            id="pdf_owner_map",
+        ),
+        pytest.param(
+            ns.IRA_ACCOUNT_LINKS,
+            {"synthbroker|X1234": ["trad_ira", "you", "IRA X1234"]},
+            load_link_map,
+            {"synthbroker|X1234": ("trad_ira", "you", "IRA X1234")},
+            id="ira_account_links",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(("namespace", "document", "load", "expected"), _pr3_legacy_cases())
+def test_a_pr2_database_imports_only_the_stores_registered_since(
+    no_override, namespace, document, load, expected
+):
+    from engine.store.migrate_json import marker_key
+    from engine.store.namespaces import PORTFOLIO
+
+    [entry] = [e for e in registered() if e.namespace == namespace]
+    existing = Store(SqliteBackend(store_pkg.db_path()))
+    for other in registered():
+        if other.namespace != namespace:
+            existing.put(META_NAMESPACE, {"imported": False}, key=marker_key(other.namespace))
+    existing.backend.close()
+    legacy = _legacy_dir() / entry.filename
+    legacy.write_text(json.dumps(document))
+    stray = _legacy_dir() / ".portfolio_cache.json"
+    stray.write_text(json.dumps({"accounts": []}))
+
+    store = get_store()
+
+    assert store.get(namespace) == document
+    assert load() == expected
+    assert store.get(PORTFOLIO) is None
+    assert stray.exists()
+    assert not legacy.exists()
+    assert len(list((_legacy_dir() / BACKUP_DIR_NAME).glob(f"*/{entry.filename}"))) == 1
+    result = migration_notice()
+    assert result is not None
+    assert result.imported == (entry.filename,)

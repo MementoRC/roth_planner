@@ -44,7 +44,6 @@ from engine.data_sources.committed import (
     save_committed,
 )
 from engine.data_sources.orchestrator import BUNDLE_SCALARS_KEY, stamp_bundle_scalars
-from engine.data_sources.paths import COMMITTED_PATH
 from engine.data_sources.record import discard_pdf_balance_candidates, record_magi_candidates
 from engine.demo_mode import is_demo_mode
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
@@ -619,12 +618,12 @@ def _stamp_bundle_scalars_in_baseline(scalar_updates: dict) -> None:
     ``Backup import`` too (audit-1018 F-21, issue #43).
     """
     try:
-        committed_json = load_committed(COMMITTED_PATH)
+        committed_json = load_committed()
         if committed_json is None:
             st.session_state[BUNDLE_SCALARS_KEY] = dict(scalar_updates)
             return
         if stamp_bundle_scalars(committed_json, scalar_updates, datetime.now()):
-            save_committed(COMMITTED_PATH, committed_json)
+            save_committed(committed_json)
     except CorruptCommittedCacheError:
         return
 
@@ -977,7 +976,7 @@ def _handle_personal_exports() -> None:
             if identity_set:
                 # Poisons-the-receiver defence: an export built from a
                 # spouse-owned instance while identity is unset (or degraded
-                # by a corrupt .instance_owner.json -- _this_instance_owner()
+                # by a corrupt saved instance owner -- _this_instance_owner()
                 # collapses both to None) would stamp "you" onto a bundle
                 # that belongs to the other person, mislabelling every
                 # account the RECEIVING instance imports it into. Skip the

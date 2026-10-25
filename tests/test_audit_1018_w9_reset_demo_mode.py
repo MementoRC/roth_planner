@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as paths_mod
 import engine.demo_mode as demo_mod
 import views.setup._state as state_mod
 from config import loader
@@ -40,6 +39,8 @@ from engine.portfolio_sync import (
     save_ytd_snapshot,
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
+from engine.store import SINGLE_KEY, Store
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, TRUST_CHOICES
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from engine.upload_merge import JOINT_FIELDS, SCALAR_KEYS, build_user_defaults_session_updates
 from models.ytd_income import YTDSnapshot
@@ -159,47 +160,41 @@ def _app(*, suppress: bool = True) -> AppTest:
     return at
 
 
-def _cache_state() -> dict[str, bytes | None]:
-    return {
-        p.name: (p.read_bytes() if p.exists() else None)
-        for p in (
-            paths_mod.COMMITTED_PATH,
-            paths_mod.CANDIDATE_STORE_PATH,
-            paths_mod.TRUST_CHOICES_PATH,
-        )
-    }
+_BASELINE_STORES = (COMMITTED, CANDIDATE_STORE, TRUST_CHOICES)
+
+
+def _cache_state(store: Store) -> dict[str, str | None]:
+    """The Command Center's saved payloads, read past demo mode's null store."""
+    rows = {ns: store.backend.get(ns, SINGLE_KEY) for ns in _BASELINE_STORES}
+    return {ns: (row.payload if row else None) for ns, row in rows.items()}
 
 
 class TestF28RenderDoesNotTouchPersonalBaseline:
-    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(
-        self, clean_command_center_caches
-    ):
+    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(self, store):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
         at.run()
         assert not at.exception
-        before = _cache_state()
-        assert before[paths_mod.COMMITTED_PATH.name] is not None
+        before = _cache_state(store)
+        assert before[COMMITTED] is not None
 
         demo_mod.enter_demo_mode()
         at2 = _app()
         at2.run()
 
         assert not at2.exception
-        assert _cache_state() == before, "demo render rewrote a personal cache file"
+        assert _cache_state(store) == before, "demo render rewrote a personal cache file"
         assert at2.session_state["your_ira"] == DEFAULTS["your_ira"], (
             "the personal committed baseline was applied inside demo mode"
         )
 
-    def test_leaving_demo_mode_finds_the_personal_baseline_intact(
-        self, clean_command_center_caches
-    ):
+    def test_leaving_demo_mode_finds_the_personal_baseline_intact(self, store):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
         at.run()
-        before = _cache_state()
+        before = _cache_state(store)
 
         demo_mod.enter_demo_mode()
         demo_at = _app()
@@ -212,7 +207,7 @@ class TestF28RenderDoesNotTouchPersonalBaseline:
         back.session_state["your_ira"] = personal_ira
         back.run()
         assert not back.exception
-        assert _cache_state() == before
+        assert _cache_state(store) == before
         assert back.session_state["your_ira"] == personal_ira
 
 
@@ -262,7 +257,7 @@ def _save_personal_caches() -> None:
 
 
 class TestF30AutoloadGatedByDemoMode:
-    def test_control_personal_caches_load_outside_demo_mode(self, clean_command_center_caches):
+    def test_control_personal_caches_load_outside_demo_mode(self):
         _save_personal_caches()
         at = _app(suppress=False)
         at.run()
@@ -270,11 +265,9 @@ class TestF30AutoloadGatedByDemoMode:
         assert "ssa_snapshot_you" in at.session_state
         assert "ssa_snapshot_spouse" in at.session_state
         assert "portfolio_snapshot" in at.session_state
-        assert CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).candidates_for(
-            magi_field_key(2024)
-        )
+        assert CandidateStore.load().candidates_for(magi_field_key(2024))
 
-    def test_demo_mode_skips_every_personal_autoload(self, clean_command_center_caches):
+    def test_demo_mode_skips_every_personal_autoload(self, store):
         _save_personal_caches()
         demo_mod.enter_demo_mode()
         at = _app(suppress=False)
@@ -287,9 +280,10 @@ class TestF30AutoloadGatedByDemoMode:
             "ytd_snapshot",
         ):
             assert key not in at.session_state, f"{key} autoloaded inside demo mode"
-        assert not CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).candidates_for(
-            magi_field_key(2024)
-        ), "1040 MAGI from the disk cache was recorded inside demo mode"
+        recorded = CandidateStore.from_json(store.get(CANDIDATE_STORE) or {})
+        assert not recorded.candidates_for(magi_field_key(2024)), (
+            "1040 MAGI from the disk cache was recorded inside demo mode"
+        )
 
 
 # --- F-31: export carries demo data only ---------------------------------------------
