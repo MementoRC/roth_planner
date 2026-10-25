@@ -246,6 +246,21 @@ def test_starting_in_demo_mode_then_leaving_still_imports(no_override):
     assert not legacy.exists()
 
 
+def test_demo_mode_never_serves_the_json_fallback(no_override):
+    declare_store("t_good", ".t_good.json")
+    declare_store("t_bad", ".t_bad.json")
+    (_legacy_dir() / ".t_good.json").write_text(json.dumps({"a": 1}))
+    (_legacy_dir() / ".t_bad.json").write_text("{not json")
+    assert get_store().get("t_good") == {"a": 1}  # the read-only JSON fallback is live
+    enter_demo_mode()
+    try:
+        assert isinstance(get_store().backend, NullBackend)
+        assert get_store().get("t_good") is None
+    finally:
+        leave_demo_mode()
+    assert get_store().get("t_good") == {"a": 1}
+
+
 def test_pyodide_never_imports_json(no_override, monkeypatch):
     monkeypatch.setattr(store_pkg, "is_pyodide", lambda: True)
     declare_store("t_sel", ".t_sel.json")

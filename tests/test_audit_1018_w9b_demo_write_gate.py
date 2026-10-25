@@ -2,10 +2,11 @@
 
 W9 made the app skip the disk autoload and the committed-baseline write in demo
 mode, but the low-level persisters still wrote (and read) the personal caches.
-W9b gates them at the choke points: ``engine.secure_io.write_pii_json`` /
-``read_pii_json`` / ``read_pii_bytes`` plus the stores that do not go through them
-(committed baseline, candidate store, trust choices, instance owner, account
-attribution, the exercise-schedule delete, the dividend-rate overrides).
+W9b gated the persisters one by one. Since the move to the document store,
+``engine.store.get_store()`` returns a null store in demo mode (reads absent,
+writes dropped) for every store, so these tests prove the stores' rows are
+untouched. The files that stay files gate themselves: ``.user_defaults.json``
+(config.loader) and ``.dividend_rates.json`` (engine.dividend_forecast).
 
 Every file under test lives in tmp_path (tests/conftest.py redirects the cache
 constants) and all values are synthetic.
@@ -52,7 +53,6 @@ from engine.portfolio_sync import (
     save_ytd_snapshot,
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
-from engine.secure_io import read_pii_bytes, read_pii_json, write_pii_json
 from engine.store import get_store
 from engine.store.core import Store
 from engine.store.legacy_files import registered
@@ -249,21 +249,6 @@ class TestDemoModeWritesNothing:
         assert dividend_mod._load_overrides(overrides) == {}
         demo_mod.leave_demo_mode()
         assert dividend_mod._load_overrides(overrides)
-
-    def test_secure_io_choke_point_is_inert_in_demo_mode(self, tmp_path):
-        target = tmp_path / "x.json"
-        write_pii_json(target, {"a": 1})
-        before = target.read_bytes()
-        demo_mod.enter_demo_mode()
-        write_pii_json(target, {"a": 2})
-        write_pii_json(tmp_path / "new.json", {"a": 3})
-        assert target.read_bytes() == before
-        assert not (tmp_path / "new.json").exists()
-        assert not list(tmp_path.glob("*.tmp-*"))
-        with pytest.raises(FileNotFoundError):
-            read_pii_json(target)
-        with pytest.raises(FileNotFoundError):
-            read_pii_bytes(target)
 
     def test_the_marker_itself_stays_writable(self):
         demo_mod.enter_demo_mode()
