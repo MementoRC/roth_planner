@@ -231,6 +231,7 @@ class TestLinkMapStore:
         store.delete(IRA_ACCOUNT_LINKS)
         store.put(IRA_ACCOUNT_LINKS, [1])
         assert load_link_map() == {}
+        assert store.get(IRA_ACCOUNT_LINKS) == [1]
 
     def test_malformed_entries_are_dropped(self, store) -> None:
         store.put(IRA_ACCOUNT_LINKS, {"a|1": ["x"], "b|2": "NEW"})

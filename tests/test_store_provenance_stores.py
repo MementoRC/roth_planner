@@ -217,14 +217,16 @@ class TestOwnerMapAndLinkMapStores:
         assert load_link_map() == link_map
 
     def test_corrupt_rows_read_empty_and_refuse_a_save(self, store, corrupt_row):
-        corrupt_row(PDF_OWNER_MAP)
-        corrupt_row(IRA_ACCOUNT_LINKS)
+        owner_payload = corrupt_row(PDF_OWNER_MAP)
+        link_payload = corrupt_row(IRA_ACCOUNT_LINKS)
         assert load_owner_map() == {}
         assert load_link_map() == {}
         with pytest.raises(CorruptStoreError, match="pdf_owner_map"):
             save_owner_map({})
         with pytest.raises(CorruptStoreError, match="ira_account_links"):
             save_link_map({})
+        assert store.backend.get(PDF_OWNER_MAP, SINGLE_KEY).payload == owner_payload
+        assert store.backend.get(IRA_ACCOUNT_LINKS, SINGLE_KEY).payload == link_payload
 
 
 _APP = Path(__file__).resolve().parent.parent / "app.py"
