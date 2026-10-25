@@ -30,7 +30,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import KOINLY
 
 
 class KoinlyParseError(Exception):
@@ -384,22 +385,20 @@ def scan_koinly_folder(folder: Path) -> tuple[KoinlyReport | None, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# JSON cache
+# Saved report -- document store namespace ``koinly``
 # ---------------------------------------------------------------------------
-
-_KOINLY_CACHE_PATH = Path(__file__).resolve().parent.parent / ".koinly_cache.json"
 
 
 def save_koinly_report(report: KoinlyReport) -> None:
-    write_pii_json(_KOINLY_CACHE_PATH, report.to_dict())
+    get_store().put(KOINLY, report.to_dict())
 
 
 def load_koinly_report() -> KoinlyReport | None:
-    if not _KOINLY_CACHE_PATH.exists():
-        return None
     try:
-        raw = read_pii_json(_KOINLY_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
+        raw = get_store().get(KOINLY)
+    except CorruptStoreError:
+        return None
+    if raw is None:
         return None
     try:
         return KoinlyReport.from_dict(raw)

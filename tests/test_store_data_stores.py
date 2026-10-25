@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from engine.koinly_report_pdf import KoinlyReport, load_koinly_report, save_koinly_report
 from engine.portfolio_sync.portfolio import (
     CorruptPortfolioCacheError,
     load_snapshot,
@@ -24,8 +25,13 @@ from engine.portfolio_sync.social_security import (
     save_ssa_snapshot,
 )
 from engine.portfolio_sync.ytd import load_ytd_snapshot, save_ytd_snapshot
+from engine.ssa_statement_pdf import (
+    SsaStatement,
+    load_ssa_pdf_estimates,
+    save_ssa_pdf_estimates,
+)
 from engine.store import SINGLE_KEY, CorruptStoreError
-from engine.store.namespaces import PORTFOLIO, SSA, TAX_PDF, YTD
+from engine.store.namespaces import KOINLY, PORTFOLIO, SSA, SSA_PDF, TAX_PDF, YTD
 from engine.tax import load_prior_year_agi, load_prior_year_federal_tax
 from engine.tax_return_pdf import (
     Form1040Record,
@@ -171,3 +177,55 @@ class TestTaxPdfStore:
         assert load_pdf_tax_cache_raw() is None
         assert load_prior_year_agi(2024) is None
         assert load_prior_year_federal_tax(2024) == 0.0
+
+
+def _koinly() -> KoinlyReport:
+    return KoinlyReport(
+        tax_year=2026,
+        crypto_stcg=10.0,
+        crypto_ltcg=20.0,
+        crypto_income=5.0,
+        captured_at="2026-07-01T00:00:00",
+    )
+
+
+def _ssa_statement() -> SsaStatement:
+    return SsaStatement(
+        owner_key=None,
+        statement_date="2026-01-15",
+        fra_age=67,
+        estimates={62: 1_000.0, 67: 1_500.0, 70: 1_900.0},
+    )
+
+
+class TestKoinlyStore:
+    def test_round_trip(self, store):
+        save_koinly_report(_koinly())
+        assert store.has(KOINLY)
+        assert load_koinly_report() == _koinly()
+
+    def test_absent_and_corrupt_read_none(self, corrupt_row):
+        assert load_koinly_report() is None
+        corrupt_row(KOINLY)
+        assert load_koinly_report() is None
+
+
+class TestSsaPdfStore:
+    def test_owners_share_one_document(self, store):
+        save_ssa_pdf_estimates("you", _ssa_statement())
+        save_ssa_pdf_estimates("spouse", _ssa_statement())
+        assert set(store.get(SSA_PDF)) == {"you", "spouse"}
+        loaded = load_ssa_pdf_estimates("you")
+        assert loaded is not None
+        assert loaded.estimates[67] == 1_500.0
+
+    def test_corrupt_row_reads_none_and_refuses_a_save(self, store, corrupt_row):
+        payload = corrupt_row(SSA_PDF)
+        assert load_ssa_pdf_estimates("you") is None
+        with pytest.raises(CorruptStoreError):
+            save_ssa_pdf_estimates("you", _ssa_statement())
+        assert store.backend.get(SSA_PDF, SINGLE_KEY).payload == payload
+
+    def test_owner_is_still_validated(self):
+        with pytest.raises(ValueError, match="owner"):
+            save_ssa_pdf_estimates("household", _ssa_statement())

@@ -15,6 +15,8 @@ EXPECTED: dict[str, str] = {
     "ytd": ".ytd_cache.json",
     "ssa": ".ssa_cache.json",
     "tax_pdf": ".tax_pdf_cache.json",
+    "koinly": ".koinly_cache.json",
+    "ssa_pdf": ".ssa_pdf_cache.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -23,6 +25,8 @@ MOVED_MODULES: list[str] = [
     "engine.portfolio_sync.ytd",
     "engine.portfolio_sync.social_security",
     "engine.tax_return_pdf",
+    "engine.koinly_report_pdf",
+    "engine.ssa_statement_pdf",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -37,6 +41,10 @@ STORE_FUNCTIONS: list[str] = [
     "engine.tax_return_pdf:load_pdf_tax_records",
     "engine.data_sources.scan_ingest:scan_and_record",
     "engine.data_sources.scan_ingest:scan_documents_and_record",
+    "engine.koinly_report_pdf:save_koinly_report",
+    "engine.koinly_report_pdf:load_koinly_report",
+    "engine.ssa_statement_pdf:save_ssa_pdf_estimates",
+    "engine.ssa_statement_pdf:load_ssa_pdf_estimates",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

@@ -40,10 +40,8 @@ import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
 import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
-import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
 import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
-import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
 import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
@@ -57,8 +55,8 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".ytd_cache.json",
     _REPO_ROOT / ".portfolio_cache.json",
     _REPO_ROOT / ".ssa_cache.json",
-    _ssa_statement_mod._SSA_PDF_CACHE_PATH,
-    _koinly_mod._KOINLY_CACHE_PATH,
+    _REPO_ROOT / ".ssa_pdf_cache.json",
+    _REPO_ROOT / ".koinly_cache.json",
     _brokerage_mod._STATEMENT_CACHE_PATH,
     _brokerage_mod._FOLDER_CONFIG_PATH,
     _brokerage_mod._ACCOUNT_TYPE_OVERRIDES_PATH,
@@ -146,8 +144,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         return cache_dir / filename
 
     # 1. Defining-module attributes.
-    monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
-    monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
     monkeypatch.setattr(
         _brokerage_mod, "_STATEMENT_CACHE_PATH", _tmp(".brokerage_statement_cache.json")
     )

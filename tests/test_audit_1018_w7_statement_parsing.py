@@ -100,11 +100,10 @@ class TestF17FraMonths:
         assert stmt.fra_months == 0
         assert stmt.fra_monthly == 1889
 
-    def test_fra_months_survive_persistence(self, tmp_path):
+    def test_fra_months_survive_persistence(self):
         stmt = parse_ssa_statement_text([_SSA_PAGE.format(fra="66 and 10 months")])
-        path = tmp_path / "ssa.json"
-        save_ssa_pdf_estimates("you", stmt, path=path)
-        loaded = load_ssa_pdf_estimates("you", path=path)
+        save_ssa_pdf_estimates("you", stmt)
+        loaded = load_ssa_pdf_estimates("you")
         assert loaded is not None
         assert loaded.fra_monthly == pytest.approx(stmt.fra_monthly)
 

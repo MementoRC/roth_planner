@@ -143,10 +143,7 @@ class TestParseKoinlyText:
 
 
 class TestKoinlyCache:
-    def test_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import engine.koinly_report_pdf as mod
-
-        monkeypatch.setattr(mod, "_KOINLY_CACHE_PATH", tmp_path / ".koinly_cache.json")
+    def test_round_trip(self) -> None:
         rec = KoinlyReport(
             tax_year=2026,
             crypto_stcg=0.0,
@@ -161,12 +158,7 @@ class TestKoinlyCache:
         assert loaded.crypto_ltcg == pytest.approx(-750.0)
         assert loaded.tax_year == 2026
 
-    def test_load_missing_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import engine.koinly_report_pdf as mod
-
-        monkeypatch.setattr(mod, "_KOINLY_CACHE_PATH", tmp_path / "nope.json")
+    def test_load_missing_returns_none(self) -> None:
         assert load_koinly_report() is None
 
 
