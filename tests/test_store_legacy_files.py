@@ -17,10 +17,6 @@ from engine.store.legacy_files import (
 )
 
 
-def test_registry_is_empty_in_pr1():
-    assert registered() == ()
-
-
 def test_registered_entries_come_back_sorted_by_namespace():
     b = LegacyFile("b_ns", ".b.json", single_document_reader)
     a = LegacyFile("a_ns", ".a.json", single_document_reader)

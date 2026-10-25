@@ -48,6 +48,7 @@ import engine.portfolio_sync.portfolio as _portfolio_mod  # noqa: E402
 import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
 import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
+import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
 import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
 import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
 import views._shared as _views_shared_mod  # noqa: E402
@@ -373,6 +374,22 @@ def file_store(tmp_path):
     backend = SqliteBackend(tmp_path / "store.db")
     yield Store(backend)
     backend.close()
+
+
+CORRUPT_PAYLOAD = "{not json"
+
+
+@pytest.fixture
+def corrupt_row(store):
+    """``corrupt_row(namespace, key="_")`` stores an undecodable row and returns its payload."""
+    from engine.store.backend import Row
+    from engine.store.core import SINGLE_KEY
+
+    def _put(namespace: str, key: str = SINGLE_KEY) -> str:
+        store.backend.put(namespace, key, Row(CORRUPT_PAYLOAD, 1, "2026-01-01T00:00:00+00:00"))
+        return CORRUPT_PAYLOAD
+
+    return _put
 
 
 def _command_center_cache_files() -> list[Path]:

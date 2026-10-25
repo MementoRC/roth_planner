@@ -59,6 +59,8 @@ from engine.portfolio_sync import (
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.secure_io import read_pii_bytes, read_pii_json, write_pii_json
+from engine.store.core import Store
+from engine.store.legacy_files import registered
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from models.ytd_income import YTDSnapshot
 
@@ -89,8 +91,32 @@ def _personal_paths() -> dict[str, Path]:
     }
 
 
-def _bytes_on_disk() -> dict[str, bytes | None]:
-    return {n: (p.read_bytes() if p.exists() else None) for n, p in _personal_paths().items()}
+# The database namespaces personal_files fills (checked once each store has moved).
+_FILLED_NAMESPACES = frozenset(
+    {
+        "portfolio",
+        "ytd",
+        "ssa",
+        "tax_pdf",
+        "pdf_ledger",
+        "brokerage_statements",
+        "statement_folder",
+        "statement_account_overrides",
+        "ubs_activity",
+        "exercise_schedule",
+    }
+)
+
+
+def _persisted(store: Store) -> dict[str, object]:
+    """Everything the app keeps: file-backed stores' bytes and every database row."""
+    files = {n: (p.read_bytes() if p.exists() else None) for n, p in _personal_paths().items()}
+    rows = {
+        (entry.namespace, key): store.backend.get(entry.namespace, key)
+        for entry in registered()
+        for key in store.backend.keys(entry.namespace)
+    }
+    return {"files": files, "rows": rows}
 
 
 def _snapshot(total: float) -> PortfolioSnapshot:
@@ -125,7 +151,7 @@ def _ssa(amount: float) -> SSASnapshot:
 
 
 @pytest.fixture
-def personal_files(monkeypatch):
+def personal_files(monkeypatch, store):
     """Fill every personal file with synthetic content via the REAL savers."""
     monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
     save_committed(paths_mod.COMMITTED_PATH, {})
@@ -146,8 +172,10 @@ def personal_files(monkeypatch):
     brokerage_mod.save_statement_records({})
     ubs_mod.save_ubs_orders([])
     write_pii_json(exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH, {"version": 1})
-    before = _bytes_on_disk()
-    assert all(v is not None for v in before.values()), "fixture left a personal file unwritten"
+    before = _persisted(store)
+    assert all(v is not None for v in before["files"].values()), "fixture left a file unwritten"
+    on_db = {entry.namespace for entry in registered()} & _FILLED_NAMESPACES
+    assert on_db <= {ns for ns, _ in before["rows"]}, "fixture left a store row unwritten"
     return before
 
 
@@ -181,17 +209,17 @@ def _run_write_paths() -> None:
 
 
 class TestDemoModeWritesNothing:
-    def test_every_persist_path_leaves_personal_files_byte_identical(self, personal_files):
+    def test_every_persist_path_leaves_personal_files_byte_identical(self, personal_files, store):
         demo_mod.enter_demo_mode()
         _run_write_paths()
-        assert _bytes_on_disk() == personal_files
+        assert _persisted(store) == personal_files
 
-    def test_confirm_a_value_in_demo_mode_writes_nothing(self, personal_files):
+    def test_confirm_a_value_in_demo_mode_writes_nothing(self, personal_files, store):
         import views._shared as shared
 
         demo_mod.enter_demo_mode()
         shared._confirm_as_is_and_save("your_ira")
-        assert _bytes_on_disk() == personal_files
+        assert _persisted(store) == personal_files
 
     def test_personal_files_are_not_read_in_demo_mode(self, personal_files):
         demo_mod.enter_demo_mode()
@@ -244,12 +272,12 @@ class TestDemoModeWritesNothing:
 
 
 class TestLeavingDemoModeRestoresPersonalFiles:
-    def test_files_and_readers_come_back(self, personal_files):
+    def test_files_and_readers_come_back(self, personal_files, store):
         demo_mod.enter_demo_mode()
         _run_write_paths()
         demo_mod.leave_demo_mode()
 
-        assert _bytes_on_disk() == personal_files
+        assert _persisted(store) == personal_files
         snap = load_snapshot()
         assert snap is not None
         assert snap.accounts[0].total_value == 2_000_000.0
@@ -265,7 +293,7 @@ class TestLeavingDemoModeRestoresPersonalFiles:
 
 
 class TestAppRunInDemoModeLeavesPersonalFilesAlone:
-    def test_edit_a_field_and_render_every_page_writes_nothing(self, personal_files):
+    def test_edit_a_field_and_render_every_page_writes_nothing(self, personal_files, store):
         demo_mod.enter_demo_mode()
         at = AppTest.from_file(str(APP_PATH), default_timeout=60)
         at.session_state["_suppress_snapshot_autoload"] = True
@@ -274,5 +302,5 @@ class TestAppRunInDemoModeLeavesPersonalFilesAlone:
         at.session_state["your_ira"] = 777_777
         at.run()
         assert not at.exception
-        assert _bytes_on_disk() == personal_files
+        assert _persisted(store) == personal_files
         assert at.session_state["your_ira"] == 777_777, "session edits must keep working"
