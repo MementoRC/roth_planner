@@ -8,17 +8,10 @@ import stat
 import pytest
 
 from engine.data_sources.committed import save_committed
-from engine.tax_return_pdf import save_pdf_tax_records
 
 
 class TestCacheFilePermissions:
-    """All three PII cache files must be written with mode 0o600: portfolio, PDF tax records, and the committed baseline."""
-
-    def test_pdf_tax_cache_mode_600(self, monkeypatch, tmp_path):
-        cache_file = tmp_path / ".tax_pdf_cache.json"
-        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
-        save_pdf_tax_records({})
-        assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
+    """PII cache files still on disk must be written with mode 0o600: the committed baseline."""
 
     def test_committed_cache_mode_600(self, tmp_path):
         """A fresh committed baseline must not be world-readable."""

@@ -852,20 +852,9 @@ def safe_harbor_payment(
 
 def _read_pdf_tax_cache() -> object:
     """Return the raw parsed 1040 cache, or None when missing/unreadable."""
-    import json
+    from engine.tax_return_pdf import load_pdf_tax_cache_raw
 
-    # Import the module object (not `from engine.tax_return_pdf import
-    # _PDF_TAX_CACHE_PATH`) so that tests/conftest.py's monkeypatch.setattr on
-    # the module attribute is honoured.
-    from engine import tax_return_pdf as _tax_return_pdf
-
-    cache_path = _tax_return_pdf._PDF_TAX_CACHE_PATH
-    if not cache_path.exists():
-        return None
-    try:
-        return _tax_return_pdf.read_pii_json(cache_path)
-    except (json.JSONDecodeError, OSError):
-        return None
+    return load_pdf_tax_cache_raw()
 
 
 def load_prior_year_agi(tax_year: int) -> float | None:
@@ -890,9 +879,8 @@ def load_prior_year_agi(tax_year: int) -> float | None:
 
 
 def load_prior_year_federal_tax(tax_year: int | None = None) -> float:
-    """Read prior-year total federal tax (Form 1040 Line 24) from .tax_pdf_cache.json.
+    """Read prior-year total federal tax (Form 1040 Line 24) from the saved 1040 records (engine.tax_return_pdf).
 
-    Cache path sourced from engine.tax_return_pdf._PDF_TAX_CACHE_PATH.
     Returns 0.0 if no 1040 has been parsed, cache is missing/malformed, or the
     record predates Line 24 capture (records written by parser_version 1.0.0 lack
     this field). Falls back across keys: total_federal_tax → total_tax → line_24.
@@ -918,22 +906,7 @@ def load_prior_year_federal_tax(tax_year: int | None = None) -> float:
                 except (TypeError, ValueError):
                     continue
         return 0.0
-    import json
-
-    # Import the module object (not `from engine.tax_return_pdf import
-    # _PDF_TAX_CACHE_PATH`) so that tests/conftest.py's monkeypatch.setattr on
-    # the module attribute is honoured -- a `from`-import would bind the value
-    # at call time into a local before any monkeypatch. This path must stay in
-    # sync with the writer in engine/tax_return_pdf.py.
-    from engine import tax_return_pdf as _tax_return_pdf
-
-    cache_path = _tax_return_pdf._PDF_TAX_CACHE_PATH
-    if not cache_path.exists():
-        return 0.0
-    try:
-        data = _tax_return_pdf.read_pii_json(cache_path)
-    except (json.JSONDecodeError, OSError):
-        return 0.0
+    data = _read_pdf_tax_cache()
     # data is keyed by tax year; try most-recent year first
     if isinstance(data, dict):
         for year_key in sorted(data.keys(), reverse=True):

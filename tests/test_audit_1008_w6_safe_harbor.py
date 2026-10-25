@@ -12,12 +12,13 @@ F-73  Due dates roll forward past Saturdays, Sundays AND legal holidays
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from unittest.mock import patch
 
 import pytest
 
+from engine.store import get_store
+from engine.store.namespaces import TAX_PDF
 from engine.tax import (
     _next_quarterly_due,
     load_prior_year_agi,
@@ -26,12 +27,8 @@ from engine.tax import (
 )
 
 
-def _write_cache(tmp_path, monkeypatch, payload: dict) -> None:
-    import engine.tax_return_pdf as tax_return_pdf_module
-
-    cache = tmp_path / ".tax_pdf_cache.json"
-    cache.write_text(json.dumps(payload))
-    monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
+def _write_cache(payload: dict) -> None:
+    get_store().put(TAX_PDF, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -40,11 +37,9 @@ def _write_cache(tmp_path, monkeypatch, payload: dict) -> None:
 
 
 class TestPriorYearTaxIsYearSpecific:
-    def test_page1_only_prior_year_does_not_fall_back_to_older_year(self, tmp_path, monkeypatch):
+    def test_page1_only_prior_year_does_not_fall_back_to_older_year(self):
         # 2025 imported without page 2 (Line 24 = 0); 2024 is complete.
         _write_cache(
-            tmp_path,
-            monkeypatch,
             {
                 "2025": {"agi": 200_000.0, "total_federal_tax": 0.0},
                 "2024": {"agi": 180_000.0, "total_federal_tax": 30_000.0},
@@ -52,14 +47,12 @@ class TestPriorYearTaxIsYearSpecific:
         )
         assert load_prior_year_federal_tax(2025) == pytest.approx(0.0)
 
-    def test_missing_prior_year_returns_zero_even_with_older_year(self, tmp_path, monkeypatch):
-        _write_cache(tmp_path, monkeypatch, {"2023": {"total_federal_tax": 10_000.0}})
+    def test_missing_prior_year_returns_zero_even_with_older_year(self):
+        _write_cache({"2023": {"total_federal_tax": 10_000.0}})
         assert load_prior_year_federal_tax(2025) == pytest.approx(0.0)
 
-    def test_complete_prior_year_is_returned(self, tmp_path, monkeypatch):
+    def test_complete_prior_year_is_returned(self):
         _write_cache(
-            tmp_path,
-            monkeypatch,
             {
                 "2025": {"total_federal_tax": 30_000.0},
                 "2024": {"total_federal_tax": 10_000.0},
@@ -67,11 +60,9 @@ class TestPriorYearTaxIsYearSpecific:
         )
         assert load_prior_year_federal_tax(2025) == pytest.approx(30_000.0)
 
-    def test_newer_year_is_not_used_for_prior_year(self, tmp_path, monkeypatch):
+    def test_newer_year_is_not_used_for_prior_year(self):
         # A current-year return (e.g. a draft) must not stand in for the prior year.
         _write_cache(
-            tmp_path,
-            monkeypatch,
             {
                 "2026": {"total_federal_tax": 99_000.0},
                 "2025": {"total_federal_tax": 30_000.0},
@@ -86,10 +77,8 @@ class TestPriorYearTaxIsYearSpecific:
 
 
 class TestPriorYearAgi:
-    def test_returns_agi_shown_on_return(self, tmp_path, monkeypatch):
+    def test_returns_agi_shown_on_return(self):
         _write_cache(
-            tmp_path,
-            monkeypatch,
             {
                 "2025": {
                     "agi": 140_000.0,
@@ -101,14 +90,11 @@ class TestPriorYearAgi:
         )
         assert load_prior_year_agi(2025) == pytest.approx(140_000.0)
 
-    def test_none_when_year_not_imported(self, tmp_path, monkeypatch):
-        _write_cache(tmp_path, monkeypatch, {"2024": {"agi": 140_000.0}})
+    def test_none_when_year_not_imported(self):
+        _write_cache({"2024": {"agi": 140_000.0}})
         assert load_prior_year_agi(2025) is None
 
-    def test_none_when_no_cache(self, tmp_path, monkeypatch):
-        import engine.tax_return_pdf as tax_return_pdf_module
-
-        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", tmp_path / "absent.json")
+    def test_none_when_no_cache(self):
         assert load_prior_year_agi(2025) is None
 
 

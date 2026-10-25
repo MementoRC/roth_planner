@@ -46,7 +46,6 @@ import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
-import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
 import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
 import views._shared as _views_shared_mod  # noqa: E402
 import views.option_exercise._partials._helpers as _option_exercise_helpers_mod  # noqa: E402
@@ -54,7 +53,7 @@ import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
 import views.setup.command_center as _command_center_mod  # noqa: E402
 
 _WATCHED_CACHE_PATHS: list[Path] = [
-    _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
+    _REPO_ROOT / ".tax_pdf_cache.json",
     _REPO_ROOT / ".ytd_cache.json",
     _REPO_ROOT / ".portfolio_cache.json",
     _REPO_ROOT / ".ssa_cache.json",
@@ -147,7 +146,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         return cache_dir / filename
 
     # 1. Defining-module attributes.
-    monkeypatch.setattr(_tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", _tmp(".tax_pdf_cache.json"))
     monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
     monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
     monkeypatch.setattr(

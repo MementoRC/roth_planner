@@ -12,3 +12,4 @@ from engine.store.legacy_files import declare_store
 PORTFOLIO = declare_store("portfolio", ".portfolio_cache.json")
 YTD = declare_store("ytd", ".ytd_cache.json")
 SSA = declare_store("ssa", ".ssa_cache.json")
+TAX_PDF = declare_store("tax_pdf", ".tax_pdf_cache.json")

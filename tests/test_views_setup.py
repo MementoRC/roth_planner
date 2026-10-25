@@ -178,40 +178,31 @@ class TestPdf1040ImportHelper:
 class TestPdfRecordRoundTrip:
     """Confirm save/load round-trip preserves filing_status and magi."""
 
-    def test_save_and_load_round_trip(self, tmp_path: Path) -> None:
+    def test_save_and_load_round_trip(self) -> None:
         from engine.tax_return_pdf import (
-            _PDF_TAX_CACHE_PATH,
             Form1040Record,
             load_pdf_tax_records,
             save_pdf_tax_records,
         )
 
-        # Patch the cache path to tmp_path
-        original = _PDF_TAX_CACHE_PATH
-        import engine.tax_return_pdf as _mod
-
-        _mod._PDF_TAX_CACHE_PATH = tmp_path / ".tax_pdf_cache.json"
-        try:
-            rec = Form1040Record(
-                tax_year=2023,
-                agi=158_400.0,
-                tax_exempt_interest=2_400.0,
-                taxable_ss=0.0,
-                qualified_dividends=500.0,
-                ordinary_dividends=1_200.0,
-                feie=3_000.0,
-                magi=163_800.0,
-                filing_status="married_filing_jointly",
-                captured_at="2026-06-09T12:00:00+00:00",
-            )
-            save_pdf_tax_records({2023: rec})
-            loaded = load_pdf_tax_records()
-            assert 2023 in loaded
-            assert loaded[2023].magi == pytest.approx(163_800.0)
-            assert loaded[2023].filing_status == "married_filing_jointly"
-            assert loaded[2023].tax_year == 2023
-        finally:
-            _mod._PDF_TAX_CACHE_PATH = original
+        rec = Form1040Record(
+            tax_year=2023,
+            agi=158_400.0,
+            tax_exempt_interest=2_400.0,
+            taxable_ss=0.0,
+            qualified_dividends=500.0,
+            ordinary_dividends=1_200.0,
+            feie=3_000.0,
+            magi=163_800.0,
+            filing_status="married_filing_jointly",
+            captured_at="2026-06-09T12:00:00+00:00",
+        )
+        save_pdf_tax_records({2023: rec})
+        loaded = load_pdf_tax_records()
+        assert 2023 in loaded
+        assert loaded[2023].magi == pytest.approx(163_800.0)
+        assert loaded[2023].filing_status == "married_filing_jointly"
+        assert loaded[2023].tax_year == 2023
 
 
 class TestFilingStatusGate:

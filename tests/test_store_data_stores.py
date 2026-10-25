@@ -25,7 +25,14 @@ from engine.portfolio_sync.social_security import (
 )
 from engine.portfolio_sync.ytd import load_ytd_snapshot, save_ytd_snapshot
 from engine.store import SINGLE_KEY, CorruptStoreError
-from engine.store.namespaces import PORTFOLIO, SSA, YTD
+from engine.store.namespaces import PORTFOLIO, SSA, TAX_PDF, YTD
+from engine.tax import load_prior_year_agi, load_prior_year_federal_tax
+from engine.tax_return_pdf import (
+    Form1040Record,
+    load_pdf_tax_cache_raw,
+    load_pdf_tax_records,
+    save_pdf_tax_records,
+)
 from models.ytd_income import YTDSnapshot
 
 
@@ -124,3 +131,43 @@ class TestSsaStore:
         with pytest.raises(CorruptSSACacheError):
             save_ssa_snapshot(_ssa(1.0), owner="you")
         assert store.get(SSA) == [1, 2]
+
+
+def _form_1040(agi: float) -> dict[int, Form1040Record]:
+    return {
+        2024: Form1040Record(
+            tax_year=2024,
+            agi=agi,
+            tax_exempt_interest=0.0,
+            taxable_ss=0.0,
+            qualified_dividends=0.0,
+            ordinary_dividends=0.0,
+            feie=0.0,
+            magi=agi,
+            filing_status=None,
+            captured_at="2026-01-01T00:00:00",
+        )
+    }
+
+
+class TestTaxPdfStore:
+    def test_round_trip_and_raw_reader(self, store):
+        save_pdf_tax_records(_form_1040(50_000.0))
+        assert set(store.get(TAX_PDF)) == {"2024"}
+        assert load_pdf_tax_records()[2024].agi == 50_000.0
+        assert load_pdf_tax_cache_raw()["2024"]["agi"] == 50_000.0
+
+    def test_tax_reads_prior_year_figures_from_the_store(self, store):
+        store.put(TAX_PDF, {"2024": {"agi": 70_000.0, "total_federal_tax": 6_000.0}})
+        assert load_prior_year_agi(2024) == 70_000.0
+        assert load_prior_year_federal_tax(2024) == 6_000.0
+        assert load_prior_year_federal_tax() == 6_000.0
+
+    def test_absent_and_corrupt_read_empty(self, corrupt_row):
+        assert load_pdf_tax_records() == {}
+        assert load_prior_year_federal_tax() == 0.0
+        corrupt_row(TAX_PDF)
+        assert load_pdf_tax_records() == {}
+        assert load_pdf_tax_cache_raw() is None
+        assert load_prior_year_agi(2024) is None
+        assert load_prior_year_federal_tax(2024) == 0.0

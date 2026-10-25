@@ -6,65 +6,9 @@ invariant enforced by the fix.
 
 from __future__ import annotations
 
-import os
-import stat
 import warnings
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# F12/F35 — PII JSON savers create files with mode 0o600 (no TOCTOU window)
-# ---------------------------------------------------------------------------
-
-
-class TestPiiJsonSaverModes:
-    """Each saver must produce a file with exactly mode 0o600."""
-
-    def test_save_pdf_tax_records_mode_600(self, tmp_path, monkeypatch):
-        import engine.tax_return_pdf as pdf_mod
-
-        cache_path = tmp_path / ".tax_pdf_cache.json"
-        monkeypatch.setattr(pdf_mod, "_PDF_TAX_CACHE_PATH", cache_path)
-
-        pdf_mod.save_pdf_tax_records({})
-
-        assert cache_path.exists()
-        assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
-
-
-# ---------------------------------------------------------------------------
-# F36 — _PDF_TAX_CACHE_PATH must be absolute and land at project root
-# ---------------------------------------------------------------------------
-
-
-class TestPdfTaxCachePath:
-    def test_is_absolute(self):
-        from engine.tax_return_pdf import _PDF_TAX_CACHE_PATH
-
-        assert _PDF_TAX_CACHE_PATH.is_absolute()
-
-    def test_filename_correct(self):
-        from engine.tax_return_pdf import _PDF_TAX_CACHE_PATH
-
-        assert _PDF_TAX_CACHE_PATH.name == ".tax_pdf_cache.json"
-
-    def test_lands_at_project_root(self, monkeypatch):
-        """Parent directory must be the repo root (same level as engine/).
-
-        audit-0805 W1: tests/conftest.py's autouse cache-path redirect
-        fixture patches this same attribute to a tmp dir for every test, so
-        undo it first to inspect the true, untouched production default.
-        """
-        monkeypatch.undo()
-        import engine.tax_return_pdf as _m
-        from engine.tax_return_pdf import _PDF_TAX_CACHE_PATH
-
-        # engine/tax_return_pdf.py → engine/ → project root
-        expected_parent = _m.__file__ and (
-            __import__("pathlib").Path(_m.__file__).resolve().parent.parent
-        )
-        assert _PDF_TAX_CACHE_PATH.parent == expected_parent
-
 
 # ---------------------------------------------------------------------------
 # F38 — BROWSER_PRIVKEY_LS_KEY must not exist on engine.data_bridge_browser

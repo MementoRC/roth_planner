@@ -1,7 +1,5 @@
 """Tests for engine.tax — brackets, deductions, LTCG, OBBBA senior bonus, safe harbor."""
 
-import json
-
 import pytest
 
 from engine.tax import (
@@ -355,106 +353,78 @@ class TestSafeHarborPayment:
 class TestLoadPriorYearFederalTax:
     """Tests for engine.tax.load_prior_year_federal_tax.
 
-    The function resolves its cache path from
-    ``engine.tax_return_pdf._PDF_TAX_CACHE_PATH`` — the same module attribute
-    the writer (``save_pdf_tax_records``) uses — so tests redirect that
-    attribute directly via ``monkeypatch.setattr``, the same mechanism
-    tests/conftest.py's ``_redirect_cache_paths_to_tmp`` fixture relies on.
+    tax.py reads the same ``tax_pdf`` row the writer (``save_pdf_tax_records``)
+    saves, so tests seed that row in the per-test store.
     """
 
-    def test_redirected_cache_with_total_federal_tax_is_read(self, tmp_path, monkeypatch):
-        """Proves the fix: monkeypatching _PDF_TAX_CACHE_PATH (the writer's
-        constant) is now honoured by load_prior_year_federal_tax, closing the
-        test-isolation hole where the function computed its own inline path."""
-        import engine.tax_return_pdf as tax_return_pdf_module
-        from engine.tax import load_prior_year_federal_tax
-
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(json.dumps({"2024": {"total_federal_tax": 55_000.0}}))
-        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
-
-        result = load_prior_year_federal_tax()
+    def test_seeded_row_with_total_federal_tax_is_read(self):
+        """load_prior_year_federal_tax reads the ``tax_pdf`` row the writer saves."""
+        result = self._load({"2024": {"total_federal_tax": 55_000.0}})
         assert result == pytest.approx(55_000.0)
 
-    def test_real_cache_returns_zero_no_total_tax_field(self, tmp_path, monkeypatch):
+    def test_real_cache_returns_zero_no_total_tax_field(self):
         """A cache with MAGI components but no total_federal_tax → returns 0.0."""
-        import engine.tax_return_pdf as tax_return_pdf_module
-        from engine.tax import load_prior_year_federal_tax
-
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(json.dumps({"2024": {"agi": 200_000.0, "magi": 205_000.0}}))
-        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
-
-        result = load_prior_year_federal_tax()
+        result = self._load({"2024": {"agi": 200_000.0, "magi": 205_000.0}})
         assert result == pytest.approx(0.0)
 
-    def test_no_matching_key_in_cache_returns_zero(self, tmp_path, monkeypatch):
+    def test_no_matching_key_in_cache_returns_zero(self):
         """A cache with agi/magi keys but no total_federal_tax/total_tax/line_24 → returns 0.0."""
-        import engine.tax_return_pdf as tax_return_pdf_module
-        from engine.tax import load_prior_year_federal_tax
-
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(json.dumps({"2023": {"agi": 150_000.0, "tax_exempt_interest": 500.0}}))
-        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
-
-        result = load_prior_year_federal_tax()
+        result = self._load({"2023": {"agi": 150_000.0, "tax_exempt_interest": 500.0}})
         assert result == pytest.approx(0.0)
 
     @staticmethod
-    def _load(tmp_path, monkeypatch, content):
-        """Write ``content`` to a tmp cache, point the writer constant at it, and
-        call the REAL load_prior_year_federal_tax (legacy no-arg path)."""
-        import engine.tax_return_pdf as tax_return_pdf_module
+    def _load(content):
+        """Seed the ``tax_pdf`` row with ``content`` and call the REAL
+        load_prior_year_federal_tax (legacy no-arg path)."""
+        from engine.store import get_store
+        from engine.store.namespaces import TAX_PDF
         from engine.tax import load_prior_year_federal_tax
 
-        cache = tmp_path / ".tax_pdf_cache.json"
-        cache.write_text(content if isinstance(content, str) else json.dumps(content))
-        monkeypatch.setattr(tax_return_pdf_module, "_PDF_TAX_CACHE_PATH", cache)
+        get_store().put(TAX_PDF, content)
         return load_prior_year_federal_tax()
 
-    def test_nested_total_federal_tax_key(self, tmp_path, monkeypatch):
+    def test_nested_total_federal_tax_key(self):
         """Cache with nested year → total_federal_tax → returns float."""
-        result = self._load(tmp_path, monkeypatch, {"2024": {"total_federal_tax": 42_500.0}})
+        result = self._load({"2024": {"total_federal_tax": 42_500.0}})
         assert result == pytest.approx(42_500.0)
 
-    def test_nested_line_24_key(self, tmp_path, monkeypatch):
+    def test_nested_line_24_key(self):
         """Cache with nested year → line_24 → returns float."""
-        result = self._load(tmp_path, monkeypatch, {"2023": {"line_24": 38_000.0}})
+        result = self._load({"2023": {"line_24": 38_000.0}})
         assert result == pytest.approx(38_000.0)
 
-    def test_most_recent_year_wins(self, tmp_path, monkeypatch):
+    def test_most_recent_year_wins(self):
         result = self._load(
-            tmp_path,
-            monkeypatch,
             {"2022": {"total_federal_tax": 1_000.0}, "2024": {"total_federal_tax": 2_000.0}},
         )
         assert result == pytest.approx(2_000.0)
 
-    def test_nested_bad_value_falls_through_to_next_key(self, tmp_path, monkeypatch):
+    def test_nested_bad_value_falls_through_to_next_key(self):
         """An unparseable total_federal_tax must not hide a usable line_24."""
         result = self._load(
-            tmp_path,
-            monkeypatch,
             {"2024": {"total_federal_tax": "n/a", "line_24": 1_234.0}},
         )
         assert result == pytest.approx(1_234.0)
 
-    def test_flat_dict_fallback(self, tmp_path, monkeypatch):
+    def test_flat_dict_fallback(self):
         """Single-year (non-nested) cache is read through the flat fallback."""
-        result = self._load(tmp_path, monkeypatch, {"line_24": 777.0})
+        result = self._load({"line_24": 777.0})
         assert result == pytest.approx(777.0)
 
-    def test_flat_dict_bad_value_returns_zero(self, tmp_path, monkeypatch):
-        result = self._load(tmp_path, monkeypatch, {"total_federal_tax": "n/a"})
+    def test_flat_dict_bad_value_returns_zero(self):
+        result = self._load({"total_federal_tax": "n/a"})
         assert result == pytest.approx(0.0)
 
-    def test_malformed_json_returns_zero(self, tmp_path, monkeypatch):
-        """Malformed JSON → returns 0.0 without raising."""
-        result = self._load(tmp_path, monkeypatch, "{{not valid json")
-        assert result == pytest.approx(0.0)
+    def test_corrupt_row_returns_zero(self, corrupt_row):
+        """An undecodable row → returns 0.0 without raising."""
+        from engine.store.namespaces import TAX_PDF
+        from engine.tax import load_prior_year_federal_tax
 
-    def test_top_level_list_returns_zero(self, tmp_path, monkeypatch):
-        result = self._load(tmp_path, monkeypatch, [1, 2, 3])
+        corrupt_row(TAX_PDF)
+        assert load_prior_year_federal_tax() == pytest.approx(0.0)
+
+    def test_top_level_list_returns_zero(self):
+        result = self._load([1, 2, 3])
         assert result == pytest.approx(0.0)
 
 

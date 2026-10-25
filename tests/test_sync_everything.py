@@ -220,10 +220,7 @@ def _patch_market_quote(*, result=None, side_effect=None):
     return [patch.object(helpers_mod, "handle_stock_quote_fetch", **kwargs)]
 
 
-def _patch_scan(tmp_path, monkeypatch):
-    import engine.tax_return_pdf as tax_return_pdf_mod
-
-    monkeypatch.setattr(tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json")
+def _patch_scan(tmp_path):
     return [
         patch(
             "engine.pdf_import.scan_pdf_folder",
@@ -244,7 +241,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
     patches = (
         _patch_portfolio_fetches()
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),
@@ -300,7 +297,7 @@ def test_sync_everything_invokes_market_quote_refresh(
     patches = (
         _patch_portfolio_fetches()
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + [
             patch.object(helpers_mod, "handle_stock_quote_fetch", mock_quote),
             patch.object(portfolio_mod, "st", mock_st),
@@ -335,7 +332,7 @@ def test_sync_everything_isolates_a_failing_market_quote_fetch(
     patches = (
         _patch_portfolio_fetches()
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + _patch_market_quote(result=failing_result)
         + [
             patch.object(portfolio_mod, "st", mock_st),
@@ -368,7 +365,7 @@ def test_sync_everything_isolates_a_raising_market_quote_fetch(
     patches = (
         _patch_portfolio_fetches()
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + _patch_market_quote(side_effect=RuntimeError("Yahoo unreachable"))
         + [
             patch.object(portfolio_mod, "st", mock_st),
@@ -395,7 +392,7 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
     patches = (
         _patch_portfolio_fetches(fetch_portfolio_side_effect=RuntimeError("FinExtract unreachable"))
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),
@@ -445,7 +442,7 @@ def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
     patches = (
         _patch_portfolio_fetches(snapshot=_stub_portfolio_snapshot_with_grants())
         + _patch_ss_fetch()
-        + _patch_scan(tmp_path, monkeypatch)
+        + _patch_scan(tmp_path)
         + _patch_market_quote()
         + [
             patch.object(portfolio_mod, "st", mock_st),

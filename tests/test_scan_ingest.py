@@ -27,6 +27,7 @@ from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.pdf_import import PdfImportResult
+from engine.store.namespaces import TAX_PDF
 from engine.tax_return_pdf import Form1040Record
 from models.household import Household
 from models.sourced import Source
@@ -134,11 +135,8 @@ def _run_ytd_scan(tmp_path, monkeypatch) -> tuple[MagicMock, dict]:
     scan_pdf_folder result. Returns (mock_st, persisted pdf cache dict)."""
     import engine.pdf_ledger as ledger_mod
     import engine.pdf_owner as owner_mod
-    import engine.tax_return_pdf as tax_return_pdf_mod
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    pdf_cache_path = tmp_path / ".tax_pdf_cache.json"
-    monkeypatch.setattr(tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", pdf_cache_path)
 
     hh = _stub_hh()
     ytd = YTDSnapshot()
@@ -259,23 +257,19 @@ class TestA1ScanAndRecordPureHelper:
         assert candidates[0].prov.source == Source.PDF
         assert candidates[0].prov.detail == "Form 1040 PDF"
 
-    def test_persists_same_merged_pdf_cache(self, tmp_path):
-        cache_path = tmp_path / "scan_ingest_cache.json"
+    def test_persists_same_merged_pdf_cache(self, tmp_path, store):
         store_path = tmp_path / "scan_ingest_candidates.json"
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
             result = scan_and_record(
                 tmp_path,
                 store_path=store_path,
-                pdf_cache_path=cache_path,
                 recorded_at=_RECORDED_AT,
             )
 
         assert set(result.pdf_cache) == {_GOLDEN_YEAR}
         assert result.pdf_cache[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
 
-        import json
-
-        raw = json.loads(cache_path.read_text())
+        raw = store.get(TAX_PDF)
         assert set(raw) == {str(_GOLDEN_YEAR)}
         assert Form1040Record.from_dict(raw[str(_GOLDEN_YEAR)]).magi == _GOLDEN_MAGI
 
@@ -309,27 +303,25 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
     same parsed documents -- both delegate to the same ``_record_scan_result``
     core, but this pins that they stay in lockstep from the outside too."""
 
-    def test_same_pdf_cache_and_magi_candidate(self, tmp_path, clean_candidate_store):
+    def test_same_pdf_cache_and_magi_candidate(self, tmp_path, clean_candidate_store, store):
         from engine.data_sources.scan_ingest import scan_documents_and_record
 
-        folder_cache_path = tmp_path / "folder_cache.json"
         folder_store_path = tmp_path / "folder_candidates.json"
-        docs_cache_path = tmp_path / "docs_cache.json"
         docs_store_path = tmp_path / "docs_candidates.json"
 
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
             folder_result = scan_and_record(
                 tmp_path,
                 store_path=folder_store_path,
-                pdf_cache_path=folder_cache_path,
                 recorded_at=_RECORDED_AT,
             )
+        folder_doc = store.get(TAX_PDF)
+        store.delete(TAX_PDF)
 
         with patch("engine.pdf_import.scan_pdf_documents", return_value=_fixed_result()):
             docs_result = scan_documents_and_record(
                 [("statement.pdf", b"irrelevant-bytes-classification-is-mocked")],
                 store_path=docs_store_path,
-                pdf_cache_path=docs_cache_path,
                 recorded_at=_RECORDED_AT,
             )
 
@@ -337,9 +329,7 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
         for year in folder_result.pdf_cache:
             assert docs_result.pdf_cache[year].magi == folder_result.pdf_cache[year].magi
 
-        import json
-
-        assert json.loads(docs_cache_path.read_text()) == json.loads(folder_cache_path.read_text())
+        assert store.get(TAX_PDF) == folder_doc
 
         folder_store = CandidateStore.load(folder_store_path)
         docs_store = CandidateStore.load(docs_store_path)
@@ -365,21 +355,17 @@ class TestRunUploadedScanMatchesRunFolderScan:
     """``views._shared.run_uploaded_scan`` writes the same
     ``_pdf_1040_scanned`` session key as ``run_folder_scan``, for the same
     parsed documents. Same repo-root-cache isolation pattern as
-    ``_run_ytd_scan`` above (``Path.home`` + ``_PDF_TAX_CACHE_PATH``
-    monkeypatched to *tmp_path*; ``clean_candidate_store`` isolates
+    ``_run_ytd_scan`` above (``Path.home`` monkeypatched to *tmp_path*; the
+    1040 records go to the per-test in-memory store; ``clean_candidate_store`` isolates
     ``CANDIDATE_STORE_PATH``, which ``run_uploaded_scan`` -- like
     ``run_folder_scan`` -- has no override parameter for)."""
 
     def test_writes_pdf_1040_scanned_session_key(
         self, tmp_path, monkeypatch, clean_candidate_store
     ):
-        import engine.tax_return_pdf as tax_return_pdf_mod
         import views._shared as shared_mod
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setattr(
-            tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json"
-        )
 
         mock_st = MagicMock()
         session_state: dict = {}
@@ -495,12 +481,8 @@ class TestA2RewiredYtdIncomeView:
     def test_single_scan_pdf_folder_call(self, tmp_path, monkeypatch, clean_candidate_store):
         import engine.pdf_ledger as ledger_mod
         import engine.pdf_owner as owner_mod
-        import engine.tax_return_pdf as tax_return_pdf_mod
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setattr(
-            tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", tmp_path / ".tax_pdf_cache.json"
-        )
 
         hh = _stub_hh()
         mock_st = _make_mock_st(YTDSnapshot())
@@ -549,18 +531,13 @@ class TestA3ParametersDuplicateScanRemoved:
         assert "Scan for 1040 PDFs" not in source
         assert "scan_1040_folder" not in source
 
-    def test_save_1040_record_flow_still_works(self, tmp_path, monkeypatch):
+    def test_save_1040_record_flow_still_works(self):
         """Pre-seeded _pdf_1040_scanned (as if run_folder_scan already wrote it)
         + a 'Save 1040 record' click still persists the record via
         save_pdf_tax_records, exactly as before."""
-        import views.setup.parameters as parameters_mod
-
-        cache_path = tmp_path / ".tax_pdf_cache.json"
-        import engine.tax_return_pdf as tax_return_pdf_mod
-
-        monkeypatch.setattr(tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", cache_path)
-
         import dataclasses
+
+        import views.setup.parameters as parameters_mod
 
         # _render_pdf_1040_import mutates rec.filing_status in place -- use a
         # private copy so this test never contaminates the shared _FORM_1040
