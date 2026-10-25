@@ -24,7 +24,7 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import apply_committed, extract_committed, load_committed
 from engine.portfolio_sync.shapes import PortfolioSnapshot, portfolio_snapshot_from_dict
-from engine.store.namespaces import PORTFOLIO
+from engine.store.namespaces import COMMITTED, PORTFOLIO
 from engine.upload_merge import build_user_defaults_session_updates
 from models.household import Household
 from models.legacy_keys import (
@@ -184,11 +184,10 @@ def test_v5_bundle_with_old_keys_imports_into_new_keys() -> None:
 # --- committed baseline -----------------------------------------------------
 
 
-def test_committed_baseline_with_old_key_loads_into_new_attr(tmp_path) -> None:
-    path = tmp_path / "committed.json"
+def test_committed_baseline_with_old_key_loads_into_new_attr(store) -> None:
     entry = SourcedValue(210.5, Provenance(Source.PDF, _WHEN, "statement")).to_json()
-    path.write_text(json.dumps({OLD["stock_price_now"]: entry}))
-    committed = load_committed(path)
+    store.put(COMMITTED, {OLD["stock_price_now"]: entry})
+    committed = load_committed()
     assert committed is not None
     assert set(committed) == {"stock_price_now"}
     hh = Household()

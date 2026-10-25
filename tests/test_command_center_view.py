@@ -24,7 +24,6 @@ test each, asserting their partial does NOT render these cards.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +35,8 @@ from engine.data_sources.committed import load_committed
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.pdf_import import PdfImportResult
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.sourced import Provenance, Source, SourcedValue
 from views._shared import (
     MarketQuoteSyncSummary,
@@ -169,12 +170,12 @@ def _render_command_center_with_pending(pending: set[str]) -> None:
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -212,9 +213,9 @@ def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
     assert not at.exception
     assert at.session_state["your_ira"] == 2_000_000.0
 
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == 2_000_000.0
     assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
@@ -227,12 +228,12 @@ def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
 
 def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -277,9 +278,7 @@ def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key() 
     assert at.session_state["stock_price"] == 250.0
     assert "stock_price_now" not in at.session_state
 
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["stock_price_now"]["value"] == 250.0
     assert committed_json["stock_price_now"]["source"] == "FINEXTRACT_LIVE"
@@ -289,7 +288,7 @@ def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
     import dataclasses
 
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
     from models.grants import StockGrant
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
@@ -299,7 +298,7 @@ def _seed_pending_grants() -> None:
             "prov": [Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()],
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     candidate_grants = [
         StockGrant(year=2019, strike=98.0, shares=200, expiry_year=2029),
@@ -341,9 +340,9 @@ def test_command_center_confirm_grants_commits_candidate_list() -> None:
     at.button(key="confirm_grants").click().run()
 
     assert not at.exception
-    from engine.data_sources.paths import COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert len(committed_json[GRANTS_KEY]["data"]) == 2
     assert {g["year"] for g in committed_json[GRANTS_KEY]["data"]} == {2019, 2021}
@@ -356,7 +355,7 @@ def test_command_center_confirm_grants_commits_candidate_list() -> None:
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_json = {
         "prior_year_magi": {
@@ -364,7 +363,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
             "prov": {"2024": Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()},
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -410,9 +409,7 @@ def test_command_center_confirm_prior_year_magi_syncs_session_state() -> None:
     assert at.session_state["prior_year_magi"][2024] == 290_000.0
     assert "prior_year_magi.2024" not in at.session_state["_pending_review"]
 
-    from engine.data_sources.paths import COMMITTED_PATH
-
-    committed_json = load_committed(COMMITTED_PATH)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["prior_year_magi"]["data"]["2024"] == 290_000.0
     assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"

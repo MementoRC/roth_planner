@@ -5,20 +5,18 @@ to verify ``get_household()`` is correctly wired to
 ``engine.data_sources.orchestrator.resolve_for_app`` and that the per-load
 snapshot-clobber block has been removed.
 
-Isolation: the three new Setup / Command Center cache files
-(``.candidate_store.json``, ``.trust_choices.json``, ``.committed_household.json``)
-are written at repo-root (mirroring the existing ``__file__``-anchored cache
-path convention used throughout ``engine/*`` — see e.g.
-``engine/exercise_schedule_store.py``). They are already covered by
-``.gitignore``. Every test runs on its own in-memory store, so a developer's personal
-committed/candidate state never leaks in. ``_suppress_snapshot_autoload`` is
-pre-seeded so a developer's real ``.portfolio_cache.json`` (personal data)
-cannot influence the migration-identity assertion below.
+Isolation: the committed baseline lives in the document store, and the
+candidate store and trust choices still use the files
+``.candidate_store.json`` and ``.trust_choices.json``. Every test redirects
+those files into its own tmp dir and runs on its own in-memory store, so a
+developer's personal committed/candidate state never leaks in.
+``_suppress_snapshot_autoload`` is pre-seeded so a developer's real saved
+portfolio (personal data) cannot influence the migration-identity assertion
+below.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -28,7 +26,7 @@ from config.defaults import DEFAULTS
 from engine.data_sources.committed import load_committed
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, save_snapshot
 from engine.store import get_store
-from engine.store.namespaces import PORTFOLIO
+from engine.store.namespaces import COMMITTED, PORTFOLIO
 from models.sourced import Provenance, Source, SourcedValue
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
@@ -85,7 +83,6 @@ def test_fresh_run_creates_committed_file_with_migration_identity(monkeypatch) -
     import engine.portfolio_sync as portfolio_sync_mod
     import engine.tax_return_pdf as tax_return_pdf_mod
     import views.setup.data_bridge as data_bridge_mod
-    from engine.data_sources.paths import COMMITTED_PATH
 
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
@@ -97,10 +94,9 @@ def test_fresh_run_creates_committed_file_with_migration_identity(monkeypatch) -
 
     assert not at.exception
 
-    committed_path = COMMITTED_PATH
-    assert committed_path.exists()
+    assert get_store().has(COMMITTED)
 
-    committed_json = load_committed(committed_path)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
 
@@ -113,15 +109,12 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns() -> None:
     the only writer left — its edits must stick, not get clobbered back to
     the frozen committed value).
     """
-    from engine.data_sources.paths import COMMITTED_PATH
-
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
     assert not at.exception
 
-    committed_path = COMMITTED_PATH
-    committed_json = load_committed(committed_path)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
 
@@ -130,7 +123,7 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns() -> None:
     at.run()
     assert not at.exception
 
-    committed_json = load_committed(committed_path)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == edited_value
     assert committed_json["your_ira"]["source"] == "MANUAL"
@@ -196,18 +189,15 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate() -> None:
     seeded-config-default-vs-committed-baseline gap that exists for a
     never-before-seen browser session.
     """
-    from engine.data_sources.paths import COMMITTED_PATH
-
     get_store().delete(PORTFOLIO)
 
     try:
-        committed_path = COMMITTED_PATH
         committed_json = {
             "your_ira": SourcedValue(
                 1_600_000.0, Provenance(Source.UNKNOWN, datetime(2026, 1, 1))
             ).to_json()
         }
-        committed_path.write_text(json.dumps(committed_json))
+        get_store().put(COMMITTED, committed_json)
 
         snap = PortfolioSnapshot(
             accounts=[
@@ -224,7 +214,7 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate() -> None:
         assert not at.exception
         assert "your_ira" in at.session_state["_pending_review"]
 
-        reloaded = load_committed(committed_path)
+        reloaded = load_committed()
         assert reloaded is not None
         assert reloaded["your_ira"]["value"] == 1_600_000.0
         assert reloaded["your_ira"]["source"] != "MANUAL"
@@ -268,18 +258,12 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     """
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     recorded_at = datetime(2026, 1, 1)
-    committed_path = COMMITTED_PATH
-    committed_path.write_text(
-        json.dumps(
-            {
-                "stock_price_now": SourcedValue(
-                    100.0, Provenance(Source.UNKNOWN, recorded_at)
-                ).to_json()
-            }
-        )
+    get_store().put(
+        COMMITTED,
+        {"stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, recorded_at)).to_json()},
     )
     store = CandidateStore()
     store.record_candidate(
@@ -302,7 +286,7 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     assert at.session_state["stock_price"] == 250.0
     assert "stock_price_now" not in at.session_state
 
-    committed_json = load_committed(committed_path)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["stock_price_now"]["value"] == 250.0
     assert committed_json["stock_price_now"]["source"] == "FINEXTRACT_LIVE"
@@ -317,7 +301,7 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     at2.run()
     assert not at2.exception
 
-    committed_json = load_committed(committed_path)
+    committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["stock_price_now"]["value"] == 250.0
     assert committed_json["stock_price_now"]["source"] == "FINEXTRACT_LIVE"

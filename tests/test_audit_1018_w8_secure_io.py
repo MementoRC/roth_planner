@@ -31,7 +31,8 @@ from engine.data_sources.committed import (
 )
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
 from engine.secure_io import read_pii_json, write_pii_json
-from engine.store.namespaces import PORTFOLIO, SSA
+from engine.store import SINGLE_KEY
+from engine.store.namespaces import COMMITTED, PORTFOLIO, SSA
 
 BAD_BYTES = b"\xff\xfe\x00not utf-8 \xc3\x28"
 
@@ -103,19 +104,17 @@ class TestF24CandidateStoreMode:
 
 
 class TestF42NonUtf8Corrupt:
-    def test_load_committed_raises_corrupt_error(self, tmp_path) -> None:
-        p = tmp_path / "committed.json"
-        p.write_bytes(BAD_BYTES)
+    def test_load_committed_raises_corrupt_error(self, store, corrupt_row) -> None:
+        payload = corrupt_row(COMMITTED)
         with pytest.raises(CorruptCommittedCacheError):
-            load_committed(p)
-        assert p.read_bytes() == BAD_BYTES
+            load_committed()
+        assert store.backend.get(COMMITTED, SINGLE_KEY).payload == payload
 
-    def test_save_committed_refuses_and_preserves(self, tmp_path) -> None:
-        p = tmp_path / "committed.json"
-        p.write_bytes(BAD_BYTES)
+    def test_save_committed_refuses_and_preserves(self, store, corrupt_row) -> None:
+        payload = corrupt_row(COMMITTED)
         with pytest.raises(CorruptCommittedCacheError):
-            save_committed(p, {})
-        assert p.read_bytes() == BAD_BYTES
+            save_committed({})
+        assert store.backend.get(COMMITTED, SINGLE_KEY).payload == payload
 
     def test_candidate_store_load_flags_corrupt(self, tmp_path) -> None:
         p = tmp_path / "cands.json"

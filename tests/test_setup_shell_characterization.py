@@ -36,7 +36,6 @@ disk-cache-free render to be reproducible across machines/CI:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -419,7 +418,9 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
     import views.setup.data_bridge as data_bridge_mod
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.store import get_store
+    from engine.store.namespaces import COMMITTED
     from models.sourced import Provenance, Source, SourcedValue
 
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
@@ -431,7 +432,7 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, recorded_at)).to_json(),
         "your_ss_fra": SourcedValue(2_000.0, Provenance(Source.UNKNOWN, recorded_at)).to_json(),
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(

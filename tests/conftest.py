@@ -60,7 +60,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".pdf_import_ledger.json",
     _paths_mod.CANDIDATE_STORE_PATH,
     _paths_mod.TRUST_CHOICES_PATH,
-    _paths_mod.COMMITTED_PATH,
+    _REPO_ROOT / ".committed_household.json",
     _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
     _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
@@ -144,7 +144,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
     monkeypatch.setattr(_paths_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
-    monkeypatch.setattr(_paths_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
     monkeypatch.setattr(
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
@@ -158,18 +157,15 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_store_pkg, "_LEGACY_DIR", cache_dir)
 
     # 2. Other production modules with their own `from ... import <CONST>`
-    # binding of CANDIDATE_STORE_PATH / COMMITTED_PATH / TRUST_CHOICES_PATH.
+    # binding of CANDIDATE_STORE_PATH / TRUST_CHOICES_PATH.
     monkeypatch.setattr(_scan_ingest_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_views_shared_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_views_shared_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(
         _option_exercise_helpers_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json")
     )
-    monkeypatch.setattr(_setup_governance_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(_setup_governance_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_command_center_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
-    monkeypatch.setattr(_command_center_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
     monkeypatch.setattr(_command_center_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
 
     # 3. Functions whose default parameter value was baked from

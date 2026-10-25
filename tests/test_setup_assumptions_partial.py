@@ -30,13 +30,14 @@ this file's round-trip tests cover those too per the plan's Task 7 item.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 from streamlit.testing.v1 import AppTest
 
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.sourced import Provenance, Source
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
@@ -46,7 +47,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
     # audit-0805 W1: re-import at call time (not the module-level binding
     # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_json = {
         "prior_year_magi": {
@@ -54,7 +55,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
             "prov": {"2024": Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()},
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(

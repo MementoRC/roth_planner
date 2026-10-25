@@ -40,6 +40,8 @@ from engine.portfolio_sync import (
     save_ytd_snapshot,
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
+from engine.store import SINGLE_KEY, Store
+from engine.store.namespaces import COMMITTED
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from engine.upload_merge import JOINT_FIELDS, SCALAR_KEYS, build_user_defaults_session_updates
 from models.ytd_income import YTDSnapshot
@@ -159,43 +161,43 @@ def _app(*, suppress: bool = True) -> AppTest:
     return at
 
 
-def _cache_state() -> dict[str, bytes | None]:
-    return {
+def _cache_state(store: Store) -> dict[str, object]:
+    """Saved Command Center state, read past demo mode's null store."""
+    state: dict[str, object] = {
         p.name: (p.read_bytes() if p.exists() else None)
-        for p in (
-            paths_mod.COMMITTED_PATH,
-            paths_mod.CANDIDATE_STORE_PATH,
-            paths_mod.TRUST_CHOICES_PATH,
-        )
+        for p in (paths_mod.CANDIDATE_STORE_PATH, paths_mod.TRUST_CHOICES_PATH)
     }
+    row = store.backend.get(COMMITTED, SINGLE_KEY)
+    state[COMMITTED] = row.payload if row else None
+    return state
 
 
 class TestF28RenderDoesNotTouchPersonalBaseline:
-    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(self):
+    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(self, store):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
         at.run()
         assert not at.exception
-        before = _cache_state()
-        assert before[paths_mod.COMMITTED_PATH.name] is not None
+        before = _cache_state(store)
+        assert before[COMMITTED] is not None
 
         demo_mod.enter_demo_mode()
         at2 = _app()
         at2.run()
 
         assert not at2.exception
-        assert _cache_state() == before, "demo render rewrote a personal cache file"
+        assert _cache_state(store) == before, "demo render rewrote a personal cache file"
         assert at2.session_state["your_ira"] == DEFAULTS["your_ira"], (
             "the personal committed baseline was applied inside demo mode"
         )
 
-    def test_leaving_demo_mode_finds_the_personal_baseline_intact(self):
+    def test_leaving_demo_mode_finds_the_personal_baseline_intact(self, store):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
         at.run()
-        before = _cache_state()
+        before = _cache_state(store)
 
         demo_mod.enter_demo_mode()
         demo_at = _app()
@@ -208,7 +210,7 @@ class TestF28RenderDoesNotTouchPersonalBaseline:
         back.session_state["your_ira"] = personal_ira
         back.run()
         assert not back.exception
-        assert _cache_state() == before
+        assert _cache_state(store) == before
         assert back.session_state["your_ira"] == personal_ira
 
 

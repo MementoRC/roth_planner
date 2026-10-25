@@ -263,7 +263,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(tmp_path, monkey
     # and nothing was ever committed.
     # audit-0805 W1: re-import at test-run time (not the module-level binding
     # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     assert store.has_candidates("your_ira")
@@ -271,7 +271,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(tmp_path, monkey
     assert store.has_candidates("spouse_ss_fra")
     assert store.has_candidates(magi_field_key(_SCAN_YEAR))
 
-    assert load_committed(COMMITTED_PATH) is None
+    assert load_committed() is None
 
 
 def test_sync_everything_invokes_market_quote_refresh(tmp_path, monkeypatch):
@@ -395,13 +395,13 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(tmp_path, monkeypatc
     assert result.market_quote.candidates_recorded == 1
     assert result.market_quote.error is None
 
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH
 
     store = CandidateStore.load(CANDIDATE_STORE_PATH)
     assert not store.has_candidates("your_ira")
     assert store.has_candidates("your_ss_fra")
     assert store.has_candidates(magi_field_key(_SCAN_YEAR))
-    assert load_committed(COMMITTED_PATH) is None
+    assert load_committed() is None
 
 
 def test_sync_everything_persists_real_stock_grant_candidates_to_disk(tmp_path, monkeypatch):

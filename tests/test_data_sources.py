@@ -34,7 +34,7 @@ from engine.data_sources.confirm import confirm_field
 from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 from engine.data_sources.record import (
     record_magi_candidates,
     record_ss_fra_candidate,
@@ -54,6 +54,7 @@ from engine.data_sources.snapshot_ingest import (
     record_snapshot_candidates,
 )
 from engine.portfolio_sync import AccountSummary, EquityGrant, PortfolioSnapshot
+from engine.store.namespaces import COMMITTED
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
@@ -864,7 +865,7 @@ class TestCommitted:
         assert isinstance(hh.grants, SourcedList)
         assert list(hh.grants) == original_grants
 
-    def test_grants_round_trip_via_save_load(self, tmp_path: Path) -> None:
+    def test_grants_round_trip_via_save_load(self) -> None:
         hh = Household()
         grants = [
             StockGrant(year=2019, strike=98.0, shares=650, expiry_year=2029, grant_id="G1"),
@@ -878,10 +879,9 @@ class TestCommitted:
             ],
         )
         committed_json = extract_committed(hh)
-        path = tmp_path / "committed.json"
-        save_committed(path, committed_json)
+        save_committed(committed_json)
 
-        loaded = load_committed(path)
+        loaded = load_committed()
         assert loaded is not None
         hh2 = Household()
         apply_committed(hh2, loaded)
@@ -890,25 +890,23 @@ class TestCommitted:
         assert hh2.grants.prov[0].source == Source.FINEXTRACT_LIVE
         assert hh2.grants.prov[1].detail == "sync"
 
-    def test_load_committed_missing_file_returns_none_no_raise(self, tmp_path: Path) -> None:
-        missing = tmp_path / "does_not_exist.json"
-        assert load_committed(missing) is None
+    def test_load_committed_nothing_saved_returns_none_no_raise(self) -> None:
+        assert load_committed() is None
 
-    def test_load_committed_corrupt_file_raises(self, tmp_path: Path) -> None:
+    def test_load_committed_corrupt_row_raises(self, corrupt_row) -> None:
         """audit-0809 #11 — this test previously asserted a corrupt file returns
         None, the same as a missing file. That collapsed the two cases in a
         single except clause, so callers could not tell 'nothing committed
         yet' (safe to overwrite) from 'a baseline exists but is unreadable'
         (never safe to overwrite), and the app silently destroyed the user's
         committed data. Missing still returns None — see the sibling test
-        test_load_committed_missing_file_returns_none_no_raise — corrupt now
+        test_load_committed_nothing_saved_returns_none_no_raise — corrupt now
         raises. The authoritative data-loss guard is save_committed, which
-        refuses to overwrite an unreadable target.
+        refuses to overwrite an unreadable row.
         """
-        corrupt = tmp_path / "corrupt.json"
-        corrupt.write_text("{not valid json")
-        with pytest.raises(CorruptCommittedCacheError):
-            load_committed(corrupt)
+        corrupt_row(COMMITTED)
+        with pytest.raises(CorruptCommittedCacheError, match="corrupt store row"):
+            load_committed()
 
 
 class TestSnapshotIngest:
@@ -1164,7 +1162,6 @@ class TestPaths:
         repo_root = Path(__file__).resolve().parents[1]
         assert repo_root / ".candidate_store.json" == CANDIDATE_STORE_PATH
         assert repo_root / ".trust_choices.json" == TRUST_CHOICES_PATH
-        assert repo_root / ".committed_household.json" == COMMITTED_PATH
 
 
 class TestConfirmField:

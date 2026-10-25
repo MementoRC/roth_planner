@@ -38,7 +38,7 @@ from engine.brokerage_statement_pdf import load_statement_records
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 from engine.instance_identity import (
     CorruptInstanceOwnerError,
     load_instance_owner,
@@ -261,7 +261,7 @@ def render_command_center(hh: Household) -> None:
         # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
         # only) — save_committed() is the actual guard against overwriting it.
         try:
-            committed_json = load_committed(COMMITTED_PATH) or {}
+            committed_json = load_committed() or {}
         except CorruptCommittedCacheError:
             committed_json = {}
 

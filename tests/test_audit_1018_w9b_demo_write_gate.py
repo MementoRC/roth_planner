@@ -69,7 +69,6 @@ APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
-        "committed": paths_mod.COMMITTED_PATH,
         "candidates": paths_mod.CANDIDATE_STORE_PATH,
         "choices": paths_mod.TRUST_CHOICES_PATH,
         "user_defaults": loader._USER_DEFAULTS_PATH,
@@ -83,6 +82,7 @@ def _personal_paths() -> dict[str, Path]:
 # The database namespaces personal_files fills (checked once each store has moved).
 _FILLED_NAMESPACES = frozenset(
     {
+        "committed",
         "portfolio",
         "ytd",
         "ssa",
@@ -143,7 +143,7 @@ def _ssa(amount: float) -> SSASnapshot:
 def personal_files(monkeypatch, store):
     """Fill every personal file with synthetic content via the REAL savers."""
     monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
-    save_committed(paths_mod.COMMITTED_PATH, {})
+    save_committed({})
     CandidateStore().save(paths_mod.CANDIDATE_STORE_PATH)
     ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
     loader._USER_DEFAULTS_PATH.write_text(json.dumps({"your_age": 71}))
@@ -187,7 +187,7 @@ def personal_files(monkeypatch, store):
 def _run_write_paths() -> None:
     """Drive the main persisting paths with DIFFERENT values than the fixture's."""
     now = datetime(2026, 3, 1)
-    save_committed(paths_mod.COMMITTED_PATH, {"your_ira": 5})
+    save_committed({"your_ira": 5})
     cand = CandidateStore()
     cand.save(paths_mod.CANDIDATE_STORE_PATH)
     record_ira_balance_candidate("your_ira", 123_456.0, "synthetic", now)
@@ -240,7 +240,7 @@ class TestDemoModeWritesNothing:
         assert ubs_mod.load_ubs_orders() == []
         assert load_instance_owner() is None
         assert load_account_overrides() == {}
-        assert load_committed(paths_mod.COMMITTED_PATH) is None
+        assert load_committed() is None
         assert not CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).load_corrupt
         assert exercise_store_mod.load_exercise_schedule() is None
 
@@ -291,7 +291,7 @@ class TestLeavingDemoModeRestoresPersonalFiles:
         assert ytd.wages_ytd == 250_000.0
         assert load_instance_owner() == "you"
         assert load_account_overrides() == {("synthbroker", "ACCT-1"): "spouse"}
-        assert load_committed(paths_mod.COMMITTED_PATH) == {}
+        assert load_committed() == {}
         assert load_ledger()["brokerage"] == {"you": {"ACCT-1": {"value": 1}}}
         assert loader.load_defaults()["your_age"] == 71
         assert owner_mod.load_owner_map() == {"SYNTH NAME": "you"}

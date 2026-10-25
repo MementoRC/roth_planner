@@ -12,6 +12,7 @@ import pytest
 import engine.store as store_pkg
 from engine.demo_mode import enter_demo_mode, leave_demo_mode
 from engine.store import (
+    META_NAMESPACE,
     CorruptStoreError,
     StoreUnavailableError,
     get_store,
@@ -20,7 +21,7 @@ from engine.store import (
 )
 from engine.store.backend import DictBackend, NullBackend
 from engine.store.core import Store
-from engine.store.legacy_files import declare_store
+from engine.store.legacy_files import declare_store, registered
 from engine.store.migrate_json import BACKUP_DIR_NAME
 from engine.store.sqlite_backend import MEMORY, SqliteBackend
 
@@ -275,3 +276,26 @@ def test_concurrent_first_calls_open_and_import_once(no_override):
     assert got[0] is got[1]
     assert got[0].get("t_sel") == {"a": 1}
     assert len(list((_legacy_dir() / BACKUP_DIR_NAME).glob("*/.t_sel.json"))) == 1
+
+
+def test_a_pr2_database_imports_only_the_stores_registered_since(no_override):
+    from engine.store.migrate_json import marker_key
+    from engine.store.namespaces import COMMITTED, PORTFOLIO
+
+    existing = Store(SqliteBackend(store_pkg.db_path()))
+    for entry in registered():
+        if entry.namespace != COMMITTED:
+            existing.put(META_NAMESPACE, {"imported": False}, key=marker_key(entry.namespace))
+    existing.backend.close()
+    (_legacy_dir() / ".committed_household.json").write_text(json.dumps({}))
+    stray = _legacy_dir() / ".portfolio_cache.json"
+    stray.write_text(json.dumps({"accounts": []}))
+
+    store = get_store()
+
+    assert store.get(COMMITTED) == {}
+    assert store.get(PORTFOLIO) is None
+    assert stray.exists()
+    result = migration_notice()
+    assert result is not None
+    assert result.imported == (".committed_household.json",)

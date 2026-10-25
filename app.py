@@ -16,7 +16,6 @@ inject_app_css()
 
 from collections.abc import Callable  # noqa: E402
 from datetime import datetime  # noqa: E402
-from pathlib import Path  # noqa: E402
 from typing import TypeVar  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
@@ -280,7 +279,6 @@ from engine.data_sources.orchestrator import (  # noqa: E402
 # them without importing from app.py).
 from engine.data_sources.paths import (  # noqa: E402
     CANDIDATE_STORE_PATH,
-    COMMITTED_PATH,
     TRUST_CHOICES_PATH,
 )
 from engine.data_sources.resolver import resolve  # noqa: E402
@@ -324,7 +322,7 @@ def _current_pending_review() -> set[str]:
     if base is None or _DEMO_MODE:
         return published
     try:
-        committed_json = load_committed(COMMITTED_PATH)
+        committed_json = load_committed()
     except CorruptCommittedCacheError:
         return published
     if committed_json is not None:
@@ -348,7 +346,7 @@ def _persist_resolution(
     app_res: AppResolveResult,
     store: CandidateStore,
     choices: ChoiceMap,
-    corrupt_committed_path: Path | None,
+    committed_unreadable: bool,
 ) -> None:
     """Write the committed baseline, candidate store and trust choices back to disk.
 
@@ -369,14 +367,14 @@ def _persist_resolution(
     # see its docstring), so this early skip is defence in depth / an earlier,
     # more specific warning message rather than the only thing preventing the
     # clobber; kept so the app.py-level warning below still fires.
-    if app_res.committed_changed and corrupt_committed_path is None:
-        save_committed(COMMITTED_PATH, app_res.committed_json)
-    elif corrupt_committed_path is not None:
+    if app_res.committed_changed and not committed_unreadable:
+        save_committed(app_res.committed_json)
+    elif committed_unreadable:
         st.warning(
-            f"⚠️ Your committed baseline at `{corrupt_committed_path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
+            "⚠️ Your committed baseline is unreadable (corrupt or truncated) and could "
+            "contain data with no other copy. It has been left untouched and will NOT be "
+            "overwritten this session — restore it from a backup if you have one, or "
+            "contact support before deleting it."
         )
     # audit-0823: mirror the committed-baseline guard above — a corrupt
     # on-disk candidate store must not be silently clobbered by the
@@ -507,18 +505,18 @@ def get_household() -> Household:
     choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load(TRUST_CHOICES_PATH)
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see
-    # CorruptCommittedCacheError's docstring. On a corrupt file we proceed
+    # CorruptCommittedCacheError's docstring. On a corrupt baseline we proceed
     # with committed_json=None (in-memory first-load path, so the app still
-    # renders) but set _corrupt_committed_path so the save below is
-    # suppressed for this run and the user is warned; the corrupt file on
-    # disk is left completely untouched (no delete/rename/overwrite).
-    _corrupt_committed_path: Path | None = None
+    # renders) but set _committed_unreadable so the save below is
+    # suppressed for this run and the user is warned; the unreadable row is
+    # left untouched.
+    _committed_unreadable = False
     committed_json: dict | None = None
     if not _DEMO_MODE:
         try:
-            committed_json = load_committed(COMMITTED_PATH)
+            committed_json = load_committed()
         except CorruptCommittedCacheError:
-            _corrupt_committed_path = COMMITTED_PATH
+            _committed_unreadable = True
 
     # audit-1008 F-64: years the Setup MAGI-anchor form set back to 0.
     _cleared_magi = st.session_state.get(MAGI_CLEARED_KEY) or ()
@@ -540,7 +538,7 @@ def get_household() -> Household:
     _run_state["baseline_hh"] = session_hh
     # The clear only sticks once the baseline is saved; on a corrupt baseline
     # (save suppressed below) keep the flag so it applies on a later render.
-    if _corrupt_committed_path is None:
+    if not _committed_unreadable:
         st.session_state.pop(MAGI_CLEARED_KEY, None)
         st.session_state.pop(SEED_VALUES_KEY, None)
         st.session_state.pop(BUNDLE_SCALARS_KEY, None)
@@ -572,7 +570,7 @@ def get_household() -> Household:
             # already used for these same fields.
             st.session_state[_session_key] = int(round(_value))
 
-    _persist_resolution(app_res, store, choices, _corrupt_committed_path)
+    _persist_resolution(app_res, store, choices, _committed_unreadable)
 
     # Expose the review gate to the sidebar/Command Center.
     st.session_state["_pending_review"] = app_res.result.pending_review

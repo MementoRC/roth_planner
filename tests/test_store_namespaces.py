@@ -28,6 +28,7 @@ EXPECTED: dict[str, str] = {
     "pdf_ledger": ".pdf_import_ledger.json",
     "ubs_activity": ".ubs_activity_cache.json",
     "exercise_schedule": ".exercise_schedule_cache.json",
+    "committed": ".committed_household.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -42,6 +43,7 @@ MOVED_MODULES: list[str] = [
     "engine.pdf_ledger",
     "engine.ubs_activity_store",
     "engine.exercise_schedule_store",
+    "engine.data_sources.committed",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -73,6 +75,8 @@ STORE_FUNCTIONS: list[str] = [
     "engine.exercise_schedule_store:save_exercise_schedule",
     "engine.exercise_schedule_store:load_exercise_schedule",
     "engine.exercise_schedule_store:clear_exercise_schedule",
+    "engine.data_sources.committed:load_committed",
+    "engine.data_sources.committed:save_committed",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

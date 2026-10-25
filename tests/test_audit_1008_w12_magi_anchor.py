@@ -8,7 +8,7 @@ silently skipping the Command Center confirm.
 F-64: "Leave 0 to use projected MAGI" popped the year from session, but
 reconcile never deletes committed years, so the anchor snapped back.
 
-W11 follow-up: ``save_committed`` only checked that the existing file was
+W11 follow-up: ``save_committed`` only checked that the saved baseline was
 valid JSON, so a valid-JSON-but-wrong-shape baseline (which
 ``load_committed`` / ``apply_committed`` cannot use) was silently replaced.
 
@@ -17,7 +17,6 @@ All figures are synthetic.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 import pytest
@@ -32,6 +31,7 @@ from engine.data_sources.committed import (
 from engine.data_sources.orchestrator import resolve_for_app
 from engine.data_sources.record import record_magi_candidates
 from engine.data_sources.resolver import magi_field_key
+from engine.store.namespaces import COMMITTED
 from models.household import Household
 from models.sourced import Source
 
@@ -177,38 +177,35 @@ def test_empty_session_without_clear_flag_does_not_wipe_committed(tmp_path):
 @pytest.mark.parametrize(
     "content",
     [
-        "[1, 2, 3]",
-        '"just a string"',
-        json.dumps({"your_ira": "not-a-payload"}),
-        json.dumps({"prior_year_magi": {"data": {"2024": 1.0}}}),
+        [1, 2, 3],
+        "just a string",
+        {"your_ira": "not-a-payload"},
+        {"prior_year_magi": {"data": {"2024": 1.0}}},
     ],
 )
-def test_save_committed_refuses_wrong_shape_file(tmp_path, content):
-    path = tmp_path / "committed.json"
-    path.write_text(content)
+def test_save_committed_refuses_wrong_shape_row(store, content):
+    store.put(COMMITTED, content)
     with pytest.raises(CorruptCommittedCacheError):
-        save_committed(path, {})
-    assert path.read_text() == content
+        save_committed({})
+    assert store.get(COMMITTED) == content
 
 
 @pytest.mark.parametrize(
     "content",
     [
-        "[1, 2, 3]",
-        json.dumps({"your_ira": "not-a-payload"}),
+        [1, 2, 3],
+        {"your_ira": "not-a-payload"},
     ],
 )
-def test_load_committed_flags_wrong_shape_file(tmp_path, content):
-    path = tmp_path / "committed.json"
-    path.write_text(content)
+def test_load_committed_flags_wrong_shape_row(store, content):
+    store.put(COMMITTED, content)
     with pytest.raises(CorruptCommittedCacheError):
-        load_committed(path)
+        load_committed()
 
 
 def test_save_committed_overwrites_valid_baseline(tmp_path):
-    path = tmp_path / "committed.json"
     app = _App(tmp_path, {2024: 111_000.0})
     app.rerun()
-    save_committed(path, app.committed)
-    save_committed(path, app.committed)
-    assert load_committed(path) == app.committed
+    save_committed(app.committed)
+    save_committed(app.committed)
+    assert load_committed() == app.committed

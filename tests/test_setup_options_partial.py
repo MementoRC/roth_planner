@@ -17,7 +17,6 @@ same fields too.
 from __future__ import annotations
 
 import dataclasses
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +25,8 @@ from streamlit.testing.v1 import AppTest
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.resolver import GRANTS_KEY
+from engine.store import get_store
+from engine.store.namespaces import COMMITTED
 from models.grants import StockGrant
 from models.sourced import Provenance, Source, SourcedValue
 
@@ -36,12 +37,12 @@ def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
     # audit-0805 W1: re-import at call time (not the module-level binding
     # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     store = CandidateStore()
     store.record_candidate(
@@ -53,7 +54,7 @@ def _seed_pending_stock_price_now() -> None:
 
 def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
     committed_json = {
@@ -62,7 +63,7 @@ def _seed_pending_grants() -> None:
             "prov": [Provenance(Source.UNKNOWN, _RECORDED_AT).to_json()],
         }
     }
-    COMMITTED_PATH.write_text(json.dumps(committed_json))
+    get_store().put(COMMITTED, committed_json)
 
     candidate_grants = [
         StockGrant(year=2019, strike=98.0, shares=200, expiry_year=2029),
