@@ -18,12 +18,16 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from engine.data_bridge_browser import is_pyodide
 from engine.demo_mode import is_demo_mode
-from engine.store.backend import Backend, DictBackend, NullBackend
+from engine.store.backend import Backend, DictBackend, NullBackend, RoutedBackend
 from engine.store.core import META_NAMESPACE, SINGLE_KEY, Store, register_namespace
 from engine.store.errors import CorruptStoreError, StoreError, StoreUnavailableError
+
+if TYPE_CHECKING:
+    from engine.store.migrate_json import MigrationResult
 
 __all__ = [
     "META_NAMESPACE",
@@ -34,6 +38,7 @@ __all__ = [
     "StoreUnavailableError",
     "db_path",
     "get_store",
+    "migration_notice",
     "register_namespace",
     "set_store",
 ]
@@ -45,6 +50,7 @@ _lock = threading.Lock()
 _override: Store | None = None
 _file_store: Store | None = None
 _session_store: Store | None = None
+_migration_result: MigrationResult | None = None
 _null_store = Store(NullBackend())
 
 
@@ -87,22 +93,57 @@ def _get_session_store() -> Store:
         return _session_store
 
 
+def migration_notice() -> MigrationResult | None:
+    """This process's JSON import result; ``None`` until the file store has been opened."""
+    return _migration_result
+
+
 def _get_file_store() -> Store:
-    global _file_store
+    global _file_store, _migration_result
     with _lock:
         if _file_store is None:
-            from engine.store.sqlite_backend import SqliteBackend
-
-            _file_store = Store(SqliteBackend(db_path()))
+            _file_store, _migration_result = _open_file_store(db_path())
         return _file_store
 
 
+def _open_file_store(path: Path) -> tuple[Store, MigrationResult]:
+    """Open the database and run the one-time JSON import (caller holds ``_lock``)."""
+    import engine.store.namespaces  # noqa: F401 -- complete the registry before importing
+    from engine.store.migrate_json import migrate_json, read_only_backend
+    from engine.store.sqlite_backend import SqliteBackend
+
+    created = not path.exists()
+    store = Store(SqliteBackend(path))
+    try:
+        result = migrate_json(store, path.parent)
+    except BaseException:
+        store.backend.close()
+        raise
+    if not result.read_only:
+        return store, result
+    json_backend = read_only_backend(result, path.parent)
+    if created:
+        # Nothing was imported, so leave no database behind (spec §4); the next start retries.
+        store.backend.close()
+        _remove_db_files(path)
+        return Store(json_backend), result
+    return Store(
+        RoutedBackend(store.backend, dict.fromkeys(result.read_only, json_backend))
+    ), result
+
+
+def _remove_db_files(path: Path) -> None:
+    for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        candidate.unlink(missing_ok=True)
+
+
 def _reset_cached_stores() -> None:
-    """Close and forget the cached stores (tests only)."""
-    global _file_store, _session_store
+    """Close and forget the cached stores and the import result (tests only)."""
+    global _file_store, _session_store, _migration_result
     with _lock:
         for store in (_file_store, _session_store):
             if store is not None:
                 store.backend.close()
         _file_store = None
         _session_store = None
+        _migration_result = None
