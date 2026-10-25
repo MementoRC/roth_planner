@@ -21,7 +21,6 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import config.loader as loader
-import engine.account_attribution as attribution_mod
 import engine.account_link as link_mod
 import engine.brokerage_statement_pdf as brokerage_mod
 import engine.demo_mode as demo_mod
@@ -68,7 +67,6 @@ def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
         "user_defaults": loader._USER_DEFAULTS_PATH,
-        "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
         "owner_map": owner_mod._OWNER_MAP_PATH,
         "link_map": link_mod._ACCOUNT_LINK_PATH,
     }
@@ -81,6 +79,7 @@ _FILLED_NAMESPACES = frozenset(
         "candidate_store",
         "trust_choices",
         "instance_owner",
+        "account_attribution",
         "portfolio",
         "ytd",
         "ssa",

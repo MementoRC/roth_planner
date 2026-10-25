@@ -124,11 +124,11 @@ def _render_attribution_table(instance_owner: str) -> None:
             if choice != resolved:
                 try:
                     save_account_override(rec.broker, account_number, choice)
-                except CorruptAccountAttributionError as exc:
+                except CorruptAccountAttributionError:
                     st.error(
-                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                        "(corrupt or truncated); this override was NOT saved. Restore "
-                        "the file from a backup or contact support before retrying."
+                        "⚠️ Account attribution store is unreadable (corrupt or "
+                        "truncated); this override was NOT saved. Restore it from a "
+                        "backup or contact support before retrying."
                     )
                 else:
                     # No session-state pop needed here: on the immediate rerun,
@@ -144,11 +144,11 @@ def _render_attribution_table(instance_owner: str) -> None:
             ):
                 try:
                     delete_account_override(rec.broker, account_number)
-                except CorruptAccountAttributionError as exc:
+                except CorruptAccountAttributionError:
                     st.error(
-                        f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                        "(corrupt or truncated); this override was NOT cleared. Restore "
-                        "the file from a backup or contact support before retrying."
+                        "⚠️ Account attribution store is unreadable (corrupt or "
+                        "truncated); this override was NOT cleared. Restore it from a "
+                        "backup or contact support before retrying."
                     )
                 else:
                     # Streamlit only honours a keyed widget's index= kwarg on its

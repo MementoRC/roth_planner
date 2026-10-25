@@ -32,6 +32,7 @@ EXPECTED: dict[str, str] = {
     "candidate_store": ".candidate_store.json",
     "trust_choices": ".trust_choices.json",
     "instance_owner": ".instance_owner.json",
+    "account_attribution": ".account_attribution.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -52,6 +53,7 @@ MOVED_MODULES: list[str] = [
     "engine.data_sources.scan_ingest",
     "engine.data_sources.choices",
     "engine.instance_identity",
+    "engine.account_attribution",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -97,6 +99,9 @@ STORE_FUNCTIONS: list[str] = [
     "engine.data_sources.choices:ChoiceMap.save",
     "engine.instance_identity:load_instance_owner",
     "engine.instance_identity:save_instance_owner",
+    "engine.account_attribution:load_account_overrides",
+    "engine.account_attribution:save_account_override",
+    "engine.account_attribution:delete_account_override",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path", "store_path"}

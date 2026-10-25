@@ -30,7 +30,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # production code never reaches the real path, but the watch-list itself
 # below is captured once and is immune to that later patching.
 import config.loader as _config_loader_mod  # noqa: E402
-import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.account_link as _account_link_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
@@ -55,7 +54,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".committed_household.json",
     _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
-    _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
+    _REPO_ROOT / ".account_attribution.json",
     _REPO_ROOT / ".instance_owner.json",
     _REPO_ROOT / ".ubs_activity_cache.json",
     _account_link_mod._ACCOUNT_LINK_PATH,
@@ -135,9 +134,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
-    monkeypatch.setattr(
-        _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
-    )
     monkeypatch.setattr(_demo_mode_mod, "DEMO_MODE_PATH", _tmp(".demo_mode"))
 
     # The SQLite store file: never let a test reach the repo-root database.

@@ -9,6 +9,12 @@ from datetime import datetime
 
 import pytest
 
+from engine.account_attribution import (
+    CorruptAccountAttributionError,
+    delete_account_override,
+    load_account_overrides,
+    save_account_override,
+)
 from engine.data_sources.candidate_store import CandidateStore, CorruptCandidateStoreError
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
 from engine.data_sources.committed import (
@@ -23,7 +29,13 @@ from engine.instance_identity import (
     save_instance_owner,
 )
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, INSTANCE_OWNER, TRUST_CHOICES
+from engine.store.namespaces import (
+    ACCOUNT_ATTRIBUTION,
+    CANDIDATE_STORE,
+    COMMITTED,
+    INSTANCE_OWNER,
+    TRUST_CHOICES,
+)
 from models.sourced import Provenance, Source, SourcedValue
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -148,3 +160,24 @@ class TestInstanceOwnerStore:
         store.put(INSTANCE_OWNER, {"version": 1, "instance_owner": "household"})
         with pytest.raises(CorruptInstanceOwnerError, match="invalid instance_owner"):
             load_instance_owner()
+
+
+class TestAccountAttributionStore:
+    def test_round_trip_keeps_the_versioned_document(self, store):
+        save_account_override("synthbroker", "ACCT-1", "spouse")
+        assert store.get(ACCOUNT_ATTRIBUTION) == {
+            "version": 1,
+            "overrides": {"synthbroker|ACCT-1": "spouse"},
+        }
+        assert load_account_overrides() == {("synthbroker", "ACCT-1"): "spouse"}
+        delete_account_override("synthbroker", "ACCT-1")
+        assert load_account_overrides() == {}
+
+    def test_corrupt_row_reads_empty_and_refuses_both_writes(self, store, corrupt_row):
+        payload = corrupt_row(ACCOUNT_ATTRIBUTION)
+        assert load_account_overrides() == {}
+        with pytest.raises(CorruptAccountAttributionError, match="corrupt store row"):
+            save_account_override("synthbroker", "ACCT-1", "you")
+        with pytest.raises(CorruptAccountAttributionError, match="corrupt store row"):
+            delete_account_override("synthbroker", "ACCT-1")
+        assert store.backend.get(ACCOUNT_ATTRIBUTION, SINGLE_KEY).payload == payload

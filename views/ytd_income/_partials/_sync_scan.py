@@ -317,10 +317,10 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
         if st.button(f"Account is actually {named_now}", key=f"holder_mismatch_account_{entry_id}"):
             try:
                 save_account_override(broker, account_key, named_now)
-            except CorruptAccountAttributionError as exc:
+            except CorruptAccountAttributionError:
                 st.error(
-                    f"⚠️ Account attribution store at `{exc.path}` is unreadable "
-                    "(corrupt or truncated); this override was NOT saved."
+                    "⚠️ Account attribution store is unreadable (corrupt or truncated); "
+                    "this override was NOT saved."
                 )
             else:
                 del mismatches[entry_id]
