@@ -4,13 +4,28 @@ from __future__ import annotations
 
 import streamlit as st
 
-from engine.store import StoreUnavailableError, get_store, migration_notice
+from engine.store import (
+    CorruptStoreError,
+    StoreError,
+    StoreUnavailableError,
+    get_store,
+    migration_notice,
+)
 
 _IMPORT_NOTICE_SHOWN = "_store_import_notice_shown"
 
 
 def storage_unavailable_message(exc: StoreUnavailableError) -> str:
     return f"Storage unavailable at {exc.location}: {exc.reason}. Nothing was saved."
+
+
+def store_error_message(exc: StoreError) -> str:
+    """Banner text for any store error: unavailable storage or an unreadable row."""
+    if isinstance(exc, StoreUnavailableError):
+        return storage_unavailable_message(exc)
+    if isinstance(exc, CorruptStoreError):
+        return f"Saved data for {exc.namespace} could not be read: {exc.reason}. Nothing was saved."
+    return f"Saved data could not be read: {exc}. Nothing was saved."
 
 
 def render_store_notice() -> None:
