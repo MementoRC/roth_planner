@@ -186,7 +186,7 @@ def apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
 
     Grants on the existing snapshot are REPLACED when the bundle carries a
     "grants" section (v4+), and preserved untouched when it does not (v3 and
-    older bundles) -- so local runs against a real .portfolio_cache.json
+    older bundles) -- so local runs against a real saved portfolio
     keep today's behaviour until the sender re-exports with a current
     version.
     """

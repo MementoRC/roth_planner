@@ -177,7 +177,7 @@ def _parse_option_exercises_rows(
 def _parse_equity_sales_lots(
     lots: list[dict[str, Any]], captured_at: str = "", *, tax_year: int | None = None
 ) -> OptionExercisesSnapshot:
-    """Parse equity_sales.lots from .portfolio_cache.json (FinExtract PRs #19/#20/#21).
+    """Parse equity_sales.lots from the saved portfolio (FinExtract PRs #19/#20/#21).
 
     Each lot is one (sale, tax-lot) tuple. lots[*].execution_quantity is a
     numeric string (must cast); other numeric fields are already numbers.

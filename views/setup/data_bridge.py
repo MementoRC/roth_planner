@@ -596,7 +596,7 @@ def _settle_ytd(result: ImportResult, ready: _ReadyImport) -> bool:
         ledger_has_data = bool(ledger_slice.get("koinly") or ledger_slice.get("brokerage"))
     if "ytd_snapshot" not in st.session_state and (ledger_has_data or incoming_ytd is not None):
         # Satisfy _rederive_ytd_from_ledger's precondition: in Pyodide there is
-        # no persistent .ytd_cache.json, so without this seed the re-derive was
+        # no saved YTD snapshot to load, so without this seed the re-derive was
         # a permanent no-op in the browser.
         st.session_state["ytd_snapshot"] = load_ytd_snapshot() or YTDSnapshot()
     return _rederive_ytd_from_ledger(result.ledger)

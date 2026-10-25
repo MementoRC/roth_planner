@@ -155,7 +155,7 @@ class PortfolioSnapshot:
     # EquityGrant has no owner, and without this an export filed the other
     # person's grants under the exporter's slot, bouncing a stale copy back.
     equity_grants_owner: str = ""
-    # FinExtract PRs #19/#20/#21: equity_sales from .portfolio_cache.json
+    # FinExtract PRs #19/#20/#21: equity_sales from the saved portfolio
     equity_sales_lots: list[dict[str, Any]] = field(default_factory=list)
     equity_sales_executions: list[dict[str, Any]] = field(default_factory=list)
     order_detail_summary_captured_at: str = ""
