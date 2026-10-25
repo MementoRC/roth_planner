@@ -5,10 +5,9 @@ to verify ``get_household()`` is correctly wired to
 ``engine.data_sources.orchestrator.resolve_for_app`` and that the per-load
 snapshot-clobber block has been removed.
 
-Isolation: the committed baseline and the candidate store live in the document
-store, and trust choices still use the file ``.trust_choices.json``. Every test
-redirects that file into its own tmp dir and runs on its own in-memory store, so
-a developer's personal committed/candidate state never leaks in.
+Isolation: the committed baseline, the candidate store and the trust choices
+all live in the document store. Every test runs on its own in-memory store, so
+a developer's personal committed/candidate/choice state never leaks in.
 ``_suppress_snapshot_autoload`` is pre-seeded so a developer's real saved
 portfolio (personal data) cannot influence the migration-identity assertion
 below.

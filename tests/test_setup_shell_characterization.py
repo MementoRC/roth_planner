@@ -215,7 +215,7 @@ def _union_of_page_keys(*, owner: str | None) -> set[str]:
 #   instance's identity is resolvable (views/setup/command_center.py's
 #   `if identity_set:`) -- which now includes a genuinely first-run instance,
 #   since it auto-defaults to "you" inside that same render. Only a CORRUPT
-#   .instance_owner.json still leaves identity unset after render.
+#   saved instance owner (store row) still leaves identity unset after render.
 # - The PDF Statements section renders its body only ONCE identity is set
 #   (views/data_pages.py swaps in a placeholder otherwise), for the
 #   same reason. The "Import previous data" (bundle) card is NOT gated: bundle
@@ -258,7 +258,7 @@ def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(monkeypatch, co
     are absent; the bundle import card still renders in full.
 
     This is the only remaining state that diverges from the test above -- a
-    genuinely MISSING .instance_owner.json no longer reaches it, since
+    genuinely MISSING saved instance owner no longer reaches it, since
     render_command_center auto-defaults such an instance to "you" (and
     persists that) within its own render, before the shell ever checks
     identity_set for the import sections. Together with the test above, this

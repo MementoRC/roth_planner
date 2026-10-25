@@ -584,7 +584,7 @@ def test_import_statement_agrees_with_applied_slot_for_both_choices(
 def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypatch) -> None:
     """Corrupt-identity companion to
     ``test_export_disabled_and_build_skipped_when_instance_owner_unset``: a
-    genuinely corrupt ``.instance_owner.json`` must degrade through
+    genuinely corrupt saved instance owner (store row) must degrade through
     ``_this_instance_owner()``'s ``except CorruptInstanceOwnerError: return
     None`` handler to the exact same "unset" treatment -- export gated and
     ``build_bundle`` never called -- rather than crashing the tab or, worse,
@@ -638,7 +638,7 @@ def test_export_disabled_and_build_skipped_when_instance_owner_corrupt(monkeypat
 
 def test_import_works_and_names_file_slot_when_identity_corrupt(monkeypatch) -> None:
     """Replaces test_apply_uploads_disabled_and_no_importing_as_statement_when_corrupt
-    (bridge v5, plan B5). A genuinely corrupt ``.instance_owner.json`` must
+    (bridge v5, plan B5). A genuinely corrupt saved instance owner must
     neither crash the panel nor block the import, now that identity does not
     gate it. The old concern -- a statement confidently naming a target GUESSED
     from a corrupt identity -- no longer applies: the slot named before Apply

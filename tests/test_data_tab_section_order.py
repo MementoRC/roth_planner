@@ -110,9 +110,9 @@ def test_pdf_statements_gate_links_to_review_when_identity_is_corrupt(
 ) -> None:
     """Corrupt identity => PDF Statements is replaced by the gate; 1040 Import is not.
 
-    A genuinely MISSING .instance_owner.json no longer reaches this branch:
+    A genuinely MISSING saved instance owner no longer reaches this branch:
     render_command_center auto-defaults such an instance to "you" (and persists
-    that), so this seeds a corrupt file instead, the only remaining state where
+    that), so this seeds a corrupt store row instead, the only remaining state where
     identity stays unset.
 
     Bundle import does not depend on identity (spec 2026-09-20 §5: a v5 file
