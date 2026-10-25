@@ -9,6 +9,8 @@ import pytest
 from engine.store.core import SINGLE_KEY
 from engine.store.legacy_files import (
     LegacyFile,
+    declare_store,
+    per_entry_reader,
     register_legacy_file,
     registered,
     single_document_reader,
@@ -25,7 +27,34 @@ def test_registered_entries_come_back_sorted_by_namespace():
     register_legacy_file(b)
     register_legacy_file(a)
     register_legacy_file(a)  # identical re-registration is harmless (module re-import)
-    assert registered() == (a, b)
+    entries = registered()
+    names = [entry.namespace for entry in entries]
+    assert names == sorted(names)
+    assert a in entries
+    assert b in entries
+
+
+def test_declare_store_registers_the_namespace_and_its_file():
+    from engine.store import core
+
+    assert declare_store("t_decl", ".t_decl.json") == "t_decl"
+    assert "t_decl" in core._NAMESPACES
+    assert LegacyFile("t_decl", ".t_decl.json", single_document_reader) in registered()
+    with pytest.raises(ValueError, match="t_decl"):
+        declare_store("t_decl", ".other.json")
+
+
+def test_per_entry_reader_maps_each_entry_to_a_row(tmp_path):
+    path = tmp_path / ".x.json"
+    path.write_text(json.dumps({"k1": {"v": 1}, "k2": 2}))
+    assert per_entry_reader(path) == {"k1": {"v": 1}, "k2": 2}
+
+
+def test_per_entry_reader_rejects_a_non_object(tmp_path):
+    path = tmp_path / ".x.json"
+    path.write_text("[1, 2]")
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        per_entry_reader(path)
 
 
 def test_conflicting_registration_is_refused():
