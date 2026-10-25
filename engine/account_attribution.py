@@ -94,14 +94,12 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     instance owner -- the same outcome as if no override had been recorded.
     """
     try:
-        raw = _read_document()
+        return _decode_overrides(_read_overrides())
     except CorruptAccountAttributionError:
         return {}
-    if not isinstance(raw, dict):
-        return {}
-    overrides_raw = raw.get("overrides")
-    if not isinstance(overrides_raw, dict):
-        return {}
+
+
+def _decode_overrides(overrides_raw: dict[str, Any]) -> dict[tuple[str, str], str]:
     result: dict[tuple[str, str], str] = {}
     for key, owner in overrides_raw.items():
         decoded = _decode_key(str(key))
@@ -110,18 +108,28 @@ def load_account_overrides() -> dict[tuple[str, str], str]:
     return result
 
 
-def _read_document() -> Any:
-    """The saved document (``None`` if absent); CorruptAccountAttributionError if unreadable.
+def _read_overrides() -> dict[str, Any]:
+    """The saved ``overrides`` mapping (``{}`` if absent).
 
-    Both writers call this before merging onto what the tolerant
-    ``load_account_overrides()`` returns, so an unreadable row stops the write
-    instead of being replaced by a fresh dict holding only the one entry being
-    saved or deleted (see CorruptAccountAttributionError).
+    Raises CorruptAccountAttributionError if the row is undecodable or is not
+    a ``{"overrides": {...}}`` document. Both writers call this inside their
+    transaction, so a row the tolerant ``load_account_overrides()`` reads as
+    ``{}`` stops the write instead of being replaced by a fresh dict holding
+    only the one entry being saved or deleted (see
+    CorruptAccountAttributionError).
     """
     try:
-        return get_store().get(ACCOUNT_ATTRIBUTION)
+        raw = get_store().get(ACCOUNT_ATTRIBUTION)
     except CorruptStoreError as exc:
         raise CorruptAccountAttributionError(ACCOUNT_ATTRIBUTION, exc) from exc
+    if raw is None:
+        return {}
+    overrides_raw = raw.get("overrides") if isinstance(raw, dict) else None
+    if not isinstance(overrides_raw, dict):
+        raise CorruptAccountAttributionError(
+            ACCOUNT_ATTRIBUTION, ValueError("expected a JSON object with an 'overrides' object")
+        )
+    return overrides_raw
 
 
 def _write(overrides: dict[tuple[str, str], str]) -> None:
@@ -136,13 +144,13 @@ def save_account_override(broker: str, account_number: str, owner: str) -> None:
     """Save an override for ``(broker, account_number)``.
 
     Raises CorruptAccountAttributionError (without writing) if the saved
-    overrides cannot be read. The check and the write are one transaction.
+    overrides cannot be read or are the wrong shape. The check and the write
+    are one transaction.
     """
     if owner not in OWNER_ROLES:
         raise ValueError(f"Invalid owner role {owner!r}, must be one of {sorted(OWNER_ROLES)}")
     with get_store().transaction():
-        _read_document()
-        overrides = load_account_overrides()
+        overrides = _decode_overrides(_read_overrides())
         overrides[(broker, account_number)] = owner
         _write(overrides)
 
@@ -151,11 +159,11 @@ def delete_account_override(broker: str, account_number: str) -> None:
     """Remove any override for ``(broker, account_number)``.
 
     Raises CorruptAccountAttributionError (without writing) if the saved
-    overrides cannot be read. The check and the write are one transaction.
+    overrides cannot be read or are the wrong shape. The check and the write
+    are one transaction.
     """
     with get_store().transaction():
-        _read_document()
-        overrides = load_account_overrides()
+        overrides = _decode_overrides(_read_overrides())
         overrides.pop((broker, account_number), None)
         _write(overrides)
 

@@ -176,6 +176,33 @@ class TestInstanceOwnerStore:
         with pytest.raises(CorruptInstanceOwnerError, match="invalid instance_owner"):
             load_instance_owner()
 
+    @pytest.mark.parametrize(
+        ("wrong", "reason"),
+        [
+            ([1, 2], "TypeError"),
+            ({"version": 1}, "KeyError"),
+            ({"version": 1, "instance_owner": "household"}, "invalid instance_owner"),
+        ],
+    )
+    def test_wrong_shape_refuses_a_save_and_is_kept(self, store, wrong, reason):
+        store.put(INSTANCE_OWNER, wrong)
+        with pytest.raises(CorruptInstanceOwnerError, match=reason):
+            save_instance_owner("you")
+        assert store.get(INSTANCE_OWNER) == wrong
+
+    def test_ensure_default_leaves_a_wrong_shape_owner_alone(self, store):
+        def _page() -> None:
+            from views.setup.command_center import ensure_default_instance_owner
+
+            ensure_default_instance_owner()
+
+        store.put(INSTANCE_OWNER, [1, 2])
+        at = AppTest.from_function(_page)
+        at.run()
+        assert not at.exception
+        assert "instance_owner" not in at.session_state
+        assert store.get(INSTANCE_OWNER) == [1, 2]
+
 
 class TestAccountAttributionStore:
     def test_round_trip_keeps_the_versioned_document(self, store):
@@ -196,6 +223,19 @@ class TestAccountAttributionStore:
         with pytest.raises(CorruptAccountAttributionError, match="corrupt store row"):
             delete_account_override("synthbroker", "ACCT-1")
         assert store.backend.get(ACCOUNT_ATTRIBUTION, SINGLE_KEY).payload == payload
+
+    @pytest.mark.parametrize(
+        "wrong",
+        [[1, 2], {"version": 1}, {"version": 1, "overrides": ["synthbroker|ACCT-9"]}],
+    )
+    def test_wrong_shape_reads_empty_and_refuses_both_writes(self, store, wrong):
+        store.put(ACCOUNT_ATTRIBUTION, wrong)
+        assert load_account_overrides() == {}
+        with pytest.raises(CorruptAccountAttributionError, match="'overrides' object"):
+            save_account_override("synthbroker", "ACCT-1", "you")
+        with pytest.raises(CorruptAccountAttributionError, match="'overrides' object"):
+            delete_account_override("synthbroker", "ACCT-1")
+        assert store.get(ACCOUNT_ATTRIBUTION) == wrong
 
 
 class TestOwnerMapAndLinkMapStores:

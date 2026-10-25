@@ -59,6 +59,11 @@ def load_instance_owner() -> str | None:
     CorruptInstanceOwnerError if the saved owner is unreadable or invalid, so
     callers never re-prompt over broken data.
     """
+    return _read_owner()
+
+
+def _read_owner() -> str | None:
+    """The saved owner (None if absent); CorruptInstanceOwnerError if unreadable or wrong-shape."""
     try:
         payload = get_store().get(INSTANCE_OWNER)
     except CorruptStoreError as exc:
@@ -79,7 +84,8 @@ def save_instance_owner(owner: str) -> None:
 
     Rejects "household" and any other value: an instance belongs to one
     person (see module docstring). Refuses, with CorruptInstanceOwnerError,
-    to replace a saved owner that cannot be read (mirrors save_committed's
+    to replace a saved owner that load_instance_owner() could not read
+    (undecodable, wrong shape, or an invalid value; mirrors save_committed's
     audit-0809 #11 guard). The check and the write are one transaction.
     """
     if owner not in _VALID_INSTANCE_OWNERS:
@@ -88,8 +94,5 @@ def save_instance_owner(owner: str) -> None:
         )
     store = get_store()
     with store.transaction():
-        try:
-            store.get(INSTANCE_OWNER)
-        except CorruptStoreError as exc:
-            raise CorruptInstanceOwnerError(INSTANCE_OWNER, exc) from exc
+        _read_owner()
         store.put(INSTANCE_OWNER, {"version": 1, "instance_owner": owner})

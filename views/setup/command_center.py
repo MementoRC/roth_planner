@@ -239,9 +239,17 @@ def render_command_center(hh: Household) -> None:
                     OwnerRole.YOU.value if new_choice == "Me" else OwnerRole.SPOUSE.value
                 )
                 if resolved_owner != instance_owner:
-                    save_instance_owner(resolved_owner)
-                    st.session_state["instance_owner"] = resolved_owner
-                    st.rerun()
+                    try:
+                        save_instance_owner(resolved_owner)
+                    except CorruptInstanceOwnerError:
+                        st.error(
+                            "⚠️ The instance-identity file is unreadable (corrupt or "
+                            "truncated); the owner was NOT changed. Restore or remove "
+                            "the file before retrying."
+                        )
+                    else:
+                        st.session_state["instance_owner"] = resolved_owner
+                        st.rerun()
 
     # disabled=True (not hidden) while identity is unset -- a hidden control
     # is indistinguishable from a missing feature (see views/planner.py's
