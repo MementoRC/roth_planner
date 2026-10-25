@@ -17,6 +17,9 @@ EXPECTED: dict[str, str] = {
     "tax_pdf": ".tax_pdf_cache.json",
     "koinly": ".koinly_cache.json",
     "ssa_pdf": ".ssa_pdf_cache.json",
+    "brokerage_statements": ".brokerage_statement_cache.json",
+    "statement_folder": ".statement_folder_config.json",
+    "statement_account_overrides": ".statement_account_overrides.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -27,6 +30,7 @@ MOVED_MODULES: list[str] = [
     "engine.tax_return_pdf",
     "engine.koinly_report_pdf",
     "engine.ssa_statement_pdf",
+    "engine.brokerage_statement_pdf",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -45,6 +49,12 @@ STORE_FUNCTIONS: list[str] = [
     "engine.koinly_report_pdf:load_koinly_report",
     "engine.ssa_statement_pdf:save_ssa_pdf_estimates",
     "engine.ssa_statement_pdf:load_ssa_pdf_estimates",
+    "engine.brokerage_statement_pdf:save_statement_records",
+    "engine.brokerage_statement_pdf:load_statement_records",
+    "engine.brokerage_statement_pdf:save_statement_folder_path",
+    "engine.brokerage_statement_pdf:load_statement_folder_path",
+    "engine.brokerage_statement_pdf:save_account_type_override",
+    "engine.brokerage_statement_pdf:load_account_type_overrides",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

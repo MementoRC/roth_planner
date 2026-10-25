@@ -2249,11 +2249,9 @@ class TestBrokerageOwnerAttributionScanFlow:
         canned_result,
         ledger_path,
         owner_map_path,
-        overrides_path,
         tmp_path,
         monkeypatch,
     ):
-        import engine.brokerage_statement_pdf as stmt_mod
         import engine.pdf_ledger as ledger_mod
         import engine.pdf_owner as owner_mod
 
@@ -2269,10 +2267,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
             patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
             patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
-            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
-            patch.object(
-                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
-            ),
         ):
             sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
@@ -2299,7 +2293,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             result1,
             tmp_path / ".pdf_import_ledger.json",
             tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json",
             tmp_path,
             monkeypatch,
         )
@@ -2320,7 +2313,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             result2,
             tmp_path / ".pdf_import_ledger.json",
             tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json",
             tmp_path,
             monkeypatch,
         )
@@ -2345,7 +2337,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             result,
             tmp_path / ".pdf_import_ledger.json",
             tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json",
             tmp_path,
             monkeypatch,
         )
@@ -2360,7 +2351,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             result,
             tmp_path / ".pdf_import_ledger.json",
             tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json",
             tmp_path,
             monkeypatch,
         )
@@ -2387,7 +2377,6 @@ class TestBrokerageOwnerAttributionScanFlow:
             result,
             tmp_path / ".pdf_import_ledger.json",
             tmp_path / ".pdf_owner_map.json",
-            tmp_path / ".statement_account_overrides.json",
             tmp_path,
             monkeypatch,
         )
@@ -2417,11 +2406,9 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
         canned_result,
         ledger_path,
         owner_map_path,
-        overrides_path,
         tmp_path,
         monkeypatch,
     ):
-        import engine.brokerage_statement_pdf as stmt_mod
         import engine.pdf_ledger as ledger_mod
         import engine.pdf_owner as owner_mod
 
@@ -2437,10 +2424,6 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
             patch("engine.portfolio_sync.save_ytd_snapshot"),
             patch.object(ledger_mod, "_LEDGER_PATH", ledger_path),
             patch.object(owner_mod, "_OWNER_MAP_PATH", owner_map_path),
-            patch.object(stmt_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", overrides_path),
-            patch.object(
-                stmt_mod, "_STATEMENT_CACHE_PATH", tmp_path / ".brokerage_statement_cache.json"
-            ),
         ):
             sync_scan_mod.render_sync_scan_partial(hh)
             ytd_income_mod.render(hh)
@@ -2476,10 +2459,7 @@ class TestCombinedKoinlyAndBrokerageScanFlow:
         )
         ledger_path = tmp_path / ".pdf_import_ledger.json"
         owner_map_path = tmp_path / ".pdf_owner_map.json"
-        overrides_path = tmp_path / ".statement_account_overrides.json"
-        self._run_scan(
-            hh, mock_st, result, ledger_path, owner_map_path, overrides_path, tmp_path, monkeypatch
-        )
+        self._run_scan(hh, mock_st, result, ledger_path, owner_map_path, tmp_path, monkeypatch)
 
         # Both loops applied their fields to the SAME snapshot in one render.
         final_snap = mock_st.session_state.ytd_snapshot

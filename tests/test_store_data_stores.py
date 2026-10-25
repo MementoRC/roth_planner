@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+import engine.brokerage_statement_pdf as bsp
+from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.koinly_report_pdf import KoinlyReport, load_koinly_report, save_koinly_report
 from engine.portfolio_sync.portfolio import (
     CorruptPortfolioCacheError,
@@ -30,8 +32,18 @@ from engine.ssa_statement_pdf import (
     load_ssa_pdf_estimates,
     save_ssa_pdf_estimates,
 )
-from engine.store import SINGLE_KEY, CorruptStoreError
-from engine.store.namespaces import KOINLY, PORTFOLIO, SSA, SSA_PDF, TAX_PDF, YTD
+from engine.store import SINGLE_KEY, CorruptStoreError, StoreUnavailableError
+from engine.store.namespaces import (
+    BROKERAGE_STATEMENTS,
+    KOINLY,
+    PORTFOLIO,
+    SSA,
+    SSA_PDF,
+    STATEMENT_ACCOUNT_OVERRIDES,
+    STATEMENT_FOLDER,
+    TAX_PDF,
+    YTD,
+)
 from engine.tax import load_prior_year_agi, load_prior_year_federal_tax
 from engine.tax_return_pdf import (
     Form1040Record,
@@ -229,3 +241,80 @@ class TestSsaPdfStore:
     def test_owner_is_still_validated(self):
         with pytest.raises(ValueError, match="owner"):
             save_ssa_pdf_estimates("household", _ssa_statement())
+
+
+def _record(number: str, broker: str = "synthbroker") -> BrokerageStatementRecord:
+    return BrokerageStatementRecord(
+        account_number=number,
+        broker=broker,
+        account_type="unknown",
+        statement_period_end="2026-06-30",
+        interest_taxable_ytd=0.0,
+        interest_tax_exempt_ytd=0.0,
+        dividends_taxable_ytd=100.0,
+        dividends_tax_exempt_ytd=0.0,
+        stcg_net_ytd=0.0,
+        ltcg_net_ytd=0.0,
+        captured_at="2026-07-10T00:00:00+00:00",
+    )
+
+
+class TestBrokerageStatementStore:
+    def test_each_account_is_its_own_row(self, store):
+        bsp.save_statement_records({"1111": _record("1111"), "2222": _record("2222")})
+        assert store.keys(BROKERAGE_STATEMENTS) == ["1111", "2222"]
+        assert set(bsp.load_statement_records()) == {"1111", "2222"}
+
+    def test_saving_one_account_leaves_the_others_untouched(self, store):
+        bsp.save_statement_records({"1111": _record("1111")})
+        before = store.backend.get(BROKERAGE_STATEMENTS, "1111")
+        bsp.save_statement_records({"2222": _record("2222")})
+        assert store.backend.get(BROKERAGE_STATEMENTS, "1111") == before
+
+    def test_an_empty_save_writes_nothing(self, store):
+        bsp.save_statement_records({})
+        assert store.keys(BROKERAGE_STATEMENTS) == []
+
+    def test_an_unreadable_account_row_is_skipped(self, corrupt_row):
+        bsp.save_statement_records({"1111": _record("1111")})
+        corrupt_row(BROKERAGE_STATEMENTS, key="2222")
+        assert set(bsp.load_statement_records()) == {"1111"}
+
+
+class TestStatementFolderStore:
+    def test_round_trip_and_corrupt(self, store, corrupt_row):
+        bsp.save_statement_folder_path("/synthetic/folder")
+        assert store.get(STATEMENT_FOLDER) == {"folder": "/synthetic/folder"}
+        assert bsp.load_statement_folder_path() == "/synthetic/folder"
+        corrupt_row(STATEMENT_FOLDER)
+        assert bsp.load_statement_folder_path() is None
+
+
+class TestAccountTypeOverrideStore:
+    def test_round_trip(self, store):
+        bsp.save_account_type_override("1111", "taxable", broker="synthbroker")
+        assert store.get(STATEMENT_ACCOUNT_OVERRIDES) == {"synthbroker:1111": "taxable"}
+        assert bsp.load_account_type_overrides() == {"synthbroker:1111": "taxable"}
+
+    def test_legacy_bare_override_is_rekeyed_and_written_back(self, store):
+        store.put(BROKERAGE_STATEMENTS, _record("1111").to_dict(), key="1111")
+        store.put(STATEMENT_ACCOUNT_OVERRIDES, {"1111": "taxable"})
+        assert bsp.load_account_type_overrides() == {"synthbroker:1111": "taxable"}
+        assert store.get(STATEMENT_ACCOUNT_OVERRIDES) == {"synthbroker:1111": "taxable"}
+
+    def test_rekeying_still_reads_when_saving_is_disabled(self, store, monkeypatch):
+        store.put(BROKERAGE_STATEMENTS, _record("1111").to_dict(), key="1111")
+        store.put(STATEMENT_ACCOUNT_OVERRIDES, {"1111": "taxable"})
+
+        def refuse(*args, **kwargs):
+            raise StoreUnavailableError("synthetic.json", "saving is disabled")
+
+        monkeypatch.setattr(store, "put", refuse)
+        assert bsp.load_account_type_overrides() == {"synthbroker:1111": "taxable"}
+
+    def test_corrupt_row_reads_empty_and_refuses_a_save(self, store, corrupt_row):
+        payload = corrupt_row(STATEMENT_ACCOUNT_OVERRIDES)
+        assert bsp.load_account_type_overrides() == {}
+        with pytest.raises(CorruptStoreError):
+            bsp.save_account_type_override("1111", "taxable")
+        assert store.backend.get(STATEMENT_ACCOUNT_OVERRIDES, SINGLE_KEY).payload == payload

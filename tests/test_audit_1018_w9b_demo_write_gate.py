@@ -77,9 +77,6 @@ def _personal_paths() -> dict[str, Path]:
         "ledger": ledger_mod._LEDGER_PATH,
         "owner_map": owner_mod._OWNER_MAP_PATH,
         "link_map": link_mod._ACCOUNT_LINK_PATH,
-        "statements": brokerage_mod._STATEMENT_CACHE_PATH,
-        "statement_folder": brokerage_mod._FOLDER_CONFIG_PATH,
-        "type_overrides": brokerage_mod._ACCOUNT_TYPE_OVERRIDES_PATH,
         "ubs": ubs_mod._UBS_ACTIVITY_CACHE_PATH,
         "exercise_schedule": exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH,
     }
@@ -163,7 +160,23 @@ def personal_files(monkeypatch, store):
     link_mod.save_link_map({})
     brokerage_mod.save_statement_folder_path("/synthetic/folder")
     brokerage_mod.save_account_type_override("ACCT-1", "traditional_ira")
-    brokerage_mod.save_statement_records({})
+    brokerage_mod.save_statement_records(
+        {
+            "ACCT-1": brokerage_mod.BrokerageStatementRecord(
+                account_number="ACCT-1",
+                broker="synthbroker",
+                account_type="unknown",
+                statement_period_end="2026-06-30",
+                interest_taxable_ytd=0.0,
+                interest_tax_exempt_ytd=0.0,
+                dividends_taxable_ytd=1.0,
+                dividends_tax_exempt_ytd=0.0,
+                stcg_net_ytd=0.0,
+                ltcg_net_ytd=0.0,
+                captured_at="2026-01-01T00:00:00+00:00",
+            )
+        }
+    )
     ubs_mod.save_ubs_orders([])
     write_pii_json(exercise_store_mod._EXERCISE_SCHEDULE_CACHE_PATH, {"version": 1})
     before = _persisted(store)

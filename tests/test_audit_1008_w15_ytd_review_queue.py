@@ -112,8 +112,7 @@ class TestPickLatestPerAccountBrokerIdentity:
         assert pick_latest_per_account([newer, older]) == {"1111-2222": newer}
         assert pick_latest_per_account([older, newer]) == {"1111-2222": newer}
 
-    def test_disk_cache_keeps_both_brokers(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(bsp, "_STATEMENT_CACHE_PATH", tmp_path / "stmts.json")
+    def test_disk_cache_keeps_both_brokers(self) -> None:
         bsp.save_statement_records({"1111-2222": _rec(broker="schwab")})
         bsp.save_statement_records({"1111-2222": _rec(broker="fidelity")})
         brokers = sorted(r.broker for r in bsp.load_statement_records().values())

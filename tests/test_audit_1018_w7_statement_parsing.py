@@ -21,6 +21,7 @@ from engine.ssa_statement_pdf import (
     pick_latest_ssa,
     save_ssa_pdf_estimates,
 )
+from engine.store.namespaces import BROKERAGE_STATEMENTS, STATEMENT_ACCOUNT_OVERRIDES
 
 # ---------------------------------------------------------------- F-15
 
@@ -129,15 +130,8 @@ def _rec(broker: str, number: str = "1234-5678", **kw) -> BrokerageStatementReco
     return BrokerageStatementRecord(**base)
 
 
-@pytest.fixture
-def paths(tmp_path, monkeypatch):
-    monkeypatch.setattr(bsp, "_ACCOUNT_TYPE_OVERRIDES_PATH", tmp_path / "overrides.json")
-    monkeypatch.setattr(bsp, "_STATEMENT_CACHE_PATH", tmp_path / "cache.json")
-    return tmp_path
-
-
 class TestF18BrokerKeyedOverrides:
-    def test_override_for_one_broker_does_not_touch_the_other(self, paths):
+    def test_override_for_one_broker_does_not_touch_the_other(self, store):
         schwab, ubs = _rec("schwab"), _rec("ubs")
         bsp.save_account_type_override("1234-5678", "taxable", broker="schwab")
         result = apply_account_type_overrides({"1234-5678": ubs}, bsp.load_account_type_overrides())
@@ -149,7 +143,7 @@ class TestF18BrokerKeyedOverrides:
         )
         assert result["1234-5678"].account_type == "taxable"
 
-    def test_override_applies_whichever_dict_key_the_record_holds(self, paths):
+    def test_override_applies_whichever_dict_key_the_record_holds(self, store):
         ubs = _rec("ubs")
         bsp.save_account_type_override("1234-5678", "taxable", broker="ubs")
         result = apply_account_type_overrides(
@@ -157,28 +151,23 @@ class TestF18BrokerKeyedOverrides:
         )
         assert result["ubs:1234-5678"].account_type == "taxable"
 
-    def test_legacy_bare_override_migrates_to_the_cached_broker(self, paths):
-        bsp.write_pii_json(bsp._ACCOUNT_TYPE_OVERRIDES_PATH, {"1234-5678": "taxable"})
-        bsp.write_pii_json(bsp._STATEMENT_CACHE_PATH, {"1234-5678": _rec("schwab").to_dict()})
+    def test_legacy_bare_override_migrates_to_the_cached_broker(self, store):
+        store.put(STATEMENT_ACCOUNT_OVERRIDES, {"1234-5678": "taxable"})
+        store.put(BROKERAGE_STATEMENTS, _rec("schwab").to_dict(), key="1234-5678")
         overrides = bsp.load_account_type_overrides()
         assert overrides == {"schwab:1234-5678": "taxable"}
         # persisted, and the other broker's same-number account is unaffected
         result = apply_account_type_overrides({"1234-5678": _rec("ubs")}, overrides)
         assert result["1234-5678"].account_type == "unknown"
 
-    def test_ambiguous_legacy_override_is_dropped(self, paths):
-        bsp.write_pii_json(bsp._ACCOUNT_TYPE_OVERRIDES_PATH, {"1234-5678": "taxable"})
-        bsp.write_pii_json(
-            bsp._STATEMENT_CACHE_PATH,
-            {
-                "1234-5678": _rec("schwab").to_dict(),
-                "ubs:1234-5678": _rec("ubs").to_dict(),
-            },
-        )
+    def test_ambiguous_legacy_override_is_dropped(self, store):
+        store.put(STATEMENT_ACCOUNT_OVERRIDES, {"1234-5678": "taxable"})
+        store.put(BROKERAGE_STATEMENTS, _rec("schwab").to_dict(), key="1234-5678")
+        store.put(BROKERAGE_STATEMENTS, _rec("ubs").to_dict(), key="ubs:1234-5678")
         assert bsp.load_account_type_overrides() == {}
 
-    def test_unmatched_legacy_override_still_applies_by_number(self, paths):
-        bsp.write_pii_json(bsp._ACCOUNT_TYPE_OVERRIDES_PATH, {"9999-0001": "taxable"})
+    def test_unmatched_legacy_override_still_applies_by_number(self, store):
+        store.put(STATEMENT_ACCOUNT_OVERRIDES, {"9999-0001": "taxable"})
         overrides = bsp.load_account_type_overrides()
         result = apply_account_type_overrides({"9999-0001": _rec("schwab", "9999-0001")}, overrides)
         assert result["9999-0001"].account_type == "taxable"

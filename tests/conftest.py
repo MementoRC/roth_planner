@@ -32,7 +32,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 import config.loader as _config_loader_mod  # noqa: E402
 import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.account_link as _account_link_mod  # noqa: E402
-import engine.brokerage_statement_pdf as _brokerage_mod  # noqa: E402
 import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
@@ -57,9 +56,9 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".ssa_cache.json",
     _REPO_ROOT / ".ssa_pdf_cache.json",
     _REPO_ROOT / ".koinly_cache.json",
-    _brokerage_mod._STATEMENT_CACHE_PATH,
-    _brokerage_mod._FOLDER_CONFIG_PATH,
-    _brokerage_mod._ACCOUNT_TYPE_OVERRIDES_PATH,
+    _REPO_ROOT / ".brokerage_statement_cache.json",
+    _REPO_ROOT / ".statement_folder_config.json",
+    _REPO_ROOT / ".statement_account_overrides.json",
     _pdf_owner_mod._OWNER_MAP_PATH,
     _pdf_ledger_mod._LEDGER_PATH,
     _paths_mod.CANDIDATE_STORE_PATH,
@@ -144,15 +143,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         return cache_dir / filename
 
     # 1. Defining-module attributes.
-    monkeypatch.setattr(
-        _brokerage_mod, "_STATEMENT_CACHE_PATH", _tmp(".brokerage_statement_cache.json")
-    )
-    monkeypatch.setattr(
-        _brokerage_mod, "_FOLDER_CONFIG_PATH", _tmp(".statement_folder_config.json")
-    )
-    monkeypatch.setattr(
-        _brokerage_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", _tmp(".statement_account_overrides.json")
-    )
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
     monkeypatch.setattr(_pdf_ledger_mod, "_LEDGER_PATH", _tmp(".pdf_import_ledger.json"))
