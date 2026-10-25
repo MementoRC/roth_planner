@@ -15,19 +15,18 @@ re-scan, while re-scanning the SAME owner's SAME account still replaces (not
 duplicates) that slot -- identical to today's pick_latest_per_account
 semantics, just owner-scoped.
 
-Pure functions + a small JSON cache. No Streamlit import (engine/ purity rule).
+Pure functions + per-owner rows in the document store. No Streamlit import (engine/ purity rule).
 """
 
 from __future__ import annotations
 
 import copy
-import json
-from pathlib import Path
 from typing import Any
 
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.koinly_report_pdf import KoinlyReport
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import PDF_LEDGER
 from models.ytd_income import YTDSnapshot, iso_day
 
 # Ledger shape:
@@ -43,9 +42,6 @@ from models.ytd_income import YTDSnapshot, iso_day
 # keyed "<broker>:<account_number>" (see _slot_key_for); readers should take
 # the account number from the record dict, not the key.
 PdfLedger = dict[str, dict[str, Any]]
-
-_EMPTY_LEDGER: PdfLedger = {"koinly": {}, "brokerage": {}}
-
 
 _REPORT_IDENTITY_FIELDS = (
     "tax_year",
@@ -505,30 +501,48 @@ def replace_owner(ledger: PdfLedger, owner: str, slice_: dict) -> PdfLedger:
 
 
 # ---------------------------------------------------------------------------
-# JSON cache
+# Saved ledger -- document store namespace ``pdf_ledger``, one row per owner:
+# {"koinly": <slot>, "brokerage": {<account>: {...}}}, each section optional.
 # ---------------------------------------------------------------------------
 
-_LEDGER_PATH = Path(__file__).resolve().parent.parent / ".pdf_import_ledger.json"
+_SECTIONS = ("koinly", "brokerage")
 
 
 def save_ledger(ledger: PdfLedger) -> None:
-    write_pii_json(_LEDGER_PATH, ledger)
+    """Persist *ledger* as one row per owner; an owner no longer in it loses its row.
+
+    One transaction. Raises CorruptStoreError, writing nothing, rather than
+    replace or remove an owner's unreadable row.
+    """
+    owners = sorted({owner for section in _SECTIONS for owner in ledger.get(section, {})})
+    store = get_store()
+    with store.transaction():
+        for owner in store.keys(PDF_LEDGER):
+            if owner not in owners:
+                store.get(PDF_LEDGER, key=owner)  # CorruptStoreError for an unreadable row
+                store.delete(PDF_LEDGER, key=owner)
+        for owner in owners:
+            row = {s: ledger[s][owner] for s in _SECTIONS if owner in ledger.get(s, {})}
+            store.put(PDF_LEDGER, row, key=owner)
 
 
 def load_ledger() -> PdfLedger:
-    """Load the ledger, defaulting missing doc-type keys to {} for forward
-    compatibility with partially-migrated or hand-edited cache files (mirrors
-    the field-default pattern in engine.portfolio_sync.ytd.load_ytd_snapshot
-    and engine.tax_return_pdf.load_pdf_tax_records)."""
-    if not _LEDGER_PATH.exists():
-        return dict(_EMPTY_LEDGER)
-    try:
-        raw = read_pii_json(_LEDGER_PATH)
-    except (json.JSONDecodeError, OSError):
-        return dict(_EMPTY_LEDGER)
-    if not isinstance(raw, dict):
-        return dict(_EMPTY_LEDGER)
-    return {
-        "koinly": dict(raw.get("koinly", {})),
-        "brokerage": {k: dict(v) for k, v in raw.get("brokerage", {}).items()},
-    }
+    """Assemble the ledger from its per-owner rows.
+
+    Both doc-type keys are always present (forward compatibility, as before).
+    An unreadable owner row is skipped -- today's tolerance for a corrupt
+    ledger, narrowed to that owner.
+    """
+    store = get_store()
+    ledger: PdfLedger = {"koinly": {}, "brokerage": {}}
+    for owner in store.keys(PDF_LEDGER):
+        try:
+            row = store.get(PDF_LEDGER, key=owner)
+        except CorruptStoreError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        for section in _SECTIONS:
+            if isinstance(row.get(section), dict):
+                ledger[section][owner] = row[section]
+    return ledger

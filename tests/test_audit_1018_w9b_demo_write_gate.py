@@ -29,7 +29,6 @@ import engine.demo_mode as demo_mod
 import engine.dividend_forecast as dividend_mod
 import engine.exercise_schedule_store as exercise_store_mod
 import engine.instance_identity as identity_mod
-import engine.pdf_ledger as ledger_mod
 import engine.pdf_owner as owner_mod
 import engine.portfolio_sync.social_security as ssa_mod
 import engine.tax_return_pdf as tax_pdf_mod
@@ -74,7 +73,6 @@ def _personal_paths() -> dict[str, Path]:
         "user_defaults": loader._USER_DEFAULTS_PATH,
         "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
         "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
-        "ledger": ledger_mod._LEDGER_PATH,
         "owner_map": owner_mod._OWNER_MAP_PATH,
         "link_map": link_mod._ACCOUNT_LINK_PATH,
         "ubs": ubs_mod._UBS_ACTIVITY_CACHE_PATH,

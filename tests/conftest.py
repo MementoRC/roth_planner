@@ -39,7 +39,6 @@ import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
 import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
-import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
@@ -60,7 +59,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".statement_folder_config.json",
     _REPO_ROOT / ".statement_account_overrides.json",
     _pdf_owner_mod._OWNER_MAP_PATH,
-    _pdf_ledger_mod._LEDGER_PATH,
+    _REPO_ROOT / ".pdf_import_ledger.json",
     _paths_mod.CANDIDATE_STORE_PATH,
     _paths_mod.TRUST_CHOICES_PATH,
     _paths_mod.COMMITTED_PATH,
@@ -145,7 +144,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # 1. Defining-module attributes.
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
-    monkeypatch.setattr(_pdf_ledger_mod, "_LEDGER_PATH", _tmp(".pdf_import_ledger.json"))
     monkeypatch.setattr(_paths_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_paths_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))

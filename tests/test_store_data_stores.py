@@ -10,6 +10,7 @@ import pytest
 import engine.brokerage_statement_pdf as bsp
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.koinly_report_pdf import KoinlyReport, load_koinly_report, save_koinly_report
+from engine.pdf_ledger import load_ledger, save_ledger
 from engine.portfolio_sync.portfolio import (
     CorruptPortfolioCacheError,
     load_snapshot,
@@ -36,6 +37,7 @@ from engine.store import SINGLE_KEY, CorruptStoreError, StoreUnavailableError
 from engine.store.namespaces import (
     BROKERAGE_STATEMENTS,
     KOINLY,
+    PDF_LEDGER,
     PORTFOLIO,
     SSA,
     SSA_PDF,
@@ -318,3 +320,35 @@ class TestAccountTypeOverrideStore:
         with pytest.raises(CorruptStoreError):
             bsp.save_account_type_override("1111", "taxable")
         assert store.backend.get(STATEMENT_ACCOUNT_OVERRIDES, SINGLE_KEY).payload == payload
+
+
+_LEDGER = {
+    "koinly": {"you": {"stcg": 1.0, "ltcg": 0.0, "income": 0.0}},
+    "brokerage": {"you": {"A1": {"value": 1}}, "spouse": {"B1": {"value": 2}}},
+}
+
+
+class TestPdfLedgerStore:
+    def test_one_row_per_owner_round_trip(self, store):
+        save_ledger(_LEDGER)
+        assert store.keys(PDF_LEDGER) == ["spouse", "you"]
+        assert store.get(PDF_LEDGER, key="spouse") == {"brokerage": {"B1": {"value": 2}}}
+        assert load_ledger() == _LEDGER
+
+    def test_an_owner_dropped_from_the_ledger_loses_its_row(self, store):
+        save_ledger(_LEDGER)
+        save_ledger({"koinly": {}, "brokerage": {"you": {"A1": {"value": 1}}}})
+        assert store.keys(PDF_LEDGER) == ["you"]
+
+    def test_an_empty_store_is_an_empty_ledger(self):
+        assert load_ledger() == {"koinly": {}, "brokerage": {}}
+
+    def test_an_unreadable_owner_row_is_skipped_and_never_removed(self, store, corrupt_row):
+        save_ledger(_LEDGER)
+        payload = corrupt_row(PDF_LEDGER, key="you")
+        assert load_ledger() == {"koinly": {}, "brokerage": {"spouse": {"B1": {"value": 2}}}}
+        with pytest.raises(CorruptStoreError):
+            save_ledger({"koinly": {}, "brokerage": {}})
+        # The failed save rolled back: spouse's row was not deleted either.
+        assert store.keys(PDF_LEDGER) == ["spouse", "you"]
+        assert store.backend.get(PDF_LEDGER, "you").payload == payload

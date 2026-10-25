@@ -8,7 +8,6 @@ the old single-valued direct-assignment bug (crypto_stcg_ytd = report.stcg).
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 
 import pytest
 
@@ -24,6 +23,7 @@ from engine.pdf_ledger import (
     write_brokerage_contribution,
     write_koinly_contribution,
 )
+from engine.store.namespaces import PDF_LEDGER
 
 
 def _koinly(
@@ -261,46 +261,25 @@ class TestBrokerageAdditive:
 
 
 class TestLedgerCache:
-    def test_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import engine.pdf_ledger as mod
-
-        monkeypatch.setattr(mod, "_LEDGER_PATH", tmp_path / ".pdf_import_ledger.json")
+    def test_round_trip(self) -> None:
         ledger: dict = {}
         ledger = write_koinly_contribution(ledger, "you", _koinly(100.0, 0.0, 0.0))
         save_ledger(ledger)
         loaded = load_ledger()
         assert derive_koinly_totals(loaded) == {"stcg": 100.0, "ltcg": 0.0, "income": 0.0}
 
-    def test_load_missing_returns_empty_ledger(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import engine.pdf_ledger as mod
-
-        monkeypatch.setattr(mod, "_LEDGER_PATH", tmp_path / "nope.json")
+    def test_load_missing_returns_empty_ledger(self) -> None:
         assert load_ledger() == {"koinly": {}, "brokerage": {}}
 
-    def test_load_corrupt_returns_empty_ledger(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import engine.pdf_ledger as mod
-
-        bad = tmp_path / ".pdf_import_ledger.json"
-        bad.write_text("{not json")
-        monkeypatch.setattr(mod, "_LEDGER_PATH", bad)
+    def test_load_corrupt_returns_empty_ledger(self, corrupt_row) -> None:
+        corrupt_row(PDF_LEDGER, key="you")
         assert load_ledger() == {"koinly": {}, "brokerage": {}}
 
-    def test_load_predates_ledger_defaults_missing_doc_type(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A hand-crafted / partially-migrated ledger missing the 'brokerage'
-        key must default it to {} rather than KeyError."""
-        import engine.pdf_ledger as mod
-
-        partial = tmp_path / ".pdf_import_ledger.json"
-        partial.write_text('{"koinly": {}}')
-        monkeypatch.setattr(mod, "_LEDGER_PATH", partial)
-        loaded = load_ledger()
-        assert loaded == {"koinly": {}, "brokerage": {}}
+    def test_load_predates_ledger_defaults_missing_doc_type(self, store) -> None:
+        """A partially-migrated owner row missing the 'brokerage' section must
+        default it to {} rather than KeyError."""
+        store.put(PDF_LEDGER, {"koinly": {"stcg": 1.0}}, key="you")
+        assert load_ledger()["brokerage"] == {}
 
 
 class TestOwnerSlice:

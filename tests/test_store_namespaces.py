@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
 from pathlib import Path
 
+import pytest
+
 import engine.store.core as store_core
+from engine.store import namespaces
 from engine.store.legacy_files import registered
 
 # namespace -> legacy file. Each PR 2 store task adds its entries; PR 3 adds the rest.
@@ -20,6 +24,7 @@ EXPECTED: dict[str, str] = {
     "brokerage_statements": ".brokerage_statement_cache.json",
     "statement_folder": ".statement_folder_config.json",
     "statement_account_overrides": ".statement_account_overrides.json",
+    "pdf_ledger": ".pdf_import_ledger.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -31,6 +36,7 @@ MOVED_MODULES: list[str] = [
     "engine.koinly_report_pdf",
     "engine.ssa_statement_pdf",
     "engine.brokerage_statement_pdf",
+    "engine.pdf_ledger",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -55,6 +61,8 @@ STORE_FUNCTIONS: list[str] = [
     "engine.brokerage_statement_pdf:load_statement_folder_path",
     "engine.brokerage_statement_pdf:save_account_type_override",
     "engine.brokerage_statement_pdf:load_account_type_overrides",
+    "engine.pdf_ledger:save_ledger",
+    "engine.pdf_ledger:load_ledger",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}
@@ -62,6 +70,36 @@ _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}
 
 def test_registry_lists_exactly_the_stores_moved_so_far():
     assert {entry.namespace: entry.filename for entry in registered()} == EXPECTED
+
+
+def test_ledger_reader_splits_the_file_per_owner(tmp_path):
+    path = tmp_path / ".pdf_import_ledger.json"
+    path.write_text(
+        json.dumps(
+            {
+                "koinly": {"you": {"stcg": 1.0}},
+                "brokerage": {"you": {"A1": {}}, "spouse": {"B1": {}}},
+            }
+        )
+    )
+    assert namespaces.ledger_reader(path) == {
+        "you": {"koinly": {"stcg": 1.0}, "brokerage": {"A1": {}}},
+        "spouse": {"brokerage": {"B1": {}}},
+    }
+
+
+def test_ledger_reader_accepts_a_missing_section(tmp_path):
+    path = tmp_path / ".pdf_import_ledger.json"
+    path.write_text(json.dumps({"koinly": {}}))
+    assert namespaces.ledger_reader(path) == {}
+
+
+@pytest.mark.parametrize("content", ["[1, 2]", '{"koinly": [1]}'])
+def test_ledger_reader_rejects_a_non_object(tmp_path, content):
+    path = tmp_path / ".pdf_import_ledger.json"
+    path.write_text(content)
+    with pytest.raises(ValueError, match="JSON object"):
+        namespaces.ledger_reader(path)
 
 
 def test_every_registered_store_has_a_declared_namespace():
