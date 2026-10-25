@@ -215,9 +215,9 @@ def render_command_center(hh: Household) -> None:
 
     if identity_corrupt:
         st.error(
-            "⚠️ The instance-identity file is unreadable (corrupt or truncated), "
+            "⚠️ The saved instance owner is unreadable (corrupt or truncated), "
             "so this instance's owner could not be set. Scanning and syncing "
-            "stay unavailable until the file is restored or removed."
+            "stay unavailable until the saved owner is restored or cleared."
         )
 
     if identity_set:
@@ -243,9 +243,9 @@ def render_command_center(hh: Household) -> None:
                         save_instance_owner(resolved_owner)
                     except CorruptInstanceOwnerError:
                         st.error(
-                            "⚠️ The instance-identity file is unreadable (corrupt or "
-                            "truncated); the owner was NOT changed. Restore or remove "
-                            "the file before retrying."
+                            "⚠️ The saved instance owner is unreadable (corrupt or "
+                            "truncated); the owner was NOT changed. Restore or clear "
+                            "the saved owner before retrying."
                         )
                     else:
                         st.session_state["instance_owner"] = resolved_owner
