@@ -17,7 +17,7 @@ import engine.portfolio_sync.portfolio as portfolio_mod
 import engine.portfolio_sync.social_security as ssa_mod
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import PORTFOLIO
+from engine.store.namespaces import PORTFOLIO, SSA
 from engine.upload_merge import build_user_defaults_session_updates, sanitize_living_expenses
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
@@ -54,23 +54,17 @@ def test_save_snapshot_missing_row_still_writes(store):
     assert store.get(PORTFOLIO)["server_available"] is True
 
 
-def test_save_ssa_snapshot_refuses_corrupt_cache_and_preserves_bytes(
-    tmp_path, monkeypatch, bad_bytes
-):
-    path = tmp_path / ".ssa_cache.json"
-    path.write_bytes(bad_bytes)
-    monkeypatch.setattr(ssa_mod, "_SSA_CACHE_PATH", path)
+def test_save_ssa_snapshot_refuses_corrupt_row_and_preserves_bytes(store, corrupt_row):
+    payload = corrupt_row(SSA)
     with pytest.raises(ssa_mod.CorruptSSACacheError):
         ssa_mod.save_ssa_snapshot(SSASnapshot(), owner="you")
-    assert path.read_bytes() == bad_bytes
+    assert store.backend.get(SSA, SINGLE_KEY).payload == payload
 
 
-def test_save_ssa_snapshot_keeps_other_owner(tmp_path, monkeypatch):
-    path = tmp_path / ".ssa_cache.json"
-    monkeypatch.setattr(ssa_mod, "_SSA_CACHE_PATH", path)
+def test_save_ssa_snapshot_keeps_other_owner(store):
     ssa_mod.save_ssa_snapshot(SSASnapshot(), owner="you")
     ssa_mod.save_ssa_snapshot(SSASnapshot(), owner="spouse")
-    assert set(json.loads(path.read_text())) == {"you", "spouse"}
+    assert set(store.get(SSA)) == {"you", "spouse"}
 
 
 # --- non-UTF-8 read_text gaps ---------------------------------------------------

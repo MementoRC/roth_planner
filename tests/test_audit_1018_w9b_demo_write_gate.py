@@ -74,7 +74,6 @@ def _personal_paths() -> dict[str, Path]:
         "user_defaults": loader._USER_DEFAULTS_PATH,
         "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
         "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
-        "ssa": ssa_mod._SSA_CACHE_PATH,
         "tax_pdf": tax_pdf_mod._PDF_TAX_CACHE_PATH,
         "ledger": ledger_mod._LEDGER_PATH,
         "owner_map": owner_mod._OWNER_MAP_PATH,

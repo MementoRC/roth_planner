@@ -43,8 +43,6 @@ import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
 import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
-import engine.portfolio_sync as _portfolio_sync_pkg  # noqa: E402
-import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
@@ -59,7 +57,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
     _REPO_ROOT / ".ytd_cache.json",
     _REPO_ROOT / ".portfolio_cache.json",
-    _social_security_mod._SSA_CACHE_PATH,
+    _REPO_ROOT / ".ssa_cache.json",
     _ssa_statement_mod._SSA_PDF_CACHE_PATH,
     _koinly_mod._KOINLY_CACHE_PATH,
     _brokerage_mod._STATEMENT_CACHE_PATH,
@@ -150,7 +148,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # 1. Defining-module attributes.
     monkeypatch.setattr(_tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", _tmp(".tax_pdf_cache.json"))
-    monkeypatch.setattr(_social_security_mod, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
     monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
     monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
     monkeypatch.setattr(
@@ -188,12 +185,7 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # ...nor read or move a repo-root legacy dotfile during the first-open import.
     monkeypatch.setattr(_store_pkg, "_LEGACY_DIR", cache_dir)
 
-    # 2a. engine.portfolio_sync package-level re-exports -- its custom
-    # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
-    # writes to the owning submodule too, but patch both ends explicitly.
-    monkeypatch.setattr(_portfolio_sync_pkg, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
-
-    # 2b. Other production modules with their own `from ... import <CONST>`
+    # 2. Other production modules with their own `from ... import <CONST>`
     # binding of CANDIDATE_STORE_PATH / COMMITTED_PATH / TRUST_CHOICES_PATH.
     monkeypatch.setattr(_scan_ingest_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import requests
 
-from engine import portfolio_sync
 from engine.portfolio_sync import client as client_module
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.portfolio_sync.social_security import (
@@ -18,6 +16,7 @@ from engine.portfolio_sync.social_security import (
     match_fra_estimate,
     save_ssa_snapshot,
 )
+from engine.store.namespaces import SSA
 
 
 def _fake_response(json_data, status_code=200):
@@ -125,8 +124,7 @@ class TestMatchFraEstimate:
 
 
 class TestSsaCache:
-    def test_round_trips_per_owner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+    def test_round_trips_per_owner(self) -> None:
         you_snap = SSASnapshot(
             estimates=[SSABenefitEstimate(67, "2032-01", "full", 2600.0)],
             server_available=True,
@@ -143,25 +141,15 @@ class TestSsaCache:
         assert loaded_you == you_snap
         assert loaded_spouse == spouse_snap
 
-    def test_load_missing_file_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "missing.json")
+    def test_load_missing_file_returns_none(self) -> None:
         assert load_ssa_snapshot(owner="you") is None
 
-    def test_load_missing_owner_key_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", tmp_path / "ssa.json")
+    def test_load_missing_owner_key_returns_none(self) -> None:
         save_ssa_snapshot(SSASnapshot(server_available=True), owner="you")
         assert load_ssa_snapshot(owner="spouse") is None
 
-    def test_load_corrupt_file_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = tmp_path / "ssa.json"
-        path.write_text("{not valid json")
-        monkeypatch.setattr(portfolio_sync, "_SSA_CACHE_PATH", path)
+    def test_load_corrupt_file_returns_none(self, corrupt_row) -> None:
+        corrupt_row(SSA)
         assert load_ssa_snapshot(owner="you") is None
 
 

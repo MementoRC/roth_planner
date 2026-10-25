@@ -13,10 +13,15 @@ from engine.store.legacy_files import registered
 EXPECTED: dict[str, str] = {
     "portfolio": ".portfolio_cache.json",
     "ytd": ".ytd_cache.json",
+    "ssa": ".ssa_cache.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
-MOVED_MODULES: list[str] = ["engine.portfolio_sync.portfolio", "engine.portfolio_sync.ytd"]
+MOVED_MODULES: list[str] = [
+    "engine.portfolio_sync.portfolio",
+    "engine.portfolio_sync.ytd",
+    "engine.portfolio_sync.social_security",
+]
 
 # "module:function" store functions: none may take a path parameter.
 STORE_FUNCTIONS: list[str] = [
@@ -24,6 +29,8 @@ STORE_FUNCTIONS: list[str] = [
     "engine.portfolio_sync.portfolio:load_snapshot",
     "engine.portfolio_sync.ytd:save_ytd_snapshot",
     "engine.portfolio_sync.ytd:load_ytd_snapshot",
+    "engine.portfolio_sync.social_security:save_ssa_snapshot",
+    "engine.portfolio_sync.social_security:load_ssa_snapshot",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

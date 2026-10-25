@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import SSA
 
 from .client import _flatten_query_rows, _get
 from .shapes import SSABenefitEstimate, SSASnapshot, known_fields
-
-_SSA_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ssa_cache.json"
 
 
 def fetch_ssa_benefit_estimates() -> list[dict[str, Any]]:
@@ -64,10 +62,10 @@ def match_fra_estimate(
 
 
 class CorruptSSACacheError(Exception):
-    """save_ssa_snapshot() found ``.ssa_cache.json`` unreadable and refused to write.
+    """save_ssa_snapshot() found the saved SSA estimates unreadable and refused to write.
 
     Same convention as ``CorruptPortfolioCacheError``: the other owner's saved
-    estimates would be lost if the bad file were replaced by a fresh one.
+    estimates would be lost if the unreadable document were replaced.
     """
 
     def __init__(self, path: str | Path, cause: Exception) -> None:
@@ -77,35 +75,33 @@ class CorruptSSACacheError(Exception):
 
 
 def save_ssa_snapshot(snap: SSASnapshot, *, owner: str) -> None:
-    """Save *snap* under *owner* ('you' or 'spouse') in the shared SSA cache file.
+    """Save *snap* under *owner* ('you' or 'spouse') in the shared SSA document.
 
-    Raises CorruptSSACacheError (without writing) if the file exists but is
+    Raises CorruptSSACacheError (without writing) if the saved document is
     unreadable or not a JSON object.
     """
-    existing: dict[str, Any] = {}
-    if _SSA_CACHE_PATH.exists():
-        try:
-            loaded = read_pii_json(_SSA_CACHE_PATH)
-        except FileNotFoundError:  # absent, or hidden in demo mode
-            loaded = {}
-        except (json.JSONDecodeError, OSError) as exc:
-            raise CorruptSSACacheError(_SSA_CACHE_PATH, exc) from exc
-        if not isinstance(loaded, dict):
-            raise CorruptSSACacheError(
-                _SSA_CACHE_PATH, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
-            )
-        existing = loaded
-    existing[owner] = asdict(snap)
-    write_pii_json(_SSA_CACHE_PATH, existing)
+    store = get_store()
+    try:
+        loaded = store.get(SSA)
+    except CorruptStoreError as exc:
+        raise CorruptSSACacheError(SSA, exc) from exc
+    if loaded is None:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        raise CorruptSSACacheError(
+            SSA, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
+        )
+    loaded[owner] = asdict(snap)
+    store.put(SSA, loaded)
 
 
 def load_ssa_snapshot(*, owner: str) -> SSASnapshot | None:
-    """Load the cached SSA snapshot for *owner*, or None if unavailable."""
-    if not _SSA_CACHE_PATH.exists():
-        return None
+    """The saved SSA snapshot for *owner*, or None if unavailable."""
     try:
-        data = read_pii_json(_SSA_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
+        data = get_store().get(SSA)
+    except CorruptStoreError:
+        return None
+    if not isinstance(data, dict):
         return None
     try:
         owner_data = data.get(owner)
@@ -122,5 +118,5 @@ def load_ssa_snapshot(*, owner: str) -> SSASnapshot | None:
         )
     except (TypeError, ValueError, AttributeError):
         # Unknown keys are dropped above; a shape this build cannot read is
-        # treated like a corrupt file, never an app-boot crash (audit-1008 F-56).
+        # treated like a corrupt row, never an app-boot crash (audit-1008 F-56).
         return None

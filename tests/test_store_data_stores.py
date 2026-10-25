@@ -12,10 +12,20 @@ from engine.portfolio_sync.portfolio import (
     load_snapshot,
     save_snapshot,
 )
-from engine.portfolio_sync.shapes import AccountSummary, PortfolioSnapshot
+from engine.portfolio_sync.shapes import (
+    AccountSummary,
+    PortfolioSnapshot,
+    SSABenefitEstimate,
+    SSASnapshot,
+)
+from engine.portfolio_sync.social_security import (
+    CorruptSSACacheError,
+    load_ssa_snapshot,
+    save_ssa_snapshot,
+)
 from engine.portfolio_sync.ytd import load_ytd_snapshot, save_ytd_snapshot
 from engine.store import SINGLE_KEY, CorruptStoreError
-from engine.store.namespaces import PORTFOLIO, YTD
+from engine.store.namespaces import PORTFOLIO, SSA, YTD
 from models.ytd_income import YTDSnapshot
 
 
@@ -83,3 +93,34 @@ class TestYtdStore:
         with pytest.raises(CorruptStoreError, match="ytd"):
             save_ytd_snapshot(YTDSnapshot())
         assert store.backend.get(YTD, SINGLE_KEY).payload == payload
+
+
+def _ssa(amount: float) -> SSASnapshot:
+    return SSASnapshot(
+        estimates=[SSABenefitEstimate(67, "2034-01-01", "retirement", amount)],
+        server_available=True,
+    )
+
+
+class TestSsaStore:
+    def test_owners_share_one_document(self, store):
+        save_ssa_snapshot(_ssa(1_000.0), owner="you")
+        save_ssa_snapshot(_ssa(800.0), owner="spouse")
+        assert set(store.get(SSA)) == {"you", "spouse"}
+        you = load_ssa_snapshot(owner="you")
+        assert you is not None
+        assert you.estimates[0].monthly_amount == 1_000.0
+
+    def test_corrupt_row_reads_none_and_refuses_a_save(self, store, corrupt_row):
+        payload = corrupt_row(SSA)
+        assert load_ssa_snapshot(owner="you") is None
+        with pytest.raises(CorruptSSACacheError):
+            save_ssa_snapshot(_ssa(1.0), owner="you")
+        assert store.backend.get(SSA, SINGLE_KEY).payload == payload
+
+    def test_non_object_document_is_kept(self, store):
+        store.put(SSA, [1, 2])
+        assert load_ssa_snapshot(owner="you") is None
+        with pytest.raises(CorruptSSACacheError):
+            save_ssa_snapshot(_ssa(1.0), owner="you")
+        assert store.get(SSA) == [1, 2]

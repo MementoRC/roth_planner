@@ -17,7 +17,6 @@ All figures are synthetic.
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,9 +42,8 @@ from engine.portfolio_sync.shapes import (
     SSASnapshot,
 )
 from engine.portfolio_sync.ytd import ytd_from_dict, ytd_to_dict
-from engine.secure_io import read_pii_json, write_pii_json
 from engine.store.core import Store
-from engine.store.namespaces import PORTFOLIO, YTD
+from engine.store.namespaces import PORTFOLIO, SSA, YTD
 from models.ytd_income import IncomeEvent, RealizedGainEvent, YTDSnapshot
 
 NOW = "2026-10-01T12:00:00+00:00"
@@ -315,27 +313,25 @@ class TestPortfolioCacheForwardCompat:
 
 class TestSsaCacheForwardCompat:
     @pytest.fixture
-    def cache(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        path = tmp_path / ".ssa_cache.json"
-        monkeypatch.setattr(ssa_mod, "_SSA_CACHE_PATH", path)
+    def cache(self, store: Store) -> Store:
         snap = SSASnapshot(
             estimates=[SSABenefitEstimate(67, "2032-01", "full", 2000.0)], server_available=True
         )
         ssa_mod.save_ssa_snapshot(snap, owner="you")
-        return path
+        return store
 
-    def test_unknown_estimate_key_is_dropped(self, cache: Path) -> None:
-        data = read_pii_json(cache)
+    def test_unknown_estimate_key_is_dropped(self, cache: Store) -> None:
+        data = cache.get(SSA)
         data["you"]["estimates"][0]["future_est_field"] = 1
-        write_pii_json(cache, data)
+        cache.put(SSA, data)
         snap = ssa_mod.load_ssa_snapshot(owner="you")
         assert snap is not None
         assert snap.estimates[0].monthly_amount == 2000.0
 
-    def test_malformed_estimate_degrades_to_none(self, cache: Path) -> None:
-        data = read_pii_json(cache)
+    def test_malformed_estimate_degrades_to_none(self, cache: Store) -> None:
+        data = cache.get(SSA)
         del data["you"]["estimates"][0]["claim_date"]
-        write_pii_json(cache, data)
+        cache.put(SSA, data)
         assert ssa_mod.load_ssa_snapshot(owner="you") is None
 
 
