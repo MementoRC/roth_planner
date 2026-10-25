@@ -37,7 +37,7 @@ def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
     # audit-0805 W1: re-import at call time (not the module-level binding
     # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
@@ -48,13 +48,13 @@ def _seed_pending_stock_price_now() -> None:
     store.record_candidate(
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
 def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
     committed_json = {
@@ -75,7 +75,7 @@ def _seed_pending_grants() -> None:
         candidate_grants,
         Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync"),
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 

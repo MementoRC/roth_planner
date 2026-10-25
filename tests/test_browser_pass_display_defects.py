@@ -15,7 +15,6 @@ All values are synthetic.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -146,7 +145,7 @@ def test_readonly_input_stacked_has_no_side_column():
 # --- (e) ---------------------------------------------------------------------
 
 
-def _store_with(path: Path) -> None:
+def _store_with() -> None:
     store = CandidateStore()
     when = datetime(2026, 7, 1)
     ingest.record_candidate(store, "your_ira", 500_000.0, Source.PDF, "statement", when)
@@ -155,16 +154,15 @@ def _store_with(path: Path) -> None:
     )
     ingest.record_candidate(store, "your_roth", 50_000.0, Source.PDF, "statement", when)
     ingest.record_candidate(store, "spouse_ira", 100_000.0, Source.PDF, "statement", when)
-    store.save(path)
+    store.save()
 
 
-def test_discard_pdf_balance_candidates_only_drops_that_persons_pdf(tmp_path):
-    path = tmp_path / "store.json"
-    _store_with(path)
+def test_discard_pdf_balance_candidates_only_drops_that_persons_pdf():
+    _store_with()
 
-    assert discard_pdf_balance_candidates(["you"], store_path=path) == 2
+    assert discard_pdf_balance_candidates(["you"]) == 2
 
-    store = CandidateStore.load(path)
+    store = CandidateStore.load()
     assert [c.prov.source for c in store.candidates_for("your_ira")] == [Source.FINEXTRACT_LIVE]
     assert not store.has_candidates("your_roth")
     assert store.has_candidates("spouse_ira")
@@ -212,10 +210,9 @@ def test_slots_with_replaced_accounts():
 
 
 def test_apply_ready_import_drops_stale_pdf_balance_candidate():
-    from engine.data_sources import paths
     from views.setup import data_bridge
 
-    _store_with(paths.CANDIDATE_STORE_PATH)
+    _store_with()
     st = MagicMock()
     st.session_state = _State()
     result = SimpleNamespace(
@@ -243,6 +240,6 @@ def test_apply_ready_import_drops_stale_pdf_balance_candidate():
     ):
         data_bridge._apply_ready_import(ready, "synthetic.enc")
 
-    store = CandidateStore.load(paths.CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     assert all(c.prov.source != Source.PDF for c in store.candidates_for("your_ira"))
     assert store.has_candidates("spouse_ira")

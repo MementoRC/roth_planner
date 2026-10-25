@@ -10,7 +10,7 @@ same scanned folder, and could silently diverge.
 
 Scope: this helper owns the Form-1040 side of a folder scan (the part that
 used to differ between the two view handlers) — merging parsed
-``Form1040Record``s into the on-disk pdf-tax cache and recording one
+``Form1040Record``s into the saved 1040 records and recording one
 ``prior_year_magi.<year>`` candidate per year. Brokerage/Koinly record
 *application* (owner attribution via interactive confirmation, ledger writes,
 YTD snapshot updates) was never routed through the candidate store in either
@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.record import record_magi_candidates
 from engine.pdf_import import PdfImportResult
 from engine.tax_return_pdf import (
@@ -89,7 +88,6 @@ def _merge_and_persist_pdf_cache(
 def _record_scan_result(
     result: PdfImportResult,
     *,
-    store_path: str | Path,
     recorded_at: datetime | None,
 ) -> ScanIngestResult:
     """Shared core behind :func:`scan_and_record` and
@@ -98,8 +96,8 @@ def _record_scan_result(
 
     Reproduces exactly what ``views/ytd_income.py``'s and
     ``views/setup/parameters.py``'s scan handlers used to do inline for Form
-    1040 records: merge ``result.form_1040_records`` into the on-disk pdf-tax
-    cache and record one ``prior_year_magi.<year>`` candidate (``Source.PDF``,
+    1040 records: merge ``result.form_1040_records`` into the saved 1040
+    records and record one ``prior_year_magi.<year>`` candidate (``Source.PDF``,
     detail "Form 1040 PDF") per year via ``record_magi_candidates`` — only
     when the scan found at least one Form 1040 this pass.
 
@@ -127,7 +125,6 @@ def _record_scan_result(
             Source.PDF,
             "Form 1040 PDF",
             when,
-            store_path=store_path,
         )
 
     return ScanIngestResult(
@@ -148,7 +145,6 @@ def _record_scan_result(
 def scan_and_record(
     folder: Path,
     *,
-    store_path: str | Path = CANDIDATE_STORE_PATH,
     recorded_at: datetime | None = None,
 ) -> ScanIngestResult:
     """Scan *folder*, record 1040 MAGI candidates, persist the merged pdf cache.
@@ -161,13 +157,12 @@ def scan_and_record(
     from engine.pdf_import import scan_pdf_folder
 
     result = scan_pdf_folder(Path(folder))
-    return _record_scan_result(result, store_path=store_path, recorded_at=recorded_at)
+    return _record_scan_result(result, recorded_at=recorded_at)
 
 
 def scan_documents_and_record(
     documents: Iterable[tuple[str, bytes]],
     *,
-    store_path: str | Path = CANDIDATE_STORE_PATH,
     recorded_at: datetime | None = None,
 ) -> ScanIngestResult:
     """Scan already-read PDF bytes, record 1040 MAGI candidates, persist the
@@ -183,4 +178,4 @@ def scan_documents_and_record(
     from engine.pdf_import import scan_pdf_documents
 
     result = scan_pdf_documents(documents)
-    return _record_scan_result(result, store_path=store_path, recorded_at=recorded_at)
+    return _record_scan_result(result, recorded_at=recorded_at)

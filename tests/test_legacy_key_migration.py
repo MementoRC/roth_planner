@@ -24,7 +24,7 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import apply_committed, extract_committed, load_committed
 from engine.portfolio_sync.shapes import PortfolioSnapshot, portfolio_snapshot_from_dict
-from engine.store.namespaces import COMMITTED, PORTFOLIO
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, PORTFOLIO
 from engine.upload_merge import build_user_defaults_session_updates
 from models.household import Household
 from models.legacy_keys import (
@@ -199,18 +199,17 @@ def test_committed_baseline_with_old_key_loads_into_new_attr(store) -> None:
 # --- candidate store and trust choices --------------------------------------
 
 
-def test_candidate_store_with_old_field_key_loads_under_new_key(tmp_path) -> None:
-    store = CandidateStore()
-    store.record_candidate("stock_price_now", 199.5, Provenance(Source.MARKET_QUOTE, _WHEN, "q"))
-    raw = store.to_json()
+def test_candidate_store_with_old_field_key_loads_under_new_key(store) -> None:
+    cands = CandidateStore()
+    cands.record_candidate("stock_price_now", 199.5, Provenance(Source.MARKET_QUOTE, _WHEN, "q"))
+    raw = cands.to_json()
     raw[OLD["stock_price_now"]] = raw.pop("stock_price_now")
-    path = tmp_path / "cands.json"
-    path.write_text(json.dumps(raw))
-    loaded = CandidateStore.load(path)
+    store.put(CANDIDATE_STORE, raw)
+    loaded = CandidateStore.load()
     assert not loaded.load_corrupt
     assert [c.value for c in loaded.candidates_for("stock_price_now")] == [199.5]
-    loaded.save(path)
-    assert not _has_legacy_key(path.read_text())
+    loaded.save()
+    assert not _has_legacy_key(json.dumps(store.get(CANDIDATE_STORE)))
 
 
 def test_trust_choices_with_old_field_key_load_under_new_key(tmp_path) -> None:

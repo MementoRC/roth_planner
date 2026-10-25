@@ -10,7 +10,6 @@ per-source balances both sum to the ending balance.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -297,7 +296,7 @@ class TestApplyStatement:
         assert "Example State University 403b" in outcome.detail
         assert "2026-06-30" in outcome.detail
 
-    def test_you_owner_maps_to_your_ira_and_records(self, tmp_path: Path) -> None:
+    def test_you_owner_maps_to_your_ira_and_records(self) -> None:
         # Issue #552: f"{owner}_ira" produced "you_ira", which the candidate
         # recorder rejects, so Apply crashed for the "you" owner.
         snap = PortfolioSnapshot(
@@ -310,7 +309,6 @@ class TestApplyStatement:
             outcome.ira_total,
             outcome.detail,
             datetime(2026, 7, 1),
-            store_path=tmp_path / "candidates.json",
         )
 
 
@@ -329,32 +327,27 @@ class TestDefaultOwner:
 
 
 class TestRecordIraCandidate:
-    def test_records_a_pdf_candidate(self, tmp_path) -> None:
+    def test_records_a_pdf_candidate(self) -> None:
         from datetime import datetime
 
         from engine.data_sources.candidate_store import CandidateStore
         from engine.data_sources.record import record_ira_balance_candidate
         from models.sourced import Source
 
-        store_path = tmp_path / "store.json"
         when = datetime(2026, 10, 1, 12, 0)
-        assert record_ira_balance_candidate(
-            "spouse_ira", 35_900.4, "NetBenefits 403(b) PDF", when, store_path=store_path
-        )
-        [cand] = CandidateStore.load(store_path).candidates_for("spouse_ira")
+        assert record_ira_balance_candidate("spouse_ira", 35_900.4, "NetBenefits 403(b) PDF", when)
+        [cand] = CandidateStore.load().candidates_for("spouse_ira")
         assert cand.value == 35_900.0
         assert cand.prov.source == Source.PDF
         assert cand.prov.detail == "NetBenefits 403(b) PDF"
 
-    def test_rejects_a_non_ira_field(self, tmp_path) -> None:
+    def test_rejects_a_non_ira_field(self) -> None:
         from datetime import datetime
 
         from engine.data_sources.record import record_ira_balance_candidate
 
         with pytest.raises(ValueError, match="your_ira"):
-            record_ira_balance_candidate(
-                "your_roth", 1.0, "x", datetime(2026, 1, 1), store_path=tmp_path / "s.json"
-            )
+            record_ira_balance_candidate("your_roth", 1.0, "x", datetime(2026, 1, 1))
 
 
 class TestDispatch:

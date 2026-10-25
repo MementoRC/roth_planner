@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as paths_mod
 import views.navigation as navigation_mod
 from engine.data_sources.record import record_magi_candidates
 from models.sourced import Source
@@ -28,7 +27,6 @@ def _run(monkeypatch: pytest.MonkeyPatch, *, record: bool, stop: bool = False) -
                 Source.PDF,
                 "synthetic",
                 datetime(2026, 1, 1),
-                store_path=paths_mod.CANDIDATE_STORE_PATH,
             )
         if stop:
             import streamlit as st
@@ -57,7 +55,6 @@ def test_badge_still_drawn_when_page_body_stops(monkeypatch) -> None:
         Source.PDF,
         "synthetic",
         datetime(2026, 1, 1),
-        store_path=paths_mod.CANDIDATE_STORE_PATH,
     )
     at = _run(monkeypatch, record=False, stop=True)
     assert len(_badges(at)) == 1

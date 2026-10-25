@@ -277,10 +277,7 @@ from engine.data_sources.orchestrator import (  # noqa: E402
 # Setup / Command Center cache paths (Wave 4: centralized in
 # engine/data_sources/paths.py so views/setup/command_center.py can share
 # them without importing from app.py).
-from engine.data_sources.paths import (  # noqa: E402
-    CANDIDATE_STORE_PATH,
-    TRUST_CHOICES_PATH,
-)
+from engine.data_sources.paths import TRUST_CHOICES_PATH  # noqa: E402
 from engine.data_sources.resolver import resolve  # noqa: E402
 from engine.data_sources.snapshot_ingest import (  # noqa: E402
     derive_snapshot_growth,
@@ -327,7 +324,7 @@ def _current_pending_review() -> set[str]:
         return published
     if committed_json is not None:
         apply_committed(base, committed_json)
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     choices = ChoiceMap.load(TRUST_CHOICES_PATH)
     return set(resolve(base, store, choices).pending_review)
 
@@ -383,13 +380,13 @@ def _persist_resolution(
     # (see CorruptCandidateStoreError's docstring); this except is what
     # surfaces that refusal to the user instead of it failing silently.
     try:
-        store.save(CANDIDATE_STORE_PATH)
-    except CorruptCandidateStoreError as exc:
+        store.save()
+    except CorruptCandidateStoreError:
         st.warning(
-            f"⚠️ Your candidate store at `{exc.path}` is unreadable "
-            "(corrupt or truncated) and could contain data with no other copy. It has "
-            "been left untouched and will NOT be overwritten this session — restore it "
-            "from a backup if you have one, or contact support before deleting it."
+            "⚠️ Your candidate store is unreadable (corrupt or truncated) and could "
+            "contain data with no other copy. It has been left untouched and will NOT be "
+            "overwritten this session — restore it from a backup if you have one, or "
+            "contact support before deleting it."
         )
     # audit-1008 F-45: same guard for the trust-choice map.
     try:
@@ -501,7 +498,7 @@ def get_household() -> Household:
     # in-memory ones (the "first load" path, so the demo seeds are the baseline)
     # and write none of them back -- demo values must never overwrite personal
     # files or be stamped MANUAL there.
-    store = CandidateStore() if _DEMO_MODE else CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore() if _DEMO_MODE else CandidateStore.load()
     choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load(TRUST_CHOICES_PATH)
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see

@@ -41,7 +41,7 @@ from engine.portfolio_sync import (
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.store import SINGLE_KEY, Store
-from engine.store.namespaces import COMMITTED
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from engine.upload_merge import JOINT_FIELDS, SCALAR_KEYS, build_user_defaults_session_updates
 from models.ytd_income import YTDSnapshot
@@ -164,11 +164,11 @@ def _app(*, suppress: bool = True) -> AppTest:
 def _cache_state(store: Store) -> dict[str, object]:
     """Saved Command Center state, read past demo mode's null store."""
     state: dict[str, object] = {
-        p.name: (p.read_bytes() if p.exists() else None)
-        for p in (paths_mod.CANDIDATE_STORE_PATH, paths_mod.TRUST_CHOICES_PATH)
+        p.name: (p.read_bytes() if p.exists() else None) for p in (paths_mod.TRUST_CHOICES_PATH,)
     }
-    row = store.backend.get(COMMITTED, SINGLE_KEY)
-    state[COMMITTED] = row.payload if row else None
+    for namespace in (COMMITTED, CANDIDATE_STORE):
+        row = store.backend.get(namespace, SINGLE_KEY)
+        state[namespace] = row.payload if row else None
     return state
 
 
@@ -268,11 +268,9 @@ class TestF30AutoloadGatedByDemoMode:
         assert "ssa_snapshot_you" in at.session_state
         assert "ssa_snapshot_spouse" in at.session_state
         assert "portfolio_snapshot" in at.session_state
-        assert CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).candidates_for(
-            magi_field_key(2024)
-        )
+        assert CandidateStore.load().candidates_for(magi_field_key(2024))
 
-    def test_demo_mode_skips_every_personal_autoload(self):
+    def test_demo_mode_skips_every_personal_autoload(self, store):
         _save_personal_caches()
         demo_mod.enter_demo_mode()
         at = _app(suppress=False)
@@ -285,9 +283,10 @@ class TestF30AutoloadGatedByDemoMode:
             "ytd_snapshot",
         ):
             assert key not in at.session_state, f"{key} autoloaded inside demo mode"
-        assert not CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).candidates_for(
-            magi_field_key(2024)
-        ), "1040 MAGI from the disk cache was recorded inside demo mode"
+        recorded = CandidateStore.from_json(store.get(CANDIDATE_STORE) or {})
+        assert not recorded.candidates_for(magi_field_key(2024)), (
+            "1040 MAGI from the disk cache was recorded inside demo mode"
+        )
 
 
 # --- F-31: export carries demo data only ---------------------------------------------

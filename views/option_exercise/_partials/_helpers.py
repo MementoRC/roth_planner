@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
 import streamlit as st
 
 from config.loader import load_defaults
-from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.record import record_stock_quote_candidate
 from engine.market_quote import QuoteResult, fetch_stock_quote
 
@@ -36,9 +34,7 @@ def configured_ticker() -> str:
 
 
 def handle_stock_quote_fetch(
-    *,
-    store_path: str | Path = CANDIDATE_STORE_PATH,
-    fetcher: Callable[[str], QuoteResult] = fetch_stock_quote,
+    *, fetcher: Callable[[str], QuoteResult] = fetch_stock_quote
 ) -> QuoteResult:
     """Fetch a live quote for the configured ticker and record it as a pending
     Command Center candidate.
@@ -53,5 +49,5 @@ def handle_stock_quote_fetch(
     """
     result = fetcher(configured_ticker())
     if result.ok and result.price is not None:
-        record_stock_quote_candidate(result.price, store_path=store_path)
+        record_stock_quote_candidate(result.price)
     return result

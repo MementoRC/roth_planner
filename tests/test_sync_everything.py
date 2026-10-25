@@ -34,6 +34,7 @@ from engine.portfolio_sync import (
     SSABenefitEstimate,
     SSASnapshot,
 )
+from engine.store.namespaces import CANDIDATE_STORE
 from engine.tax_return_pdf import Form1040Record
 from models.grants import StockGrant
 from models.household import Household
@@ -261,11 +262,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(tmp_path, monkey
 
     # Freeze invariant: every produced value is PENDING (a candidate exists),
     # and nothing was ever committed.
-    # audit-0805 W1: re-import at test-run time (not the module-level binding
-    # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     assert store.has_candidates("your_ira")
     assert store.has_candidates("your_ss_fra")
     assert store.has_candidates("spouse_ss_fra")
@@ -395,26 +392,23 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(tmp_path, monkeypatc
     assert result.market_quote.candidates_recorded == 1
     assert result.market_quote.error is None
 
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     assert not store.has_candidates("your_ira")
     assert store.has_candidates("your_ss_fra")
     assert store.has_candidates(magi_field_key(_SCAN_YEAR))
     assert load_committed() is None
 
 
-def test_sync_everything_persists_real_stock_grant_candidates_to_disk(tmp_path, monkeypatch):
+def test_sync_everything_persists_real_stock_grant_candidates_to_the_store(
+    tmp_path, monkeypatch, store
+):
     """Reproduces the production crash: a fetched snapshot with a REAL
     outstanding ``EquityGrant`` (merged into a REAL ``StockGrant``) must
-    round-trip through an actual ``CandidateStore.save``/``.load`` at a real
-    temp-file path without raising
+    round-trip through an actual ``CandidateStore.save``/``.load`` in the
+    document store without raising
     ``TypeError: Object of type StockGrant is not JSON serializable``, and
     the grant candidate must be readable back as a live ``StockGrant``.
     """
-    store_path = tmp_path / "candidate_store.json"
-    monkeypatch.setattr(shared_mod, "CANDIDATE_STORE_PATH", store_path)
-
     hh = _stub_hh()
     mock_st = _mock_st(_user_grant_strikes={"2020": 124.0})
 
@@ -435,11 +429,10 @@ def test_sync_everything_persists_real_stock_grant_candidates_to_disk(tmp_path, 
     assert result.portfolio.server_available is True
     assert result.portfolio.error is None
 
-    # The store must have actually hit disk (this is where the production
+    # The store must have actually been written (this is where the production
     # crash occurred: json.dumps on a raw StockGrant).
-    assert store_path.exists()
-    store = CandidateStore.load(store_path)
-    candidates = store.candidates_for("grants")
+    assert store.has(CANDIDATE_STORE)
+    candidates = CandidateStore.load().candidates_for("grants")
     assert len(candidates) == 1
     grants = candidates[0].value
     assert len(grants) == 1

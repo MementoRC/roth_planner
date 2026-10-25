@@ -14,7 +14,6 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-CANDIDATE_STORE_PATH = _REPO_ROOT / ".candidate_store.json"
 TRUST_CHOICES_PATH = _REPO_ROOT / ".trust_choices.json"
 
-__all__ = ["CANDIDATE_STORE_PATH", "TRUST_CHOICES_PATH"]
+__all__ = ["TRUST_CHOICES_PATH"]

@@ -3,7 +3,6 @@
 F-20  read_pii_json let UnicodeDecodeError escape the (JSONDecodeError, OSError)
       handlers of its callers.
 F-23  write_pii_json was not atomic and ignored short writes.
-F-24  the candidate store was written world-readable (0644).
 F-42  a non-UTF-8 committed baseline / candidate store / choice map crashed.
 F-43  save_snapshot / save_ssa_snapshot crashed on a valid-JSON non-object cache.
 
@@ -32,7 +31,7 @@ from engine.data_sources.committed import (
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
 from engine.secure_io import read_pii_json, write_pii_json
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import COMMITTED, PORTFOLIO, SSA
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, PORTFOLIO, SSA
 
 BAD_BYTES = b"\xff\xfe\x00not utf-8 \xc3\x28"
 
@@ -96,13 +95,6 @@ class TestF23AtomicWrite:
         assert stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
-class TestF24CandidateStoreMode:
-    def test_candidate_store_saved_0600(self, tmp_path) -> None:
-        p = tmp_path / "cands.json"
-        CandidateStore().save(p)
-        assert stat.S_IMODE(p.stat().st_mode) == 0o600
-
-
 class TestF42NonUtf8Corrupt:
     def test_load_committed_raises_corrupt_error(self, store, corrupt_row) -> None:
         payload = corrupt_row(COMMITTED)
@@ -116,12 +108,10 @@ class TestF42NonUtf8Corrupt:
             save_committed({})
         assert store.backend.get(COMMITTED, SINGLE_KEY).payload == payload
 
-    def test_candidate_store_load_flags_corrupt(self, tmp_path) -> None:
-        p = tmp_path / "cands.json"
-        p.write_bytes(BAD_BYTES)
-        store = CandidateStore.load(p)
-        assert store.load_corrupt is True
-        assert p.read_bytes() == BAD_BYTES
+    def test_candidate_store_load_flags_corrupt(self, store, corrupt_row) -> None:
+        payload = corrupt_row(CANDIDATE_STORE)
+        assert CandidateStore.load().load_corrupt is True
+        assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload
 
     def test_choice_map_load_flags_corrupt(self, tmp_path) -> None:
         p = tmp_path / "choices.json"

@@ -23,7 +23,7 @@ def _pending_quote(confirmed_price: float) -> float | None:
     Uses the resolver's own pending predicate (honours the user's trust
     choice) so this page and Command Center agree.
     """
-    store = CandidateStore.load(paths.CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     choice = ChoiceMap.load(paths.TRUST_CHOICES_PATH).get("stock_price_now")
     quotes = [
         c for c in store.candidates_for("stock_price_now") if c.prov.source == Source.MARKET_QUOTE

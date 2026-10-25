@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import json
 import pickle
 from datetime import datetime
 from pathlib import Path
@@ -34,7 +33,7 @@ from engine.data_sources.confirm import confirm_field
 from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
-from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+from engine.data_sources.paths import TRUST_CHOICES_PATH
 from engine.data_sources.record import (
     record_magi_candidates,
     record_ss_fra_candidate,
@@ -54,7 +53,8 @@ from engine.data_sources.snapshot_ingest import (
     record_snapshot_candidates,
 )
 from engine.portfolio_sync import AccountSummary, EquityGrant, PortfolioSnapshot
-from engine.store.namespaces import COMMITTED
+from engine.store import SINGLE_KEY
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
@@ -362,89 +362,69 @@ class TestCandidateStore:
         assert your_ira_candidates[0].prov.source == Source.MANUAL
         assert your_ira_candidates[0].prov.detail == "entered"
 
-    def test_save_load_round_trip(self, tmp_path: Path) -> None:
-        store = CandidateStore()
-        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
-        path = tmp_path / "candidates.json"
-        store.save(path)
+    def test_save_load_round_trip(self) -> None:
+        cands = CandidateStore()
+        cands.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+        cands.save()
 
-        restored = CandidateStore.load(path)
+        restored = CandidateStore.load()
         assert restored.candidates_for("your_ira")[0].value == 100.0
 
-    def test_load_missing_file_returns_empty_store_no_raise(self, tmp_path: Path) -> None:
-        missing = tmp_path / "does_not_exist.json"
-        store = CandidateStore.load(missing)
-        assert store.field_keys() == []
-        # A missing file means "nothing has ever been saved" — not corrupt,
+    def test_load_absent_row_returns_empty_store_no_raise(self) -> None:
+        cands = CandidateStore.load()
+        assert cands.field_keys() == []
+        # An absent row means "nothing has ever been saved" — not corrupt,
         # so save() must NOT refuse to write over it (see the sibling
-        # test_load_corrupt_file_returns_empty_store_no_raise, where a
-        # genuinely corrupt file DOES set this).
-        assert store.load_corrupt is False
+        # test_load_corrupt_row_returns_empty_store_no_raise, where a
+        # genuinely corrupt row DOES set this).
+        assert cands.load_corrupt is False
 
-    def test_load_corrupt_file_returns_empty_store_no_raise(self, tmp_path: Path) -> None:
-        """audit-0823: an unparseable file previously returned an empty store
+    def test_load_corrupt_row_returns_empty_store_no_raise(self, corrupt_row) -> None:
+        """audit-0823: an unparseable row previously returned an empty store
         with no way for the caller to tell that apart from "nothing was ever
-        saved" — the missing-vs-corrupt distinction now lives on the
+        saved" — the absent-vs-corrupt distinction now lives on the
         returned store's ``load_corrupt`` flag (load() itself still never
         raises; save() is the authoritative guard that refuses to clobber).
         """
-        corrupt = tmp_path / "corrupt.json"
-        corrupt.write_text("{not valid json!!")
-        store = CandidateStore.load(corrupt)
-        assert store.field_keys() == []
-        assert store.load_corrupt is True
+        corrupt_row(CANDIDATE_STORE)
+        cands = CandidateStore.load()
+        assert cands.field_keys() == []
+        assert cands.load_corrupt is True
 
-    def test_save_writes_atomically_no_stray_temp_file(self, tmp_path: Path) -> None:
-        store = CandidateStore()
-        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
-        path = tmp_path / "candidates.json"
-
-        store.save(path)
-
-        assert json.loads(path.read_text())["your_ira"]
-        # Only look for save()'s own temp files — the cache-redirect fixture
-        # drops an unrelated _redirected_caches/ dir into tmp_path.
-        leftover = sorted(tmp_path.glob(f"{path.name}.tmp-*"))
-        assert leftover == [], f"stray temp file(s) left behind: {leftover!r}"
-
-    def test_save_refuses_to_overwrite_existing_corrupt_file(self, tmp_path: Path) -> None:
+    def test_save_refuses_to_overwrite_existing_corrupt_row(self, store, corrupt_row) -> None:
         """audit-0823 — the load-bearing regression: save() must never
         clobber an existing-but-unparseable candidate store with a
         freshly-loaded (necessarily empty, per CandidateStore.load's
-        resilience) in-memory store. The on-disk bytes may be the user's
+        resilience) in-memory store. The saved row may be the user's
         only copy of their candidates.
         """
-        path = tmp_path / "corrupt.json"
-        corrupt_bytes = '{"your_ira": {"MANUAL": {"value": 100.0,'  # truncated mid-write
-        path.write_text(corrupt_bytes)
-        store = CandidateStore()
+        payload = corrupt_row(CANDIDATE_STORE)
+        cands = CandidateStore()
 
         with pytest.raises(CorruptCandidateStoreError):
-            store.save(path)
+            cands.save()
 
-        assert path.read_text() == corrupt_bytes, (
-            "refused save must leave the corrupt file byte-identical"
+        assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload, (
+            "refused save must leave the corrupt row byte-identical"
         )
 
-    def test_save_writes_normally_when_target_missing(self, tmp_path: Path) -> None:
-        path = tmp_path / "missing.json"
-        store = CandidateStore()
-        store.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
+    def test_save_writes_normally_when_row_absent(self, store) -> None:
+        cands = CandidateStore()
+        cands.record_candidate("your_ira", 100.0, Provenance(Source.MANUAL, FIXED_DT))
 
-        store.save(path)
+        cands.save()
 
-        assert path.exists()
-        assert CandidateStore.load(path).candidates_for("your_ira")[0].value == 100.0
+        assert store.has(CANDIDATE_STORE)
+        assert CandidateStore.load().candidates_for("your_ira")[0].value == 100.0
 
-    def test_save_writes_normally_when_target_valid(self, tmp_path: Path) -> None:
-        path = tmp_path / "valid.json"
-        path.write_text('{"your_ira": {}}')
-        store = CandidateStore()
-        store.record_candidate("your_ira", 200.0, Provenance(Source.MANUAL, FIXED_DT))
+    def test_save_writes_normally_when_row_valid(self, store) -> None:
+        store.put(CANDIDATE_STORE, {"your_ira": {}})
+        cands = CandidateStore()
+        cands.record_candidate("your_ira", 200.0, Provenance(Source.MANUAL, FIXED_DT))
 
-        store.save(path)
+        cands.save()
 
-        assert CandidateStore.load(path).candidates_for("your_ira")[0].value == 200.0
+        assert CandidateStore.load().candidates_for("your_ira")[0].value == 200.0
 
 
 class TestChoiceMap:
@@ -1160,7 +1140,6 @@ class TestReconcileManualEdits:
 class TestPaths:
     def test_cache_path_constants_match_app_py_expected_locations(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        assert repo_root / ".candidate_store.json" == CANDIDATE_STORE_PATH
         assert repo_root / ".trust_choices.json" == TRUST_CHOICES_PATH
 
 
@@ -1262,19 +1241,16 @@ class TestRecordMagiCandidates:
     replacing st.session_state["prior_year_magi"] directly (audit defect #2).
     """
 
-    def test_records_one_candidate_per_year(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
+    def test_records_one_candidate_per_year(self) -> None:
         count = record_magi_candidates(
             {2023: 270_000.0, 2024: 288_000.0},
             Source.PDF,
             "Form 1040 PDF",
             FIXED_DT,
-            store_path=store_path,
         )
 
         assert count == 2
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         c2023 = store.candidates_for(magi_field_key(2023))
         c2024 = store.candidates_for(magi_field_key(2024))
         assert len(c2023) == 1
@@ -1285,59 +1261,38 @@ class TestRecordMagiCandidates:
         assert len(c2024) == 1
         assert c2024[0].value == 288_000.0
 
-    def test_skips_falsy_and_none_values(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
+    def test_skips_falsy_and_none_values(self) -> None:
         count = record_magi_candidates(
             {2022: 0.0, 2023: None, 2024: 150_000.0},
             Source.FINEXTRACT_LIVE,
             "FinExtract tax return",
             FIXED_DT,
-            store_path=store_path,
         )
 
         assert count == 1
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         assert store.candidates_for(magi_field_key(2022)) == []
         assert store.candidates_for(magi_field_key(2023)) == []
         assert len(store.candidates_for(magi_field_key(2024))) == 1
 
-    def test_round_trips_through_store_file(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-        record_magi_candidates(
-            {2025: 300_000.0}, Source.BUNDLE, "Data bridge import", FIXED_DT, store_path=store_path
-        )
+    def test_round_trips_through_the_store(self) -> None:
+        record_magi_candidates({2025: 300_000.0}, Source.BUNDLE, "Data bridge import", FIXED_DT)
 
         # Fresh load (simulating a later app run) sees the persisted candidate.
-        reloaded = CandidateStore.load(store_path)
+        reloaded = CandidateStore.load()
         candidates = reloaded.candidates_for(magi_field_key(2025))
         assert len(candidates) == 1
         assert candidates[0].value == 300_000.0
         assert candidates[0].prov.source == Source.BUNDLE
 
-    def test_coerces_string_year_and_int_value(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
-        count = record_magi_candidates(
-            {"2024": 275_000}, Source.PDF, "Form 1040 PDF", FIXED_DT, store_path=store_path
-        )
+    def test_coerces_string_year_and_int_value(self) -> None:
+        count = record_magi_candidates({"2024": 275_000}, Source.PDF, "Form 1040 PDF", FIXED_DT)
 
         assert count == 1
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         candidates = store.candidates_for(magi_field_key(2024))
         assert candidates[0].value == 275_000.0
         assert isinstance(candidates[0].value, float)
-
-    def test_store_path_param_is_isolated_from_real_candidate_store(self, tmp_path: Path) -> None:
-        """Explicit store_path writes to the tmp file, never the real CANDIDATE_STORE_PATH."""
-        store_path = tmp_path / "isolated_candidate_store.json"
-        assert store_path != CANDIDATE_STORE_PATH
-
-        record_magi_candidates(
-            {2024: 200_000.0}, Source.PDF, "Form 1040 PDF", FIXED_DT, store_path=store_path
-        )
-
-        assert store_path.exists()
 
 
 class TestSsFraCharacterization:
@@ -1414,15 +1369,14 @@ class TestSsFraSourcedField:
         assert result.household.your_ss_fra == 2_500.0
         assert "your_ss_fra" in result.pending_review
 
-    def test_store_round_trips_through_json_with_provenance(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
+    def test_store_round_trips_through_json_with_provenance(self) -> None:
         store = CandidateStore()
         ingest_record_candidate(
             store, "spouse_ss_fra", 1_900.0, Source.FINEXTRACT_LIVE, "SSA statement", FIXED_DT
         )
-        store.save(store_path)
+        store.save()
 
-        reloaded = CandidateStore.load(store_path)
+        reloaded = CandidateStore.load()
         candidates = reloaded.candidates_for("spouse_ss_fra")
         assert len(candidates) == 1
         assert candidates[0].value == 1_900.0
@@ -1439,20 +1393,17 @@ class TestRecordSsFraCandidate:
     the Command Center review gate (mirrors record_magi_candidates).
     """
 
-    def test_records_finextract_live_candidate(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
+    def test_records_finextract_live_candidate(self) -> None:
         recorded = record_ss_fra_candidate(
             "your_ss_fra",
             2_500.6,
             Source.FINEXTRACT_LIVE,
             "SSA statement",
             FIXED_DT,
-            store_path=store_path,
         )
 
         assert recorded is True
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         candidates = store.candidates_for("your_ss_fra")
         assert len(candidates) == 1
         assert candidates[0].value == 2_501.0  # rounded, matches int-typed widget
@@ -1461,24 +1412,19 @@ class TestRecordSsFraCandidate:
         assert candidates[0].prov.detail == "SSA statement"
         assert candidates[0].prov.recorded_at == FIXED_DT
 
-    def test_records_spouse_field(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
+    def test_records_spouse_field(self) -> None:
         record_ss_fra_candidate(
             "spouse_ss_fra",
             1_800.0,
             Source.FINEXTRACT_LIVE,
             "SSA statement",
             FIXED_DT,
-            store_path=store_path,
         )
 
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         assert store.candidates_for("spouse_ss_fra")[0].value == 1_800.0
 
-    def test_rejects_unrecognized_field_key(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
+    def test_rejects_unrecognized_field_key(self, store) -> None:
         with pytest.raises(ValueError, match="not_a_real_field"):
             record_ss_fra_candidate(
                 "not_a_real_field",
@@ -1486,25 +1432,22 @@ class TestRecordSsFraCandidate:
                 Source.FINEXTRACT_LIVE,
                 "detail",
                 FIXED_DT,
-                store_path=store_path,
             )
 
-        assert not store_path.exists()
+        assert not store.has(CANDIDATE_STORE)
 
-    def test_confirm_then_resolve_matches_c0_golden(self, tmp_path: Path) -> None:
+    def test_confirm_then_resolve_matches_c0_golden(self) -> None:
         """End-to-end: sync (candidate) -> confirm -> resolved number equals
         the C0 golden — freeze-until-confirm changes the mechanism, not the
         final number."""
-        store_path = tmp_path / "candidate_store.json"
         record_ss_fra_candidate(
             "your_ss_fra",
             2_500.0,
             Source.FINEXTRACT_LIVE,
             "SSA statement",
             FIXED_DT,
-            store_path=store_path,
         )
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         choices = ChoiceMap()
 
         committed = Household()  # not yet committed
@@ -1527,15 +1470,11 @@ class TestRecordStockQuoteCandidate:
     to Household/session state.
     """
 
-    def test_records_market_quote_candidate(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-
-        recorded = record_stock_quote_candidate(
-            202.357, recorded_at=FIXED_DT, store_path=store_path
-        )
+    def test_records_market_quote_candidate(self) -> None:
+        recorded = record_stock_quote_candidate(202.357, recorded_at=FIXED_DT)
 
         assert recorded is True
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         candidates = store.candidates_for("stock_price_now")
         assert len(candidates) == 1
         assert candidates[0].value == 202.36  # rounded to the nearest cent
@@ -1543,20 +1482,15 @@ class TestRecordStockQuoteCandidate:
         assert candidates[0].prov.detail == "Yahoo Finance quote"
         assert candidates[0].prov.recorded_at == FIXED_DT
 
-    def test_custom_detail(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
+    def test_custom_detail(self) -> None:
+        record_stock_quote_candidate(150.0, detail="Yahoo Finance AAPL", recorded_at=FIXED_DT)
 
-        record_stock_quote_candidate(
-            150.0, detail="Yahoo Finance AAPL", recorded_at=FIXED_DT, store_path=store_path
-        )
-
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         assert store.candidates_for("stock_price_now")[0].prov.detail == "Yahoo Finance AAPL"
 
-    def test_makes_stock_price_now_pending(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-        record_stock_quote_candidate(210.0, recorded_at=FIXED_DT, store_path=store_path)
-        store = CandidateStore.load(store_path)
+    def test_makes_stock_price_now_pending(self) -> None:
+        record_stock_quote_candidate(210.0, recorded_at=FIXED_DT)
+        store = CandidateStore.load()
         choices = ChoiceMap()
 
         result = resolve(Household(), store, choices)
@@ -1565,11 +1499,10 @@ class TestRecordStockQuoteCandidate:
         assert result.household.stock_price_now == 210.0
         assert result.household.stock_price_now.prov.source == Source.MARKET_QUOTE
 
-    def test_round_trips_through_store_save_load(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "candidate_store.json"
-        record_stock_quote_candidate(199.99, recorded_at=FIXED_DT, store_path=store_path)
+    def test_round_trips_through_store_save_load(self) -> None:
+        record_stock_quote_candidate(199.99, recorded_at=FIXED_DT)
 
-        reloaded = CandidateStore.load(store_path)
+        reloaded = CandidateStore.load()
         candidate = reloaded.candidates_for("stock_price_now")[0]
         assert candidate.value == 199.99
         assert candidate.prov.source == Source.MARKET_QUOTE

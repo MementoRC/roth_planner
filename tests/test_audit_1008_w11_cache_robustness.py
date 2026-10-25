@@ -31,7 +31,7 @@ from engine.data_sources.candidate_store import CandidateStore, CorruptCandidate
 from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
 from engine.dividend_forecast import Position, forecast_portfolio
 from engine.exercise_schedule_store import load_exercise_schedule
-from engine.store.namespaces import EXERCISE_SCHEDULE
+from engine.store.namespaces import CANDIDATE_STORE, EXERCISE_SCHEDULE
 from models.exercise_schedule import ExerciseSchedule
 from models.sourced import Provenance, Source
 
@@ -145,34 +145,31 @@ def _seed_good_candidates(store: CandidateStore) -> None:
         [1, 2, 3],
     ],
 )
-def test_f44_wrong_shape_store_is_not_clobbered(tmp_path: Path, bad_entry: object) -> None:
-    path = tmp_path / "candidates.json"
+def test_f44_wrong_shape_store_is_not_clobbered(store, bad_entry: object) -> None:
     good = CandidateStore()
     _seed_good_candidates(good)
     payload = good.to_json()
     payload["stock_price_now"] = bad_entry
-    original = json.dumps(payload)
-    path.write_text(original)
+    store.put(CANDIDATE_STORE, payload)
 
-    loaded = CandidateStore.load(path)
+    loaded = CandidateStore.load()
     assert loaded.load_corrupt is True
 
     loaded.record_candidate("spouse_ira", 5.0, Provenance(Source.MANUAL, FIXED_DT))
     with pytest.raises(CorruptCandidateStoreError):
-        loaded.save(path)
-    assert path.read_text() == original
+        loaded.save()
+    assert store.get(CANDIDATE_STORE) == payload
 
 
-def test_f44_top_level_non_object_loads_as_corrupt_without_raising(tmp_path: Path) -> None:
-    path = tmp_path / "candidates.json"
-    path.write_text("[1, 2, 3]")
+def test_f44_top_level_non_object_loads_as_corrupt_without_raising(store) -> None:
+    store.put(CANDIDATE_STORE, [1, 2, 3])
 
-    loaded = CandidateStore.load(path)
+    loaded = CandidateStore.load()
 
     assert loaded.load_corrupt is True
     with pytest.raises(CorruptCandidateStoreError):
-        loaded.save(path)
-    assert path.read_text() == "[1, 2, 3]"
+        loaded.save()
+    assert store.get(CANDIDATE_STORE) == [1, 2, 3]
 
 
 # ---------------------------------------------------------------- F-45 ----

@@ -5,11 +5,10 @@ to verify ``get_household()`` is correctly wired to
 ``engine.data_sources.orchestrator.resolve_for_app`` and that the per-load
 snapshot-clobber block has been removed.
 
-Isolation: the committed baseline lives in the document store, and the
-candidate store and trust choices still use the files
-``.candidate_store.json`` and ``.trust_choices.json``. Every test redirects
-those files into its own tmp dir and runs on its own in-memory store, so a
-developer's personal committed/candidate state never leaks in.
+Isolation: the committed baseline and the candidate store live in the document
+store, and trust choices still use the file ``.trust_choices.json``. Every test
+redirects that file into its own tmp dir and runs on its own in-memory store, so
+a developer's personal committed/candidate state never leaks in.
 ``_suppress_snapshot_autoload`` is pre-seeded so a developer's real saved
 portfolio (personal data) cannot influence the migration-identity assertion
 below.
@@ -258,7 +257,7 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     """
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     recorded_at = datetime(2026, 1, 1)
     get_store().put(
@@ -269,7 +268,7 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     store.record_candidate(
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, recorded_at, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)

@@ -170,7 +170,7 @@ def _render_command_center_with_pending(pending: set[str]) -> None:
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
@@ -181,7 +181,7 @@ def _seed_pending_your_ira() -> None:
     store.record_candidate(
         "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
@@ -228,7 +228,7 @@ def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
 
 def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
@@ -239,7 +239,7 @@ def _seed_pending_stock_price_now() -> None:
     store.record_candidate(
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
@@ -288,7 +288,7 @@ def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
     import dataclasses
 
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
     from models.grants import StockGrant
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
@@ -310,7 +310,7 @@ def _seed_pending_grants() -> None:
         candidate_grants,
         Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync"),
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
@@ -355,7 +355,7 @@ def test_command_center_confirm_grants_commits_candidate_list() -> None:
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_json = {
         "prior_year_magi": {
@@ -371,7 +371,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
         290_000.0,
         Provenance(Source.PDF, _RECORDED_AT, "Form 1040 PDF"),
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 

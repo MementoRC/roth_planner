@@ -69,7 +69,6 @@ APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
-        "candidates": paths_mod.CANDIDATE_STORE_PATH,
         "choices": paths_mod.TRUST_CHOICES_PATH,
         "user_defaults": loader._USER_DEFAULTS_PATH,
         "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
@@ -83,6 +82,7 @@ def _personal_paths() -> dict[str, Path]:
 _FILLED_NAMESPACES = frozenset(
     {
         "committed",
+        "candidate_store",
         "portfolio",
         "ytd",
         "ssa",
@@ -144,7 +144,7 @@ def personal_files(monkeypatch, store):
     """Fill every personal file with synthetic content via the REAL savers."""
     monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
     save_committed({})
-    CandidateStore().save(paths_mod.CANDIDATE_STORE_PATH)
+    CandidateStore().save()
     ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
     loader._USER_DEFAULTS_PATH.write_text(json.dumps({"your_age": 71}))
     save_instance_owner("you")
@@ -189,7 +189,7 @@ def _run_write_paths() -> None:
     now = datetime(2026, 3, 1)
     save_committed({"your_ira": 5})
     cand = CandidateStore()
-    cand.save(paths_mod.CANDIDATE_STORE_PATH)
+    cand.save()
     record_ira_balance_candidate("your_ira", 123_456.0, "synthetic", now)
     record_stock_quote_candidate(12.34)
     ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
@@ -241,7 +241,7 @@ class TestDemoModeWritesNothing:
         assert load_instance_owner() is None
         assert load_account_overrides() == {}
         assert load_committed() is None
-        assert not CandidateStore.load(paths_mod.CANDIDATE_STORE_PATH).load_corrupt
+        assert not CandidateStore.load().load_corrupt
         assert exercise_store_mod.load_exercise_schedule() is None
 
     def test_dividend_rate_overrides_are_hidden_and_not_read(self, tmp_path):

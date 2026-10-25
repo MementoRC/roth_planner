@@ -21,13 +21,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import engine.data_sources.paths as _paths_mod
 import views.ytd_income as ytd_income_mod
 from engine.brokerage_statement_pdf import BrokerageStatementRecord
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.scan_ingest import ScanIngestResult, scan_and_record
 from engine.pdf_import import PdfImportResult
-from engine.store.namespaces import TAX_PDF
+from engine.store.namespaces import CANDIDATE_STORE, TAX_PDF
 from engine.tax_return_pdf import Form1040Record
 from models.household import Household
 from models.sourced import Source
@@ -172,12 +171,7 @@ class TestA0CurrentScanHandlerGolden:
     def test_records_magi_candidate_for_scanned_1040(self, tmp_path, monkeypatch):
         _run_ytd_scan(tmp_path, monkeypatch)
 
-        # audit-0805 W1: re-import at test-run time (not the module-level
-        # binding frozen at collection) to see tests/conftest.py's per-test
-        # cache-path redirect.
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         candidate = candidates[0]
@@ -225,9 +219,7 @@ class TestA1ScanAndRecordPureHelper:
         assert isinstance(result, ScanIngestResult)
         assert result.magi_candidates_recorded == 1
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         assert candidates[0].value == _GOLDEN_IRMAA_MAGI
@@ -235,13 +227,8 @@ class TestA1ScanAndRecordPureHelper:
         assert candidates[0].prov.detail == "Form 1040 PDF"
 
     def test_persists_same_merged_pdf_cache(self, tmp_path, store):
-        store_path = tmp_path / "scan_ingest_candidates.json"
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
-            result = scan_and_record(
-                tmp_path,
-                store_path=store_path,
-                recorded_at=_RECORDED_AT,
-            )
+            result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert set(result.pdf_cache) == {_GOLDEN_YEAR}
         assert result.pdf_cache[_GOLDEN_YEAR].magi == _GOLDEN_MAGI
@@ -270,7 +257,7 @@ class TestA1ScanAndRecordPureHelper:
 
         assert result.magi_candidates_recorded == 0
         assert result.pdf_cache == {}
-        store = CandidateStore.load(_paths_mod.CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         assert not store.has_candidates(f"prior_year_magi.{_GOLDEN_YEAR}")
 
 
@@ -283,22 +270,16 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
     def test_same_pdf_cache_and_magi_candidate(self, tmp_path, store):
         from engine.data_sources.scan_ingest import scan_documents_and_record
 
-        folder_store_path = tmp_path / "folder_candidates.json"
-        docs_store_path = tmp_path / "docs_candidates.json"
-
         with patch("engine.pdf_import.scan_pdf_folder", return_value=_fixed_result()):
-            folder_result = scan_and_record(
-                tmp_path,
-                store_path=folder_store_path,
-                recorded_at=_RECORDED_AT,
-            )
+            folder_result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
         folder_doc = store.get(TAX_PDF)
+        folder_store = CandidateStore.load()
         store.delete(TAX_PDF)
+        store.delete(CANDIDATE_STORE)
 
         with patch("engine.pdf_import.scan_pdf_documents", return_value=_fixed_result()):
             docs_result = scan_documents_and_record(
                 [("statement.pdf", b"irrelevant-bytes-classification-is-mocked")],
-                store_path=docs_store_path,
                 recorded_at=_RECORDED_AT,
             )
 
@@ -308,8 +289,7 @@ class TestScanDocumentsAndRecordMatchesFolderPath:
 
         assert store.get(TAX_PDF) == folder_doc
 
-        folder_store = CandidateStore.load(folder_store_path)
-        docs_store = CandidateStore.load(docs_store_path)
+        docs_store = CandidateStore.load()
         folder_candidates = folder_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         docs_candidates = docs_store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert [c.value for c in folder_candidates] == [c.value for c in docs_candidates]
@@ -392,9 +372,7 @@ class TestAuditHighIrmaaFeieScope:
             result = scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
         assert result.magi_candidates_recorded == 1
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{self._FEIE_YEAR}")
         assert len(candidates) == 1
         # IRMAA MAGI = AGI + tax-exempt interest + FEIE = $220,000.
@@ -409,9 +387,7 @@ class TestAuditHighIrmaaFeieScope:
         with patch("engine.pdf_import.scan_pdf_folder", return_value=feie_result):
             scan_and_record(tmp_path, recorded_at=_RECORDED_AT)
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         result = resolve(Household(), store, ChoiceMap())
         resolved_magi = result.household.prior_year_magi[self._FEIE_YEAR]
 
@@ -430,9 +406,7 @@ class TestA2RewiredYtdIncomeView:
         """Same assertions as TestA0 -- run against the (now rewired) view."""
         mock_st, persisted = _run_ytd_scan(tmp_path, monkeypatch)
 
-        from engine.data_sources.paths import CANDIDATE_STORE_PATH
-
-        store = CandidateStore.load(CANDIDATE_STORE_PATH)
+        store = CandidateStore.load()
         candidates = store.candidates_for(f"prior_year_magi.{_GOLDEN_YEAR}")
         assert len(candidates) == 1
         assert candidates[0].value == _GOLDEN_IRMAA_MAGI

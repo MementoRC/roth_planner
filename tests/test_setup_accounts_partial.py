@@ -30,7 +30,7 @@ def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
     # audit-0805 W1: re-import at call time (not the module-level binding
     # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
@@ -41,7 +41,7 @@ def _seed_pending_your_ira() -> None:
     store.record_candidate(
         "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 

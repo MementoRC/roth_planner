@@ -62,7 +62,6 @@ from engine.data_sources.committed import (
     save_committed,
 )
 from engine.data_sources.confirm import confirm_as_is
-from engine.data_sources.paths import CANDIDATE_STORE_PATH
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.data_sources.scan_ingest import (
     ScanIngestResult,
@@ -309,12 +308,12 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
             candidates_recorded=0, server_available=False, error=outcome.snap.error
         )
 
-    store = CandidateStore.load(CANDIDATE_STORE_PATH)
+    store = CandidateStore.load()
     strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
         "grant_strikes", {}
     )
     record_snapshot_candidates(store, outcome.snap, strikes, datetime.now())
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
 
     scalar_recorded = _count_candidates_from(
         store, _PORTFOLIO_CANDIDATE_FIELDS, Source.FINEXTRACT_LIVE

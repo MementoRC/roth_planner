@@ -82,7 +82,6 @@ def test_the_scan_sees_the_whole_engine():
     assert not ALLOWLIST & set(sources)
 
 
-@pytest.mark.xfail(strict=True, reason="record.py/scan_ingest.py keep store_path until Task 4")
 def test_no_engine_function_takes_a_store_path_parameter():
     offenders = [
         f"{name}: {hit}"

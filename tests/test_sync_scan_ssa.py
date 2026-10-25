@@ -69,11 +69,9 @@ class TestScanQueuesStatements:
         assert [s.statement_date for s in state["ssa_statements"]] == ["2026-03-04"]
 
 
-def test_record_ss_fra_candidate_rejects_an_unknown_field_key(tmp_path) -> None:
+def test_record_ss_fra_candidate_rejects_an_unknown_field_key() -> None:
     with pytest.raises(ValueError, match="you_ss_fra"):
-        record_ss_fra_candidate(
-            "you_ss_fra", 2000, Source.PDF, "x", datetime(2026, 1, 1), tmp_path / "c.json"
-        )
+        record_ss_fra_candidate("you_ss_fra", 2000, Source.PDF, "x", datetime(2026, 1, 1))
 
 
 class TestReviewPanel:
@@ -113,27 +111,22 @@ class TestReviewPanel:
         assert state["ssa_statements"] == []
         mock_st.rerun.assert_called_once()
 
-    def test_apply_as_you_stores_a_your_ss_fra_pdf_candidate(self, tmp_path) -> None:
+    def test_apply_as_you_stores_a_your_ss_fra_pdf_candidate(self) -> None:
         stmt = parse_ssa_statement_text(PAGES)
         mock_st, _state = _mock_st(
             state_extra={"ssa_statements": [stmt]},
             clicks={"ssa_apply_0"},
             radio_choice="you",
         )
-        store_path = tmp_path / "candidates.json"
-
-        def real_record(*args):
-            return record_ss_fra_candidate(*args, store_path=store_path)
 
         with (
             patch.object(sync_scan_mod, "st", mock_st),
-            patch.object(sync_scan_mod, "record_ss_fra_candidate", real_record),
             patch.object(sync_scan_mod, "save_owner_map"),
             contextlib.suppress(_RerunError),
         ):
             sync_scan_mod._render_ssa_review(owner_map={}, instance_owner="you", identity_set=True)
 
-        store = CandidateStore.load(store_path)
+        store = CandidateStore.load()
         [cand] = store.candidates_for("your_ss_fra")
         assert cand.prov.source is Source.PDF
         assert cand.value == pytest.approx(stmt.fra_monthly)

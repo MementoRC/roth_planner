@@ -29,6 +29,7 @@ EXPECTED: dict[str, str] = {
     "ubs_activity": ".ubs_activity_cache.json",
     "exercise_schedule": ".exercise_schedule_cache.json",
     "committed": ".committed_household.json",
+    "candidate_store": ".candidate_store.json",
 }
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
@@ -44,6 +45,9 @@ MOVED_MODULES: list[str] = [
     "engine.ubs_activity_store",
     "engine.exercise_schedule_store",
     "engine.data_sources.committed",
+    "engine.data_sources.candidate_store",
+    "engine.data_sources.record",
+    "engine.data_sources.scan_ingest",
 ]
 
 # "module:function" store functions: none may take a path parameter.
@@ -77,9 +81,17 @@ STORE_FUNCTIONS: list[str] = [
     "engine.exercise_schedule_store:clear_exercise_schedule",
     "engine.data_sources.committed:load_committed",
     "engine.data_sources.committed:save_committed",
+    "engine.data_sources.candidate_store:CandidateStore.load",
+    "engine.data_sources.candidate_store:CandidateStore.save",
+    "engine.data_sources.record:record_magi_candidates",
+    "engine.data_sources.record:record_ss_fra_candidate",
+    "engine.data_sources.record:record_ira_balance_candidate",
+    "engine.data_sources.record:record_roth_balance_candidate",
+    "engine.data_sources.record:record_stock_quote_candidate",
+    "engine.data_sources.record:discard_pdf_balance_candidates",
 ]
 
-_PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}
+_PATH_PARAMS = {"path", "cache_path", "pdf_cache_path", "store_path"}
 
 
 def test_registry_lists_exactly_the_stores_moved_so_far():

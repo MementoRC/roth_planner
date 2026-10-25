@@ -157,13 +157,13 @@ def test_f32_confirm_click_with_negative_value_commits_nothing(
 
 
 def _seed_pending_roth() -> None:
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     committed = {"your_roth": SourcedValue(1_000.0, Provenance(Source.UNKNOWN, _NOW)).to_json()}
     get_store().put(COMMITTED, committed)
     store = CandidateStore()
     store.record_candidate("your_roth", 12_345.0, Provenance(Source.PDF, _NOW, "stale stmt"))
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 

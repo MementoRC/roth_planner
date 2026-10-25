@@ -418,7 +418,7 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
     import views.setup.data_bridge as data_bridge_mod
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH
+    from engine.data_sources.paths import TRUST_CHOICES_PATH
     from engine.store import get_store
     from engine.store.namespaces import COMMITTED
     from models.sourced import Provenance, Source, SourcedValue
@@ -441,7 +441,7 @@ def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fiel
     store.record_candidate(
         "your_ss_fra", 2_500.0, Provenance(Source.FINEXTRACT_LIVE, recorded_at, "SSA statement")
     )
-    store.save(CANDIDATE_STORE_PATH)
+    store.save()
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
     at = AppTest.from_file(str(APP_PATH))

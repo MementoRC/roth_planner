@@ -7,7 +7,6 @@ use that same ticker rather than an engine default.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,9 +22,7 @@ def _ok(ticker: str) -> QuoteResult:
     return QuoteResult(ticker, 123.45, "USD", None, f"stub {ticker}")
 
 
-def test_fetcher_receives_configured_ticker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetcher_receives_configured_ticker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(st, "session_state", {"_stock_ticker": "ZZZZ"})
     seen: list[str] = []
 
@@ -33,14 +30,12 @@ def test_fetcher_receives_configured_ticker(
         seen.append(ticker)
         return _ok(ticker)
 
-    handle_stock_quote_fetch(store_path=tmp_path / "cands.json", fetcher=_fetcher)
+    handle_stock_quote_fetch(fetcher=_fetcher)
 
     assert seen == ["ZZZZ"]
 
 
-def test_default_fetch_requests_configured_ticker_url(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_fetch_requests_configured_ticker_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(st, "session_state", {"_stock_ticker": "ZZZZ"})
     urls: list[str] = []
 
@@ -56,7 +51,7 @@ def test_default_fetch_requests_configured_ticker_url(
 
     monkeypatch.setattr(market_quote_mod.requests, "get", _get)
 
-    result = handle_stock_quote_fetch(store_path=tmp_path / "cands.json")
+    result = handle_stock_quote_fetch()
 
     assert result.ticker == "ZZZZ"
     assert len(urls) == 1
