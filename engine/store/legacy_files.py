@@ -44,3 +44,11 @@ def registered() -> tuple[LegacyFile, ...]:
 def single_document_reader(path: Path) -> dict[str, Any]:
     """Reader for stores that are one JSON document: the whole file under the default key."""
     return {SINGLE_KEY: read_pii_json(path)}
+
+
+def per_entry_reader(path: Path) -> dict[str, Any]:
+    """Reader for a JSON object stored one row per top-level entry."""
+    raw = read_pii_json(path)
+    if not isinstance(raw, dict):
+        raise ValueError(f"expected a JSON object, got {type(raw).__name__}")
+    return {str(key): value for key, value in raw.items()}

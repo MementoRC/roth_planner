@@ -7,13 +7,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from engine.store.backend import Backend, DictBackend, Row
+from engine.store.backend import Backend, DictBackend, RoutedBackend, Row
 from engine.store.sqlite_backend import MEMORY, SqliteBackend
 
 ROW_A = Row('{"a": 1}', 1, "2026-01-01T00:00:00+00:00")
 ROW_B = Row('{"b": 2}', 1, "2026-01-02T00:00:00+00:00")
 
-BACKEND_KINDS = ["dict", "sqlite-memory", "sqlite-file"]
+BACKEND_KINDS = ["dict", "sqlite-memory", "sqlite-file", "routed-sqlite"]
 
 
 def _make(kind: str, tmp_path) -> Backend:
@@ -23,6 +23,9 @@ def _make(kind: str, tmp_path) -> Backend:
         return SqliteBackend(MEMORY)
     if kind == "sqlite-file":
         return SqliteBackend(tmp_path / "contract.db")
+    if kind == "routed-sqlite":
+        # Everything the contract uses goes to the default; one unrelated route is present.
+        return RoutedBackend(SqliteBackend(MEMORY), {"routed_elsewhere": DictBackend()})
     raise AssertionError(kind)
 
 
@@ -86,6 +89,19 @@ def test_commit_and_rollback_without_begin_are_noops(backend):
     backend.commit()
     backend.rollback()
     assert backend.get("ns", "k") == ROW_A
+
+
+def test_routed_backend_sends_listed_namespaces_to_their_own_backend():
+    default, other = DictBackend(), DictBackend()
+    routed = RoutedBackend(default, {"elsewhere": other})
+    routed.put("elsewhere", "k", ROW_A)
+    routed.put("ns", "k", ROW_B)
+    assert other.get("elsewhere", "k") == ROW_A
+    assert default.get("elsewhere", "k") is None
+    assert default.get("ns", "k") == ROW_B
+    assert routed.keys("elsewhere") == ["k"]
+    routed.delete("elsewhere", "k")
+    assert other.get("elsewhere", "k") is None
 
 
 def test_sqlite_transaction_blocks_other_threads_until_commit():
