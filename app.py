@@ -26,10 +26,12 @@ from config.scalar_registry import (  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
+from engine.store import StoreUnavailableError  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
 from views.setup._state import _drain_pending_defaults  # noqa: E402
+from views.store_notice import render_store_notice, storage_unavailable_message  # noqa: E402
 
 
 def _seed_session_state() -> None:
@@ -110,6 +112,10 @@ _seed_session_state()
 # for why (Streamlit forbids assigning to a widget-backed session_state key
 # after that widget already exists in the run).
 _drain_pending_defaults()
+
+# Open the store before any cached snapshot is read: the first open imports the
+# legacy JSON files, and an unavailable database stops here with one banner.
+render_store_notice()
 
 # Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
 # personal cache below is skipped, so the reset cannot be silently undone and
@@ -578,6 +584,8 @@ def _route_and_badge() -> None:
     _render_pending_badge(set(st.session_state.get("_pending_review") or ()))
     try:
         route_target(page)(hh)
+    except StoreUnavailableError as exc:
+        st.error(storage_unavailable_message(exc))
     finally:
         pending = _current_pending_review()
         st.session_state["_pending_review"] = pending
