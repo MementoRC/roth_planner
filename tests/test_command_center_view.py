@@ -778,3 +778,58 @@ def test_attribution_delete_corrupt_store_shows_error_not_exception(monkeypatch)
 
     assert not at.exception
     assert any("account attribution store" in e.value.lower() for e in at.error)
+
+
+class TestEnsureDefaultInstanceOwner:
+    """ensure_default_instance_owner: quiet only when saving is disabled."""
+
+    @staticmethod
+    def _patch(monkeypatch, *, disabled: bool, save_error: Exception | None = None):
+        import types
+
+        import views.setup.command_center as command_center_mod
+
+        state: dict = {}
+        monkeypatch.setattr(command_center_mod, "st", types.SimpleNamespace(session_state=state))
+        monkeypatch.setattr(command_center_mod, "saving_disabled", lambda: disabled)
+        if save_error is not None:
+            monkeypatch.setattr(
+                command_center_mod, "save_instance_owner", MagicMock(side_effect=save_error)
+            )
+        return command_center_mod, state
+
+    def test_refused_save_while_saving_disabled_leaves_owner_unset(self, monkeypatch) -> None:
+        from engine.store import StoreUnavailableError
+
+        mod, state = self._patch(
+            monkeypatch,
+            disabled=True,
+            save_error=StoreUnavailableError("x", "saving is disabled: importing .x.json failed"),
+        )
+        mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_other_unavailable_error_propagates(self, monkeypatch) -> None:
+        import pytest
+
+        from engine.store import StoreUnavailableError
+
+        mod, state = self._patch(
+            monkeypatch, disabled=False, save_error=StoreUnavailableError("x", "database is locked")
+        )
+        with pytest.raises(StoreUnavailableError, match="database is locked"):
+            mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_corrupt_identity_leaves_owner_unset(self, monkeypatch, corrupt_row) -> None:
+        from engine.store.namespaces import INSTANCE_OWNER
+
+        corrupt_row(INSTANCE_OWNER)
+        mod, state = self._patch(monkeypatch, disabled=False)
+        mod.ensure_default_instance_owner()
+        assert "instance_owner" not in state
+
+    def test_unset_owner_defaults_to_you(self, monkeypatch) -> None:
+        mod, state = self._patch(monkeypatch, disabled=False)
+        mod.ensure_default_instance_owner()
+        assert state["instance_owner"] == "you"

@@ -41,6 +41,7 @@ __all__ = [
     "legacy_dir",
     "migration_notice",
     "register_namespace",
+    "saving_disabled",
     "set_store",
 ]
 
@@ -104,6 +105,12 @@ def _get_session_store() -> Store:
 def migration_notice() -> MigrationResult | None:
     """This process's JSON import result; ``None`` until the file store has been opened."""
     return _migration_result
+
+
+def saving_disabled() -> bool:
+    """True while a failed JSON import serves stores read-only (saves are refused)."""
+    notice = _migration_result
+    return notice is not None and bool(notice.read_only)
 
 
 def _get_file_store() -> Store:

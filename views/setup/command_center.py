@@ -44,7 +44,7 @@ from engine.instance_identity import (
     save_instance_owner,
 )
 from engine.pdf_owner import OwnerRole, load_owner_map
-from engine.store import StoreUnavailableError
+from engine.store import StoreUnavailableError, saving_disabled
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
@@ -169,15 +169,21 @@ def ensure_default_instance_owner() -> None:
     """Default an UNSET instance owner to "you" and persist it (idempotent).
 
     A corrupt identity is never touched or defaulted: callers see it as
-    still-unset and keep their owner gate. A refused save (saving disabled)
-    leaves it unset the same way. No UI.
+    still-unset and keep their owner gate. A save refused because a failed
+    JSON import disabled saving (its banner is already shown) leaves it unset
+    the same way. Any other StoreUnavailableError propagates to the page-level
+    storage banner. No UI.
     """
     try:
         if st.session_state.get("instance_owner") or load_instance_owner() is not None:
             return
         save_instance_owner(OwnerRole.YOU.value)
-    except (CorruptInstanceOwnerError, StoreUnavailableError):
+    except CorruptInstanceOwnerError:
         return
+    except StoreUnavailableError:
+        if saving_disabled():
+            return
+        raise
     st.session_state["instance_owner"] = OwnerRole.YOU.value
 
 

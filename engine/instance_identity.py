@@ -33,7 +33,7 @@ __all__ = [
 
 class CorruptInstanceOwnerError(Exception):
     """Raised when the saved instance owner is not a valid
-    instance_owner payload (truncated/malformed JSON, missing key, or an
+    instance_owner payload (an undecodable store row, a missing key, or an
     invalid value).
 
     Deliberately NOT the same outcome as no saved owner: no saved owner means
@@ -48,7 +48,7 @@ class CorruptInstanceOwnerError(Exception):
     def __init__(self, path: str | Path, cause: Exception) -> None:
         self.path = path
         self.cause = cause
-        super().__init__(f"instance owner cache at {path!r} is corrupt: {cause!r}")
+        super().__init__(f"saved instance owner ({path}) is corrupt: {cause!r}")
 
 
 def load_instance_owner() -> str | None:

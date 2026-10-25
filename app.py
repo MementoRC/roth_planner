@@ -27,7 +27,7 @@ from config.scalar_registry import (  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
-from engine.store import StoreError  # noqa: E402
+from engine.store import StoreError, StoreUnavailableError, saving_disabled  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
@@ -106,6 +106,14 @@ def _seed_session_state() -> None:
     try:
         st.session_state.setdefault("instance_owner", load_instance_owner())
     except CorruptInstanceOwnerError:
+        st.session_state.setdefault("instance_owner", None)
+    except StoreUnavailableError as exc:
+        # Saving disabled by a failed import: its banner is already shown.
+        # Any other unavailable store gets the storage banner (once).
+        if not saving_disabled() and not _boot_store_errors:
+            st.error(store_error_message(exc))
+        if not saving_disabled():
+            _boot_store_errors.append(exc)
         st.session_state.setdefault("instance_owner", None)
     # Issue #43: remember what the governed fields were seeded with so the
     # first resolve does not read an untouched seed as a manual edit.
