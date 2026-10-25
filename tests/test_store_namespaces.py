@@ -10,15 +10,20 @@ import engine.store.core as store_core
 from engine.store.legacy_files import registered
 
 # namespace -> legacy file. Each PR 2 store task adds its entries; PR 3 adds the rest.
-EXPECTED: dict[str, str] = {"portfolio": ".portfolio_cache.json"}
+EXPECTED: dict[str, str] = {
+    "portfolio": ".portfolio_cache.json",
+    "ytd": ".ytd_cache.json",
+}
 
 # Modules whose store moved: none may keep a Path constant naming a legacy file.
-MOVED_MODULES: list[str] = ["engine.portfolio_sync.portfolio"]
+MOVED_MODULES: list[str] = ["engine.portfolio_sync.portfolio", "engine.portfolio_sync.ytd"]
 
 # "module:function" store functions: none may take a path parameter.
 STORE_FUNCTIONS: list[str] = [
     "engine.portfolio_sync.portfolio:save_snapshot",
     "engine.portfolio_sync.portfolio:load_snapshot",
+    "engine.portfolio_sync.ytd:save_ytd_snapshot",
+    "engine.portfolio_sync.ytd:load_ytd_snapshot",
 ]
 
 _PATH_PARAMS = {"path", "cache_path", "pdf_cache_path"}

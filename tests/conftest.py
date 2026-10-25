@@ -45,7 +45,6 @@ import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.portfolio_sync as _portfolio_sync_pkg  # noqa: E402
 import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
-import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
@@ -58,7 +57,7 @@ import views.setup.command_center as _command_center_mod  # noqa: E402
 
 _WATCHED_CACHE_PATHS: list[Path] = [
     _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
-    _ytd_mod._YTD_CACHE_PATH,
+    _REPO_ROOT / ".ytd_cache.json",
     _REPO_ROOT / ".portfolio_cache.json",
     _social_security_mod._SSA_CACHE_PATH,
     _ssa_statement_mod._SSA_PDF_CACHE_PATH,
@@ -151,7 +150,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # 1. Defining-module attributes.
     monkeypatch.setattr(_tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", _tmp(".tax_pdf_cache.json"))
-    monkeypatch.setattr(_ytd_mod, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
     monkeypatch.setattr(_social_security_mod, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
     monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
     monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
@@ -194,7 +192,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
     # writes to the owning submodule too, but patch both ends explicitly.
     monkeypatch.setattr(_portfolio_sync_pkg, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
-    monkeypatch.setattr(_portfolio_sync_pkg, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
 
     # 2b. Other production modules with their own `from ... import <CONST>`
     # binding of CANDIDATE_STORE_PATH / COMMITTED_PATH / TRUST_CHOICES_PATH.

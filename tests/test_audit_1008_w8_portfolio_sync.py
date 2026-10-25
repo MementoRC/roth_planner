@@ -45,7 +45,7 @@ from engine.portfolio_sync.shapes import (
 from engine.portfolio_sync.ytd import ytd_from_dict, ytd_to_dict
 from engine.secure_io import read_pii_json, write_pii_json
 from engine.store.core import Store
-from engine.store.namespaces import PORTFOLIO
+from engine.store.namespaces import PORTFOLIO, YTD
 from models.ytd_income import IncomeEvent, RealizedGainEvent, YTDSnapshot
 
 NOW = "2026-10-01T12:00:00+00:00"
@@ -366,24 +366,16 @@ class TestYtdEventForwardCompat:
         ytd = ytd_from_dict(data)
         assert len(ytd.gain_events) == 1
 
-    def test_load_survives_unknown_event_key(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = tmp_path / ".ytd_cache.json"
-        monkeypatch.setattr(ytd_mod, "_YTD_CACHE_PATH", path)
+    def test_load_survives_unknown_event_key(self, store) -> None:
         data = ytd_to_dict(_ytd())
         data["income_events"][0]["account_id"] = "X"
-        write_pii_json(path, data)
+        store.put(YTD, data)
         ytd = ytd_mod.load_ytd_snapshot()
         assert ytd is not None
         assert ytd.wages_ytd == 11_111.0
 
-    def test_load_malformed_event_degrades_to_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = tmp_path / ".ytd_cache.json"
-        monkeypatch.setattr(ytd_mod, "_YTD_CACHE_PATH", path)
+    def test_load_malformed_event_degrades_to_none(self, store) -> None:
         data = ytd_to_dict(_ytd())
         del data["income_events"][0]["amount"]
-        write_pii_json(path, data)
+        store.put(YTD, data)
         assert ytd_mod.load_ytd_snapshot() is None

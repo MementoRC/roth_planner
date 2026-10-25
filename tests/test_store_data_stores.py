@@ -13,8 +13,10 @@ from engine.portfolio_sync.portfolio import (
     save_snapshot,
 )
 from engine.portfolio_sync.shapes import AccountSummary, PortfolioSnapshot
-from engine.store import SINGLE_KEY
-from engine.store.namespaces import PORTFOLIO
+from engine.portfolio_sync.ytd import load_ytd_snapshot, save_ytd_snapshot
+from engine.store import SINGLE_KEY, CorruptStoreError
+from engine.store.namespaces import PORTFOLIO, YTD
+from models.ytd_income import YTDSnapshot
 
 
 def _portfolio(total: float) -> PortfolioSnapshot:
@@ -61,3 +63,23 @@ class TestPortfolioStore:
         saved = store.get(PORTFOLIO)
         assert saved["equity_sales"]["lots"] == [{"id": "L1"}]
         assert saved["sources"]["order_detail_summary"]["captured_at"] == "2026-01-01"
+
+
+class TestYtdStore:
+    def test_round_trip(self, store):
+        save_ytd_snapshot(YTDSnapshot(wages_ytd=12_000.0))
+        assert store.has(YTD)
+        loaded = load_ytd_snapshot()
+        assert loaded is not None
+        assert loaded.wages_ytd == 12_000.0
+
+    def test_absent_and_corrupt_read_none(self, corrupt_row):
+        assert load_ytd_snapshot() is None
+        corrupt_row(YTD)
+        assert load_ytd_snapshot() is None
+
+    def test_save_refuses_to_replace_a_corrupt_row(self, store, corrupt_row):
+        payload = corrupt_row(YTD)
+        with pytest.raises(CorruptStoreError, match="ytd"):
+            save_ytd_snapshot(YTDSnapshot())
+        assert store.backend.get(YTD, SINGLE_KEY).payload == payload

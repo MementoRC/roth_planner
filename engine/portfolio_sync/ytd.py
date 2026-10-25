@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, fields
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import requests  # type: ignore[import-untyped]
 
 from engine.brokerage_statement_pdf import BrokerageStatementRecord, aggregate_to_ytd_fields
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import YTD
 from models.ytd_income import (
     OWNED_YTD_FIELDS,
     YTD_OWNERS,
@@ -117,9 +116,6 @@ def apply_brokerage_statement_records(
     remainder) happens inside apply_brokerage_totals, not here.
     """
     return apply_brokerage_totals(ytd, aggregate_to_ytd_fields(taxable_by_account))
-
-
-_YTD_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".ytd_cache.json"
 
 
 def ytd_to_dict(ytd: YTDSnapshot) -> dict:
@@ -313,22 +309,22 @@ def ytd_from_dict(data: dict) -> YTDSnapshot:
 
 
 def save_ytd_snapshot(ytd: YTDSnapshot) -> None:
-    """Save YTD snapshot to disk as JSON."""
-    write_pii_json(_YTD_CACHE_PATH, ytd_to_dict(ytd))
+    """Save the YTD snapshot to the document store."""
+    get_store().put(YTD, ytd_to_dict(ytd))
 
 
 def load_ytd_snapshot() -> YTDSnapshot | None:
-    """Load cached YTD snapshot from disk, or None if not available."""
-    if not _YTD_CACHE_PATH.exists():
-        return None
+    """The saved YTD snapshot, or None if absent or unreadable."""
     try:
-        data = read_pii_json(_YTD_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
+        data = get_store().get(YTD)
+    except CorruptStoreError:
+        return None
+    if data is None:
         return None
     try:
         return ytd_from_dict(data)
     except (TypeError, ValueError, AttributeError):
         # A shape this build cannot read (e.g. an event missing a required
-        # field) is treated like a corrupt file, never an app-boot crash
+        # field) is treated like a corrupt row, never an app-boot crash
         # (audit-1008 F-57).
         return None

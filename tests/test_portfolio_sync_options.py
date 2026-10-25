@@ -1,6 +1,5 @@
 """Tests for engine.portfolio_sync — option exercises fetch/apply, grant_id normalization, equity sales cache."""
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -445,12 +444,9 @@ class TestOptionExercisesFetchAndApply:
         assert len(exercises.warnings) == 1
         assert "19" in exercises.warnings[0]
 
-    def test_load_path_migration_legacy_cache(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_load_path_migration_legacy_cache(self, store):
         from engine.portfolio_sync import load_ytd_snapshot
-
-        cache_file = tmp_path / "ytd_legacy.json"
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_file)
+        from engine.store.namespaces import YTD
 
         # Write a cache dict that deliberately omits nqo_exercise_ytd
         legacy_data = {
@@ -469,7 +465,7 @@ class TestOptionExercisesFetchAndApply:
             "manually_entered": True,
             # nqo_exercise_ytd intentionally absent
         }
-        cache_file.write_text(json.dumps(legacy_data))
+        store.put(YTD, legacy_data)
 
         result = load_ytd_snapshot()
         assert result is not None

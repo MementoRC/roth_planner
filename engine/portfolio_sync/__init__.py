@@ -63,7 +63,6 @@ from .social_security import (
     save_ssa_snapshot,
 )
 from .ytd import (
-    _YTD_CACHE_PATH,
     fetch_ytd_snapshot,
     load_ytd_snapshot,
     save_ytd_snapshot,
@@ -87,7 +86,6 @@ __all__ = [
     "SSABenefitEstimate",
     "SSASnapshot",
     "_SSA_CACHE_PATH",
-    "_YTD_CACHE_PATH",
     "_classify_account",
     "_classify_symbol",
     "_derive_ttm_dividends",
@@ -190,7 +188,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "SSABenefitEstimate": _shapes,
     "SSASnapshot": _shapes,
     "_SSA_CACHE_PATH": _social_security,
-    "_YTD_CACHE_PATH": _ytd,
     "_classify_account": _classify,
     "_classify_symbol": _classify,
     "_derive_ttm_dividends": _holdings,

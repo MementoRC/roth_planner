@@ -20,18 +20,6 @@ import pytest
 class TestPiiJsonSaverModes:
     """Each saver must produce a file with exactly mode 0o600."""
 
-    def test_save_ytd_snapshot_mode_600(self, tmp_path, monkeypatch):
-        from engine.portfolio_sync import ytd as ytd_mod
-        from models.ytd_income import YTDSnapshot
-
-        cache_path = tmp_path / ".ytd_cache.json"
-        monkeypatch.setattr(ytd_mod, "_YTD_CACHE_PATH", cache_path)
-
-        ytd_mod.save_ytd_snapshot(YTDSnapshot())
-
-        assert cache_path.exists()
-        assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
-
     def test_save_pdf_tax_records_mode_600(self, tmp_path, monkeypatch):
         import engine.tax_return_pdf as pdf_mod
 
@@ -41,21 +29,6 @@ class TestPiiJsonSaverModes:
         pdf_mod.save_pdf_tax_records({})
 
         assert cache_path.exists()
-        assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
-
-    def test_overwrite_preserves_mode_600(self, tmp_path, monkeypatch):
-        """Re-writing a pre-existing 0o644 file must tighten to 0o600."""
-        from engine.portfolio_sync import ytd as ytd_mod
-        from models.ytd_income import YTDSnapshot
-
-        cache_path = tmp_path / ".ytd_cache.json"
-        # Pre-create with loose permissions to simulate the old pattern
-        cache_path.write_text("{}")
-        cache_path.chmod(0o644)
-
-        monkeypatch.setattr(ytd_mod, "_YTD_CACHE_PATH", cache_path)
-        ytd_mod.save_ytd_snapshot(YTDSnapshot())
-
         assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
 
 
