@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib
 import inspect
 import json
@@ -129,8 +130,8 @@ def test_moved_modules_keep_no_legacy_json_path():
 def test_store_functions_take_no_path_parameter():
     offenders = []
     for ref in STORE_FUNCTIONS:
-        module_name, func_name = ref.split(":")
-        func = getattr(importlib.import_module(module_name), func_name)
+        module_name, attr_path = ref.split(":")
+        func = functools.reduce(getattr, attr_path.split("."), importlib.import_module(module_name))
         offenders += [
             f"{ref}({p})" for p in inspect.signature(func).parameters if p in _PATH_PARAMS
         ]
