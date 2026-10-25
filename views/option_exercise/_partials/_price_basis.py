@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 
 import views.option_exercise as _option_exercise
-from engine.data_sources import paths
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.resolver import has_pending_candidate
@@ -24,7 +23,7 @@ def _pending_quote(confirmed_price: float) -> float | None:
     choice) so this page and Command Center agree.
     """
     store = CandidateStore.load()
-    choice = ChoiceMap.load(paths.TRUST_CHOICES_PATH).get("stock_price_now")
+    choice = ChoiceMap.load().get("stock_price_now")
     quotes = [
         c for c in store.candidates_for("stock_price_now") if c.prov.source == Source.MARKET_QUOTE
     ]

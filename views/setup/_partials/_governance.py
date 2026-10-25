@@ -26,7 +26,6 @@ from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError
 from engine.data_sources.committed import CorruptCommittedCacheError, save_committed
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import session_keys_for_writeback
-from engine.data_sources.paths import TRUST_CHOICES_PATH
 from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
 from models.sourced import Source
 
@@ -169,11 +168,11 @@ def _handle_confirm_click(
     # The value itself is already committed above, so only the remembered
     # source choice is lost; warn and carry on with the confirm.
     try:
-        choices.save(TRUST_CHOICES_PATH)
+        choices.save()
     except CorruptChoiceMapError:
         st.warning(
-            f"⚠️ Saved source choices at `{TRUST_CHOICES_PATH}` are unreadable and were "
-            "left untouched, so this source choice was not remembered."
+            "⚠️ Saved source choices are unreadable and were left untouched, so this "
+            "source choice was not remembered."
         )
     _apply_confirm_to_session(field_key, value)
     st.success(f"Confirmed {_field_label(field_key)} from {source}.")

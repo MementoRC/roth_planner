@@ -31,7 +31,7 @@ from engine.data_sources.committed import (
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
 from engine.secure_io import read_pii_json, write_pii_json
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, PORTFOLIO, SSA
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, PORTFOLIO, SSA, TRUST_CHOICES
 
 BAD_BYTES = b"\xff\xfe\x00not utf-8 \xc3\x28"
 
@@ -113,12 +113,11 @@ class TestF42NonUtf8Corrupt:
         assert CandidateStore.load().load_corrupt is True
         assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload
 
-    def test_choice_map_load_flags_corrupt(self, tmp_path) -> None:
-        p = tmp_path / "choices.json"
-        p.write_bytes(BAD_BYTES)
-        cm = ChoiceMap.load(p)
+    def test_choice_map_load_flags_corrupt(self, store, corrupt_row) -> None:
+        payload = corrupt_row(TRUST_CHOICES)
+        cm = ChoiceMap.load()
         assert cm.load_corrupt is True
-        assert p.read_bytes() == BAD_BYTES
+        assert store.backend.get(TRUST_CHOICES, SINGLE_KEY).payload == payload
 
 
 class TestF43NonObjectCache:

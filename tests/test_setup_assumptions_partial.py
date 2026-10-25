@@ -45,10 +45,6 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    # audit-0805 W1: re-import at call time (not the module-level binding
-    # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = {
         "prior_year_magi": {
             "data": {"2024": 200_000.0},
@@ -64,7 +60,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
         Provenance(Source.PDF, _RECORDED_AT, "Form 1040 PDF"),
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def _render_assumptions_with_pending(pending: set[str]) -> None:

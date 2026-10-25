@@ -10,6 +10,7 @@ from datetime import datetime
 import pytest
 
 from engine.data_sources.candidate_store import CandidateStore, CorruptCandidateStoreError
+from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
 from engine.data_sources.committed import (
     CorruptCommittedCacheError,
     load_committed,
@@ -17,7 +18,7 @@ from engine.data_sources.committed import (
 )
 from engine.data_sources.record import discard_pdf_balance_candidates, record_ira_balance_candidate
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, TRUST_CHOICES
 from models.sourced import Provenance, Source, SourcedValue
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -90,3 +91,32 @@ class TestCandidateStore:
         assert cand.value == 1_000.0
         assert discard_pdf_balance_candidates(["you"]) == 1
         assert CandidateStore.load().candidates_for("your_ira") == []
+
+
+class TestTrustChoicesStore:
+    def test_round_trip(self, store):
+        cm = ChoiceMap()
+        cm.set_choice("your_ira", Source.PDF, _T0)
+        cm.save()
+        assert set(store.get(TRUST_CHOICES)) == {"your_ira"}
+        assert ChoiceMap.load().get("your_ira") == TrustChoice(Source.PDF, _T0)
+
+    def test_absent_is_empty_and_not_corrupt(self):
+        assert ChoiceMap.load().load_corrupt is False
+
+    def test_corrupt_row_loads_empty_flagged_and_refuses_a_save(self, store, corrupt_row):
+        payload = corrupt_row(TRUST_CHOICES)
+        loaded = ChoiceMap.load()
+        assert loaded.get("your_ira") is None
+        assert loaded.load_corrupt is True
+        with pytest.raises(CorruptChoiceMapError, match="corrupt store row"):
+            loaded.save()
+        assert store.backend.get(TRUST_CHOICES, SINGLE_KEY).payload == payload
+
+    def test_unknown_source_is_corrupt_and_kept(self, store):
+        wrong = {"your_ira": {"source": "NOT_A_SOURCE", "locked_at": "2026-01-01T00:00:00"}}
+        store.put(TRUST_CHOICES, wrong)
+        assert ChoiceMap.load().load_corrupt is True
+        with pytest.raises(CorruptChoiceMapError, match="NOT_A_SOURCE"):
+            ChoiceMap().save()
+        assert store.get(TRUST_CHOICES) == wrong

@@ -33,6 +33,7 @@ EXERCISE_SCHEDULE = declare_store("exercise_schedule", ".exercise_schedule_cache
 # Provenance and mapping stores.
 COMMITTED = declare_store("committed", ".committed_household.json")
 CANDIDATE_STORE = declare_store("candidate_store", ".candidate_store.json")
+TRUST_CHOICES = declare_store("trust_choices", ".trust_choices.json")
 
 _LEDGER_SECTIONS = ("koinly", "brokerage")
 

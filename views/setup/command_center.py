@@ -38,7 +38,6 @@ from engine.brokerage_statement_pdf import load_statement_records
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import CorruptCommittedCacheError, load_committed
-from engine.data_sources.paths import TRUST_CHOICES_PATH
 from engine.instance_identity import (
     CorruptInstanceOwnerError,
     load_instance_owner,
@@ -257,7 +256,7 @@ def render_command_center(hh: Household) -> None:
         st.success("All data sources reconciled ✓")
     else:
         store = CandidateStore.load()
-        choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+        choices = ChoiceMap.load()
         # audit-0809 #11: a corrupt committed cache degrades to {} here (read-time
         # only) — save_committed() is the actual guard against overwriting it.
         try:

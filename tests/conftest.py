@@ -32,15 +32,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 import config.loader as _config_loader_mod  # noqa: E402
 import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.account_link as _account_link_mod  # noqa: E402
-import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
-import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
-import views.setup.command_center as _command_center_mod  # noqa: E402
 
 _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".tax_pdf_cache.json",
@@ -55,7 +52,7 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _pdf_owner_mod._OWNER_MAP_PATH,
     _REPO_ROOT / ".pdf_import_ledger.json",
     _REPO_ROOT / ".candidate_store.json",
-    _paths_mod.TRUST_CHOICES_PATH,
+    _REPO_ROOT / ".trust_choices.json",
     _REPO_ROOT / ".committed_household.json",
     _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
@@ -138,7 +135,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # 1. Defining-module attributes.
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
-    monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
     monkeypatch.setattr(
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
@@ -151,12 +147,7 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # ...nor read or move a repo-root legacy dotfile during the first-open import.
     monkeypatch.setattr(_store_pkg, "_LEGACY_DIR", cache_dir)
 
-    # 2. Other production modules with their own `from ... import <CONST>`
-    # binding of TRUST_CHOICES_PATH.
-    monkeypatch.setattr(_setup_governance_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
-    monkeypatch.setattr(_command_center_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
-
-    # 3. forecast_portfolio defaults overrides_path to the cwd-relative, personal,
+    # 2. forecast_portfolio defaults overrides_path to the cwd-relative, personal,
     # gitignored ".dividend_rates.json" (audit-1018 F-52). Point it at a
     # per-test path that never exists, so no test reads the developer's file.
     _patch_default(

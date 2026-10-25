@@ -24,7 +24,6 @@ import config.loader as loader
 import engine.account_attribution as attribution_mod
 import engine.account_link as link_mod
 import engine.brokerage_statement_pdf as brokerage_mod
-import engine.data_sources.paths as paths_mod
 import engine.demo_mode as demo_mod
 import engine.dividend_forecast as dividend_mod
 import engine.exercise_schedule_store as exercise_store_mod
@@ -69,7 +68,6 @@ APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 def _personal_paths() -> dict[str, Path]:
     """Every personal on-disk file the app persists (the redirected tmp copies)."""
     return {
-        "choices": paths_mod.TRUST_CHOICES_PATH,
         "user_defaults": loader._USER_DEFAULTS_PATH,
         "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
         "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
@@ -83,6 +81,7 @@ _FILLED_NAMESPACES = frozenset(
     {
         "committed",
         "candidate_store",
+        "trust_choices",
         "portfolio",
         "ytd",
         "ssa",
@@ -145,7 +144,7 @@ def personal_files(monkeypatch, store):
     monkeypatch.delenv("ROTH_PLANNER_IGNORE_USER_DEFAULTS", raising=False)
     save_committed({})
     CandidateStore().save()
-    ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
+    ChoiceMap().save()
     loader._USER_DEFAULTS_PATH.write_text(json.dumps({"your_age": 71}))
     save_instance_owner("you")
     save_account_override("synthbroker", "ACCT-1", "spouse")
@@ -192,7 +191,7 @@ def _run_write_paths() -> None:
     cand.save()
     record_ira_balance_candidate("your_ira", 123_456.0, "synthetic", now)
     record_stock_quote_candidate(12.34)
-    ChoiceMap().save(paths_mod.TRUST_CHOICES_PATH)
+    ChoiceMap().save()
     loader.save_user_defaults({"your_age": 99})
     save_instance_owner("spouse")
     save_account_override("synthbroker", "ACCT-1", "you")

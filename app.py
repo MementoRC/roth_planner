@@ -273,11 +273,6 @@ from engine.data_sources.orchestrator import (  # noqa: E402
     resolve_for_app,
     session_keys_for_writeback,
 )
-
-# Setup / Command Center cache paths (Wave 4: centralized in
-# engine/data_sources/paths.py so views/setup/command_center.py can share
-# them without importing from app.py).
-from engine.data_sources.paths import TRUST_CHOICES_PATH  # noqa: E402
 from engine.data_sources.resolver import resolve  # noqa: E402
 from engine.data_sources.snapshot_ingest import (  # noqa: E402
     derive_snapshot_growth,
@@ -325,7 +320,7 @@ def _current_pending_review() -> set[str]:
     if committed_json is not None:
         apply_committed(base, committed_json)
     store = CandidateStore.load()
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap.load()
     return set(resolve(base, store, choices).pending_review)
 
 
@@ -390,13 +385,12 @@ def _persist_resolution(
         )
     # audit-1008 F-45: same guard for the trust-choice map.
     try:
-        choices.save(TRUST_CHOICES_PATH)
-    except CorruptChoiceMapError as exc:
+        choices.save()
+    except CorruptChoiceMapError:
         st.warning(
-            f"⚠️ Your saved source choices at `{exc.path}` are unreadable "
-            "(corrupt or truncated). The file has been left untouched and will NOT be "
-            "overwritten this session — restore it from a backup if you have one, or "
-            "delete it to start over with no saved choices."
+            "⚠️ Your saved source choices are unreadable (corrupt or truncated). They "
+            "have been left untouched and will NOT be overwritten this session — restore "
+            "them from a backup if you have one."
         )
 
 
@@ -499,7 +493,7 @@ def get_household() -> Household:
     # and write none of them back -- demo values must never overwrite personal
     # files or be stamped MANUAL there.
     store = CandidateStore() if _DEMO_MODE else CandidateStore.load()
-    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load()
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see
     # CorruptCommittedCacheError's docstring. On a corrupt baseline we proceed

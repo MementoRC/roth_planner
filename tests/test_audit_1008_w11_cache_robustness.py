@@ -18,7 +18,6 @@ All figures are synthetic.
 
 from __future__ import annotations
 
-import errno
 import json
 from datetime import datetime
 from pathlib import Path
@@ -28,10 +27,11 @@ import pytest
 import config.loader as loader
 from config.defaults import DEFAULTS
 from engine.data_sources.candidate_store import CandidateStore, CorruptCandidateStoreError
-from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError, TrustChoice
+from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError
 from engine.dividend_forecast import Position, forecast_portfolio
 from engine.exercise_schedule_store import load_exercise_schedule
-from engine.store.namespaces import CANDIDATE_STORE, EXERCISE_SCHEDULE
+from engine.store import SINGLE_KEY
+from engine.store.namespaces import CANDIDATE_STORE, EXERCISE_SCHEDULE, TRUST_CHOICES
 from models.exercise_schedule import ExerciseSchedule
 from models.sourced import Provenance, Source
 
@@ -175,73 +175,32 @@ def test_f44_top_level_non_object_loads_as_corrupt_without_raising(store) -> Non
 # ---------------------------------------------------------------- F-45 ----
 
 
-def _five_choices() -> ChoiceMap:
-    cm = ChoiceMap()
-    for key, src in [
-        ("your_ira", Source.PDF),
-        ("spouse_ira", Source.PDF),
-        ("your_roth", Source.MANUAL),
-        ("spouse_roth", Source.MANUAL),
-        ("stock_price_now", Source.MANUAL),
-    ]:
-        cm.set_choice(key, src, FIXED_DT)
-    return cm
-
-
 class TestF45ChoiceMapDurability:
-    def test_interrupted_save_leaves_previous_file_intact(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = tmp_path / ".trust_choices.json"
-        _five_choices().save(path)
-        before = path.read_text()
+    def test_save_refuses_to_overwrite_corrupt_row(self, store, corrupt_row) -> None:
+        payload = corrupt_row(TRUST_CHOICES)
 
-        real_write_text = Path.write_text
-
-        def _enospc_after_half(self: Path, data: str, *a: object, **kw: object) -> int:
-            real_write_text(self, data[: len(data) // 2], *a, **kw)  # type: ignore[arg-type]
-            raise OSError(errno.ENOSPC, "No space left on device")
-
-        monkeypatch.setattr(Path, "write_text", _enospc_after_half)
-        updated = _five_choices()
-        updated.clear("your_ira")
-        with pytest.raises(OSError, match="No space left"):
-            updated.save(path)
-        monkeypatch.setattr(Path, "write_text", real_write_text)
-
-        assert path.read_text() == before
-        assert ChoiceMap.load(path).get("your_ira") == TrustChoice(Source.PDF, FIXED_DT)
-        assert sorted(tmp_path.glob(f"{path.name}.tmp-*")) == []
-
-    def test_save_refuses_to_overwrite_corrupt_file(self, tmp_path: Path) -> None:
-        path = tmp_path / ".trust_choices.json"
-        corrupt = '{"your_ira": {"source": "PDF", "locked_a'
-        path.write_text(corrupt)
-
-        loaded = ChoiceMap.load(path)
+        loaded = ChoiceMap.load()
         assert loaded.load_corrupt is True
         assert loaded.get("your_ira") is None
 
         with pytest.raises(CorruptChoiceMapError):
-            loaded.save(path)
-        assert path.read_text() == corrupt
+            loaded.save()
+        assert store.backend.get(TRUST_CHOICES, SINGLE_KEY).payload == payload
 
-    def test_save_refuses_to_overwrite_wrong_shape_file(self, tmp_path: Path) -> None:
-        path = tmp_path / ".trust_choices.json"
-        wrong_shape = json.dumps({"your_ira": {"source": "NOT_A_SOURCE", "locked_at": "x"}})
-        path.write_text(wrong_shape)
+    def test_save_refuses_to_overwrite_wrong_shape_row(self, store) -> None:
+        wrong_shape = {"your_ira": {"source": "NOT_A_SOURCE", "locked_at": "x"}}
+        store.put(TRUST_CHOICES, wrong_shape)
 
-        assert ChoiceMap.load(path).load_corrupt is True
+        assert ChoiceMap.load().load_corrupt is True
         with pytest.raises(CorruptChoiceMapError):
-            ChoiceMap().save(path)
-        assert path.read_text() == wrong_shape
+            ChoiceMap().save()
+        assert store.get(TRUST_CHOICES) == wrong_shape
 
-    def test_missing_file_is_not_corrupt(self, tmp_path: Path) -> None:
-        path = tmp_path / ".trust_choices.json"
-        loaded = ChoiceMap.load(path)
+    def test_missing_row_is_not_corrupt(self, store) -> None:
+        loaded = ChoiceMap.load()
         assert loaded.load_corrupt is False
-        loaded.save(path)
-        assert json.loads(path.read_text()) == {}
+        loaded.save()
+        assert store.get(TRUST_CHOICES) == {}
 
 
 # ---------------------------------------------------------------- F-47 ----

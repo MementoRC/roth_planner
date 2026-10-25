@@ -257,7 +257,6 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     """
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
 
     recorded_at = datetime(2026, 1, 1)
     get_store().put(
@@ -269,7 +268,7 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, recorded_at, "live sync")
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True

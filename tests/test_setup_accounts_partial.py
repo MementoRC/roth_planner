@@ -28,10 +28,6 @@ _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    # audit-0805 W1: re-import at call time (not the module-level binding
-    # frozen at collection) to see tests/conftest.py's per-test redirect.
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
@@ -42,7 +38,7 @@ def _seed_pending_your_ira() -> None:
         "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def _render_your_accounts_with_pending_ira() -> None:

@@ -141,12 +141,9 @@ def test_f32_confirm_field_still_allows_negative_magi() -> None:
     assert committed["prior_year_magi"]["data"]["2023"] == -5000.0
 
 
-def test_f32_confirm_click_with_negative_value_commits_nothing(
-    store, tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_f32_confirm_click_with_negative_value_commits_nothing(store) -> None:
     import views.setup._partials._governance as gov
 
-    monkeypatch.setattr(gov, "TRUST_CHOICES_PATH", tmp_path / "choices.json")
     committed_json: dict = {}
 
     ok = gov._handle_confirm_click("your_roth", committed_json, ChoiceMap(), [], None, -5000.0)
@@ -157,14 +154,12 @@ def test_f32_confirm_click_with_negative_value_commits_nothing(
 
 
 def _seed_pending_roth() -> None:
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed = {"your_roth": SourcedValue(1_000.0, Provenance(Source.UNKNOWN, _NOW)).to_json()}
     get_store().put(COMMITTED, committed)
     store = CandidateStore()
     store.record_candidate("your_roth", 12_345.0, Provenance(Source.PDF, _NOW, "stale stmt"))
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def _render_card() -> None:

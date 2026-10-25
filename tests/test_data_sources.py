@@ -10,7 +10,6 @@ import copy
 import dataclasses
 import pickle
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -33,7 +32,6 @@ from engine.data_sources.confirm import confirm_field
 from engine.data_sources.ingest import is_valid_field_key
 from engine.data_sources.ingest import record_candidate as ingest_record_candidate
 from engine.data_sources.orchestrator import reconcile_manual_edits, resolve_for_app
-from engine.data_sources.paths import TRUST_CHOICES_PATH
 from engine.data_sources.record import (
     record_magi_candidates,
     record_ss_fra_candidate,
@@ -54,7 +52,7 @@ from engine.data_sources.snapshot_ingest import (
 )
 from engine.portfolio_sync import AccountSummary, EquityGrant, PortfolioSnapshot
 from engine.store import SINGLE_KEY
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, TRUST_CHOICES
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Provenance, Source, SourcedDict, SourcedList, SourcedValue
@@ -469,24 +467,21 @@ class TestChoiceMap:
         assert restored.get("your_ira") == TrustChoice(Source.MANUAL, FIXED_DT)
         assert restored.get("spouse_ira") == TrustChoice(Source.PDF, FIXED_DT_2)
 
-    def test_save_load_round_trip(self, tmp_path: Path) -> None:
+    def test_save_load_round_trip(self) -> None:
         cm = ChoiceMap()
         cm.set_choice("your_ira", Source.FINEXTRACT_LIVE, FIXED_DT)
-        path = tmp_path / "choices.json"
-        cm.save(path)
+        cm.save()
 
-        restored = ChoiceMap.load(path)
+        restored = ChoiceMap.load()
         assert restored.get("your_ira") == TrustChoice(Source.FINEXTRACT_LIVE, FIXED_DT)
 
-    def test_load_missing_file_returns_empty_map_no_raise(self, tmp_path: Path) -> None:
-        missing = tmp_path / "does_not_exist.json"
-        cm = ChoiceMap.load(missing)
+    def test_load_missing_row_returns_empty_map_no_raise(self) -> None:
+        cm = ChoiceMap.load()
         assert cm.get("your_ira") is None
 
-    def test_load_corrupt_file_returns_empty_map_no_raise(self, tmp_path: Path) -> None:
-        corrupt = tmp_path / "corrupt.json"
-        corrupt.write_text("not json at all {{{")
-        cm = ChoiceMap.load(corrupt)
+    def test_load_corrupt_row_returns_empty_map_no_raise(self, corrupt_row) -> None:
+        corrupt_row(TRUST_CHOICES)
+        cm = ChoiceMap.load()
         assert cm.get("your_ira") is None
 
 
@@ -1135,12 +1130,6 @@ class TestReconcileManualEdits:
         assert changed is True
         assert result_json["your_ira"]["source"] == "MANUAL"
         assert result_json["your_ira"]["value"] == 1_800_000.0
-
-
-class TestPaths:
-    def test_cache_path_constants_match_app_py_expected_locations(self) -> None:
-        repo_root = Path(__file__).resolve().parents[1]
-        assert repo_root / ".trust_choices.json" == TRUST_CHOICES_PATH
 
 
 class TestConfirmField:

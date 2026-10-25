@@ -5,10 +5,9 @@ Uses ``streamlit.testing.v1.AppTest.from_function`` (mirrors the pattern in
 tests/test_optimizer_panel.py — the wrapped function must be fully
 self-contained, all imports/object construction inside its body).
 
-The Command Center's cache paths (``engine.data_sources.paths``) are
-repo-root-anchored regardless of cwd (matching every other engine/data_sources
-cache file), so this test seeds/cleans those exact files directly rather than
-using a tmp cwd — same isolation approach as tests/test_app_data_sources.py.
+The Command Center's stores live in each test's in-memory document store, so
+this test seeds them directly through the store modules — same isolation
+approach as tests/test_app_data_sources.py.
 
 Per-field governance-card tests for ``your_ira`` (accounts),
 ``stock_price_now``/``grants`` (options), and ``prior_year_magi.<year>``
@@ -170,8 +169,6 @@ def _render_command_center_with_pending(pending: set[str]) -> None:
 
 def _seed_pending_your_ira() -> None:
     """Committed your_ira=1.6M/UNKNOWN + a FINEXTRACT_LIVE your_ira=2.0M candidate."""
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = {
         "your_ira": SourcedValue(1_600_000.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
@@ -182,7 +179,7 @@ def _seed_pending_your_ira() -> None:
         "your_ira", 2_000_000.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def test_command_center_renders_and_shows_pending_candidate() -> None:
@@ -213,14 +210,12 @@ def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
     assert not at.exception
     assert at.session_state["your_ira"] == 2_000_000.0
 
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = load_committed()
     assert committed_json is not None
     assert committed_json["your_ira"]["value"] == 2_000_000.0
     assert committed_json["your_ira"]["source"] == "FINEXTRACT_LIVE"
 
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap.load()
     choice = choices.get("your_ira")
     assert choice is not None
     assert choice.source == Source.FINEXTRACT_LIVE
@@ -228,8 +223,6 @@ def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
 
 def _seed_pending_stock_price_now() -> None:
     """Committed stock_price_now=100/UNKNOWN + a FINEXTRACT_LIVE=250 candidate."""
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = {
         "stock_price_now": SourcedValue(100.0, Provenance(Source.UNKNOWN, _RECORDED_AT)).to_json()
     }
@@ -240,7 +233,7 @@ def _seed_pending_stock_price_now() -> None:
         "stock_price_now", 250.0, Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync")
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def test_command_center_shows_pending_stock_price_now_candidate() -> None:
@@ -288,7 +281,6 @@ def _seed_pending_grants() -> None:
     """Committed 1 grant/UNKNOWN + a FINEXTRACT_LIVE 2-grant candidate list."""
     import dataclasses
 
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
     from models.grants import StockGrant
 
     committed_grant = StockGrant(year=2020, strike=124.0, shares=100, expiry_year=2030)
@@ -311,7 +303,7 @@ def _seed_pending_grants() -> None:
         Provenance(Source.FINEXTRACT_LIVE, _RECORDED_AT, "live sync"),
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def test_command_center_shows_pending_grants_candidate() -> None:
@@ -340,14 +332,12 @@ def test_command_center_confirm_grants_commits_candidate_list() -> None:
     at.button(key="confirm_grants").click().run()
 
     assert not at.exception
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = load_committed()
     assert committed_json is not None
     assert len(committed_json[GRANTS_KEY]["data"]) == 2
     assert {g["year"] for g in committed_json[GRANTS_KEY]["data"]} == {2019, 2021}
 
-    choices = ChoiceMap.load(TRUST_CHOICES_PATH)
+    choices = ChoiceMap.load()
     choice = choices.get(GRANTS_KEY)
     assert choice is not None
     assert choice.source == Source.FINEXTRACT_LIVE
@@ -355,8 +345,6 @@ def test_command_center_confirm_grants_commits_candidate_list() -> None:
 
 def _seed_pending_prior_year_magi_2024() -> None:
     """Committed 2024 MAGI=$200k/UNKNOWN + a Source.PDF $290k candidate."""
-    from engine.data_sources.paths import TRUST_CHOICES_PATH
-
     committed_json = {
         "prior_year_magi": {
             "data": {"2024": 200_000.0},
@@ -372,7 +360,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
         Provenance(Source.PDF, _RECORDED_AT, "Form 1040 PDF"),
     )
     store.save()
-    ChoiceMap().save(TRUST_CHOICES_PATH)
+    ChoiceMap().save()
 
 
 def test_command_center_shows_pending_prior_year_magi_candidate() -> None:

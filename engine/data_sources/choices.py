@@ -1,6 +1,6 @@
 """Per-field trusted-source choices for the Setup / Command Center.
 
-Pure module: stdlib + models/ + engine.demo_mode only. No streamlit.
+No streamlit. Saved in the document store, namespace ``trust_choices``.
 
 Once a user tells the app "trust FinExtract for your_ira going forward", that
 choice is recorded here so future resolutions don't need to re-ask — until
@@ -10,14 +10,13 @@ that field (see engine/data_sources/resolver.py).
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from engine.demo_mode import is_demo_mode
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import TRUST_CHOICES
 from models.legacy_keys import migrate_legacy_keys
 from models.sourced import Source
 
@@ -40,16 +39,16 @@ class TrustChoice:
 
 
 class CorruptChoiceMapError(Exception):
-    """Raised by :meth:`ChoiceMap.save` when ``path`` exists but does not
-    parse as a choice map (truncated/malformed write, or wrong shape).
+    """Raised by :meth:`ChoiceMap.save` when the saved choices do not parse
+    as a choice map (truncated/malformed write, or wrong shape).
 
     Mirrors ``CorruptCandidateStoreError`` (engine/data_sources/candidate_store.py)
-    and ``CorruptCommittedCacheError`` (engine/data_sources/committed.py): a
-    missing file means no choice was ever saved, so writing fresh is safe. A
-    file that exists but fails to parse may hold the user's only copy of their
+    and ``CorruptCommittedCacheError`` (engine/data_sources/committed.py): no
+    saved choices means none was ever made, so writing fresh is safe. A saved
+    row that fails to parse may hold the user's only copy of their
     trust choices, and ``ChoiceMap.load`` has already turned it into an empty
     map, so saving that map back would make the loss permanent and silent
-    (audit-1008 F-45). Callers catch this and leave the file untouched (see
+    (audit-1008 F-45). Callers catch this and leave it untouched (see
     app.py's ``choices.save`` call site).
     """
 
@@ -59,12 +58,15 @@ class CorruptChoiceMapError(Exception):
         super().__init__(f"trust choices at {path!r} are corrupt: {cause!r}")
 
 
+_SHAPE_ERRORS = (KeyError, ValueError, TypeError)
+
+
 class ChoiceMap:
     """Per-field-key trusted-source choice."""
 
     def __init__(self) -> None:
         self._data: dict[str, TrustChoice] = {}
-        # Set True by ``load`` when the file EXISTED but failed to parse, so an
+        # Set True by ``load`` when the saved row EXISTED but failed to parse, so an
         # empty-because-corrupt map is distinguishable from a never-saved one.
         self.load_corrupt: bool = False
 
@@ -91,57 +93,36 @@ class ChoiceMap:
             cm._data[k] = TrustChoice.from_json(v)
         return cm
 
-    def save(self, path: str | Path) -> None:
-        """Write this map to ``path`` durably.
+    def save(self) -> None:
+        """Save this map.
 
-        Mirrors ``CandidateStore.save`` (audit-1008 F-45): the JSON goes to a
-        temp file in the same directory and is ``os.replace()``d onto the
-        target, so a crash or full disk mid-write cannot truncate an existing
-        good file. If ``path`` exists but does not parse as a choice map, the
-        write is refused with :class:`CorruptChoiceMapError` so the unreadable
-        bytes (possibly the only copy of the user's choices) stay on disk.
-
-        Demo mode (audit-1018 W9b): a no-op.
+        Refuses, with :class:`CorruptChoiceMapError`, to replace saved choices
+        that do not parse as a choice map. They may be the only copy of the
+        user's choices, and :meth:`load` already turned them into an empty map
+        (audit-1008 F-45). The check and the write are one transaction.
         """
-        if is_demo_mode():
-            return
-        target = Path(path)
-        if target.exists():
+        store = get_store()
+        with store.transaction():
             try:
-                self.from_json(json.loads(target.read_text()))
-            except (OSError, KeyError, ValueError, TypeError) as exc:
-                raise CorruptChoiceMapError(path, exc) from exc
-        tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
-        try:
-            tmp_path.write_text(json.dumps(self.to_json()))
-            os.replace(tmp_path, target)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+                saved = store.get(TRUST_CHOICES)
+                if saved is not None:
+                    self.from_json(saved)
+            except (CorruptStoreError, *_SHAPE_ERRORS) as exc:
+                raise CorruptChoiceMapError(TRUST_CHOICES, exc) from exc
+            store.put(TRUST_CHOICES, self.to_json())
 
     @classmethod
-    def load(cls, path: str | Path) -> ChoiceMap:
-        """Load from ``path``; a missing or corrupt file yields an EMPTY map.
+    def load(cls) -> ChoiceMap:
+        """The saved map; absent or unreadable yields an EMPTY map.
 
-        Never raises — logs a warning instead so a broken cache file can't
-        crash the Setup / Command Center. A file that exists but fails to
-        parse sets ``load_corrupt`` on the returned map; ``save`` refuses to
-        overwrite such a file.
-
-        Demo mode (audit-1018 W9b): always an empty map.
+        An unreadable row sets ``load_corrupt`` on the returned map rather than
+        raising, and :meth:`save` refuses to replace it.
         """
-        if is_demo_mode():
-            return cls()
         try:
-            raw = Path(path).read_text()
-            return cls.from_json(json.loads(raw))
-        except OSError as exc:
-            logger.warning("ChoiceMap.load(%s) failed (%s); returning empty map", path, exc)
-            return cls()
-        except (KeyError, ValueError, TypeError) as exc:
-            # UnicodeDecodeError (non-UTF-8 bytes) is a ValueError: corrupt, not fatal.
-            logger.warning(
-                "ChoiceMap.load(%s) failed (%s); returning empty (corrupt) map", path, exc
-            )
-            cm = cls()
-            cm.load_corrupt = True
-            return cm
+            saved = get_store().get(TRUST_CHOICES)
+            return cls() if saved is None else cls.from_json(saved)
+        except (CorruptStoreError, *_SHAPE_ERRORS) as exc:
+            logger.warning("saved trust choices are unreadable (%s); using an empty map", exc)
+            empty = cls()
+            empty.load_corrupt = True
+            return empty

@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as paths_mod
 import engine.demo_mode as demo_mod
 import views.setup._state as state_mod
 from config import loader
@@ -41,7 +40,7 @@ from engine.portfolio_sync import (
 )
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.store import SINGLE_KEY, Store
-from engine.store.namespaces import CANDIDATE_STORE, COMMITTED
+from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, TRUST_CHOICES
 from engine.tax_return_pdf import Form1040Record, save_pdf_tax_records
 from engine.upload_merge import JOINT_FIELDS, SCALAR_KEYS, build_user_defaults_session_updates
 from models.ytd_income import YTDSnapshot
@@ -161,15 +160,13 @@ def _app(*, suppress: bool = True) -> AppTest:
     return at
 
 
-def _cache_state(store: Store) -> dict[str, object]:
-    """Saved Command Center state, read past demo mode's null store."""
-    state: dict[str, object] = {
-        p.name: (p.read_bytes() if p.exists() else None) for p in (paths_mod.TRUST_CHOICES_PATH,)
-    }
-    for namespace in (COMMITTED, CANDIDATE_STORE):
-        row = store.backend.get(namespace, SINGLE_KEY)
-        state[namespace] = row.payload if row else None
-    return state
+_BASELINE_STORES = (COMMITTED, CANDIDATE_STORE, TRUST_CHOICES)
+
+
+def _cache_state(store: Store) -> dict[str, str | None]:
+    """The Command Center's saved payloads, read past demo mode's null store."""
+    rows = {ns: store.backend.get(ns, SINGLE_KEY) for ns in _BASELINE_STORES}
+    return {ns: (row.payload if row else None) for ns, row in rows.items()}
 
 
 class TestF28RenderDoesNotTouchPersonalBaseline:
