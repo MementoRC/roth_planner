@@ -38,6 +38,7 @@ __all__ = [
     "StoreUnavailableError",
     "db_path",
     "get_store",
+    "legacy_dir",
     "migration_notice",
     "register_namespace",
     "set_store",
@@ -45,6 +46,8 @@ __all__ = [
 
 DB_ENV_VAR = "ROTH_PLANNER_DB"
 _DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / ".roth_planner.db"
+# The legacy dotfiles always lived at the repo root, wherever ROTH_PLANNER_DB points.
+_LEGACY_DIR = _DEFAULT_DB_PATH.parent
 
 _lock = threading.Lock()
 _override: Store | None = None
@@ -58,6 +61,11 @@ def db_path() -> Path:
     """Location of the local database file."""
     configured = os.environ.get(DB_ENV_VAR)
     return Path(configured) if configured else _DEFAULT_DB_PATH
+
+
+def legacy_dir() -> Path:
+    """Folder holding the legacy JSON dotfiles the first open imports."""
+    return _LEGACY_DIR
 
 
 def set_store(store: Store | None) -> None:
@@ -110,18 +118,22 @@ def _open_file_store(path: Path) -> tuple[Store, MigrationResult]:
     """Open the database and run the one-time JSON import (caller holds ``_lock``)."""
     import engine.store.namespaces  # noqa: F401 -- complete the registry before importing
     from engine.store.migrate_json import migrate_json, read_only_backend
-    from engine.store.sqlite_backend import SqliteBackend
+    from engine.store.sqlite_backend import SqliteBackend, prepare_db_file
 
-    created = not path.exists()
-    store = Store(SqliteBackend(path))
+    created = prepare_db_file(path)  # atomic: never claim a database another process made
+    store: Store | None = None
     try:
-        result = migrate_json(store, path.parent)
+        store = Store(SqliteBackend(path))
+        result = migrate_json(store, legacy_dir())
     except BaseException:
-        store.backend.close()
+        if store is not None:
+            store.backend.close()
+        if created:
+            _remove_db_files(path)
         raise
     if not result.read_only:
         return store, result
-    json_backend = read_only_backend(result, path.parent)
+    json_backend = read_only_backend(result, legacy_dir())
     if created:
         # Nothing was imported, so leave no database behind (spec §4); the next start retries.
         store.backend.close()

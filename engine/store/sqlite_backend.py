@@ -41,7 +41,7 @@ class SqliteBackend:
         conn: sqlite3.Connection | None = None
         try:
             if self._is_file:
-                _prepare_db_file(Path(self.location))
+                prepare_db_file(Path(self.location))
             conn = sqlite3.connect(self.location, isolation_level=None, check_same_thread=False)
             conn.execute("PRAGMA busy_timeout = 5000")
             if self._is_file:
@@ -176,12 +176,24 @@ class SqliteBackend:
                     raise StoreUnavailableError(self.location, str(exc)) from exc
 
 
-def _prepare_db_file(path: Path) -> None:
-    """Create *path* with mode 0600, never through a symlink, before sqlite opens it."""
+def prepare_db_file(path: Path) -> bool:
+    """Create *path* with mode 0600, never through a symlink, before sqlite opens it.
+
+    Returns whether this call created the file (decided atomically by ``O_EXCL``).
+    """
     if path.is_symlink():
         raise StoreUnavailableError(str(path), "refusing to open a database through a symlink")
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            created = True
+        except FileExistsError:
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+            created = False
+    except OSError as exc:
+        raise StoreUnavailableError(str(path), str(exc)) from exc
     try:
         os.fchmod(fd, 0o600)
     finally:
         os.close(fd)
+    return created

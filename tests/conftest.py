@@ -47,6 +47,7 @@ import engine.portfolio_sync as _portfolio_sync_pkg  # noqa: E402
 import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
 import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
+import engine.store as _store_pkg  # noqa: E402
 import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
 import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
 import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
@@ -186,6 +187,8 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # The SQLite store file: never let a test reach the repo-root database.
     monkeypatch.setenv("ROTH_PLANNER_DB", str(_tmp(".roth_planner.db")))
+    # ...nor read or move a repo-root legacy dotfile during the first-open import.
+    monkeypatch.setattr(_store_pkg, "_LEGACY_DIR", cache_dir)
 
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these

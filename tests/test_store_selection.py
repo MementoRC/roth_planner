@@ -89,8 +89,87 @@ def test_demo_mode_hides_an_installed_store(store):
 
 
 def _legacy_dir() -> Path:
-    """Where get_store() looks for the dotfiles: beside the (tmp) database."""
-    return store_pkg.db_path().parent
+    """Where get_store() looks for the dotfiles (redirected to tmp by conftest)."""
+    return store_pkg.legacy_dir()
+
+
+def test_legacy_dir_is_redirected_away_from_the_repo_root(tmp_path):
+    assert store_pkg.legacy_dir() != store_pkg._DEFAULT_DB_PATH.parent
+    assert store_pkg.legacy_dir().is_relative_to(tmp_path)
+
+
+def test_db_elsewhere_still_imports_the_legacy_files(no_override, monkeypatch, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("ROTH_PLANNER_DB", str(elsewhere / "planner.db"))
+    declare_store("t_sel", ".t_sel.json")
+    legacy = _legacy_dir() / ".t_sel.json"
+    legacy.write_text(json.dumps({"a": 1}))
+
+    assert get_store().get("t_sel") == {"a": 1}
+    assert not legacy.exists()
+    assert (elsewhere / "planner.db").exists()
+
+
+def test_existing_db_is_never_deleted_when_import_fails_even_if_it_appeared_late(
+    no_override, monkeypatch
+):
+    db = store_pkg.db_path()
+    existing = Store(SqliteBackend(db))
+    existing.put("not_migrated", {"kept": 1})
+    existing.backend.close()
+    declare_store("t_bad", ".t_bad.json")
+    (_legacy_dir() / ".t_bad.json").write_text("{not json")
+    real_exists = Path.exists
+    with monkeypatch.context() as patch:
+        # Simulates another process creating the database right after an existence check.
+        patch.setattr(
+            Path,
+            "exists",
+            lambda self, *a, **k: False if self == db else real_exists(self, *a, **k),
+        )
+        get_store()
+        store_pkg._reset_cached_stores()
+
+    assert db.exists()
+    assert Store(SqliteBackend(db)).get("not_migrated") == {"kept": 1}
+
+
+def test_unexpected_import_error_removes_a_database_this_run_created(no_override, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("synthetic import failure")
+
+    monkeypatch.setattr("engine.store.migrate_json.migrate_json", boom)
+
+    with pytest.raises(RuntimeError, match="synthetic import failure"):
+        get_store()
+    assert not store_pkg.db_path().exists()
+
+
+def test_unexpected_import_error_keeps_an_existing_database(no_override, monkeypatch):
+    Store(SqliteBackend(store_pkg.db_path())).backend.close()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("synthetic import failure")
+
+    monkeypatch.setattr("engine.store.migrate_json.migrate_json", boom)
+
+    with pytest.raises(RuntimeError, match="synthetic import failure"):
+        get_store()
+    assert store_pkg.db_path().exists()
+
+
+def test_backend_failure_after_creating_the_file_leaves_no_database(no_override, monkeypatch):
+    class _FailingBackend:
+        def __init__(self, location: Path) -> None:
+            Path(location).touch()
+            raise StoreUnavailableError(str(location), "synthetic open failure")
+
+    monkeypatch.setattr("engine.store.sqlite_backend.SqliteBackend", _FailingBackend)
+
+    with pytest.raises(StoreUnavailableError, match="synthetic open failure"):
+        get_store()
+    assert not store_pkg.db_path().exists()
 
 
 def test_first_file_store_imports_registered_json_beside_the_database(no_override):
