@@ -287,10 +287,10 @@ class TestFetchPortfolioStamps:
 
 class TestLoadSnapshotTolerance:
     def _write(self, accounts: list[dict]) -> None:
-        from engine.portfolio_sync import portfolio as portfolio_module
-        from engine.secure_io import write_pii_json
+        from engine.store import get_store
+        from engine.store.namespaces import PORTFOLIO
 
-        write_pii_json(portfolio_module._CACHE_PATH, {"accounts": accounts})
+        get_store().put(PORTFOLIO, {"accounts": accounts})
 
     def test_legacy_cache_without_fields_loads_undated(self) -> None:
         self._write([{"account_type": "brokerage", "owner": "you", "total_value": 5.0}])

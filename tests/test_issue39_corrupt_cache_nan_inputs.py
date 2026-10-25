@@ -16,6 +16,8 @@ import engine.instance_identity as identity
 import engine.portfolio_sync.portfolio as portfolio_mod
 import engine.portfolio_sync.social_security as ssa_mod
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
+from engine.store import SINGLE_KEY
+from engine.store.namespaces import PORTFOLIO
 from engine.upload_merge import build_user_defaults_session_updates, sanitize_living_expenses
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
@@ -33,20 +35,23 @@ def bad_bytes(request: pytest.FixtureRequest) -> bytes:
 # --- save_snapshot / save_ssa_snapshot preserve an unreadable cache ------------
 
 
-def test_save_snapshot_refuses_corrupt_cache_and_preserves_bytes(tmp_path, monkeypatch, bad_bytes):
-    path = tmp_path / ".portfolio_cache.json"
-    path.write_bytes(bad_bytes)
-    monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", path)
-    with pytest.raises(portfolio_mod.CorruptPortfolioCacheError):
+def test_save_snapshot_refuses_corrupt_row_and_preserves_bytes(store, corrupt_row):
+    payload = corrupt_row(PORTFOLIO)
+    with pytest.raises(portfolio_mod.CorruptPortfolioCacheError, match="portfolio"):
         portfolio_mod.save_snapshot(PortfolioSnapshot(server_available=True))
-    assert path.read_bytes() == bad_bytes
+    assert store.backend.get(PORTFOLIO, SINGLE_KEY).payload == payload
 
 
-def test_save_snapshot_missing_file_still_writes(tmp_path, monkeypatch):
-    path = tmp_path / ".portfolio_cache.json"
-    monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", path)
+def test_save_snapshot_refuses_non_object_document(store):
+    store.put(PORTFOLIO, [1, 2, 3])
+    with pytest.raises(portfolio_mod.CorruptPortfolioCacheError, match="portfolio"):
+        portfolio_mod.save_snapshot(PortfolioSnapshot(server_available=True))
+    assert store.get(PORTFOLIO) == [1, 2, 3]
+
+
+def test_save_snapshot_missing_row_still_writes(store):
     portfolio_mod.save_snapshot(PortfolioSnapshot(server_available=True))
-    assert json.loads(path.read_text())["server_available"] is True
+    assert store.get(PORTFOLIO)["server_available"] is True
 
 
 def test_save_ssa_snapshot_refuses_corrupt_cache_and_preserves_bytes(

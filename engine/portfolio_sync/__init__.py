@@ -35,7 +35,6 @@ from .holdings import (
 )
 from .magi import apply_magi, fetch_magi
 from .portfolio import (
-    _CACHE_PATH,
     EmptySnapshotWriteRefusedError,
     fetch_portfolio,
     load_snapshot,
@@ -87,7 +86,6 @@ __all__ = [
     "PortfolioSnapshot",
     "SSABenefitEstimate",
     "SSASnapshot",
-    "_CACHE_PATH",
     "_SSA_CACHE_PATH",
     "_YTD_CACHE_PATH",
     "_classify_account",
@@ -191,7 +189,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "PortfolioSnapshot": _shapes,
     "SSABenefitEstimate": _shapes,
     "SSASnapshot": _shapes,
-    "_CACHE_PATH": _portfolio,
     "_SSA_CACHE_PATH": _social_security,
     "_YTD_CACHE_PATH": _ytd,
     "_classify_account": _classify,

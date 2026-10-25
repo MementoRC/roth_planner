@@ -6,3 +6,7 @@ imported first. Store modules import their namespace constant from here.
 """
 
 from __future__ import annotations
+
+from engine.store.legacy_files import declare_store
+
+PORTFOLIO = declare_store("portfolio", ".portfolio_cache.json")

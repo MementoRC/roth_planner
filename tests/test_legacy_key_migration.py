@@ -24,6 +24,7 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import apply_committed, extract_committed, load_committed
 from engine.portfolio_sync.shapes import PortfolioSnapshot, portfolio_snapshot_from_dict
+from engine.store.namespaces import PORTFOLIO
 from engine.upload_merge import build_user_defaults_session_updates
 from models.household import Household
 from models.legacy_keys import (
@@ -231,19 +232,18 @@ def test_trust_choices_with_old_field_key_load_under_new_key(tmp_path) -> None:
 # --- portfolio cache --------------------------------------------------------
 
 
-def test_portfolio_cache_with_old_keys_loads_and_saves_new_keys(tmp_path, monkeypatch) -> None:
-    path = tmp_path / ".portfolio_cache.json"
-    monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", path)
-    path.write_text(
-        json.dumps({"accounts": [], OLD["stock_shares_held"]: 5, OLD["stock_shares_value"]: 500.0})
+def test_portfolio_cache_with_old_keys_loads_and_saves_new_keys(store) -> None:
+    store.put(
+        PORTFOLIO,
+        {"accounts": [], OLD["stock_shares_held"]: 5, OLD["stock_shares_value"]: 500.0},
     )
     snap = portfolio_mod.load_snapshot()
     assert snap is not None
     assert (snap.stock_shares_held, snap.stock_shares_value) == (5, 500.0)
     portfolio_mod.save_snapshot(snap, allow_empty=True)
-    text = path.read_text()
-    assert not _has_legacy_key(text)
-    assert json.loads(text)["stock_shares_held"] == 5
+    saved = store.get(PORTFOLIO)
+    assert not _has_legacy_key(json.dumps(saved))
+    assert saved["stock_shares_held"] == 5
 
 
 def test_snapshot_dict_with_old_keys_loads_under_new_names() -> None:

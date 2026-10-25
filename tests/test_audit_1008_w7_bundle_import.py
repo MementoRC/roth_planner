@@ -222,10 +222,9 @@ class TestF01ImportedSnapshotDerivesGrowth:
         assert hh.your_ira_growth is not None
         assert hh.your_ira_growth.default_rate == 0.04
 
-    def test_flag_survives_save_and_load(self, tmp_path, monkeypatch) -> None:
+    def test_flag_survives_save_and_load(self) -> None:
         import engine.portfolio_sync.portfolio as portfolio_mod
 
-        monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", tmp_path / "pc.json")
         snap = PortfolioSnapshot(
             accounts=_exporter_snapshot().accounts,
             equity_grants=[_grant(1)],

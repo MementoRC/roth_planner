@@ -44,6 +44,8 @@ from engine.portfolio_sync.shapes import (
 )
 from engine.portfolio_sync.ytd import ytd_from_dict, ytd_to_dict
 from engine.secure_io import read_pii_json, write_pii_json
+from engine.store.core import Store
+from engine.store.namespaces import PORTFOLIO
 from models.ytd_income import IncomeEvent, RealizedGainEvent, YTDSnapshot
 
 NOW = "2026-10-01T12:00:00+00:00"
@@ -284,32 +286,30 @@ def _snapshot() -> PortfolioSnapshot:
 
 class TestPortfolioCacheForwardCompat:
     @pytest.fixture
-    def cache(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        path = tmp_path / ".portfolio_cache.json"
-        monkeypatch.setattr(portfolio_mod, "_CACHE_PATH", path)
-        write_pii_json(path, asdict(_snapshot()))
-        return path
+    def cache(self, store: Store) -> Store:
+        store.put(PORTFOLIO, asdict(_snapshot()))
+        return store
 
-    def test_unknown_holding_key_is_dropped(self, cache: Path) -> None:
-        data = read_pii_json(cache)
+    def test_unknown_holding_key_is_dropped(self, cache: Store) -> None:
+        data = cache.get(PORTFOLIO)
         data["accounts"][0]["holdings"][0]["future_holding_field"] = 1
-        write_pii_json(cache, data)
+        cache.put(PORTFOLIO, data)
         snap = portfolio_mod.load_snapshot()
         assert snap is not None
         assert snap.accounts[0].holdings[0].symbol == "VTI"
 
-    def test_unknown_grant_key_is_dropped(self, cache: Path) -> None:
-        data = read_pii_json(cache)
+    def test_unknown_grant_key_is_dropped(self, cache: Store) -> None:
+        data = cache.get(PORTFOLIO)
         data["equity_grants"][0]["future_grant_field"] = 1
-        write_pii_json(cache, data)
+        cache.put(PORTFOLIO, data)
         snap = portfolio_mod.load_snapshot()
         assert snap is not None
         assert snap.equity_grants[0].grant_id == "G1"
 
-    def test_grant_missing_required_key_degrades_to_none(self, cache: Path) -> None:
-        data = read_pii_json(cache)
+    def test_grant_missing_required_key_degrades_to_none(self, cache: Store) -> None:
+        data = cache.get(PORTFOLIO)
         del data["equity_grants"][0]["grant_type"]
-        write_pii_json(cache, data)
+        cache.put(PORTFOLIO, data)
         assert portfolio_mod.load_snapshot() is None
 
 

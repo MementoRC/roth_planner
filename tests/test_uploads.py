@@ -524,11 +524,8 @@ class TestHoldingFinExtractFieldsRoundTrip:
         assert h.dividends_window == {"start": "2025-01-01", "end": "2026-06-04"}
         assert h.dividends_is_stale is False
 
-    def test_holding_round_trip_through_load_snapshot(self, monkeypatch, tmp_path):
+    def test_holding_round_trip_through_load_snapshot(self):
         """save_snapshot → load_snapshot must preserve the three new fields.
-
-        Monkeypatches _CACHE_PATH to tmp_path/cache.json so load_snapshot()
-        reads the file we write rather than the production path.
 
         Currently fails: TypeError during Holding(**h) deserialization in
         load_snapshot when the dict contains the new keys.
@@ -539,9 +536,6 @@ class TestHoldingFinExtractFieldsRoundTrip:
             load_snapshot,
             save_snapshot,
         )
-
-        cache_file = tmp_path / "cache.json"
-        monkeypatch.setattr("engine.portfolio_sync._CACHE_PATH", cache_file)
 
         snap = PortfolioSnapshot(
             server_available=True,

@@ -44,7 +44,6 @@ import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
 import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
 import engine.portfolio_sync as _portfolio_sync_pkg  # noqa: E402
-import engine.portfolio_sync.portfolio as _portfolio_mod  # noqa: E402
 import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
 import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
 import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
@@ -59,7 +58,7 @@ import views.setup.command_center as _command_center_mod  # noqa: E402
 _WATCHED_CACHE_PATHS: list[Path] = [
     _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
     _ytd_mod._YTD_CACHE_PATH,
-    _portfolio_mod._CACHE_PATH,
+    _REPO_ROOT / ".portfolio_cache.json",
     _social_security_mod._SSA_CACHE_PATH,
     _ssa_statement_mod._SSA_PDF_CACHE_PATH,
     _koinly_mod._KOINLY_CACHE_PATH,
@@ -152,7 +151,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # 1. Defining-module attributes.
     monkeypatch.setattr(_tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", _tmp(".tax_pdf_cache.json"))
     monkeypatch.setattr(_ytd_mod, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
-    monkeypatch.setattr(_portfolio_mod, "_CACHE_PATH", _tmp(".portfolio_cache.json"))
     monkeypatch.setattr(_social_security_mod, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
     monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
     monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
@@ -192,7 +190,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     # 2a. engine.portfolio_sync package-level re-exports -- its custom
     # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
     # writes to the owning submodule too, but patch both ends explicitly.
-    monkeypatch.setattr(_portfolio_sync_pkg, "_CACHE_PATH", _tmp(".portfolio_cache.json"))
     monkeypatch.setattr(_portfolio_sync_pkg, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
     monkeypatch.setattr(_portfolio_sync_pkg, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
 

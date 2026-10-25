@@ -31,7 +31,6 @@ import engine.exercise_schedule_store as exercise_store_mod
 import engine.instance_identity as identity_mod
 import engine.pdf_ledger as ledger_mod
 import engine.pdf_owner as owner_mod
-import engine.portfolio_sync.portfolio as portfolio_mod
 import engine.portfolio_sync.social_security as ssa_mod
 import engine.portfolio_sync.ytd as ytd_mod
 import engine.tax_return_pdf as tax_pdf_mod
@@ -76,7 +75,6 @@ def _personal_paths() -> dict[str, Path]:
         "user_defaults": loader._USER_DEFAULTS_PATH,
         "instance_owner": identity_mod.INSTANCE_OWNER_PATH,
         "attribution": attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
-        "portfolio": portfolio_mod._CACHE_PATH,
         "ytd": ytd_mod._YTD_CACHE_PATH,
         "ssa": ssa_mod._SSA_CACHE_PATH,
         "tax_pdf": tax_pdf_mod._PDF_TAX_CACHE_PATH,

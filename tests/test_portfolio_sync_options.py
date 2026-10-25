@@ -610,14 +610,11 @@ class TestEquitySalesCacheConsumer:
         result = fetch_option_exercises_with_cache(snapshot)
         assert result.captured_at == ts
 
-    def test_save_snapshot_preserves_existing_equity_sales(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_save_snapshot_preserves_existing_equity_sales(self, store):
         from engine.portfolio_sync import PortfolioSnapshot, save_snapshot
+        from engine.store.namespaces import PORTFOLIO
 
-        cache = tmp_path / ".portfolio_cache.json"
-        monkeypatch.setattr(portfolio_sync, "_CACHE_PATH", cache)
-
-        # Simulate FinExtract's rebuild write — equity_sales and sources on disk.
+        # Simulate FinExtract's rebuild write — equity_sales and sources saved.
         finextract_data = {
             "equity_sales": {
                 "lots": [{"grant_number": "N0000123456", "grant_price": 163.0}],
@@ -627,13 +624,13 @@ class TestEquitySalesCacheConsumer:
                 "order_detail_summary": {"captured_at": "2026-06-10T12:00Z"},
             },
         }
-        cache.write_text(json.dumps(finextract_data))
+        store.put(PORTFOLIO, finextract_data)
 
         # Live HTTP sync produces a snap with empty equity_sales_lots.
         snap = PortfolioSnapshot(equity_sales_lots=[], equity_sales_executions=[])
         save_snapshot(snap)
 
-        result = json.loads(cache.read_text())
+        result = store.get(PORTFOLIO)
         assert "equity_sales" in result
 
 

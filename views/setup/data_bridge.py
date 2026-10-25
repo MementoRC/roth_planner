@@ -663,8 +663,8 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
         return
     except CorruptPortfolioCacheError:
         st.error(
-            "Import refused: the saved portfolio cache file is unreadable, so it was "
-            "left untouched. Repair or remove .portfolio_cache.json, then import again."
+            "Import refused: the saved portfolio could not be read, so it was "
+            "left untouched and nothing was imported."
         )
         return
 
