@@ -366,9 +366,15 @@ def _current_pending_review() -> set[str]:
         committed_json = load_committed()
         store = CandidateStore.load()
         choices = ChoiceMap.load()
-    except (CorruptCommittedCacheError, StoreUnavailableError):
-        # The candidate/choice loaders turn a corrupt row into a flag; only an
-        # unavailable store (or a corrupt committed baseline) gets here.
+    except CorruptCommittedCacheError:
+        # The candidate/choice loaders turn a corrupt row into a flag; a corrupt
+        # committed baseline is already warned about by get_household().
+        return published
+    except StoreUnavailableError as exc:
+        # Runs in _route_and_badge's finally, outside its StoreError catch, so
+        # the refusal goes through the one-banner rule (quiet while saving is
+        # disabled by a failed import).
+        _report_refused_save(exc)
         return published
     if committed_json is not None:
         apply_committed(base, committed_json)
@@ -652,6 +658,8 @@ def _route_and_badge() -> None:
         route_target(page)(hh)
     except StoreError as exc:
         st.error(store_error_message(exc))
+        # Counted as this run's banner, so the pending recompute below adds none.
+        _boot_store_errors.append(exc)
     finally:
         pending = _current_pending_review()
         st.session_state["_pending_review"] = pending

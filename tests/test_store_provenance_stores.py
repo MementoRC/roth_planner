@@ -387,6 +387,63 @@ class TestCorruptCandidateStoreAtBoot:
         assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload
 
 
+def _lock_store_after_page_body(monkeypatch, *, page_raises: bool = False) -> list[str]:
+    """The overview page body runs, then the pending-review recompute finds the store locked."""
+    import engine.data_sources.committed as committed_mod
+    import views.dashboard as dashboard_mod
+
+    armed: list[str] = []
+    real_load = committed_mod.load_committed
+
+    def page(*_args, **_kwargs):
+        armed.append("page")
+        if page_raises:
+            raise StoreUnavailableError("/synthetic/.roth_planner.db", "database is locked")
+
+    def load_committed_spy():
+        if armed:
+            armed.append("recompute")
+            raise StoreUnavailableError("/synthetic/.roth_planner.db", "database is locked")
+        return real_load()
+
+    monkeypatch.setattr(dashboard_mod, "render", page)
+    monkeypatch.setattr(committed_mod, "load_committed", load_committed_spy)
+    return armed
+
+
+def _run_overview() -> AppTest:
+    at = AppTest.from_file(str(_APP), default_timeout=60)
+    at.session_state["_suppress_snapshot_autoload"] = True
+    at.session_state["nav_page"] = "overview"
+    at.run()
+    return at
+
+
+class TestPendingRecomputeRefusal:
+    def test_unavailable_store_shows_one_storage_banner(self, monkeypatch):
+        armed = _lock_store_after_page_body(monkeypatch)
+        at = _run_overview()
+        assert not at.exception, [e.value for e in at.exception]
+        assert "recompute" in armed, "the pending recompute never met the locked store"
+        banners = _storage_banners(at)
+        assert len(banners) == 1
+        assert "database is locked" in banners[0]
+
+    def test_a_page_banner_is_not_repeated_by_the_recompute(self, monkeypatch):
+        armed = _lock_store_after_page_body(monkeypatch, page_raises=True)
+        at = _run_overview()
+        assert not at.exception, [e.value for e in at.exception]
+        assert "recompute" in armed
+        assert len(_storage_banners(at)) == 1
+
+    def test_quiet_while_saving_is_disabled(self, store_saving_disabled, monkeypatch):
+        armed = _lock_store_after_page_body(monkeypatch)
+        at = _run_overview()
+        assert not at.exception, [e.value for e in at.exception]
+        assert "recompute" in armed
+        assert _no_storage_banner(at)
+
+
 def _spy_refusals(
     monkeypatch, module, names: tuple[str, ...], refused: list[str] | None = None
 ) -> list[str]:
