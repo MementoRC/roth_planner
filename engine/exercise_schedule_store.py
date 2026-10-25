@@ -1,61 +1,41 @@
-"""ExerciseSchedule persistence — ``.exercise_schedule_cache.json`` at project
-root, via the hardened ``engine.secure_io`` PII read/write pattern (atomic,
-``0o600``, ``O_NOFOLLOW``).
-
-Mirrors ``engine/portfolio_sync/portfolio.py`` (``load_snapshot``/
-``save_snapshot``) and ``engine/portfolio_sync/ytd.py``
-(``load_ytd_snapshot``/``save_ytd_snapshot``) — the two *live* caches. Do not
-imitate ``.tax_return_cache.json``; it is dead code.
-"""
+"""ExerciseSchedule persistence in the document store (namespace ``exercise_schedule``)."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from engine.demo_mode import is_demo_mode
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import EXERCISE_SCHEDULE
 from models.exercise_schedule import _SCHEDULE_VERSION, ExerciseSchedule
 
-_EXERCISE_SCHEDULE_CACHE_PATH = (
-    Path(__file__).resolve().parent.parent / ".exercise_schedule_cache.json"
-)
+
+def save_exercise_schedule(schedule: ExerciseSchedule) -> None:
+    """Save *schedule* to the document store."""
+    get_store().put(EXERCISE_SCHEDULE, schedule.to_dict())
 
 
-def save_exercise_schedule(
-    schedule: ExerciseSchedule, path: Path = _EXERCISE_SCHEDULE_CACHE_PATH
-) -> None:
-    """Save *schedule* to disk as JSON via the hardened PII write helper."""
-    write_pii_json(path, schedule.to_dict())
+def load_exercise_schedule() -> ExerciseSchedule | None:
+    """The saved ExerciseSchedule, or ``None`` if unavailable.
 
-
-def load_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> ExerciseSchedule | None:
-    """Load cached ExerciseSchedule from disk, or ``None`` if unavailable.
-
-    Returns ``None`` when the file is missing, contains malformed JSON, or
-    carries an unrecognized/missing ``version`` — never raises. Callers rely
-    on ``Household.effective_schedule()`` to fall back to
-    ``default_at_expiry`` in all of those cases, so a bad/absent cache
-    degrades gracefully to the hold-to-expiration default.
+    Returns ``None`` when nothing is saved, the row is unreadable, or it
+    carries an unrecognized/missing ``version`` -- never raises. Callers rely
+    on ``Household.effective_schedule()`` to fall back to ``default_at_expiry``
+    in all of those cases.
     """
-    if not path.exists():
+    try:
+        data = get_store().get(EXERCISE_SCHEDULE)
+    except CorruptStoreError:
+        return None
+    if not isinstance(data, dict) or data.get("version") != _SCHEDULE_VERSION:
         return None
     try:
-        data = read_pii_json(path)
-        if not isinstance(data, dict) or data.get("version") != _SCHEDULE_VERSION:
-            return None
         return ExerciseSchedule.from_dict(data)
-    except (json.JSONDecodeError, OSError, ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError):
         return None
 
 
-def clear_exercise_schedule(path: Path = _EXERCISE_SCHEDULE_CACHE_PATH) -> None:
-    """Delete the cached schedule file, if present.
+def clear_exercise_schedule() -> None:
+    """Delete the saved schedule, if any ("Reset to default").
 
-    No-op (no error) when the file is already absent, so callers can invoke
-    this unconditionally on a "Reset to default" action. After clearing,
-    ``Household.effective_schedule()`` falls back to ``default_at_expiry``.
+    After clearing, ``Household.effective_schedule()`` falls back to
+    ``default_at_expiry``. In demo mode the null store drops the delete.
     """
-    if is_demo_mode():  # audit-1018 W9b: never delete the personal file in demo mode
-        return
-    path.unlink(missing_ok=True)
+    get_store().delete(EXERCISE_SCHEDULE)

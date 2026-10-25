@@ -35,7 +35,6 @@ from .holdings import (
 )
 from .magi import apply_magi, fetch_magi
 from .portfolio import (
-    _CACHE_PATH,
     EmptySnapshotWriteRefusedError,
     fetch_portfolio,
     load_snapshot,
@@ -56,7 +55,6 @@ from .shapes import (
     SSASnapshot,
 )
 from .social_security import (
-    _SSA_CACHE_PATH,
     fetch_ssa_benefit_estimates,
     fetch_ssa_snapshot,
     load_ssa_snapshot,
@@ -64,7 +62,6 @@ from .social_security import (
     save_ssa_snapshot,
 )
 from .ytd import (
-    _YTD_CACHE_PATH,
     fetch_ytd_snapshot,
     load_ytd_snapshot,
     save_ytd_snapshot,
@@ -87,9 +84,6 @@ __all__ = [
     "PortfolioSnapshot",
     "SSABenefitEstimate",
     "SSASnapshot",
-    "_CACHE_PATH",
-    "_SSA_CACHE_PATH",
-    "_YTD_CACHE_PATH",
     "_classify_account",
     "_classify_symbol",
     "_derive_ttm_dividends",
@@ -191,9 +185,6 @@ _REEXPORT_OWNERS: dict[str, _ModuleType] = {
     "PortfolioSnapshot": _shapes,
     "SSABenefitEstimate": _shapes,
     "SSASnapshot": _shapes,
-    "_CACHE_PATH": _portfolio,
-    "_SSA_CACHE_PATH": _social_security,
-    "_YTD_CACHE_PATH": _ytd,
     "_classify_account": _classify,
     "_classify_symbol": _classify,
     "_derive_ttm_dividends": _holdings,

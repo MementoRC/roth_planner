@@ -1,13 +1,11 @@
-"""Tests for engine.exercise_schedule_store — ExerciseSchedule persistence via
-the hardened secure_io PII cache pattern.
+"""Tests for engine.exercise_schedule_store — ExerciseSchedule persistence in
+the document store.
 """
 
 from __future__ import annotations
 
-import json
-
 from engine.exercise_schedule_store import load_exercise_schedule, save_exercise_schedule
-from engine.secure_io import write_pii_json
+from engine.store.namespaces import EXERCISE_SCHEDULE
 from models.exercise_schedule import _SCHEDULE_VERSION, ExerciseSchedule
 
 
@@ -22,22 +20,20 @@ def make_schedule() -> ExerciseSchedule:
 
 
 class TestRoundTrip:
-    def test_save_then_load_reproduces_schedule(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
+    def test_save_then_load_reproduces_schedule(self):
         original = make_schedule()
 
-        save_exercise_schedule(original, path=path)
-        loaded = load_exercise_schedule(path=path)
+        save_exercise_schedule(original)
+        loaded = load_exercise_schedule()
 
         assert loaded is not None
         assert loaded.shares_by_grant_year == original.shares_by_grant_year
         assert loaded.price_by_year == original.price_by_year
 
-    def test_year_keys_are_ints_after_load(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
-        save_exercise_schedule(make_schedule(), path=path)
+    def test_year_keys_are_ints_after_load(self):
+        save_exercise_schedule(make_schedule())
 
-        loaded = load_exercise_schedule(path=path)
+        loaded = load_exercise_schedule()
 
         assert loaded is not None
         for years in loaded.shares_by_grant_year.values():
@@ -48,45 +44,40 @@ class TestRoundTrip:
 
 
 class TestMissingOrMalformed:
-    def test_missing_file_returns_none(self, tmp_path):
-        path = tmp_path / "does_not_exist.json"
-        assert load_exercise_schedule(path=path) is None
+    def test_missing_row_returns_none(self):
+        assert load_exercise_schedule() is None
 
-    def test_malformed_json_returns_none(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
-        path.write_text("{not valid json")
+    def test_malformed_row_returns_none(self, corrupt_row):
+        corrupt_row(EXERCISE_SCHEDULE)
 
-        assert load_exercise_schedule(path=path) is None
+        assert load_exercise_schedule() is None
 
-    def test_missing_version_returns_none(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
-        path.write_text(json.dumps({"shares_by_grant_year": {}, "price_by_year": {}}))
+    def test_missing_version_returns_none(self, store):
+        store.put(EXERCISE_SCHEDULE, {"shares_by_grant_year": {}, "price_by_year": {}})
 
-        assert load_exercise_schedule(path=path) is None
+        assert load_exercise_schedule() is None
 
-    def test_wrong_version_returns_none(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
-        path.write_text(
-            json.dumps({"version": 999, "shares_by_grant_year": {}, "price_by_year": {}})
+    def test_wrong_version_returns_none(self, store):
+        store.put(
+            EXERCISE_SCHEDULE,
+            {"version": 999, "shares_by_grant_year": {}, "price_by_year": {}},
         )
 
-        assert load_exercise_schedule(path=path) is None
+        assert load_exercise_schedule() is None
 
-    def test_correct_version_but_non_numeric_value_returns_none(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
+    def test_correct_version_but_non_numeric_value_returns_none(self, store):
         corrupt = {
             "version": _SCHEDULE_VERSION,
             "shares_by_grant_year": {"2019:98": {"2029": "not-an-int"}},
             "price_by_year": {},
         }
-        write_pii_json(path, corrupt)
+        store.put(EXERCISE_SCHEDULE, corrupt)
 
-        assert load_exercise_schedule(path=path) is None
+        assert load_exercise_schedule() is None
 
 
 class TestPermissions:
-    def test_written_file_created(self, tmp_path):
-        path = tmp_path / ".exercise_schedule_cache.json"
-        save_exercise_schedule(make_schedule(), path=path)
+    def test_written_row_created(self, store):
+        save_exercise_schedule(make_schedule())
 
-        assert path.exists()
+        assert store.has(EXERCISE_SCHEDULE)

@@ -17,7 +17,6 @@ Synthetic names and round amounts only.
 from __future__ import annotations
 
 import contextlib
-import json
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -30,6 +29,7 @@ from engine.netbenefits_statement_pdf import NetBenefitsStatement
 from engine.pdf_import import PdfImportResult
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
 from engine.ssa_statement_pdf import SsaStatement
+from engine.store import SINGLE_KEY
 from engine.tax_return_pdf import Form1040Record
 from engine.ubs_activity_csv import UbsActivityOrder, UbsExerciseLot
 from engine.ubs_activity_store import UbsActivityStoreError
@@ -112,8 +112,7 @@ class TestPickLatestPerAccountBrokerIdentity:
         assert pick_latest_per_account([newer, older]) == {"1111-2222": newer}
         assert pick_latest_per_account([older, newer]) == {"1111-2222": newer}
 
-    def test_disk_cache_keeps_both_brokers(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(bsp, "_STATEMENT_CACHE_PATH", tmp_path / "stmts.json")
+    def test_disk_cache_keeps_both_brokers(self) -> None:
         bsp.save_statement_records({"1111-2222": _rec(broker="schwab")})
         bsp.save_statement_records({"1111-2222": _rec(broker="fidelity")})
         brokers = sorted(r.broker for r in bsp.load_statement_records().values())
@@ -355,29 +354,22 @@ def _order(ref: str) -> UbsActivityOrder:
 
 
 class TestCorruptUbsStoreIsNotOverwritten:
-    def test_store_refuses_to_overwrite_an_unreadable_file(self, tmp_path, monkeypatch) -> None:
-        path = tmp_path / "ubs.json"
-        monkeypatch.setattr(ubs_activity_store, "_UBS_ACTIVITY_CACHE_PATH", path)
+    def test_store_refuses_to_overwrite_an_unreadable_file(self, store, corrupt_row) -> None:
         ubs_activity_store.save_ubs_orders([_order("R1"), _order("R2"), _order("R3")])
-        truncated = path.read_bytes()[:200]
-        path.write_bytes(truncated)
+        payload = corrupt_row("ubs_activity")
 
         with pytest.raises(UbsActivityStoreError):
             ubs_activity_store.save_ubs_orders([_order("R4")])
 
-        assert path.read_bytes() == truncated
+        assert store.backend.get("ubs_activity", SINGLE_KEY).payload == payload
 
-    def test_wrong_shape_file_is_reported_as_corrupt(self, tmp_path, monkeypatch) -> None:
-        path = tmp_path / "ubs.json"
-        monkeypatch.setattr(ubs_activity_store, "_UBS_ACTIVITY_CACHE_PATH", path)
-        path.write_text(json.dumps([{"reference_number": "R1"}]))
+    def test_wrong_shape_file_is_reported_as_corrupt(self, store) -> None:
+        store.put("ubs_activity", [{"reference_number": "R1"}])
 
         with pytest.raises(UbsActivityStoreError):
             ubs_activity_store.load_ubs_orders()
 
-    def test_readable_store_is_still_replaced_on_save(self, tmp_path, monkeypatch) -> None:
-        path = tmp_path / "ubs.json"
-        monkeypatch.setattr(ubs_activity_store, "_UBS_ACTIVITY_CACHE_PATH", path)
+    def test_readable_store_is_still_replaced_on_save(self) -> None:
         ubs_activity_store.save_ubs_orders([_order("R1")])
         ubs_activity_store.save_ubs_orders([_order("R1"), _order("R2")])
         refs = [o.reference_number for o in ubs_activity_store.load_ubs_orders()]

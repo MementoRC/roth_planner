@@ -9,7 +9,6 @@ pdfplumber import is DEFERRED into parse_form_1040_pdf to stay Pyodide-safe
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -17,7 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import TAX_PDF
 
 
 class Form1040ParseError(Exception):
@@ -572,32 +572,27 @@ def parse_form_1040_pdf(data: bytes) -> Form1040Record:
 
 
 # ---------------------------------------------------------------------------
-# JSON cache — mirrors save_tax_snapshot / load_tax_snapshot pattern
+# Parsed 1040 records -- document store namespace ``tax_pdf`` ({year: record})
 # ---------------------------------------------------------------------------
-
-_PDF_TAX_CACHE_PATH = Path(__file__).resolve().parent.parent / ".tax_pdf_cache.json"
 
 
 def save_pdf_tax_records(records: dict[int, Form1040Record]) -> None:
-    """Persist parsed PDF tax records to disk as JSON.
+    """Persist parsed PDF tax records, keyed by year as a string (JSON keys)."""
+    get_store().put(TAX_PDF, {str(k): v.to_dict() for k, v in records.items()})
 
-    Keys are stored as strings (JSON requirement); year ints are converted.
-    """
-    serialised: dict[str, Any] = {str(k): v.to_dict() for k, v in records.items()}
-    write_pii_json(_PDF_TAX_CACHE_PATH, serialised)
+
+def load_pdf_tax_cache_raw() -> Any:
+    """The saved 1040 document as stored, or None when absent or unreadable."""
+    try:
+        return get_store().get(TAX_PDF)
+    except CorruptStoreError:
+        return None
 
 
 def load_pdf_tax_records() -> dict[int, Form1040Record]:
-    """Load cached PDF tax records from disk.
-
-    Returns an empty dict on missing or corrupt file (same tolerance as
-    load_tax_snapshot in portfolio_sync.py).
-    """
-    if not _PDF_TAX_CACHE_PATH.exists():
-        return {}
-    try:
-        raw: dict[str, Any] = read_pii_json(_PDF_TAX_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
+    """Saved PDF tax records by year; ``{}`` when absent or unreadable."""
+    raw = load_pdf_tax_cache_raw()
+    if not isinstance(raw, dict):
         return {}
     result: dict[int, Form1040Record] = {}
     for k, v in raw.items():

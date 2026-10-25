@@ -14,8 +14,10 @@ from views._style import inject_app_css  # noqa: E402
 inject_app_css()
 
 
+from collections.abc import Callable  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import TypeVar  # noqa: E402
 
 from config.loader import load_defaults  # noqa: E402
 from config.scalar_registry import (  # noqa: E402
@@ -26,10 +28,27 @@ from config.scalar_registry import (  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
+from engine.store import StoreError  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
 from views.setup._state import _drain_pending_defaults  # noqa: E402
+from views.store_notice import render_store_notice, store_error_message  # noqa: E402
+
+_T = TypeVar("_T")
+# Store errors met by this run's boot-time reads; only the first gets a banner.
+_boot_store_errors: list[StoreError] = []
+
+
+def _boot_read(read: Callable[[], _T], default: _T) -> _T:
+    """Run a boot-time store read; a store error falls back to *default* with one banner."""
+    try:
+        return read()
+    except StoreError as exc:
+        if not _boot_store_errors:
+            st.error(store_error_message(exc))
+        _boot_store_errors.append(exc)
+        return default
 
 
 def _seed_session_state() -> None:
@@ -111,6 +130,10 @@ _seed_session_state()
 # after that widget already exists in the run).
 _drain_pending_defaults()
 
+# Open the store before any cached snapshot is read: the first open imports the
+# legacy JSON files, and an unavailable database stops here with one banner.
+render_store_notice()
+
 # Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
 # personal cache below is skipped, so the reset cannot be silently undone and
 # the personal files stay parked on disk until the user leaves demo mode.
@@ -124,7 +147,7 @@ if (
 ):
     from engine.portfolio_sync import load_snapshot
 
-    _cached = load_snapshot()
+    _cached = _boot_read(load_snapshot, None)
     if _cached is not None:
         # NOTE: sourced balance fields (your_ira/spouse_ira/your_roth/spouse_roth)
         # are deliberately NOT written to session_state here. get_household()
@@ -142,14 +165,14 @@ if (
 ):
     from engine.portfolio_sync import load_ytd_snapshot
 
-    _cached_ytd = load_ytd_snapshot()
+    _cached_ytd = _boot_read(load_ytd_snapshot, None)
     if _cached_ytd is not None:
         st.session_state.ytd_snapshot = _cached_ytd
 
 if not _DEMO_MODE and "ssa_snapshot_you" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
 
-    _cached_ssa_you = load_ssa_snapshot(owner="you")
+    _cached_ssa_you = _boot_read(lambda: load_ssa_snapshot(owner="you"), None)
     if _cached_ssa_you is not None:
         st.session_state.ssa_snapshot_you = _cached_ssa_you
         _your_fra_age = st.session_state.get("your_fra_age")
@@ -171,7 +194,7 @@ if not _DEMO_MODE and "ssa_snapshot_you" not in st.session_state:
 if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
     from engine.portfolio_sync import load_ssa_snapshot, match_fra_estimate
 
-    _cached_ssa_spouse = load_ssa_snapshot(owner="spouse")
+    _cached_ssa_spouse = _boot_read(lambda: load_ssa_snapshot(owner="spouse"), None)
     if _cached_ssa_spouse is not None:
         st.session_state.ssa_snapshot_spouse = _cached_ssa_spouse
         _spouse_fra_age = st.session_state.get("spouse_fra_age")
@@ -193,7 +216,7 @@ if not _DEMO_MODE and "ssa_snapshot_spouse" not in st.session_state:
 # prior_year_magi is the IRMAA-scoped slot, so the recorded value is
 # compute_irmaa_magi(agi, tax_exempt_interest, feie) — 42 U.S.C. §1395r(i)(4)
 # adds the FEIE back (audit-1008 F-59).
-_pdf_records = {} if _DEMO_MODE else load_pdf_tax_records()
+_pdf_records = {} if _DEMO_MODE else _boot_read(load_pdf_tax_records, {})
 if _pdf_records:
     record_magi_candidates(
         {
@@ -578,6 +601,8 @@ def _route_and_badge() -> None:
     _render_pending_badge(set(st.session_state.get("_pending_review") or ()))
     try:
         route_target(page)(hh)
+    except StoreError as exc:
+        st.error(store_error_message(exc))
     finally:
         pending = _current_pending_review()
         st.session_state["_pending_review"] = pending

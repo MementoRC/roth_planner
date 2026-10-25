@@ -59,7 +59,7 @@ pdfplumber import is DEFERRED into parse_statement_pdf to stay Pyodide-safe
 from __future__ import annotations
 
 import calendar
-import json
+import contextlib
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -67,7 +67,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, StoreUnavailableError, get_store
+from engine.store.namespaces import (
+    BROKERAGE_STATEMENTS,
+    STATEMENT_ACCOUNT_OVERRIDES,
+    STATEMENT_FOLDER,
+)
 
 # Account types a record can carry. "unknown" means the statement gave no
 # reliable signal — MUST be excluded from YTD sums until a human confirms it.
@@ -1270,58 +1275,55 @@ def aggregate_to_ytd_fields(
 
 
 # ---------------------------------------------------------------------------
-# JSON caches -- statement records, folder path, account-type overrides
+# Saved state -- statement records (one row per account slot), folder path,
+# account-type overrides (document store namespaces in engine.store.namespaces)
 # ---------------------------------------------------------------------------
-
-_STATEMENT_CACHE_PATH = Path(__file__).resolve().parent.parent / ".brokerage_statement_cache.json"
-_FOLDER_CONFIG_PATH = Path(__file__).resolve().parent.parent / ".statement_folder_config.json"
-_ACCOUNT_TYPE_OVERRIDES_PATH = (
-    Path(__file__).resolve().parent.parent / ".statement_account_overrides.json"
-)
 
 
 def save_statement_records(records: dict[str, BrokerageStatementRecord]) -> None:
-    """Merge *records* onto the existing on-disk cache (per-account slot), then persist.
+    """Merge *records* into the saved statement records (per-account slot).
 
     Mirrors engine.pdf_ledger.write_brokerage_contribution's per-slot merge
-    semantics -- a full-file overwrite here meant scanning a folder with no
+    semantics -- a full overwrite here meant scanning a folder with no
     brokerage PDFs (records={}) silently wiped every previously-confirmed
     account (audit-0805 C101). An empty *records* is therefore a no-op;
-    a non-empty *records* updates only the accounts it contains, leaving
-    every other cached account untouched. Accounts are matched on
-    (broker, account_number), so another broker's same-number account is
-    kept beside it (merge_latest_per_account).
+    a non-empty *records* writes only the account rows it adds or replaces.
+    Accounts are matched on (broker, account_number), so another broker's
+    same-number account is kept beside it (merge_latest_per_account).
     """
-    merged = merge_latest_per_account(load_statement_records(), records.values())
-    write_pii_json(_STATEMENT_CACHE_PATH, {k: v.to_dict() for k, v in merged.items()})
+    store = get_store()
+    with store.transaction():
+        existing = load_statement_records()
+        merged = merge_latest_per_account(existing, records.values())
+        for key, rec in merged.items():
+            if existing.get(key) is not rec:
+                store.put(BROKERAGE_STATEMENTS, rec.to_dict(), key=key)
 
 
 def load_statement_records() -> dict[str, BrokerageStatementRecord]:
-    if not _STATEMENT_CACHE_PATH.exists():
-        return {}
-    try:
-        raw = read_pii_json(_STATEMENT_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    """Saved statement records by slot key; an unreadable row is skipped."""
+    store = get_store()
     result: dict[str, BrokerageStatementRecord] = {}
-    for k, v in raw.items():
+    for key in store.keys(BROKERAGE_STATEMENTS):
         try:
-            result[k] = BrokerageStatementRecord.from_dict(v)
-        except (KeyError, ValueError, TypeError):
+            result[key] = BrokerageStatementRecord.from_dict(
+                store.get(BROKERAGE_STATEMENTS, key=key)
+            )
+        except (CorruptStoreError, KeyError, ValueError, TypeError):
             continue
     return result
 
 
 def save_statement_folder_path(folder: str) -> None:
-    write_pii_json(_FOLDER_CONFIG_PATH, {"folder": folder})
+    get_store().put(STATEMENT_FOLDER, {"folder": folder})
 
 
 def load_statement_folder_path() -> str | None:
-    if not _FOLDER_CONFIG_PATH.exists():
-        return None
     try:
-        raw = read_pii_json(_FOLDER_CONFIG_PATH)
-    except (json.JSONDecodeError, OSError):
+        raw = get_store().get(STATEMENT_FOLDER)
+    except CorruptStoreError:
+        return None
+    if not isinstance(raw, dict):
         return None
     folder = raw.get("folder")
     return str(folder) if folder is not None else None
@@ -1367,7 +1369,7 @@ def save_account_type_override(
     overrides = load_account_type_overrides()
     key = account_number if broker is None else _override_key(broker, account_number)
     overrides[key] = account_type
-    write_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH, overrides)
+    get_store().put(STATEMENT_ACCOUNT_OVERRIDES, overrides)
 
 
 def _migrate_legacy_overrides(overrides: dict[str, str]) -> tuple[dict[str, str], bool]:
@@ -1390,11 +1392,11 @@ def _migrate_legacy_overrides(overrides: dict[str, str]) -> tuple[dict[str, str]
 
 
 def load_account_type_overrides() -> dict[str, str]:
-    if not _ACCOUNT_TYPE_OVERRIDES_PATH.exists():
-        return {}
     try:
-        raw = read_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH)
-    except (json.JSONDecodeError, OSError):
+        raw = get_store().get(STATEMENT_ACCOUNT_OVERRIDES)
+    except CorruptStoreError:
+        return {}
+    if not isinstance(raw, dict):
         return {}
     overrides = {str(k): str(v) for k, v in raw.items()}
     legacy = {k: v for k, v in overrides.items() if ":" not in k}
@@ -1404,7 +1406,9 @@ def load_account_type_overrides() -> dict[str, str]:
     if not changed:
         return overrides
     result = {**{k: v for k, v in overrides.items() if k not in legacy}, **migrated}
-    write_pii_json(_ACCOUNT_TYPE_OVERRIDES_PATH, result)
+    # A read never fails because its write-back cannot run (saving disabled, DB locked).
+    with contextlib.suppress(StoreUnavailableError):
+        get_store().put(STATEMENT_ACCOUNT_OVERRIDES, result)
     return result
 
 

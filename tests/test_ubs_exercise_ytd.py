@@ -293,11 +293,8 @@ class TestUbsActivityStore:
     def test_load_missing_file_returns_empty_list(self) -> None:
         assert load_ubs_orders() == []
 
-    def test_load_corrupt_file_raises(self) -> None:
-        import engine.ubs_activity_store as ubs_store_mod
-
-        ubs_store_mod._UBS_ACTIVITY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        ubs_store_mod._UBS_ACTIVITY_CACHE_PATH.write_text("{not valid json")
+    def test_load_corrupt_file_raises(self, corrupt_row) -> None:
+        corrupt_row("ubs_activity")
 
         with pytest.raises(UbsActivityStoreError):
             load_ubs_orders()

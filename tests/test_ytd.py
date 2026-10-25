@@ -346,12 +346,9 @@ class TestCryptoFields:
 class TestCryptoFieldsCacheRoundtrip:
     """save_ytd_snapshot/load_ytd_snapshot must preserve crypto fields, with migration."""
 
-    def test_roundtrip_preserves_new_fields(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_roundtrip_preserves_new_fields(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_crypto.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,
@@ -367,23 +364,18 @@ class TestCryptoFieldsCacheRoundtrip:
         assert loaded.crypto_ltcg_ytd == 20_000.0
         assert loaded.crypto_income_ytd == 5_000.0
 
-    def test_cache_missing_new_keys_migrates_to_zero(self, tmp_path, monkeypatch):
+    def test_cache_missing_new_keys_migrates_to_zero(self, store):
         """Pre-existing caches lacking the new keys must load without raising."""
-        import json
-
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from engine.store.namespaces import YTD
         from models.ytd_income import YTDSnapshot
 
-        cache_path = tmp_path / "ytd_legacy_crypto.json"
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
-
         save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
-        data = json.loads(cache_path.read_text())
+        data = store.get(YTD)
         data.pop("crypto_stcg_ytd", None)
         data.pop("crypto_ltcg_ytd", None)
         data.pop("crypto_income_ytd", None)
-        cache_path.write_text(json.dumps(data))
+        store.put(YTD, data)
 
         loaded = load_ytd_snapshot()
         assert loaded is not None
@@ -584,12 +576,9 @@ class TestApplyBrokerageStatementRecords:
 class TestTaxExemptInterestSaveLoad:
     """PR-3: tax_exempt_interest_ytd must survive a save_ytd_snapshot/load round-trip."""
 
-    def test_save_load_roundtrip_preserves_tax_exempt_interest(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_save_load_roundtrip_preserves_tax_exempt_interest(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_muni.json")
 
         ytd = YTDSnapshot(tax_year=2026, wages_ytd=80_000.0, tax_exempt_interest_ytd=6_000.0)
         save_ytd_snapshot(ytd)
@@ -603,12 +592,9 @@ class TestTaxExemptInterestSaveLoad:
 class TestAboveTheLineAdjustmentsCacheRoundtrip:
     """save_ytd_snapshot/load_ytd_snapshot must preserve HSA/IRA fields, with migration."""
 
-    def test_roundtrip_preserves_new_fields(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_roundtrip_preserves_new_fields(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_atl.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,
@@ -622,22 +608,17 @@ class TestAboveTheLineAdjustmentsCacheRoundtrip:
         assert loaded.hsa_contribution_ytd == 5_150.0
         assert loaded.deductible_ira_contribution_ytd == 16_000.0
 
-    def test_cache_missing_new_keys_migrates_to_zero(self, tmp_path, monkeypatch):
+    def test_cache_missing_new_keys_migrates_to_zero(self, store):
         """Pre-existing caches lacking the new keys must load without raising."""
-        import json
-
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from engine.store.namespaces import YTD
         from models.ytd_income import YTDSnapshot
 
-        cache_path = tmp_path / "ytd_legacy.json"
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
-
         save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
-        data = json.loads(cache_path.read_text())
+        data = store.get(YTD)
         data.pop("hsa_contribution_ytd", None)
         data.pop("deductible_ira_contribution_ytd", None)
-        cache_path.write_text(json.dumps(data))
+        store.put(YTD, data)
 
         loaded = load_ytd_snapshot()
         assert loaded is not None
@@ -649,12 +630,9 @@ class TestEstimatedPaymentsCacheRoundtrip:
     """save_ytd_snapshot/load_ytd_snapshot must preserve estimated_payments_ytd,
     with a backward-compat default for caches predating the field."""
 
-    def test_roundtrip_preserves_estimated_payments_ytd(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_roundtrip_preserves_estimated_payments_ytd(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_est.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,
@@ -669,21 +647,16 @@ class TestEstimatedPaymentsCacheRoundtrip:
             f"Expected estimated_payments_ytd=12000 after round-trip; got {loaded.estimated_payments_ytd}"
         )
 
-    def test_cache_missing_estimated_payments_key_migrates_to_zero(self, tmp_path, monkeypatch):
+    def test_cache_missing_estimated_payments_key_migrates_to_zero(self, store):
         """Pre-existing caches lacking estimated_payments_ytd must load without raising."""
-        import json
-
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
+        from engine.store.namespaces import YTD
         from models.ytd_income import YTDSnapshot
 
-        cache_path = tmp_path / "ytd_legacy_est.json"
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
-
         save_ytd_snapshot(YTDSnapshot(tax_year=2026, wages_ytd=50_000.0))
-        data = json.loads(cache_path.read_text())
+        data = store.get(YTD)
         data.pop("estimated_payments_ytd", None)
-        cache_path.write_text(json.dumps(data))
+        store.put(YTD, data)
 
         loaded = load_ytd_snapshot()
         assert loaded is not None

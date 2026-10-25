@@ -43,7 +43,7 @@ def render(hh: Household) -> None:
     # snapshot: a "Reset to demo", or any session that never loaded/synced
     # one). In that case nothing writes session_state["ytd_snapshot"] during
     # this render either, so an unconditional save_ytd_snapshot(ytd) below
-    # would silently overwrite a real .ytd_cache.json on disk with a blank
+    # would silently overwrite the saved YTD snapshot with a blank
     # snapshot on the very first render. A real write DOES land in
     # session_state during this render whenever manual entry or a sync
     # actually produced a value, so checking presence AFTER render (not

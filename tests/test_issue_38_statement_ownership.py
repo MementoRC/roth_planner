@@ -360,11 +360,10 @@ class TestSsaMonthsEstimateRow:
         stmt = parse_ssa_statement_text([_SSA_PAGE.replace("66 $1,889\n", "")])
         assert stmt.fra_monthly == pytest.approx(2005.0)
 
-    def test_fra_estimate_survives_persistence(self, tmp_path) -> None:
+    def test_fra_estimate_survives_persistence(self) -> None:
         stmt = parse_ssa_statement_text([_SSA_PAGE])
-        path = tmp_path / "ssa.json"
-        save_ssa_pdf_estimates("you", stmt, path=path)
-        loaded = load_ssa_pdf_estimates("you", path=path)
+        save_ssa_pdf_estimates("you", stmt)
+        loaded = load_ssa_pdf_estimates("you")
         assert loaded is not None
         assert loaded.fra_monthly == pytest.approx(2005.0)
 

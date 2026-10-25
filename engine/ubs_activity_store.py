@@ -10,32 +10,24 @@ reported short-term capital gain, and silently restores the phantom STCG that
 double-counts the NQO spread as both ordinary income and a capital gain. This
 store exists solely to prevent that.
 
-Pure I/O module -- no Streamlit, mirrors the ``write_pii_json``/
-``read_pii_json`` pattern used by engine.portfolio_sync.ytd's YTD snapshot
-cache.
+Pure I/O module -- no Streamlit; the orders live in the document store
+namespace ``ubs_activity``.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import date
-from pathlib import Path
 from typing import Any
 
-from engine.demo_mode import is_demo_mode
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import UBS_ACTIVITY
 from engine.ubs_activity_csv import UbsActivityOrder, UbsExerciseLot
-
-# One level shallower than engine.portfolio_sync.ytd's _YTD_CACHE_PATH: this
-# module lives directly in engine/, not engine/portfolio_sync/, so it only
-# needs to climb two parents (engine/ -> repo root) instead of three.
-_UBS_ACTIVITY_CACHE_PATH = Path(__file__).resolve().parent.parent / ".ubs_activity_cache.json"
 
 
 class UbsActivityStoreError(Exception):
-    """Raised when the UBS activity cache file exists but cannot be parsed.
+    """Raised when the saved UBS activity orders exist but cannot be read.
 
     Deliberately NOT swallowed into an empty list: a silently-returned ``[]``
     here is indistinguishable from "no exercises this year" and would
@@ -125,43 +117,38 @@ def order_from_dict(data: dict[str, Any]) -> UbsActivityOrder:
 
 
 def save_ubs_orders(orders: Sequence[UbsActivityOrder]) -> None:
-    """Persist *orders* to disk as JSON, replacing whatever was there.
+    """Persist *orders*, replacing whatever was saved.
 
-    Refuses (raises :class:`UbsActivityStoreError`) when the existing file
+    Refuses (raises :class:`UbsActivityStoreError`) when the saved orders
     cannot be read: callers merge new orders into the loaded ones, so a write
-    over an unreadable store would replace orders it never saw (audit-1008
-    F-70). The unreadable file is left as-is for the user to repair or move.
+    over an unreadable row would replace orders it never saw (audit-1008
+    F-70). The unreadable row is left as it is.
     """
     load_ubs_orders()
-    write_pii_json(_UBS_ACTIVITY_CACHE_PATH, [order_to_dict(o) for o in orders])
+    get_store().put(UBS_ACTIVITY, [order_to_dict(o) for o in orders])
 
 
 def load_ubs_orders() -> list[UbsActivityOrder]:
-    """Load cached UBS activity orders from disk.
+    """The saved UBS activity orders.
 
-    Returns ``[]`` when the file is simply absent (nothing has been scanned
-    yet -- a legitimate, distinct state from "scanned and found nothing").
-    If the file EXISTS but cannot be parsed, raises
-    :class:`UbsActivityStoreError` rather than returning ``[]`` -- see that
-    class's docstring for why a silent empty-list fallback here would be
-    actively dangerous rather than merely inconvenient.
+    Returns ``[]`` when nothing has been saved yet (nothing scanned -- a
+    legitimate state, distinct from "scanned and found nothing"). Saved orders
+    that cannot be read raise :class:`UbsActivityStoreError` rather than
+    returning ``[]`` -- see that class's docstring for why a silent empty-list
+    fallback here would be actively dangerous.
     """
-    if is_demo_mode() or not _UBS_ACTIVITY_CACHE_PATH.exists():
-        return []
     try:
-        data = read_pii_json(_UBS_ACTIVITY_CACHE_PATH)
-    except (json.JSONDecodeError, OSError) as exc:
-        raise UbsActivityStoreError(
-            f"Could not read UBS activity cache at {_UBS_ACTIVITY_CACHE_PATH}: {exc}"
-        ) from exc
+        data = get_store().get(UBS_ACTIVITY)
+    except CorruptStoreError as exc:
+        raise UbsActivityStoreError(f"Could not read the saved UBS activity orders: {exc}") from exc
+    if data is None:
+        return []
     # Valid JSON of the wrong shape is just as unreadable as broken JSON.
     if not isinstance(data, list):
-        raise UbsActivityStoreError(
-            f"UBS activity cache at {_UBS_ACTIVITY_CACHE_PATH} is not a list of orders"
-        )
+        raise UbsActivityStoreError("The saved UBS activity orders are not a list of orders")
     try:
         return [order_from_dict(d) for d in data]
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise UbsActivityStoreError(
-            f"UBS activity cache at {_UBS_ACTIVITY_CACHE_PATH} holds a malformed order: {exc!r}"
+            f"The saved UBS activity orders hold a malformed order: {exc!r}"
         ) from exc

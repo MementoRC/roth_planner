@@ -25,11 +25,8 @@ list, same shape as site 2, consumed inline by 5 tests doing an explicit
 mid-test pre-clean. Fixed: ``_new_cache_files()``, a call-time lookup
 function.
 
-Site 4: the SAME file's former module-level
-``from engine.portfolio_sync import _CACHE_PATH as _PORTFOLIO_CACHE_PATH``,
-unlinked inline in 2 tests. Fixed: reads ``engine.portfolio_sync._CACHE_PATH``
-(the package-level re-export the redirect fixture patches) via a module
-import, at call time.
+Site 4 (the portfolio cache path) no longer exists: the portfolio lives in the
+document store (PR 2).
 
 One additional module-level import of the same 3 constants,
 ``tests/test_data_sources.py``'s ``from engine.data_sources.paths import
@@ -179,16 +176,6 @@ class TestSite3AppDataSourcesHelperCallTimeResolution:
                 f"_new_cache_files() returned repo-root path {p!r} instead of "
                 "a value redirected under tmp_path"
             )
-
-
-class TestSite4PortfolioCachePathCallTimeResolution:
-    def test_portfolio_cache_path_resolves_under_tmp_path(self, tmp_path: Path) -> None:
-        p = app_data_sources_mod._portfolio_sync_pkg._CACHE_PATH
-        repo_root = app_data_sources_mod.REPO_ROOT
-        assert not str(p).startswith(str(repo_root)), (
-            f"engine.portfolio_sync._CACHE_PATH resolved to repo-root path {p!r} "
-            "instead of a value redirected under tmp_path"
-        )
 
 
 class TestClassLevelGuardNoTestModuleBindsWatchedCachePathAtImportTime:

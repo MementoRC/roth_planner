@@ -596,7 +596,7 @@ def _settle_ytd(result: ImportResult, ready: _ReadyImport) -> bool:
         ledger_has_data = bool(ledger_slice.get("koinly") or ledger_slice.get("brokerage"))
     if "ytd_snapshot" not in st.session_state and (ledger_has_data or incoming_ytd is not None):
         # Satisfy _rederive_ytd_from_ledger's precondition: in Pyodide there is
-        # no persistent .ytd_cache.json, so without this seed the re-derive was
+        # no saved YTD snapshot to load, so without this seed the re-derive was
         # a permanent no-op in the browser.
         st.session_state["ytd_snapshot"] = load_ytd_snapshot() or YTDSnapshot()
     return _rederive_ytd_from_ledger(result.ledger)
@@ -663,8 +663,8 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
         return
     except CorruptPortfolioCacheError:
         st.error(
-            "Import refused: the saved portfolio cache file is unreadable, so it was "
-            "left untouched. Repair or remove .portfolio_cache.json, then import again."
+            "Import refused: the saved portfolio could not be read, so it was "
+            "left untouched and nothing was imported."
         )
         return
 

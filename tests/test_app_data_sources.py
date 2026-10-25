@@ -27,10 +27,11 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 import engine.data_sources.paths as _paths_mod
-import engine.portfolio_sync as _portfolio_sync_pkg
 from config.defaults import DEFAULTS
 from engine.data_sources.committed import load_committed
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, save_snapshot
+from engine.store import get_store
+from engine.store.namespaces import PORTFOLIO
 from models.sourced import Provenance, Source, SourcedValue
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
@@ -233,7 +234,7 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
 
     for p in _new_cache_files():
         p.unlink(missing_ok=True)
-    _portfolio_sync_pkg._CACHE_PATH.unlink(missing_ok=True)
+    get_store().delete(PORTFOLIO)
 
     try:
         committed_path = COMMITTED_PATH
@@ -264,7 +265,7 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
         assert reloaded["your_ira"]["value"] == 1_600_000.0
         assert reloaded["your_ira"]["source"] != "MANUAL"
     finally:
-        _portfolio_sync_pkg._CACHE_PATH.unlink(missing_ok=True)
+        get_store().delete(PORTFOLIO)
 
 
 def test_resolved_sourced_values_are_written_back_to_session_state(

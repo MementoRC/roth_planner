@@ -32,49 +32,40 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 import config.loader as _config_loader_mod  # noqa: E402
 import engine.account_attribution as _account_attribution_mod  # noqa: E402
 import engine.account_link as _account_link_mod  # noqa: E402
-import engine.brokerage_statement_pdf as _brokerage_mod  # noqa: E402
 import engine.data_sources.paths as _paths_mod  # noqa: E402
 import engine.data_sources.record as _record_mod  # noqa: E402
 import engine.data_sources.scan_ingest as _scan_ingest_mod  # noqa: E402
 import engine.demo_mode as _demo_mode_mod  # noqa: E402
 import engine.dividend_forecast as _dividend_forecast_mod  # noqa: E402
-import engine.exercise_schedule_store as _exercise_schedule_store_mod  # noqa: E402
 import engine.instance_identity as _instance_identity_mod  # noqa: E402
-import engine.koinly_report_pdf as _koinly_mod  # noqa: E402
-import engine.pdf_ledger as _pdf_ledger_mod  # noqa: E402
 import engine.pdf_owner as _pdf_owner_mod  # noqa: E402
-import engine.portfolio_sync as _portfolio_sync_pkg  # noqa: E402
-import engine.portfolio_sync.portfolio as _portfolio_mod  # noqa: E402
-import engine.portfolio_sync.social_security as _social_security_mod  # noqa: E402
-import engine.portfolio_sync.ytd as _ytd_mod  # noqa: E402
-import engine.ssa_statement_pdf as _ssa_statement_mod  # noqa: E402
-import engine.tax_return_pdf as _tax_return_pdf_mod  # noqa: E402
-import engine.ubs_activity_store as _ubs_activity_store_mod  # noqa: E402
+import engine.store as _store_pkg  # noqa: E402
+import engine.store.namespaces  # noqa: E402,F401 -- every namespace registered before the copies below
 import views._shared as _views_shared_mod  # noqa: E402
 import views.option_exercise._partials._helpers as _option_exercise_helpers_mod  # noqa: E402
 import views.setup._partials._governance as _setup_governance_mod  # noqa: E402
 import views.setup.command_center as _command_center_mod  # noqa: E402
 
 _WATCHED_CACHE_PATHS: list[Path] = [
-    _tax_return_pdf_mod._PDF_TAX_CACHE_PATH,
-    _ytd_mod._YTD_CACHE_PATH,
-    _portfolio_mod._CACHE_PATH,
-    _social_security_mod._SSA_CACHE_PATH,
-    _ssa_statement_mod._SSA_PDF_CACHE_PATH,
-    _koinly_mod._KOINLY_CACHE_PATH,
-    _brokerage_mod._STATEMENT_CACHE_PATH,
-    _brokerage_mod._FOLDER_CONFIG_PATH,
-    _brokerage_mod._ACCOUNT_TYPE_OVERRIDES_PATH,
+    _REPO_ROOT / ".tax_pdf_cache.json",
+    _REPO_ROOT / ".ytd_cache.json",
+    _REPO_ROOT / ".portfolio_cache.json",
+    _REPO_ROOT / ".ssa_cache.json",
+    _REPO_ROOT / ".ssa_pdf_cache.json",
+    _REPO_ROOT / ".koinly_cache.json",
+    _REPO_ROOT / ".brokerage_statement_cache.json",
+    _REPO_ROOT / ".statement_folder_config.json",
+    _REPO_ROOT / ".statement_account_overrides.json",
     _pdf_owner_mod._OWNER_MAP_PATH,
-    _pdf_ledger_mod._LEDGER_PATH,
+    _REPO_ROOT / ".pdf_import_ledger.json",
     _paths_mod.CANDIDATE_STORE_PATH,
     _paths_mod.TRUST_CHOICES_PATH,
     _paths_mod.COMMITTED_PATH,
-    _exercise_schedule_store_mod._EXERCISE_SCHEDULE_CACHE_PATH,
+    _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
     _account_attribution_mod._ACCOUNT_ATTRIBUTION_PATH,
     _instance_identity_mod.INSTANCE_OWNER_PATH,
-    _ubs_activity_store_mod._UBS_ACTIVITY_CACHE_PATH,
+    _REPO_ROOT / ".ubs_activity_cache.json",
     _account_link_mod._ACCOUNT_LINK_PATH,
     _REPO_ROOT / ".dividend_rates.json",
     _demo_mode_mod.DEMO_MODE_PATH,
@@ -149,53 +140,24 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         return cache_dir / filename
 
     # 1. Defining-module attributes.
-    monkeypatch.setattr(_tax_return_pdf_mod, "_PDF_TAX_CACHE_PATH", _tmp(".tax_pdf_cache.json"))
-    monkeypatch.setattr(_ytd_mod, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
-    monkeypatch.setattr(_portfolio_mod, "_CACHE_PATH", _tmp(".portfolio_cache.json"))
-    monkeypatch.setattr(_social_security_mod, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
-    monkeypatch.setattr(_ssa_statement_mod, "_SSA_PDF_CACHE_PATH", _tmp(".ssa_pdf_cache.json"))
-    monkeypatch.setattr(_koinly_mod, "_KOINLY_CACHE_PATH", _tmp(".koinly_cache.json"))
-    monkeypatch.setattr(
-        _brokerage_mod, "_STATEMENT_CACHE_PATH", _tmp(".brokerage_statement_cache.json")
-    )
-    monkeypatch.setattr(
-        _brokerage_mod, "_FOLDER_CONFIG_PATH", _tmp(".statement_folder_config.json")
-    )
-    monkeypatch.setattr(
-        _brokerage_mod, "_ACCOUNT_TYPE_OVERRIDES_PATH", _tmp(".statement_account_overrides.json")
-    )
     monkeypatch.setattr(_pdf_owner_mod, "_OWNER_MAP_PATH", _tmp(".pdf_owner_map.json"))
     monkeypatch.setattr(_account_link_mod, "_ACCOUNT_LINK_PATH", _tmp(".ira_account_links.json"))
-    monkeypatch.setattr(_pdf_ledger_mod, "_LEDGER_PATH", _tmp(".pdf_import_ledger.json"))
     monkeypatch.setattr(_paths_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_paths_mod, "TRUST_CHOICES_PATH", _tmp(".trust_choices.json"))
     monkeypatch.setattr(_paths_mod, "COMMITTED_PATH", _tmp(".committed_household.json"))
-    monkeypatch.setattr(
-        _exercise_schedule_store_mod,
-        "_EXERCISE_SCHEDULE_CACHE_PATH",
-        _tmp(".exercise_schedule_cache.json"),
-    )
     monkeypatch.setattr(_config_loader_mod, "_USER_DEFAULTS_PATH", _tmp(".user_defaults.json"))
     monkeypatch.setattr(
         _account_attribution_mod, "_ACCOUNT_ATTRIBUTION_PATH", _tmp(".account_attribution.json")
     )
     monkeypatch.setattr(_instance_identity_mod, "INSTANCE_OWNER_PATH", _tmp(".instance_owner.json"))
     monkeypatch.setattr(_demo_mode_mod, "DEMO_MODE_PATH", _tmp(".demo_mode"))
-    monkeypatch.setattr(
-        _ubs_activity_store_mod, "_UBS_ACTIVITY_CACHE_PATH", _tmp(".ubs_activity_cache.json")
-    )
 
     # The SQLite store file: never let a test reach the repo-root database.
     monkeypatch.setenv("ROTH_PLANNER_DB", str(_tmp(".roth_planner.db")))
+    # ...nor read or move a repo-root legacy dotfile during the first-open import.
+    monkeypatch.setattr(_store_pkg, "_LEGACY_DIR", cache_dir)
 
-    # 2a. engine.portfolio_sync package-level re-exports -- its custom
-    # __setattr__ (see engine/portfolio_sync/__init__.py) forwards these
-    # writes to the owning submodule too, but patch both ends explicitly.
-    monkeypatch.setattr(_portfolio_sync_pkg, "_CACHE_PATH", _tmp(".portfolio_cache.json"))
-    monkeypatch.setattr(_portfolio_sync_pkg, "_SSA_CACHE_PATH", _tmp(".ssa_cache.json"))
-    monkeypatch.setattr(_portfolio_sync_pkg, "_YTD_CACHE_PATH", _tmp(".ytd_cache.json"))
-
-    # 2b. Other production modules with their own `from ... import <CONST>`
+    # 2. Other production modules with their own `from ... import <CONST>`
     # binding of CANDIDATE_STORE_PATH / COMMITTED_PATH / TRUST_CHOICES_PATH.
     monkeypatch.setattr(_scan_ingest_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
     monkeypatch.setattr(_record_mod, "CANDIDATE_STORE_PATH", _tmp(".candidate_store.json"))
@@ -264,15 +226,6 @@ def _redirect_cache_paths_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         "overrides_path",
         _tmp(".dividend_rates.json"),
     )
-
-    # 4. exercise_schedule_store functions bake ``path=`` at definition time, so
-    # app.py's load_exercise_schedule() would otherwise read the REAL cache.
-    for _fn in (
-        _exercise_schedule_store_mod.save_exercise_schedule,
-        _exercise_schedule_store_mod.load_exercise_schedule,
-        _exercise_schedule_store_mod.clear_exercise_schedule,
-    ):
-        _patch_default(monkeypatch, _fn, "path", _tmp(".exercise_schedule_cache.json"))
 
 
 def _diff_cache_snapshots(
@@ -373,6 +326,22 @@ def file_store(tmp_path):
     backend = SqliteBackend(tmp_path / "store.db")
     yield Store(backend)
     backend.close()
+
+
+CORRUPT_PAYLOAD = "{not json"
+
+
+@pytest.fixture
+def corrupt_row(store):
+    """``corrupt_row(namespace, key="_")`` stores an undecodable row and returns its payload."""
+    from engine.store.backend import Row
+    from engine.store.core import SINGLE_KEY
+
+    def _put(namespace: str, key: str = SINGLE_KEY) -> str:
+        store.backend.put(namespace, key, Row(CORRUPT_PAYLOAD, 1, "2026-01-01T00:00:00+00:00"))
+        return CORRUPT_PAYLOAD
+
+    return _put
 
 
 def _command_center_cache_files() -> list[Path]:

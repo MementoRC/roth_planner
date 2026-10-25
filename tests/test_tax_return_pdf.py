@@ -5,12 +5,12 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Iterator, Sequence
-from pathlib import Path
 from typing import Any, overload
 
 import pytest
 
 from engine.irmaa import irmaa_surcharge
+from engine.store.namespaces import TAX_PDF
 from engine.tax_return_pdf import (
     ANCHORS,
     Form1040ParseError,
@@ -517,9 +517,7 @@ class TestToFromDict:
 
 
 class TestCacheRoundTrip:
-    def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        cache_file = tmp_path / "test_pdf_cache.json"
-        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+    def test_save_and_load(self) -> None:
         rec = parse_form_1040_text(_pages_2023_with_feie())
         save_pdf_tax_records({2023: rec})
         loaded = load_pdf_tax_records()
@@ -528,37 +526,21 @@ class TestCacheRoundTrip:
         assert loaded[2023].magi == rec.magi
         assert loaded[2023].provenance == rec.provenance
 
-    def test_load_missing_file_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            "engine.tax_return_pdf._PDF_TAX_CACHE_PATH",
-            tmp_path / "nonexistent.json",
-        )
+    def test_load_missing_file_returns_empty(self) -> None:
         assert load_pdf_tax_records() == {}
 
-    def test_load_corrupt_file_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        cache_file = tmp_path / "corrupt.json"
-        cache_file.write_text("not valid json {{{")
-        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+    def test_load_corrupt_file_returns_empty(self, corrupt_row) -> None:
+        corrupt_row(TAX_PDF)
         assert load_pdf_tax_records() == {}
 
-    def test_keys_stored_as_strings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        cache_file = tmp_path / "str_keys.json"
-        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+    def test_keys_stored_as_strings(self, store) -> None:
         rec = parse_form_1040_text(_pages_2023_with_feie())
         save_pdf_tax_records({2023: rec})
-        raw: dict[str, Any] = json.loads(cache_file.read_text())
+        raw: dict[str, Any] = store.get(TAX_PDF)
         assert "2023" in raw
         assert isinstance(list(raw.keys())[0], str)
 
-    def test_multiple_years_round_trip(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        cache_file = tmp_path / "multi.json"
-        monkeypatch.setattr("engine.tax_return_pdf._PDF_TAX_CACHE_PATH", cache_file)
+    def test_multiple_years_round_trip(self) -> None:
         rec2023 = parse_form_1040_text(_pages_2023_with_feie())
         rec2024 = parse_form_1040_text(_pages_2024())
         save_pdf_tax_records({2023: rec2023, 2024: rec2024})

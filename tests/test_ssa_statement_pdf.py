@@ -9,6 +9,7 @@ invented. No SSN appears anywhere.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -26,6 +27,7 @@ from engine.ssa_statement_pdf import (
     save_ssa_pdf_estimates,
     statement_age_notice,
 )
+from engine.store.namespaces import SSA_PDF
 from tests.test_netbenefits_statement_pdf import FIDELITY_BROKERAGE_PAGE
 from tests.test_netbenefits_statement_pdf import PAGES as NETBENEFITS_PAGES
 
@@ -209,25 +211,22 @@ class TestOwnerAndLatest:
 
 
 class TestPersistence:
-    def test_round_trip_per_owner(self, tmp_path) -> None:
-        path = tmp_path / "ssa_pdf.json"
+    def test_round_trip_per_owner(self) -> None:
         stmt = parse_ssa_statement_text(PAGES)
-        save_ssa_pdf_estimates("spouse", stmt, path=path)
+        save_ssa_pdf_estimates("spouse", stmt)
 
-        loaded = load_ssa_pdf_estimates("spouse", path=path)
+        loaded = load_ssa_pdf_estimates("spouse")
         assert loaded is not None
         assert loaded.statement_date == "2026-03-04"
         assert loaded.fra_age == 67
         assert loaded.estimates == ESTIMATES
-        assert load_ssa_pdf_estimates("you", path=path) is None
+        assert load_ssa_pdf_estimates("you") is None
 
-    def test_missing_or_corrupt_file_is_none(self, tmp_path) -> None:
-        path = tmp_path / "ssa_pdf.json"
-        assert load_ssa_pdf_estimates("you", path=path) is None
-        path.write_text("{not json")
-        assert load_ssa_pdf_estimates("you", path=path) is None
+    def test_missing_or_corrupt_row_is_none(self, corrupt_row) -> None:
+        assert load_ssa_pdf_estimates("you") is None
+        corrupt_row(SSA_PDF)
+        assert load_ssa_pdf_estimates("you") is None
 
-    def test_saved_file_holds_no_holder_name(self, tmp_path) -> None:
-        path = tmp_path / "ssa_pdf.json"
-        save_ssa_pdf_estimates("you", parse_ssa_statement_text(PAGES), path=path)
-        assert "EXAMPLE" not in path.read_text()
+    def test_saved_document_holds_no_holder_name(self, store) -> None:
+        save_ssa_pdf_estimates("you", parse_ssa_statement_text(PAGES))
+        assert "EXAMPLE" not in json.dumps(store.get(SSA_PDF))

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import PORTFOLIO
 from models.legacy_keys import migrate_legacy_keys
 
 if TYPE_CHECKING:
@@ -137,9 +137,6 @@ def fetch_portfolio(
     return snap
 
 
-_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / ".portfolio_cache.json"
-
-
 class EmptySnapshotWriteRefusedError(RuntimeError):
     """save_snapshot() refused to erase a populated cache with an empty snapshot.
 
@@ -150,7 +147,7 @@ class EmptySnapshotWriteRefusedError(RuntimeError):
 
 
 class CorruptPortfolioCacheError(Exception):
-    """save_snapshot() found ``.portfolio_cache.json`` unreadable and refused to write.
+    """save_snapshot() found the saved portfolio unreadable and refused to write.
 
     Mirrors ``CorruptCommittedCacheError`` / ``CorruptCandidateStoreError``:
     overwriting a corrupt (or non-object) cache with a fresh snapshot would
@@ -170,7 +167,7 @@ def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -
     FinExtract-owned fields (equity_sales_lots, equity_sales_executions,
     order_detail_summary_captured_at) are never serialized from the in-memory
     snapshot — live HTTP sync has no equivalent source for these.  Instead,
-    the existing on-disk equity_sales and sources sections are preserved so
+    the saved equity_sales and sources sections are preserved so
     FinExtract's rebuild writes are not clobbered.
 
     ``allow_empty`` controls whether a snapshot carrying zero accounts may
@@ -182,32 +179,30 @@ def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -
     pass it explicitly rather than depend on the inference.
 
     Raises:
-        CorruptPortfolioCacheError: the cache exists but is unreadable or not a
-            JSON object; the file is left untouched.
+        CorruptPortfolioCacheError: the saved portfolio is unreadable or not a
+            JSON object; it is left untouched.
         EmptySnapshotWriteRefusedError: the write would drop every account from a
             cache that currently holds some, and emptiness was not verified.
     """
-    existing: dict[str, Any] = {}
-    if _CACHE_PATH.exists():
-        try:
-            loaded = read_pii_json(_CACHE_PATH)
-        except FileNotFoundError:  # absent, or hidden in demo mode
-            loaded = {}
-        except (json.JSONDecodeError, OSError) as exc:
-            raise CorruptPortfolioCacheError(_CACHE_PATH, exc) from exc
-        if not isinstance(loaded, dict):
-            raise CorruptPortfolioCacheError(
-                _CACHE_PATH, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
-            )
-        existing = loaded
+    try:
+        loaded = get_store().get(PORTFOLIO)
+    except CorruptStoreError as exc:
+        raise CorruptPortfolioCacheError(PORTFOLIO, exc) from exc
+    if loaded is None:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        raise CorruptPortfolioCacheError(
+            PORTFOLIO, TypeError(f"expected a JSON object, got {type(loaded).__name__}")
+        )
+    existing: dict[str, Any] = loaded
 
     if allow_empty is None:
         allow_empty = snap.server_available
     existing_accounts = existing.get("accounts") or []
     if not snap.accounts and not allow_empty and existing_accounts:
         raise EmptySnapshotWriteRefusedError(
-            f"Refusing to overwrite {_CACHE_PATH.name} "
-            f"({len(existing_accounts)} account(s) on disk) with a snapshot "
+            "Refusing to overwrite the saved portfolio "
+            f"({len(existing_accounts)} account(s) saved) with a snapshot "
             "holding none. The fetch that produced it never confirmed the "
             "household actually holds nothing, so this would be data loss."
         )
@@ -225,18 +220,17 @@ def save_snapshot(snap: PortfolioSnapshot, *, allow_empty: bool | None = None) -
     if "sources" in existing:
         data["sources"] = existing["sources"]
 
-    write_pii_json(_CACHE_PATH, data)
+    get_store().put(PORTFOLIO, data)
 
 
 def load_snapshot() -> PortfolioSnapshot | None:
-    """Load cached portfolio snapshot from disk, or None if not available."""
-    if not _CACHE_PATH.exists():
-        return None
+    """The saved portfolio snapshot, or None if absent or unreadable."""
     try:
-        data = read_pii_json(_CACHE_PATH)
-    except (json.JSONDecodeError, OSError):
+        data = get_store().get(PORTFOLIO)
+    except CorruptStoreError:
         return None
-
+    if data is None:
+        return None
     try:
         return _snapshot_from_cache(data)
     except (TypeError, ValueError, AttributeError):

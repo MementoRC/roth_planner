@@ -537,12 +537,9 @@ class TestScenarioWithYTD:
         # Full RMD cash is still available for the excess-RMD/brokerage path -> unchanged.
         assert partial.excess_rmd == approx(base.excess_rmd)
 
-    def test_ytd_save_load_roundtrip(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_ytd_save_load_roundtrip(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import RealizedGainEvent, YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,
@@ -576,12 +573,9 @@ class TestScenarioWithYTD:
         assert len(loaded.gain_events) == 1
         assert loaded.gain_events[0].gain_loss == approx(200_000)
 
-    def test_ytd_save_load_roundtrip_income_events(self, tmp_path, monkeypatch):
-        from engine import portfolio_sync
+    def test_ytd_save_load_roundtrip_income_events(self):
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import IncomeEvent, YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,
@@ -600,17 +594,12 @@ class TestScenarioWithYTD:
         assert loaded.income_events[0].kind == "conversion"
         assert loaded.income_events[1].owner == "spouse"
 
-    def test_ytd_load_missing_income_events_defaults_empty(self, tmp_path, monkeypatch):
+    def test_ytd_load_missing_income_events_defaults_empty(self, store):
         """Old cache files predating this field must still load cleanly."""
-        import json
-
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot
+        from engine.store.namespaces import YTD
 
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd.json")
-        (tmp_path / "ytd.json").write_text(
-            json.dumps({"tax_year": 2026, "snapshot_date": "2026-06-01"})
-        )
+        store.put(YTD, {"tax_year": 2026, "snapshot_date": "2026-06-01"})
 
         loaded = load_ytd_snapshot()
         assert loaded is not None
@@ -780,13 +769,10 @@ class TestSpouseIraConversionsYTDWiring:
         ytd = YTDSnapshot(tax_year=2026, spouse_ira_conversions_ytd=self._SPOUSE_CONV)
         assert ytd.magi_ytd == approx(self._SPOUSE_CONV)
 
-    def test_save_load_roundtrip_preserves_spouse_conversions(self, tmp_path, monkeypatch) -> None:
+    def test_save_load_roundtrip_preserves_spouse_conversions(self) -> None:
         """spouse_ira_conversions_ytd must survive a save_ytd_snapshot/load round-trip."""
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_spouse.json")
 
         ytd = YTDSnapshot(tax_year=2026, spouse_ira_conversions_ytd=self._SPOUSE_CONV)
         save_ytd_snapshot(ytd)

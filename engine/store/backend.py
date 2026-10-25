@@ -9,6 +9,7 @@ corrupt-row rules live in the Store, so every backend behaves the same.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -65,6 +66,48 @@ class DictBackend:
 
     def close(self) -> None:
         self._rows = {}
+
+
+class RoutedBackend:
+    """Listed namespaces go to their own backend; every other namespace to *default*.
+
+    Transactions run on *default* only. The routes are read-only views of the
+    legacy JSON files (``JsonReadOnlyBackend``), so they hold nothing to commit
+    or roll back.
+    """
+
+    def __init__(self, default: Backend, routes: Mapping[str, Backend]) -> None:
+        self.default = default
+        self._routes = dict(routes)
+
+    def _for(self, namespace: str) -> Backend:
+        return self._routes.get(namespace, self.default)
+
+    def begin(self) -> None:
+        self.default.begin()
+
+    def commit(self) -> None:
+        self.default.commit()
+
+    def rollback(self) -> None:
+        self.default.rollback()
+
+    def get(self, namespace: str, key: str) -> Row | None:
+        return self._for(namespace).get(namespace, key)
+
+    def put(self, namespace: str, key: str, row: Row) -> None:
+        self._for(namespace).put(namespace, key, row)
+
+    def delete(self, namespace: str, key: str) -> None:
+        self._for(namespace).delete(namespace, key)
+
+    def keys(self, namespace: str) -> list[str]:
+        return self._for(namespace).keys(namespace)
+
+    def close(self) -> None:
+        self.default.close()
+        for backend in {id(b): b for b in self._routes.values()}.values():
+            backend.close()
 
 
 class NullBackend:

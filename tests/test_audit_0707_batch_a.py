@@ -212,12 +212,9 @@ class TestSweetSpotYtdOrdinaryBase:
 class TestFederalWithholdingRoundTrip:
     """PU1-M01: federal_withholding_ytd must survive save_ytd_snapshot/load."""
 
-    def test_federal_withholding_survives_round_trip(self, tmp_path, monkeypatch) -> None:
-        from engine import portfolio_sync
+    def test_federal_withholding_survives_round_trip(self) -> None:
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_withholding.json")
 
         withholding = 45_000.0
         ytd = YTDSnapshot(
@@ -234,14 +231,10 @@ class TestFederalWithholdingRoundTrip:
             f"saved {withholding}, got {loaded.federal_withholding_ytd}"
         )
 
-    def test_old_cache_missing_withholding_defaults_zero(self, tmp_path, monkeypatch) -> None:
+    def test_old_cache_missing_withholding_defaults_zero(self, store) -> None:
         """Old cache without federal_withholding_ytd must load without error, default 0.0."""
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot
-        from engine.secure_io import write_pii_json
-
-        cache_path = tmp_path / "ytd_old.json"
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", cache_path)
+        from engine.store.namespaces import YTD
 
         old_data = {
             "tax_year": 2025,
@@ -261,7 +254,7 @@ class TestFederalWithholdingRoundTrip:
             "gain_events": [],
             "manually_entered": True,
         }
-        write_pii_json(cache_path, old_data)
+        store.put(YTD, old_data)
 
         loaded = load_ytd_snapshot()
         assert loaded is not None
@@ -270,13 +263,10 @@ class TestFederalWithholdingRoundTrip:
             f"got {loaded.federal_withholding_ytd}"
         )
 
-    def test_all_ytd_fields_preserved(self, tmp_path, monkeypatch) -> None:
+    def test_all_ytd_fields_preserved(self) -> None:
         """All YTD fields survive a full round-trip including federal_withholding_ytd."""
-        from engine import portfolio_sync
         from engine.portfolio_sync import load_ytd_snapshot, save_ytd_snapshot
         from models.ytd_income import YTDSnapshot
-
-        monkeypatch.setattr(portfolio_sync, "_YTD_CACHE_PATH", tmp_path / "ytd_full.json")
 
         ytd = YTDSnapshot(
             tax_year=2026,

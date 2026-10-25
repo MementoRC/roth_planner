@@ -17,7 +17,7 @@ _Num = TypeVar("_Num", int, float)
 def clamp(value: _Num, lo: _Num, hi: _Num | None = None) -> _Num:
     """Clamp ``value`` into ``[lo, hi]`` (or ``[lo, +inf)`` when ``hi`` is ``None``).
 
-    Cached/uploaded JSON (.user_defaults.json, .tax_pdf_cache.json) can seed a
+    Saved/uploaded JSON (.user_defaults.json, the saved tax-PDF data) can seed a
     widget ``value`` outside its ``[min_value, max_value]`` bounds, and Streamlit
     raises ``StreamlitAPIException`` at render time — crashing the Joint sub-tab on
     load with no user interaction (audit C4). The widget bounds are widened to

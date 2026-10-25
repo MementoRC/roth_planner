@@ -23,18 +23,15 @@ Pure: works on already-extracted page strings, no pdfplumber, no Streamlit.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from pathlib import Path
 
 from engine.ira import ss_benefit_at_age
 from engine.pdf_owner import resolve_owner
-from engine.secure_io import read_pii_json, write_pii_json
-
-_SSA_PDF_CACHE_PATH = Path(__file__).resolve().parent.parent / ".ssa_pdf_cache.json"
+from engine.store import CorruptStoreError, get_store
+from engine.store.namespaces import SSA_PDF
 
 
 class SsaStatementParseError(ValueError):
@@ -206,23 +203,21 @@ def pick_latest_ssa(statements: Iterable[SsaStatement]) -> list[SsaStatement]:
     return [*latest.values(), *nameless]
 
 
-def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement, *, path: Path | None = None) -> None:
+def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement) -> None:
     """Persist *stmt*'s per-age estimates under *owner* for the comparison
     display. The holder name is not stored -- only date, FRA and estimates.
 
-    Kept apart from the FinExtract SSA cache on purpose: app.py re-records
-    that cache as a FinExtract candidate on every boot, which would mislabel
-    a PDF-sourced figure.
+    Kept apart from the FinExtract SSA store on purpose: app.py re-records
+    that one as a FinExtract candidate on every boot, which would mislabel
+    a PDF-sourced figure. An unreadable saved document is never replaced
+    (CorruptStoreError).
     """
     if owner not in ("you", "spouse"):
         raise ValueError(f"SSA statement owner must be 'you' or 'spouse', got {owner!r}")
-    target = path or _SSA_PDF_CACHE_PATH
-    existing: dict = {}
-    if target.exists():
-        try:
-            existing = read_pii_json(target)
-        except (json.JSONDecodeError, OSError):
-            existing = {}
+    store = get_store()
+    existing = store.get(SSA_PDF)
+    if not isinstance(existing, dict):
+        existing = {}
     existing[owner] = {
         "statement_date": stmt.statement_date,
         "fra_age": stmt.fra_age,
@@ -230,20 +225,23 @@ def save_ssa_pdf_estimates(owner: str, stmt: SsaStatement, *, path: Path | None 
         "fra_estimate": stmt.fra_estimate,
         "estimates": {str(age): amount for age, amount in stmt.estimates.items()},
     }
-    write_pii_json(target, existing)
+    store.put(SSA_PDF, existing)
 
 
 def _optional_float(value: object) -> float | None:
     return None if value is None else float(str(value))
 
 
-def load_ssa_pdf_estimates(owner: str, *, path: Path | None = None) -> SsaStatement | None:
+def load_ssa_pdf_estimates(owner: str) -> SsaStatement | None:
     """Load *owner*'s persisted estimates, or ``None`` if absent/unreadable."""
-    target = path or _SSA_PDF_CACHE_PATH
-    if not target.exists():
+    try:
+        doc = get_store().get(SSA_PDF)
+    except CorruptStoreError:
+        return None
+    if not isinstance(doc, dict):
         return None
     try:
-        entry = read_pii_json(target).get(owner)
+        entry = doc.get(owner)
         if entry is None:
             return None
         return SsaStatement(
@@ -254,5 +252,5 @@ def load_ssa_pdf_estimates(owner: str, *, path: Path | None = None) -> SsaStatem
             fra_months=int(entry.get("fra_months", 0)),
             fra_estimate=_optional_float(entry.get("fra_estimate")),
         )
-    except (json.JSONDecodeError, OSError, AttributeError, KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError):
         return None
