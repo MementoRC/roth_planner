@@ -51,9 +51,7 @@ def _render_after_pdf_scan() -> None:
     render_command_center(Household())
 
 
-def test_pdf_scan_magi_candidate_appears_pending_in_command_center(
-    clean_command_center_caches,
-) -> None:
+def test_pdf_scan_magi_candidate_appears_pending_in_command_center() -> None:
     at = AppTest.from_function(_render_after_pdf_scan)
     at.run()
 

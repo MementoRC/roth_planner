@@ -10,7 +10,7 @@ from views.navigation import ALL_PAGE_IDS, DEFAULT_PAGE, NAV_GROUPS
 
 
 @pytest.fixture(autouse=True)
-def _isolated_app(clean_command_center_caches, monkeypatch):
+def _isolated_app(monkeypatch):
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)

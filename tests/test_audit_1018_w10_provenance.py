@@ -180,7 +180,7 @@ def _render_card() -> None:
     render_command_center(Household())
 
 
-def test_f32_widget_has_zero_floor_and_empty_default(clean_command_center_caches) -> None:
+def test_f32_widget_has_zero_floor_and_empty_default() -> None:
     _seed_pending_roth()
     at = AppTest.from_function(_render_card)
     at.run()
@@ -190,7 +190,7 @@ def test_f32_widget_has_zero_floor_and_empty_default(clean_command_center_caches
     assert manual.value is None
 
 
-def test_f32_typed_zero_commits_zero_not_the_stale_candidate(clean_command_center_caches) -> None:
+def test_f32_typed_zero_commits_zero_not_the_stale_candidate() -> None:
     from engine.data_sources.paths import COMMITTED_PATH
 
     _seed_pending_roth()

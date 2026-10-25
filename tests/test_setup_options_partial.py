@@ -92,18 +92,14 @@ def _render_options_with_pending(pending: set[str]) -> None:
     render_options_partial(Household(), st)
 
 
-def test_options_partial_renders_without_exception_when_nothing_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_renders_without_exception_when_nothing_pending() -> None:
     at = AppTest.from_function(_render_options_with_pending, kwargs={"pending": set()})
     at.run()
     assert not at.exception
     assert any("No grants loaded" in i.value for i in at.info)
 
 
-def test_options_partial_does_not_render_stock_price_now_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_does_not_render_stock_price_now_card_even_when_pending() -> None:
     """Task-5 reversal regression: render_options_partial must NOT render
     the stock_price_now trust/manual/confirm governance card, even though it
     is pending review. That card renders exclusively in
@@ -134,7 +130,7 @@ def _render_stock_price_widget(stock_price: float = 100) -> None:
     render_stock_price_widget(st)
 
 
-def test_stock_price_widget_stock_price_round_trip(clean_command_center_caches) -> None:
+def test_stock_price_widget_stock_price_round_trip() -> None:
     """Unkeyed-widget safety net (Owner decision 5): drive a distinct sentinel
     value through the plain stock_price number_input and confirm
     session_state.stock_price reflects it, catching a typo'd attribute name.
@@ -155,9 +151,7 @@ def test_stock_price_widget_stock_price_round_trip(clean_command_center_caches) 
 # no user interaction. Must FAIL on unmodified source.
 
 
-def test_stock_price_negative_persisted_value_does_not_crash(
-    clean_command_center_caches,
-) -> None:
+def test_stock_price_negative_persisted_value_does_not_crash() -> None:
     at = AppTest.from_function(_render_stock_price_widget, kwargs={"stock_price": -50})
     at.run()
     assert not at.exception
@@ -165,9 +159,7 @@ def test_stock_price_negative_persisted_value_does_not_crash(
     assert widget.value == 0
 
 
-def test_options_partial_does_not_render_grants_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_options_partial_does_not_render_grants_card_even_when_pending() -> None:
     """Task-5 reversal regression: render_options_partial must NOT render
     the grants trust/manual/confirm governance card, even though it is
     pending review. That card renders exclusively in
@@ -212,9 +204,7 @@ def test_options_partial_does_not_render_grants_card_even_when_pending(
 _APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
-def test_stock_price_widget_renders_once_under_data_tab(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_stock_price_widget_renders_once_under_data_tab(monkeypatch) -> None:
     """Owner decision 6 (as amended by PR B, 2026-09): the Stock Price widget
     lives on Profile › Assumptions now, rendered by
     ``render_stock_price_widget`` — no longer co-located with the

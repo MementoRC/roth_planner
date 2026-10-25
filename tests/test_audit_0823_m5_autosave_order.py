@@ -93,9 +93,7 @@ def _neutralize_disk_sources(monkeypatch):
 
 
 @pytest.mark.usefixtures("_neutralize_disk_sources")
-def test_assumptions_autosave_sees_same_run_stock_price_write(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_assumptions_autosave_sees_same_run_stock_price_write(monkeypatch) -> None:
     """audit-0823 M5: the page's autosave must observe a same-run write.
 
     RED while ``autosave_user_defaults()`` runs before the stock-price widget has
@@ -131,9 +129,7 @@ def test_assumptions_autosave_sees_same_run_stock_price_write(
 
 @pytest.mark.usefixtures("_neutralize_disk_sources")
 @pytest.mark.parametrize("page_id", list(PAGE_FUNCS))
-def test_page_autosave_runs_exactly_once_per_render(
-    page_id, clean_command_center_caches, monkeypatch
-) -> None:
+def test_page_autosave_runs_exactly_once_per_render(page_id, monkeypatch) -> None:
     """Moving the call must not leave a second autosave behind mid-render."""
     import views.setup._state as state_mod
 

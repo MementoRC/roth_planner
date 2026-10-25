@@ -129,9 +129,7 @@ def _number_input_by_label(at: AppTest, label: str):
 # --- Key-set parity: editing touches the same session_state key -------------
 
 
-def test_your_ira_edit_updates_same_session_state_key(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_your_ira_edit_updates_same_session_state_key(monkeypatch) -> None:
     """Setting ``your_ira`` on Household & Accounts must update the identical
     ``session_state["your_ira"]`` key — proves it doesn't fork the data
     model onto a differently-named key.
@@ -148,9 +146,7 @@ def test_your_ira_edit_updates_same_session_state_key(
 # --- 1040 PDF import section: parity fix -------------------------------------
 
 
-def test_1040_import_section_renders_without_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_1040_import_section_renders_without_exception(monkeypatch) -> None:
     """The "Import 1040 PDF" workflow (``_render_pdf_1040_import``) is
     reachable from the shell. With no scanned record pending, it should
     render its "scan on YTD Income" caption without exception.
@@ -159,7 +155,7 @@ def test_1040_import_section_renders_without_exception(
     assert not at.exception
 
 
-def test_1040_import_section_reuses_widget_key(clean_command_center_caches, monkeypatch) -> None:
+def test_1040_import_section_reuses_widget_key(monkeypatch) -> None:
     """With a scanned 1040 record pending, the confirmation selectbox must
     carry the EXACT SAME key Classic's copy of this widget used
     (``_pdf_1040_filing_status_2024``) — proving this section reuses the
@@ -746,9 +742,7 @@ def _patch_state_autosave(monkeypatch):
     return spy
 
 
-def test_shell_autosave_reaches_save_user_defaults(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_reaches_save_user_defaults(monkeypatch) -> None:
     """audit-0823 M2: a page must persist session edits.
 
     Without this, edits made through the page vanish on restart.
@@ -759,9 +753,7 @@ def test_shell_autosave_reaches_save_user_defaults(
     assert spy.called, "page did not reach save_user_defaults"
 
 
-def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_suppressed_by_snapshot_autoload_guard(monkeypatch) -> None:
     """``_suppress_snapshot_autoload=True`` must suppress the save -- the
     sentinel is session-wide, not shell-specific (app.py:108/122,
     views/setup/_state.py:212). Uses ``_run_shell`` (not the no-suppress
@@ -773,9 +765,7 @@ def test_shell_autosave_suppressed_by_snapshot_autoload_guard(
     assert not spy.called, "page called save_user_defaults despite _suppress_snapshot_autoload=True"
 
 
-def test_shell_autosave_payload_carries_session_edited_value(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_shell_autosave_payload_carries_session_edited_value(monkeypatch) -> None:
     """Non-vacuous companion to test_shell_autosave_reaches_save_user_defaults:
     proves the ACTUAL payload dict reaching save_user_defaults carries a
     session-edited value, not merely that the function was called with

@@ -69,7 +69,7 @@ def _render_spouse_toggle_back() -> None:
 
 
 class TestF32SingleFilerDoesNotClobberSpouse:
-    def test_single_render_keeps_stored_spouse_fields(self, clean_command_center_caches):
+    def test_single_render_keeps_stored_spouse_fields(self):
         at = AppTest.from_function(_render_spouse_slice, kwargs={"filing_status": "Single"})
         at.run()
         assert not at.exception
@@ -77,13 +77,13 @@ class TestF32SingleFilerDoesNotClobberSpouse:
         assert at.session_state["spouse_has_workplace_plan"] is True
         assert at.session_state["spouse_aca"] is True
 
-    def test_single_render_shows_spouse_widgets_disabled(self, clean_command_center_caches):
+    def test_single_render_shows_spouse_widgets_disabled(self):
         at = AppTest.from_function(_render_spouse_slice, kwargs={"filing_status": "Single"})
         at.run()
         age = next(w for w in at.number_input if w.label == "Spouse Age")
         assert age.disabled
 
-    def test_toggle_back_run_restores_stored_values(self, clean_command_center_caches):
+    def test_toggle_back_run_restores_stored_values(self):
         """The run in which the user flips Single -> MFJ: the radio has already
         written MFJ, but ``hh`` was built (zeroed) at the top of the run."""
         at = AppTest.from_function(_render_spouse_toggle_back)
@@ -93,7 +93,7 @@ class TestF32SingleFilerDoesNotClobberSpouse:
         assert at.session_state["spouse_has_workplace_plan"] is True
         assert at.session_state["spouse_aca"] is True
 
-    def test_mfj_render_still_writes_spouse_fields(self, clean_command_center_caches):
+    def test_mfj_render_still_writes_spouse_fields(self):
         """Non-regression: the controlled MFJ path keeps writing widget values."""
         at = AppTest.from_function(_render_spouse_slice, kwargs={"filing_status": "MFJ"})
         at.run()
@@ -135,7 +135,7 @@ def _render_overrides(existing: dict | None) -> None:
 
 
 class TestF34OverridesPanelDoesNotStampOwner:
-    def test_render_writes_no_overrides_for_untouched_accounts(self, clean_command_center_caches):
+    def test_render_writes_no_overrides_for_untouched_accounts(self):
         at = AppTest.from_function(_render_overrides, kwargs={"existing": None})
         at.run()
         assert not at.exception
@@ -147,13 +147,13 @@ class TestF34OverridesPanelDoesNotStampOwner:
         )
         assert "Traditional IRA 000222" not in stored
 
-    def test_owner_selectbox_defaults_to_account_owner(self, clean_command_center_caches):
+    def test_owner_selectbox_defaults_to_account_owner(self):
         at = AppTest.from_function(_render_overrides, kwargs={"existing": None})
         at.run()
         owner_box = next(s for s in at.selectbox if s.key == "_override_owner_Rollover IRA 000111")
         assert owner_box.value == "spouse"
 
-    def test_user_change_is_persisted(self, clean_command_center_caches):
+    def test_user_change_is_persisted(self):
         at = AppTest.from_function(_render_overrides, kwargs={"existing": None})
         at.run()
         owner_box = next(
@@ -163,7 +163,7 @@ class TestF34OverridesPanelDoesNotStampOwner:
         stored = at.session_state["account_type_overrides"]
         assert stored["Traditional IRA 000222"] == {"type": "trad_ira", "owner": "spouse"}
 
-    def test_existing_override_is_kept(self, clean_command_center_caches):
+    def test_existing_override_is_kept(self):
         existing = {"Rollover IRA 000111": {"type": "brokerage", "owner": "spouse"}}
         at = AppTest.from_function(_render_overrides, kwargs={"existing": existing})
         at.run()

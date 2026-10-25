@@ -47,42 +47,42 @@ def _fra_widget(at: AppTest, label: str):
 # unmodified source with a StreamlitAPIException (value out of min/max).
 
 
-def test_your_fra_age_clamps_above_max(clean_command_center_caches) -> None:
+def test_your_fra_age_clamps_above_max() -> None:
     at = AppTest.from_function(_render_household_your, kwargs={"fra_age": 99})
     at.run()
     assert not at.exception
     assert _fra_widget(at, "Your FRA (Full Retirement Age)").value == 70
 
 
-def test_your_fra_age_clamps_below_min(clean_command_center_caches) -> None:
+def test_your_fra_age_clamps_below_min() -> None:
     at = AppTest.from_function(_render_household_your, kwargs={"fra_age": 10})
     at.run()
     assert not at.exception
     assert _fra_widget(at, "Your FRA (Full Retirement Age)").value == 65
 
 
-def test_your_fra_age_in_range_value_unchanged(clean_command_center_caches) -> None:
+def test_your_fra_age_in_range_value_unchanged() -> None:
     at = AppTest.from_function(_render_household_your, kwargs={"fra_age": 68})
     at.run()
     assert not at.exception
     assert _fra_widget(at, "Your FRA (Full Retirement Age)").value == 68
 
 
-def test_spouse_fra_age_clamps_above_max(clean_command_center_caches) -> None:
+def test_spouse_fra_age_clamps_above_max() -> None:
     at = AppTest.from_function(_render_household_spouse, kwargs={"fra_age": 99})
     at.run()
     assert not at.exception
     assert _fra_widget(at, "Spouse FRA (Full Retirement Age)").value == 70
 
 
-def test_spouse_fra_age_clamps_below_min(clean_command_center_caches) -> None:
+def test_spouse_fra_age_clamps_below_min() -> None:
     at = AppTest.from_function(_render_household_spouse, kwargs={"fra_age": 10})
     at.run()
     assert not at.exception
     assert _fra_widget(at, "Spouse FRA (Full Retirement Age)").value == 65
 
 
-def test_spouse_fra_age_in_range_value_unchanged(clean_command_center_caches) -> None:
+def test_spouse_fra_age_in_range_value_unchanged() -> None:
     at = AppTest.from_function(_render_household_spouse, kwargs={"fra_age": 66})
     at.run()
     assert not at.exception

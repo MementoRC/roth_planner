@@ -42,15 +42,6 @@ from models.ytd_income import YTDSnapshot
 _SCAN_YEAR = 2023
 _SCAN_MAGI = 210_000.0
 
-# clean_command_center_caches fixture is provided by tests/conftest.py (cleans
-# up the 3 Command Center cache files -- CANDIDATE_STORE_PATH, TRUST_CHOICES_PATH,
-# COMMITTED_PATH -- BEFORE and AFTER each test) -- do not redeclare a narrower
-# local fixture here. This file previously had a same-purpose but differently
-# -named ``clean_candidate_caches`` fixture that only cleaned up 2 of the 3
-# cache files, omitting TRUST_CHOICES_PATH; nothing in this module writes to
-# trust_choices.json today, but the gap was inconsistent with the sibling
-# fixture and a latent risk if that ever changes.
-
 _FORM_1040 = Form1040Record(
     tax_year=_SCAN_YEAR,
     agi=200_000.0,
@@ -232,9 +223,7 @@ def _patch_scan(tmp_path):
     ]
 
 
-def test_sync_everything_fans_out_and_every_value_lands_pending(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_fans_out_and_every_value_lands_pending(tmp_path, monkeypatch):
     hh = _stub_hh()
     mock_st = _mock_st()
 
@@ -285,9 +274,7 @@ def test_sync_everything_fans_out_and_every_value_lands_pending(
     assert load_committed(COMMITTED_PATH) is None
 
 
-def test_sync_everything_invokes_market_quote_refresh(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_invokes_market_quote_refresh(tmp_path, monkeypatch):
     """The fan-out must actually call the Yahoo market-quote refresh (not
     just the portfolio/SS/scan legs) — the wiring this task adds."""
     hh = _stub_hh()
@@ -313,9 +300,7 @@ def test_sync_everything_invokes_market_quote_refresh(
     assert result.market_quote.error is None
 
 
-def test_sync_everything_isolates_a_failing_market_quote_fetch(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_isolates_a_failing_market_quote_fetch(tmp_path, monkeypatch):
     """A Yahoo market-quote failure must not abort the rest of "Sync
     everything" — the other three legs still run and record."""
     hh = _stub_hh()
@@ -353,9 +338,7 @@ def test_sync_everything_isolates_a_failing_market_quote_fetch(
     assert result.scan.result.magi_candidates_recorded == 1
 
 
-def test_sync_everything_isolates_a_raising_market_quote_fetch(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_isolates_a_raising_market_quote_fetch(tmp_path, monkeypatch):
     """An exception raised by the market-quote fetch (not just an error
     result) must still be isolated — this codebase has repeatedly been
     bitten by swallowed exceptions, so this proves it surfaces, not hides."""
@@ -382,9 +365,7 @@ def test_sync_everything_isolates_a_raising_market_quote_fetch(
     assert result.ss.candidates_recorded == 2
 
 
-def test_sync_everything_isolates_a_raising_portfolio_fetch(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_isolates_a_raising_portfolio_fetch(tmp_path, monkeypatch):
     """A raising FinExtract portfolio fetch must not prevent SS/scan from recording."""
     hh = _stub_hh()
     mock_st = _mock_st()
@@ -423,9 +404,7 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(
     assert load_committed(COMMITTED_PATH) is None
 
 
-def test_sync_everything_persists_real_stock_grant_candidates_to_disk(
-    clean_command_center_caches, tmp_path, monkeypatch
-):
+def test_sync_everything_persists_real_stock_grant_candidates_to_disk(tmp_path, monkeypatch):
     """Reproduces the production crash: a fetched snapshot with a REAL
     outstanding ``EquityGrant`` (merged into a REAL ``StockGrant``) must
     round-trip through an actual ``CandidateStore.save``/``.load`` at a real
@@ -475,7 +454,7 @@ class TestYtdSyncPreservation:
     the persisted YTD snapshot with an all-zero fresh YTDSnapshot(), and the
     /status-unreachable case must not be reported as synced."""
 
-    def test_successful_sync_preserves_prior_manual_fields(self, clean_command_center_caches):
+    def test_successful_sync_preserves_prior_manual_fields(self):
         hh = _stub_hh()
         prior_ytd = YTDSnapshot(
             tax_year=hh.base_year,
@@ -526,9 +505,7 @@ class TestYtdSyncPreservation:
             f"Expected freshly-computed nqo_exercise_ytd=45000; got {result.nqo_exercise_ytd}"
         )
 
-    def test_unreachable_status_does_not_mark_synced_or_zero_prior_data(
-        self, clean_command_center_caches
-    ):
+    def test_unreachable_status_does_not_mark_synced_or_zero_prior_data(self):
         hh = _stub_hh()
         prior_ytd = YTDSnapshot(
             tax_year=hh.base_year,

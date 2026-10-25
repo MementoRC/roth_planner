@@ -171,9 +171,7 @@ def _cache_state() -> dict[str, bytes | None]:
 
 
 class TestF28RenderDoesNotTouchPersonalBaseline:
-    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(
-        self, clean_command_center_caches
-    ):
+    def test_demo_render_neither_reads_nor_overwrites_committed_baseline(self):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
@@ -192,9 +190,7 @@ class TestF28RenderDoesNotTouchPersonalBaseline:
             "the personal committed baseline was applied inside demo mode"
         )
 
-    def test_leaving_demo_mode_finds_the_personal_baseline_intact(
-        self, clean_command_center_caches
-    ):
+    def test_leaving_demo_mode_finds_the_personal_baseline_intact(self):
         personal_ira = 123_456
         at = _app()
         at.session_state["your_ira"] = personal_ira
@@ -262,7 +258,7 @@ def _save_personal_caches() -> None:
 
 
 class TestF30AutoloadGatedByDemoMode:
-    def test_control_personal_caches_load_outside_demo_mode(self, clean_command_center_caches):
+    def test_control_personal_caches_load_outside_demo_mode(self):
         _save_personal_caches()
         at = _app(suppress=False)
         at.run()
@@ -274,7 +270,7 @@ class TestF30AutoloadGatedByDemoMode:
             magi_field_key(2024)
         )
 
-    def test_demo_mode_skips_every_personal_autoload(self, clean_command_center_caches):
+    def test_demo_mode_skips_every_personal_autoload(self):
         _save_personal_caches()
         demo_mod.enter_demo_mode()
         at = _app(suppress=False)

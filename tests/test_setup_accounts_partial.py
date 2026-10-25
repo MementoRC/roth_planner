@@ -62,9 +62,7 @@ def _render_your_accounts_with_pending_ira() -> None:
     render_accounts_partial(Household(), st, "your")
 
 
-def test_accounts_partial_does_not_render_governance_card_even_when_pending(
-    clean_command_center_caches,
-) -> None:
+def test_accounts_partial_does_not_render_governance_card_even_when_pending() -> None:
     """Task-4 reversal regression: render_accounts_partial must NOT render
     the your_ira trust/manual/confirm governance card, even though your_ira
     is pending review. That card renders exclusively in
@@ -128,7 +126,7 @@ def _render_accounts_your_ira(your_ira: float) -> None:
     render_accounts_partial(Household(), st, "your")
 
 
-def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+def test_your_ss_start_age_clamps_above_max() -> None:
     at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 85})
     at.run()
     assert not at.exception
@@ -136,7 +134,7 @@ def test_your_ss_start_age_clamps_above_max(clean_command_center_caches) -> None
     assert widget.value == 70
 
 
-def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+def test_your_ss_start_age_clamps_below_min() -> None:
     at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 10})
     at.run()
     assert not at.exception
@@ -144,7 +142,7 @@ def test_your_ss_start_age_clamps_below_min(clean_command_center_caches) -> None
     assert widget.value == 62
 
 
-def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches) -> None:
+def test_your_ss_start_age_in_range_value_unchanged() -> None:
     at = AppTest.from_function(_render_accounts_your_ss_start_age, kwargs={"ss_start_age": 65})
     at.run()
     assert not at.exception
@@ -152,7 +150,7 @@ def test_your_ss_start_age_in_range_value_unchanged(clean_command_center_caches)
     assert widget.value == 65
 
 
-def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> None:
+def test_spouse_ss_start_age_clamps_above_max() -> None:
     at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 85})
     at.run()
     assert not at.exception
@@ -160,7 +158,7 @@ def test_spouse_ss_start_age_clamps_above_max(clean_command_center_caches) -> No
     assert widget.value == 70
 
 
-def test_spouse_ss_start_age_clamps_below_min(clean_command_center_caches) -> None:
+def test_spouse_ss_start_age_clamps_below_min() -> None:
     at = AppTest.from_function(_render_accounts_spouse_ss_start_age, kwargs={"ss_start_age": 10})
     at.run()
     assert not at.exception
@@ -168,9 +166,7 @@ def test_spouse_ss_start_age_clamps_below_min(clean_command_center_caches) -> No
     assert widget.value == 62
 
 
-def test_your_ira_negative_persisted_value_does_not_crash(
-    clean_command_center_caches,
-) -> None:
+def test_your_ira_negative_persisted_value_does_not_crash() -> None:
     """Representative min-only-site regression (min_value=0) for the six
     balance/SS-FRA widgets in this file."""
     at = AppTest.from_function(_render_accounts_your_ira, kwargs={"your_ira": -500})

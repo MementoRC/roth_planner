@@ -16,8 +16,7 @@ Uses ``streamlit.testing.v1.AppTest.from_file`` against the real ``app.py``
 (mirrors ``tests/test_app_data_sources.py``) so ``get_household()`` and the
 Command Center review-gate resolver run exactly as they do in production —
 each run selects the Setup page explicitly via ``nav_page`` (YTD Income is
-the default page since redesign PR 1). ``clean_command_center_caches`` (shared fixture,
-``tests/conftest.py``) isolates the 3 Command Center cache files.
+the default page since redesign PR 1). Every test runs on its own in-memory store.
 
 Determinism: this walks the FULL widget tree (``Block.__iter__`` recurses
 through every nested tab/expander/column), so it only needs a truly fresh,
@@ -25,10 +24,6 @@ disk-cache-free render to be reproducible across machines/CI:
 - ``ROTH_PLANNER_IGNORE_USER_DEFAULTS`` (set repo-wide in tests/conftest.py)
   isolates ``.user_defaults.json`` (a developer's personal grant_strikes /
   survivor / inherited_iras would otherwise render extra per-item widgets).
-- ``clean_command_center_caches`` deletes the 3 Command Center cache files
-  before AND after the test — a developer's personal
-  ``.committed_household.json`` from running the real app locally must not
-  leak in.
 - ``load_pdf_tax_records`` and ``load_ssa_snapshot`` are monkeypatched to
   empty/None — a developer's local ``.tax_pdf_cache.json`` /
   ``.ssa_snapshot_*.json`` would otherwise record extra MAGI/SS-FRA
@@ -117,7 +112,7 @@ EXPECTED_WIDGET_KEYS = frozenset(
 
 
 @pytest.fixture
-def setup_app_test(clean_command_center_caches, monkeypatch) -> AppTest:
+def setup_app_test(monkeypatch) -> AppTest:
     """A fresh, already-``.run()`` ``AppTest`` positioned on the Setup page.
 
     Neutralizes every local-disk source of non-determinism (see module
@@ -245,7 +240,7 @@ _PDF_SECTION_KEYS = frozenset(
 )
 
 
-def test_setup_widget_key_set_unchanged(clean_command_center_caches, monkeypatch) -> None:
+def test_setup_widget_key_set_unchanged(monkeypatch) -> None:
     """Owner resolvable (pre-seeded here, but a fresh instance now reaches the
     same state via auto-default): across the six pages, the correction control
     and both import bodies are all present. The union equals the old Setup
@@ -259,9 +254,7 @@ def test_setup_widget_key_set_unchanged(clean_command_center_caches, monkeypatch
     assert not extra, f"New/unexpected widget keys appeared on the six pages: {sorted(extra)}"
 
 
-def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_setup_widget_key_set_unchanged_when_identity_is_corrupt(monkeypatch) -> None:
     """Corrupt identity: the correction control and the PDF Statements body
     are absent; the bundle import card still renders in full.
 
@@ -399,7 +392,7 @@ def test_accounts_partial_ss_start_age_round_trip(setup_app_test: AppTest) -> No
 
 
 def test_classic_mode_no_duplicate_widget_id_with_multiple_pending_accounts_fields(
-    clean_command_center_caches, monkeypatch
+    monkeypatch,
 ) -> None:
     """Task-4 reversal regression: IRA/Roth/SS-FRA governance cards render in
     ``views/setup/command_center.py``'s generic per-pending-field loop again
@@ -509,9 +502,7 @@ def _render_portfolio_with_snapshot(snap) -> None:
     render_portfolio_legacy(Household(), st)
 
 
-def test_portfolio_partial_account_type_overrides_round_trip(
-    clean_command_center_caches,
-) -> None:
+def test_portfolio_partial_account_type_overrides_round_trip() -> None:
     from engine.portfolio_sync import AccountSummary, PortfolioSnapshot
 
     snap = PortfolioSnapshot(
@@ -538,9 +529,7 @@ def test_portfolio_partial_account_type_overrides_round_trip(
     assert overrides["U1234567"] == {"type": "roth_ira", "owner": "spouse"}
 
 
-def test_portfolio_partial_widget_keys_present_with_snapshot(
-    clean_command_center_caches,
-) -> None:
+def test_portfolio_partial_widget_keys_present_with_snapshot() -> None:
     """Extends the Task 1 characterization baseline to the Portfolio tab: on a
     clean checkout, ``EXPECTED_WIDGET_KEYS`` has no Portfolio-tab entries
     because the Sync button is unkeyed and the overrides expander short-circuits

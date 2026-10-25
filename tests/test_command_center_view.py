@@ -47,17 +47,8 @@ from views._shared import (
 
 _RECORDED_AT = datetime(2026, 7, 24, 12, 0, 0)
 
-# clean_command_center_caches fixture is provided by tests/conftest.py (cleans
-# up the 3 Command Center cache files BEFORE and AFTER each test) -- do not
-# redeclare it here with the same name. A same-named local fixture silently
-# shadows the conftest one for every test in this module, and this file's
-# prior copy only cleaned up AFTER, leaking stale cache state into whichever
-# test ran next when a full-suite run was interrupted mid-test.
 
-
-def test_command_center_no_pending_shows_reconciled_message(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_no_pending_shows_reconciled_message() -> None:
     def _render_no_pending() -> None:
         import streamlit as st
 
@@ -108,9 +99,7 @@ def _render_sync_everything() -> None:
     render_command_center(Household())
 
 
-def test_sync_everything_button_invokes_handler_and_renders_summary(
-    clean_command_center_caches,
-) -> None:
+def test_sync_everything_button_invokes_handler_and_renders_summary() -> None:
     import views.setup.command_center as command_center_mod
 
     mock_sync = MagicMock(return_value=_canned_sync_everything_result())
@@ -136,9 +125,7 @@ def test_sync_everything_button_invokes_handler_and_renders_summary(
     assert at.metric[0].value == "3"
 
 
-def test_sync_everything_clears_suppress_snapshot_autoload_flag(
-    clean_command_center_caches,
-) -> None:
+def test_sync_everything_clears_suppress_snapshot_autoload_flag() -> None:
     """P4-1: Sync everything must clear the Reset-to-demo autoload-suppression flag.
 
     The only other code path that ever clears ``_suppress_snapshot_autoload``
@@ -197,9 +184,7 @@ def _seed_pending_your_ira() -> None:
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
-def test_command_center_renders_and_shows_pending_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_renders_and_shows_pending_candidate() -> None:
     _seed_pending_your_ira()
 
     at = AppTest.from_function(
@@ -213,9 +198,7 @@ def test_command_center_renders_and_shows_pending_candidate(
     assert "1,600,000" in rendered_text  # the currently-committed value
 
 
-def test_confirm_button_commits_chosen_source_and_syncs_session(
-    clean_command_center_caches,
-) -> None:
+def test_confirm_button_commits_chosen_source_and_syncs_session() -> None:
     _seed_pending_your_ira()
 
     at = AppTest.from_function(
@@ -259,9 +242,7 @@ def _seed_pending_stock_price_now() -> None:
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
-def test_command_center_shows_pending_stock_price_now_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_shows_pending_stock_price_now_candidate() -> None:
     _seed_pending_stock_price_now()
 
     at = AppTest.from_function(
@@ -275,9 +256,7 @@ def test_command_center_shows_pending_stock_price_now_candidate(
     assert "100" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_stock_price_now_syncs_the_aliased_session_key() -> None:
     """Bug 2 regression: the Household attr is stock_price_now, but the Setup
     number_input widget reads/writes session_state["stock_price"] (alias). The
     confirm handler must write the SAME aliased key, or the next
@@ -336,7 +315,7 @@ def _seed_pending_grants() -> None:
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
-def test_command_center_shows_pending_grants_candidate(clean_command_center_caches) -> None:
+def test_command_center_shows_pending_grants_candidate() -> None:
     _seed_pending_grants()
 
     at = AppTest.from_function(
@@ -350,9 +329,7 @@ def test_command_center_shows_pending_grants_candidate(clean_command_center_cach
     assert "1 grants" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_grants_commits_candidate_list(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_grants_commits_candidate_list() -> None:
     _seed_pending_grants()
 
     at = AppTest.from_function(
@@ -399,9 +376,7 @@ def _seed_pending_prior_year_magi_2024() -> None:
     ChoiceMap().save(TRUST_CHOICES_PATH)
 
 
-def test_command_center_shows_pending_prior_year_magi_candidate(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_shows_pending_prior_year_magi_candidate() -> None:
     _seed_pending_prior_year_magi_2024()
 
     at = AppTest.from_function(
@@ -415,9 +390,7 @@ def test_command_center_shows_pending_prior_year_magi_candidate(
     assert "200,000" in rendered_text  # the currently-committed value
 
 
-def test_command_center_confirm_prior_year_magi_syncs_session_state(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_confirm_prior_year_magi_syncs_session_state() -> None:
     """Confirming prior_year_magi.2024 must update BOTH the on-disk committed
     JSON and st.session_state["prior_year_magi"] (int-keyed dict), and clear
     the field from _pending_review — same shape ``_apply_confirm_to_session``
@@ -445,9 +418,7 @@ def test_command_center_confirm_prior_year_magi_syncs_session_state(
     assert committed_json["prior_year_magi"]["prov"]["2024"]["source"] == "PDF"
 
 
-def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync() -> None:
     """Replaces the old gate-blocks-sync test: a genuinely unset instance no
     longer shows a blocking gate -- it auto-defaults to "you", persists that
     to disk without any user interaction, and enables Sync immediately. The
@@ -477,9 +448,7 @@ def test_command_center_identity_unset_auto_defaults_to_you_and_enables_sync(
     assert instance_identity_mod.load_instance_owner() == "you"
 
 
-def test_command_center_identity_set_shows_correction_control_and_enables_sync(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_command_center_identity_set_shows_correction_control_and_enables_sync(monkeypatch) -> None:
     """Non-vacuous by construction: identity is set on DISK (via
     ``save_instance_owner``), never in ``session_state`` directly, so
     ``render_command_center``'s ``st.session_state.get("instance_owner") or
@@ -523,9 +492,7 @@ def test_command_center_identity_set_shows_correction_control_and_enables_sync(
     spy.assert_called()
 
 
-def test_command_center_does_not_reset_existing_spouse_identity(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_does_not_reset_existing_spouse_identity() -> None:
     """An already-"spouse" instance must never be silently reset to "you" by
     the auto-default path -- that path only fires when owner is None."""
     import engine.instance_identity as instance_identity_mod
@@ -552,9 +519,7 @@ def test_command_center_does_not_reset_existing_spouse_identity(
     # contract -- only the auto-default and Update paths ever write that key).
 
 
-def test_command_center_update_control_changes_owner_and_persists(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_update_control_changes_owner_and_persists() -> None:
     """Picking "Spouse" in the correction control and clicking Update must
     persist the change to disk, readable back via ``load_instance_owner()``."""
     import engine.instance_identity as instance_identity_mod
@@ -582,9 +547,7 @@ def test_command_center_update_control_changes_owner_and_persists(
     assert at.session_state["instance_owner"] == "spouse"
 
 
-def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten() -> None:
     """A corrupt ``.instance_owner.json`` must NOT be auto-defaulted (that
     would either raise inside ``save_instance_owner`` or, if it somehow
     succeeded, destroy the only copy of whatever is on disk) -- the render
@@ -614,9 +577,7 @@ def test_command_center_corrupt_identity_is_not_auto_defaulted_or_overwritten(
     assert "instance_owner" not in at.session_state
 
 
-def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(monkeypatch) -> None:
     import views.setup.command_center as command_center_mod
 
     monkeypatch.setattr(
@@ -648,9 +609,7 @@ def test_attribution_table_lists_statement_accounts_and_allows_owner_edit(
     )
 
 
-def test_attribution_clear_actually_clears_and_does_not_resave(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_clear_actually_clears_and_does_not_resave(monkeypatch) -> None:
     """Regression for Defect 1 (Task 7 follow-up): Streamlit only honours a
     keyed widget's ``index=`` kwarg on its FIRST creation -- on every later
     rerun the persisted ``session_state[key]`` value wins. Without popping
@@ -704,9 +663,7 @@ def test_attribution_clear_actually_clears_and_does_not_resave(
     assert owner_box.value == "you"
 
 
-def test_attribution_save_corrupt_store_shows_error_not_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_save_corrupt_store_shows_error_not_exception(monkeypatch) -> None:
     """Regression for Defect 2 (save path): CorruptAccountAttributionError
     must degrade to a visible st.error, not crash the whole Command Center
     render -- mirrors this module's existing CorruptInstanceOwnerError and
@@ -753,9 +710,7 @@ def test_attribution_save_corrupt_store_shows_error_not_exception(
     assert any("account attribution store" in e.value.lower() for e in at.error)
 
 
-def test_attribution_expander_is_scoped_to_statement_accounts(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_expander_is_scoped_to_statement_accounts(monkeypatch) -> None:
     """#604: the expander lists statement-PDF accounts only, so its label and
     caption must say so rather than imply it covers every account."""
     import views.setup.command_center as command_center_mod
@@ -790,9 +745,7 @@ def test_attribution_expander_is_scoped_to_statement_accounts(
     assert any("imported from statement PDFs" in c.value for c in at.caption)
 
 
-def test_attribution_delete_corrupt_store_shows_error_not_exception(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_attribution_delete_corrupt_store_shows_error_not_exception(monkeypatch) -> None:
     """Regression for Defect 2 (delete/Clear path): same as the save-path
     test above, but for delete_account_override raising on Clear."""
     import views.setup.command_center as command_center_mod

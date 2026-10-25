@@ -43,9 +43,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, *, record: bool, stop: bool = False) -
     return at
 
 
-def test_badge_counts_candidate_recorded_by_page_body_same_run(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_badge_counts_candidate_recorded_by_page_body_same_run(monkeypatch) -> None:
     at = _run(monkeypatch, record=True)
     badges = _badges(at)
     assert len(badges) == 1
@@ -53,7 +51,7 @@ def test_badge_counts_candidate_recorded_by_page_body_same_run(
     assert len(at.session_state["_pending_review"]) == 1
 
 
-def test_badge_still_drawn_when_page_body_stops(clean_command_center_caches, monkeypatch) -> None:
+def test_badge_still_drawn_when_page_body_stops(monkeypatch) -> None:
     record_magi_candidates(
         {2031: 123456.0},
         Source.PDF,
@@ -65,6 +63,6 @@ def test_badge_still_drawn_when_page_body_stops(clean_command_center_caches, mon
     assert len(_badges(at)) == 1
 
 
-def test_no_badge_when_nothing_pending(clean_command_center_caches, monkeypatch) -> None:
+def test_no_badge_when_nothing_pending(monkeypatch) -> None:
     at = _run(monkeypatch, record=False)
     assert _badges(at) == []

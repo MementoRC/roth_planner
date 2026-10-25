@@ -10,9 +10,7 @@ Isolation: the three new Setup / Command Center cache files
 are written at repo-root (mirroring the existing ``__file__``-anchored cache
 path convention used throughout ``engine/*`` — see e.g.
 ``engine/exercise_schedule_store.py``). They are already covered by
-``.gitignore``. The shared ``clean_command_center_caches`` fixture
-(``tests/conftest.py``) deletes them before AND after each test so repeated
-local test runs never leave stray state behind and a developer's personal
+``.gitignore``. Every test runs on its own in-memory store, so a developer's personal
 committed/candidate state never leaks in. ``_suppress_snapshot_autoload`` is
 pre-seeded so a developer's real ``.portfolio_cache.json`` (personal data)
 cannot influence the migration-identity assertion below.
@@ -26,7 +24,6 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-import engine.data_sources.paths as _paths_mod
 from config.defaults import DEFAULTS
 from engine.data_sources.committed import load_committed
 from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, save_snapshot
@@ -43,26 +40,7 @@ REPO_ROOT = APP_PATH.parent
 _PAGE_TIMEOUT = 60
 
 
-def _new_cache_files() -> list[Path]:
-    """The 3 Setup/Command Center cache paths, resolved at CALL time --
-    mirrors ``tests/conftest.py``'s ``_command_center_cache_files()``.
-
-    audit-0809 F18: this used to be a module-level ``_NEW_CACHE_FILES`` list
-    built from ``REPO_ROOT`` at THIS MODULE'S import time, a third instance
-    of the same class of defect as ``tests/test_scan_ingest.py``'s
-    module-level ``CANDIDATE_STORE_PATH`` import and
-    ``tests/conftest.py``'s old ``_COMMAND_CENTER_CACHE_FILES`` list --
-    frozen before any per-test redirect, so the explicit mid-test pre-cleans
-    below were deleting the developer's REAL repo-root cache files.
-    """
-    return [
-        _paths_mod.CANDIDATE_STORE_PATH,
-        _paths_mod.TRUST_CHOICES_PATH,
-        _paths_mod.COMMITTED_PATH,
-    ]
-
-
-def test_setup_page_renders_without_exception(clean_command_center_caches) -> None:
+def test_setup_page_renders_without_exception() -> None:
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
@@ -70,7 +48,7 @@ def test_setup_page_renders_without_exception(clean_command_center_caches) -> No
     assert not at.exception
 
 
-def test_dashboard_page_renders_without_exception(clean_command_center_caches) -> None:
+def test_dashboard_page_renders_without_exception() -> None:
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
@@ -82,7 +60,7 @@ def test_dashboard_page_renders_without_exception(clean_command_center_caches) -
     assert not at.exception
 
 
-def test_get_household_exposes_pending_review_gate(clean_command_center_caches) -> None:
+def test_get_household_exposes_pending_review_gate() -> None:
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
@@ -91,9 +69,7 @@ def test_get_household_exposes_pending_review_gate(clean_command_center_caches) 
     assert "_pending_review" in at.session_state
 
 
-def test_fresh_run_creates_committed_file_with_migration_identity(
-    clean_command_center_caches, monkeypatch
-) -> None:
+def test_fresh_run_creates_committed_file_with_migration_identity(monkeypatch) -> None:
     """First-ever load (no committed baseline on disk) migrates the session
     default numerically unchanged — the "migration is a numeric no-op"
     invariant resolve_for_app relies on.
@@ -115,9 +91,6 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
     monkeypatch.setattr(tax_return_pdf_mod, "load_pdf_tax_records", lambda: {})
     monkeypatch.setattr(portfolio_sync_mod, "load_ssa_snapshot", lambda *, owner: None)
 
-    for p in _new_cache_files():
-        p.unlink(missing_ok=True)
-
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
@@ -132,9 +105,7 @@ def test_fresh_run_creates_committed_file_with_migration_identity(
     assert committed_json["your_ira"]["value"] == DEFAULTS["your_ira"]
 
 
-def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
-    clean_command_center_caches,
-) -> None:
+def test_manual_setup_edit_to_sourced_field_sticks_across_reruns() -> None:
     """Regression (Wave 3.1b): apply_committed froze sourced fields onto the
     committed baseline on every render, so a Setup-form edit to your_ira was
     silently reverted on the very next rerun (the FinExtract snapshot no
@@ -143,9 +114,6 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     the frozen committed value).
     """
     from engine.data_sources.paths import COMMITTED_PATH
-
-    for p in _new_cache_files():
-        p.unlink(missing_ok=True)
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
@@ -168,7 +136,7 @@ def test_manual_setup_edit_to_sourced_field_sticks_across_reruns(
     assert committed_json["your_ira"]["source"] == "MANUAL"
 
 
-def test_workplace_plan_session_state_flows_to_household(clean_command_center_caches) -> None:
+def test_workplace_plan_session_state_flows_to_household() -> None:
     """W3: your_has_workplace_plan in session_state flows through get_household()
     into the Household consumed by views. Verified via the Roth Eligibility
     read-only redirect display, which renders hh.your_has_workplace_plan
@@ -188,7 +156,7 @@ def test_workplace_plan_session_state_flows_to_household(clean_command_center_ca
     assert "### No" in joined
 
 
-def test_ytd_snapshot_autoload_respects_suppress_flag(clean_command_center_caches) -> None:
+def test_ytd_snapshot_autoload_respects_suppress_flag() -> None:
     """C111 (audit-0805, MEDIUM): app.py's ytd_snapshot autoload guard lacks
     the ``_suppress_snapshot_autoload`` check present on the portfolio_snapshot
     autoload immediately above it, so a stale on-disk ``.ytd_cache.json``
@@ -211,9 +179,7 @@ def test_ytd_snapshot_autoload_respects_suppress_flag(clean_command_center_cache
     )
 
 
-def test_finextract_sync_snapshot_does_not_bypass_the_gate(
-    clean_command_center_caches,
-) -> None:
+def test_finextract_sync_snapshot_does_not_bypass_the_gate() -> None:
     """Bug 1 regression: a fresh FinExtract snapshot (loaded at boot from the
     on-disk portfolio cache) must be recorded as a FINEXTRACT_LIVE candidate
     (pending review), never written straight into
@@ -232,8 +198,6 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
     """
     from engine.data_sources.paths import COMMITTED_PATH
 
-    for p in _new_cache_files():
-        p.unlink(missing_ok=True)
     get_store().delete(PORTFOLIO)
 
     try:
@@ -268,16 +232,11 @@ def test_finextract_sync_snapshot_does_not_bypass_the_gate(
         get_store().delete(PORTFOLIO)
 
 
-def test_resolved_sourced_values_are_written_back_to_session_state(
-    clean_command_center_caches,
-) -> None:
+def test_resolved_sourced_values_are_written_back_to_session_state() -> None:
     """Post-resolve writeback: on a fresh (no prior committed baseline)
     load, session_state mirrors the migrated/committed household every
     render — including through the stock_price_now -> "stock_price" alias.
     """
-    for p in _new_cache_files():
-        p.unlink(missing_ok=True)
-
     at = AppTest.from_file(str(APP_PATH), default_timeout=_PAGE_TIMEOUT)
     at.session_state["_suppress_snapshot_autoload"] = True
     at.run()
@@ -287,9 +246,7 @@ def test_resolved_sourced_values_are_written_back_to_session_state(
     assert at.session_state["stock_price"] == DEFAULTS["stock_price_now"]
 
 
-def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_revert(
-    clean_command_center_caches,
-) -> None:
+def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_revert() -> None:
     """Bug 2 regression, end-to-end through the real app.py router + Setup
     page's Portfolio tab (``render_options_partial`` as of Task 5 of the
     ui-shell-theme-toggle plan — previously Command Center's generic loop,
@@ -312,9 +269,6 @@ def test_command_center_stock_price_confirm_sticks_and_next_render_does_not_reve
     from engine.data_sources.candidate_store import CandidateStore
     from engine.data_sources.choices import ChoiceMap
     from engine.data_sources.paths import CANDIDATE_STORE_PATH, COMMITTED_PATH, TRUST_CHOICES_PATH
-
-    for p in _new_cache_files():
-        p.unlink(missing_ok=True)
 
     recorded_at = datetime(2026, 1, 1)
     committed_path = COMMITTED_PATH
