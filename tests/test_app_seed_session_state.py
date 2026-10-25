@@ -96,13 +96,16 @@ def _run_seed_session_state(
     Returns the resulting fake session_state for assertions.
     """
     text = APP_PATH.read_text()
-    func = next(
-        node
+    # _report_refused_save is exec'd from app.py too, so it sees the fakes below.
+    wanted = ("_report_refused_save", "_seed_session_state")
+    funcs = {
+        node.name: node
         for node in ast.parse(text).body
-        if isinstance(node, ast.FunctionDef) and node.name == "_seed_session_state"
-    )
-    source = ast.get_source_segment(text, func)
-    assert source is not None
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
+    }
+    assert set(funcs) == set(wanted)
+    sources = [ast.get_source_segment(text, funcs[name]) for name in wanted]
+    assert all(src is not None for src in sources)
     fake_st = _FakeSt()
 
     def _fake_load_instance_owner() -> str | None:
@@ -129,7 +132,8 @@ def _run_seed_session_state(
         "store_error_message": lambda exc: f"banner: {exc}",
         "_boot_store_errors": [],
     }
-    exec(compile(source, "<_seed_session_state>", "exec"), namespace)
+    for name, src in zip(wanted, sources, strict=True):
+        exec(compile(src or "", f"<{name}>", "exec"), namespace)
     namespace["_seed_session_state"]()
     if errors is not None:
         errors.extend(fake_st.errors)

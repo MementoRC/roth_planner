@@ -127,10 +127,7 @@ def _seed_session_state() -> None:
     except StoreUnavailableError as exc:
         # Saving disabled by a failed import: its banner is already shown.
         # Any other unavailable store gets the storage banner (once).
-        if not saving_disabled() and not _boot_store_errors:
-            st.error(store_error_message(exc))
-        if not saving_disabled():
-            _boot_store_errors.append(exc)
+        _report_refused_save(exc)
         st.session_state.setdefault("instance_owner", None)
     # Issue #43: remember what the governed fields were seeded with so the
     # first resolve does not read an untouched seed as a manual edit.
@@ -348,7 +345,9 @@ def _current_pending_review() -> set[str]:
         committed_json = load_committed()
         store = CandidateStore.load()
         choices = ChoiceMap.load()
-    except (CorruptCommittedCacheError, StoreError):
+    except (CorruptCommittedCacheError, StoreUnavailableError):
+        # The candidate/choice loaders turn a corrupt row into a flag; only an
+        # unavailable store (or a corrupt committed baseline) gets here.
         return published
     if committed_json is not None:
         apply_committed(base, committed_json)

@@ -35,7 +35,7 @@ from engine.instance_identity import (
 from engine.pdf_owner import load_owner_map, save_owner_map
 from engine.portfolio_sync.shapes import SSABenefitEstimate, SSASnapshot
 from engine.portfolio_sync.social_security import save_ssa_snapshot
-from engine.store import SINGLE_KEY, CorruptStoreError, Store, set_store
+from engine.store import SINGLE_KEY, CorruptStoreError, Store, StoreUnavailableError, set_store
 from engine.store.backend import RoutedBackend
 from engine.store.json_readonly import JsonReadOnlyBackend
 from engine.store.legacy_files import registered
@@ -322,37 +322,60 @@ class TestRenderWhileSavingIsDisabled:
         """A cached SSA snapshot / 1040 record makes app.py record a candidate at boot."""
         import engine.data_sources.record as record_mod
 
-        calls: list[str] = []
-        for name in ("record_ss_fra_candidate", "record_magi_candidates"):
-            real = getattr(record_mod, name)
-
-            def spy(*args, _real=real, _name=name, **kwargs):
-                calls.append(_name)
-                return _real(*args, **kwargs)
-
-            monkeypatch.setattr(record_mod, name, spy)
+        refused = _spy_refusals(
+            monkeypatch, record_mod, ("record_ss_fra_candidate", "record_magi_candidates")
+        )
         if cached == "ssa":
             save_ssa_snapshot(_ssa_snapshot(1_000.0), owner="you")
+            expected = "record_ss_fra_candidate"
         else:
             save_pdf_tax_records(_form_1040(50_000.0))
+            expected = "record_magi_candidates"
 
         at = AppTest.from_file(str(_APP), default_timeout=60)
         at.session_state["_suppress_snapshot_autoload"] = True
         at.session_state["your_fra_age"] = 67
         at.run()
 
-        assert calls, "the boot-time candidate recording was not reached"
+        # The real recording ran, was refused, and app.py swallowed the refusal.
+        assert expected in refused, "the boot-time candidate recording was not refused"
         assert not at.exception
         assert _no_storage_banner(at)
 
-    def test_other_refused_saves_show_one_storage_banner(self, store_refusing_saves):
+    def test_other_refused_saves_show_one_storage_banner(self, store_refusing_saves, monkeypatch):
         """No failed import: a refused save is not quiet, but boot and resolve share one banner."""
+        import engine.data_sources.committed as committed_mod
+        import engine.data_sources.record as record_mod
+
+        refused = _spy_refusals(monkeypatch, record_mod, ("record_magi_candidates",))
+        _spy_refusals(monkeypatch, committed_mod, ("save_committed",), refused)
         save_pdf_tax_records(_form_1040(50_000.0))
         at = AppTest.from_file(str(_APP), default_timeout=60)
         at.session_state["_suppress_snapshot_autoload"] = True
         at.session_state["nav_page"] = "overview"
         at.run()
         assert not at.exception
+        assert "record_magi_candidates" in refused, "the boot-time refusal did not fire"
+        assert "save_committed" in refused, "the resolve-time refusal did not fire"
         banners = _storage_banners(at)
         assert len(banners) == 1
         assert "saving is disabled" in banners[0]
+
+
+def _spy_refusals(
+    monkeypatch, module, names: tuple[str, ...], refused: list[str] | None = None
+) -> list[str]:
+    """Wrap *names* in *module*; *refused* collects each name whose real call was refused."""
+    refused = [] if refused is None else refused
+    for name in names:
+        real = getattr(module, name)
+
+        def spy(*args, _real=real, _name=name, **kwargs):
+            try:
+                return _real(*args, **kwargs)
+            except StoreUnavailableError:
+                refused.append(_name)
+                raise
+
+        monkeypatch.setattr(module, name, spy)
+    return refused
