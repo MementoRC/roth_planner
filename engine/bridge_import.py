@@ -9,8 +9,8 @@ The import runs in stages, and nothing is written until the last one:
    slot (or redirect a legacy v4 file into the ``you`` slot).
 2. :func:`apply_import` -- a pure function building the NEW snapshot, ledger,
    YTD and session-state updates on deep copies, then validating them.
-3. :func:`commit_import` -- writes the three caches in order, rolling back
-   the earlier writes when a later one fails.
+3. :func:`commit_import` -- writes the three caches in order; the caller's
+   store transaction rolls the earlier writes back when a later one fails.
 
 Ownership rules this module encodes (spec 2026-09-20 + section 5a):
 
@@ -28,7 +28,6 @@ Ownership rules this module encodes (spec 2026-09-20 + section 5a):
 
 from __future__ import annotations
 
-import contextlib
 import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -792,7 +791,6 @@ def apply_import(
 
 def commit_import(
     result: ImportResult,
-    previous: LocalState,
     *,
     save_snapshot: Callable[..., None],
     save_ledger: Callable[[Any], None],
@@ -800,47 +798,16 @@ def commit_import(
 ) -> None:
     """Write *result* to the three caches in order: snapshot, ledger, YTD.
 
-    Three separate files cannot be swapped atomically (plan R14), so this is
-    ordered writes with best-effort rollback: when a write fails, every write
-    that already succeeded is re-done with *previous*'s object, newest first,
-    and the ORIGINAL error is re-raised. A rollback failure is swallowed so it
-    cannot mask that error. A previous snapshot or YTD that never existed is
-    not "restored" by inventing an empty cache.
-
-    The savers are injected so this stays pure and testable. The forward
-    snapshot write passes ``allow_empty=False`` (audit-0823 PS-2b); restoring
-    the pre-import snapshot passes ``allow_empty=True``, since putting back
-    what was already there is never the data loss that guard exists to stop.
+    The caller runs this inside one store transaction (spec §2), so a failed
+    write rolls back the ones before it; this function only orders the writes
+    and stops at the first failure. The savers are injected so this module
+    stays pure (no Streamlit, no store). The snapshot write passes
+    ``allow_empty=False`` (audit-0823 PS-2b).
     """
-    steps: list[tuple[Callable[[], None], Callable[[], None] | None]] = [
-        (
-            lambda: save_snapshot(result.snapshot, allow_empty=False),
-            (lambda: save_snapshot(previous.snapshot, allow_empty=True))
-            if previous.snapshot is not None
-            else None,
-        ),
-        (lambda: save_ledger(result.ledger), lambda: save_ledger(previous.ledger)),
-    ]
+    save_snapshot(result.snapshot, allow_empty=False)
+    save_ledger(result.ledger)
     if result.ytd is not None:
-        steps.append(
-            (
-                lambda: save_ytd(result.ytd),
-                (lambda: save_ytd(previous.ytd)) if previous.ytd is not None else None,
-            )
-        )
-    done: list[Callable[[], None] | None] = []
-    for write, undo in steps:
-        try:
-            write()
-        except Exception:
-            for rollback in reversed(done):
-                if rollback is None:
-                    continue
-                # Best effort: a failed rollback must never mask the original error.
-                with contextlib.suppress(Exception):
-                    rollback()
-            raise
-        done.append(undo)
+        save_ytd(result.ytd)
 
 
 def _unchanged(local: LocalState) -> ImportResult:

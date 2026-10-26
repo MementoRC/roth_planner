@@ -9,14 +9,19 @@ modules, so their tests are not collected twice). Synthetic values only.
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import engine.data_sources.scan_ingest as scan_ingest_mod
+import views.setup.data_bridge as data_bridge_mod
+from engine.data_sources.orchestrator import BUNDLE_SCALARS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.netbenefits_statement_pdf import parse_netbenefits_text
 from engine.pdf_import import PdfImportResult
+from engine.portfolio_sync.portfolio import save_snapshot
+from engine.portfolio_sync.shapes import AccountSummary, PortfolioSnapshot
 from engine.ssa_statement_pdf import parse_ssa_statement_text
 from engine.store import StoreUnavailableError
 from engine.store.namespaces import (
@@ -28,7 +33,9 @@ from engine.store.namespaces import (
     SSA,
     SSA_PDF,
     TAX_PDF,
+    YTD,
 )
+from models.ytd_income import YTDSnapshot
 from tests import test_sync_scan_ira_statements as ira_tests
 from tests import test_sync_scan_netbenefits as nb_tests
 from tests import test_sync_scan_uploader as upload_tests
@@ -212,3 +219,50 @@ def test_a_scan_whose_ytd_write_fails_saves_no_statement_or_ledger(store):
     assert store.keys(BROKERAGE_STATEMENTS) == []
     assert store.keys(PDF_LEDGER) == []
     assert "statement_by_account" not in state
+
+
+def _taxable(total: float) -> PortfolioSnapshot:
+    return PortfolioSnapshot(
+        accounts=[AccountSummary(account_type="taxable", owner="you", total_value=total)]
+    )
+
+
+def test_a_bridge_import_that_fails_last_changes_no_store_and_stages_nothing(store, monkeypatch):
+    save_snapshot(_taxable(1_000.0))
+    before = store.get(PORTFOLIO)
+    result = SimpleNamespace(
+        snapshot=_taxable(2_000.0),
+        ledger={"koinly": {}, "brokerage": {}},
+        ytd=YTDSnapshot(),
+        scalar_updates={"your_ira": 1_000},
+        joint_conflicts=(),
+        account_type_overrides={},
+        magi_candidates={2024: 50_000.0},
+        slot_captured_at={"you": "synthetic-later"},
+    )
+    ready = SimpleNamespace(
+        bundle=None,
+        plan=None,
+        local=SimpleNamespace(account_type_overrides={}, slot_captured_at={}),
+        selected=frozenset(),
+        operator=None,
+        data={"sections": {"setup_scalars": {}}},
+        version="v5",
+    )
+    session: dict = {}
+    saved_defaults: list = []
+    monkeypatch.setattr(data_bridge_mod.st, "session_state", session)
+    monkeypatch.setattr(data_bridge_mod, "apply_import", lambda *a, **k: result)
+    monkeypatch.setattr(data_bridge_mod, "slots_with_replaced_accounts", lambda *a: [])
+    monkeypatch.setattr(data_bridge_mod, "save_user_defaults", saved_defaults.append)
+    monkeypatch.setattr(data_bridge_mod, "_settle_ytd", _locked)  # the LAST write fails
+    with pytest.raises(StoreUnavailableError, match="database is locked"):
+        data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    assert store.get(PORTFOLIO) == before
+    assert store.keys(YTD) == []
+    assert store.keys(CANDIDATE_STORE) == []
+    assert BUNDLE_SCALARS_KEY not in session
+    assert "_pending_defaults" not in session
+    assert "_slot_captured_at" not in session
+    assert "portfolio_snapshot" not in session
+    assert saved_defaults == []

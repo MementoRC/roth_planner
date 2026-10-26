@@ -60,6 +60,7 @@ from models.household import Household
 from models.sourced import Source
 from models.ytd_income import YTDSnapshot
 from views._shared import auto_deselect_manual_entry, operator_slot
+from views._store_transaction import store_transaction
 
 from ._partials._import_preview import SLOT_ORDER, render_import_preview, render_v4_slot_picker
 from ._state import (
@@ -629,12 +630,16 @@ def _stamp_bundle_scalars_in_baseline(scalar_updates: dict) -> None:
 
 
 def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
-    """Apply a previewed upload: build, write the three caches, then stage the session.
+    """Apply a previewed upload: one store transaction, then stage the session.
 
-    Nothing reaches session state until every cache write has succeeded
-    (``commit_import`` rolls earlier writes back when a later one fails). Any
-    exception other than the refused-empty-portfolio guard is OUR defect and
-    propagates rather than being reported as a bad file (audit-0823).
+    Every store write -- the three caches (``commit_import``), the baseline
+    stamp, the MAGI candidates, the superseded-candidate discard and the YTD
+    re-derive -- runs in ONE store transaction (spec §2): a failure saves none
+    of them and puts back the session keys they touched. Only after it commits
+    are the next run's defaults staged and the slot timestamps written
+    (``.user_defaults.json`` is a file, outside the store). Any exception other
+    than the two refusals below is OUR defect and propagates rather than being
+    reported as a bad file (audit-0823); a store error reaches the page banner.
     """
     try:
         result = apply_import(
@@ -645,13 +650,24 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
             operator=ready.operator,
             apply_v4_bundle=apply_bundle,
         )
-        commit_import(
-            result,
-            ready.local,
-            save_snapshot=save_snapshot,
-            save_ledger=_save_pdf_ledger,
-            save_ytd=save_ytd_snapshot,
-        )
+        with store_transaction(st.session_state, BUNDLE_SCALARS_KEY, "ytd_snapshot"):
+            commit_import(
+                result,
+                save_snapshot=save_snapshot,
+                save_ledger=_save_pdf_ledger,
+                save_ytd=save_ytd_snapshot,
+            )
+            _stamp_bundle_scalars_in_baseline(result.scalar_updates)
+            if result.magi_candidates:
+                # Source.BUNDLE candidates for Command Center review, never a
+                # full session_state replace (audit defect #2).
+                record_magi_candidates(
+                    result.magi_candidates, Source.BUNDLE, "Data bridge import", datetime.now()
+                )
+            # A statement-PDF balance candidate was computed from accounts this
+            # import just replaced; leaving it would offer a superseded figure.
+            discard_pdf_balance_candidates(slots_with_replaced_accounts(ready.plan, ready.selected))
+            manual_entry_kept_explicit = _settle_ytd(result, ready)
     except EmptySnapshotWriteRefusedError:
         st.error(
             "Import refused: this bundle would remove every account from your "
@@ -672,24 +688,13 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     # NEXT run (see _apply_user_defaults_to_session).
     pending = st.session_state.setdefault("_pending_defaults", {})
     pending.update(result.scalar_updates)
-    _stamp_bundle_scalars_in_baseline(result.scalar_updates)
     if result.joint_conflicts:
         pending["_bundle_joint_conflicts"] = [dict(c) for c in result.joint_conflicts]
     if result.account_type_overrides != dict(ready.local.account_type_overrides):
         pending["account_type_overrides"] = result.account_type_overrides
-    if result.magi_candidates:
-        # Source.BUNDLE candidates for Command Center review, never a full
-        # session_state replace (audit defect #2).
-        record_magi_candidates(
-            result.magi_candidates, Source.BUNDLE, "Data bridge import", datetime.now()
-        )
-    # A statement-PDF balance candidate was computed from accounts this import
-    # just replaced; leaving it would offer a superseded figure in Review Changes.
-    discard_pdf_balance_candidates(slots_with_replaced_accounts(ready.plan, ready.selected))
     _persist_slot_captured_at(result.slot_captured_at, dict(ready.local.slot_captured_at))
     st.session_state["portfolio_snapshot"] = result.snapshot
     st.session_state.pop("_suppress_snapshot_autoload", None)
-    manual_entry_kept_explicit = _settle_ytd(result, ready)
 
     # Strike prices arrived but no grants to attach them to: Household.grants
     # is still the synthetic demo default_factory, which silently poisons every
@@ -879,8 +884,10 @@ def _rederive_ytd_from_ledger(ledger: object) -> bool:
 
     snap.with_snapshot_date()
     st.session_state["ytd_snapshot"] = snap
-    deselected = auto_deselect_manual_entry(st.session_state)
+    # Save first: ``ytd_manual_entry`` is widget-backed, so the import's
+    # transaction cannot put it back if this write fails.
     save_ytd_snapshot(snap)
+    deselected = auto_deselect_manual_entry(st.session_state)
     return not deselected
 
 

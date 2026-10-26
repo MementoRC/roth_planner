@@ -24,6 +24,7 @@ from engine.bridge_import import (
 )
 from engine.portfolio_sync.portfolio import EmptySnapshotWriteRefusedError
 from engine.portfolio_sync.shapes import AccountSummary, EquityGrant, PortfolioSnapshot
+from engine.store.namespaces import PDF_LEDGER, PORTFOLIO
 from models.ytd_income import OWNED_YTD_FIELDS, IncomeEvent, YTDSnapshot
 from tests.test_bridge_ytd_overwrite import _receiver_snapshot, _sender_snapshot
 
@@ -489,18 +490,14 @@ class TestApplyV4:
 class _Savers:
     """Fake cache writers recording every call; ``fail`` names one that raises."""
 
-    def __init__(self, fail: str | None = None, fail_rollback: bool = False):
+    def __init__(self, fail: str | None = None):
         self.calls: list[tuple[str, object, dict]] = []
         self.fail = fail
-        self.fail_rollback = fail_rollback
 
     def _record(self, name, obj, kwargs):
-        rollback = any(c[0] == name for c in self.calls)
         self.calls.append((name, obj, kwargs))
-        if name == self.fail and not rollback:
+        if name == self.fail:
             raise OSError(f"{name} write failed")
-        if rollback and self.fail_rollback:
-            raise OSError(f"{name} rollback failed")
 
     def snapshot(self, obj, **kwargs):
         self._record("snapshot", obj, kwargs)
@@ -515,69 +512,61 @@ class _Savers:
         return {"save_snapshot": self.snapshot, "save_ledger": self.ledger, "save_ytd": self.ytd}
 
 
+def _commit_in_transaction(store, result, savers: dict) -> None:
+    with store.transaction():
+        commit_import(result, **savers)
+
+
 class TestCommitImport:
     def test_commit_writes_snapshot_ledger_ytd_in_order(self):
-        local = _receiver()
-        result = _apply(_spouse_bundle(), local)
+        result = _apply(_spouse_bundle(), _receiver())
         savers = _Savers()
-        commit_import(result, local, **savers.kwargs())
+        commit_import(result, **savers.kwargs())
         assert [(n, o) for n, o, _ in savers.calls] == [
             ("snapshot", result.snapshot),
             ("ledger", result.ledger),
             ("ytd", result.ytd),
         ]
 
-    def test_commit_rolls_back_earlier_writes_when_later_write_fails(self):
-        local = _receiver()
-        result = _apply(_spouse_bundle(), local)
-        savers = _Savers(fail="ytd")
-        with pytest.raises(OSError, match="ytd write failed"):
-            commit_import(result, local, **savers.kwargs())
-        names = [n for n, _, _ in savers.calls]
-        assert names == ["snapshot", "ledger", "ytd", "ledger", "snapshot"]
-        assert savers.calls[3][1] is local.ledger
-        assert savers.calls[4][1] is local.snapshot
-
-    def test_commit_passes_allow_empty_false_to_snapshot_saver(self):
-        local = _receiver()
-        result = _apply(_spouse_bundle(), local)
+    def test_commit_stops_at_the_first_failed_write_and_undoes_nothing_itself(self):
+        result = _apply(_spouse_bundle(), _receiver())
         savers = _Savers(fail="ledger")
         with pytest.raises(OSError, match="ledger write failed"):
-            commit_import(result, local, **savers.kwargs())
+            commit_import(result, **savers.kwargs())
+        # The caller's store transaction undoes the snapshot write (spec §2).
+        assert [n for n, _, _ in savers.calls] == ["snapshot", "ledger"]
+
+    def test_commit_passes_allow_empty_false_to_snapshot_saver(self):
+        result = _apply(_spouse_bundle(), _receiver())
+        savers = _Savers()
+        commit_import(result, **savers.kwargs())
         assert savers.calls[0][2] == {"allow_empty": False}
-        # Restoring the pre-import snapshot is not a new empty write to refuse.
-        assert savers.calls[-1][2] == {"allow_empty": True}
 
     def test_commit_skips_ytd_when_result_has_none(self):
         local = LocalState(snapshot=PortfolioSnapshot())
         result = _apply(_v4_bundle(), local)
         assert result.ytd is None
         savers = _Savers()
-        commit_import(result, local, **savers.kwargs())
+        commit_import(result, **savers.kwargs())
         assert [n for n, _, _ in savers.calls] == ["snapshot", "ledger"]
 
-    def test_rollback_failure_does_not_mask_the_original_error(self):
+    def test_in_a_store_transaction_a_failed_write_leaves_every_cache_as_it_was(self, store):
+        from engine.pdf_ledger import save_ledger
+        from engine.portfolio_sync.portfolio import save_snapshot
+
         local = _receiver()
+        save_snapshot(local.snapshot, allow_empty=True)
+        before = store.get(PORTFOLIO)
         result = _apply(_spouse_bundle(), local)
-        savers = _Savers(fail="ytd", fail_rollback=True)
+        savers = {
+            "save_snapshot": save_snapshot,
+            "save_ledger": save_ledger,
+            "save_ytd": _Savers(fail="ytd").ytd,
+        }
         with pytest.raises(OSError, match="ytd write failed"):
-            commit_import(result, local, **savers.kwargs())
-        assert [n for n, _, _ in savers.calls] == [
-            "snapshot",
-            "ledger",
-            "ytd",
-            "ledger",
-            "snapshot",
-        ]
-
-    def test_rollback_skips_a_snapshot_that_never_existed(self):
-        local = LocalState(ledger={"koinly": {}, "brokerage": {}})
-        result = _apply(_spouse_bundle(), local)
-        savers = _Savers(fail="ledger")
-        with pytest.raises(OSError, match="ledger write failed"):
-            commit_import(result, local, **savers.kwargs())
-        # No pre-import snapshot to restore: writing an empty one would invent a cache.
-        assert [n for n, _, _ in savers.calls] == ["snapshot", "ledger"]
+            _commit_in_transaction(store, result, savers)
+        assert store.get(PORTFOLIO) == before
+        assert store.keys(PDF_LEDGER) == []
 
 
 class TestPurity:
