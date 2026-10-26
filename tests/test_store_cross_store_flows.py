@@ -27,6 +27,7 @@ from engine.portfolio_sync.portfolio import save_snapshot
 from engine.portfolio_sync.shapes import AccountSummary, PortfolioSnapshot
 from engine.ssa_statement_pdf import parse_ssa_statement_text
 from engine.store import StoreUnavailableError
+from engine.store.core import SINGLE_KEY
 from engine.store.namespaces import (
     BROKERAGE_STATEMENTS,
     CANDIDATE_STORE,
@@ -37,6 +38,7 @@ from engine.store.namespaces import (
     SSA,
     SSA_PDF,
     TAX_PDF,
+    TRUST_CHOICES,
     YTD,
 )
 from models.household import Household
@@ -379,3 +381,19 @@ def test_a_refused_choice_save_rolls_back_the_confirmed_baseline(store):
     with pytest.raises(StoreUnavailableError, match="database is locked"):
         _confirm_your_ira(committed)
     assert store.keys(COMMITTED) == []
+
+
+def test_an_unreadable_choice_map_still_commits_the_confirm(store, corrupt_row, monkeypatch):
+    warnings: list = []
+    monkeypatch.setattr(governance_mod.st, "warning", warnings.append)
+    monkeypatch.setattr(governance_mod.st, "success", lambda *_a, **_k: None)
+    monkeypatch.setattr(governance_mod.st, "session_state", {})
+    payload = corrupt_row(TRUST_CHOICES)
+    committed = migrate_committed(Household(), datetime(2026, 1, 1, 12, 0, 0))
+    confirmed = governance_mod._handle_confirm_click(
+        "your_ira", committed, ChoiceMap(), [], None, 1_000.0
+    )
+    assert confirmed is True
+    assert store.keys(COMMITTED) != []
+    assert store.backend.get(TRUST_CHOICES, SINGLE_KEY).payload == payload
+    assert any("source choice was not remembered" in w for w in warnings)
