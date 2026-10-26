@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import engine.data_sources.scan_ingest as scan_ingest_mod
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.netbenefits_statement_pdf import parse_netbenefits_text
 from engine.pdf_import import PdfImportResult
@@ -24,18 +25,49 @@ from engine.store.namespaces import (
     IRA_ACCOUNT_LINKS,
     PDF_LEDGER,
     PORTFOLIO,
+    SSA,
     SSA_PDF,
+    TAX_PDF,
 )
 from tests import test_sync_scan_ira_statements as ira_tests
 from tests import test_sync_scan_netbenefits as nb_tests
 from tests import test_sync_scan_uploader as upload_tests
 from tests.test_netbenefits_statement_pdf import PAGES as NB_PAGES
 from tests.test_ssa_statement_pdf import PAGES as SSA_PAGES
+from tests.test_store_provenance_stores import _form_1040, _ssa_snapshot
+from views.setup._partials import _accounts as accounts_mod
 from views.ytd_income._partials import _sync_scan as sync_scan_mod
 
 
 def _locked(*_args, **_kwargs):
     raise StoreUnavailableError("/synthetic/.roth_planner.db", "database is locked")
+
+
+def _record_1040s() -> None:
+    scan_ingest_mod._record_scan_result(
+        PdfImportResult(form_1040_records=_form_1040(50_000.0)), recorded_at=None
+    )
+
+
+def test_a_1040_scan_whose_candidate_write_fails_saves_no_1040_records(store, monkeypatch):
+    monkeypatch.setattr(scan_ingest_mod, "record_magi_candidates", _locked)
+    with pytest.raises(StoreUnavailableError, match="database is locked"):
+        _record_1040s()
+    assert store.keys(TAX_PDF) == []
+
+
+def test_a_corrupt_ssa_cache_also_drops_the_synced_candidate(store, monkeypatch):
+    """Decision 6: "this sync was not saved" is now true of the candidate too."""
+    store.put(SSA, [1, 2])  # wrong shape: save_ssa_snapshot refuses it
+    session: dict = {}
+    monkeypatch.setattr(accounts_mod.st, "session_state", session)
+    monkeypatch.setattr(accounts_mod, "fetch_ssa_snapshot", lambda: _ssa_snapshot(1_000.0))
+    warning = accounts_mod._sync_ssa_for("you", 67)
+    assert warning is not None
+    assert "not saved" in warning
+    assert store.keys(CANDIDATE_STORE) == []
+    assert store.get(SSA) == [1, 2]
+    assert "ssa_snapshot_you" not in session
 
 
 def _apply_ira(mock_st) -> None:
