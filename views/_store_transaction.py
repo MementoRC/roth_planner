@@ -7,6 +7,12 @@ as they were (removed if they were absent), so the page never shows values the
 store rolled back. Values are deep-copied first because the flows mutate their
 snapshots in place.
 
+Nested blocks join the outer transaction (there are no savepoints). If an inner
+block raises and the caller catches the error inside the outer block, the inner
+keys are restored but the store writes are kept. Only the outermost block's
+keys are restored when the outer block fails, so list every session key the
+whole flow touches in the outermost call.
+
 Rules for callers:
 
 - Never call ``st.rerun()`` or ``st.stop()`` inside the block. Both raise, and
