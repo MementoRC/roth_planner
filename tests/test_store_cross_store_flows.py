@@ -14,9 +14,17 @@ from unittest.mock import patch
 import pytest
 
 from engine.netbenefits_statement_pdf import parse_netbenefits_text
+from engine.pdf_import import PdfImportResult
 from engine.ssa_statement_pdf import parse_ssa_statement_text
 from engine.store import StoreUnavailableError
-from engine.store.namespaces import CANDIDATE_STORE, IRA_ACCOUNT_LINKS, PORTFOLIO, SSA_PDF
+from engine.store.namespaces import (
+    BROKERAGE_STATEMENTS,
+    CANDIDATE_STORE,
+    IRA_ACCOUNT_LINKS,
+    PDF_LEDGER,
+    PORTFOLIO,
+    SSA_PDF,
+)
 from tests import test_sync_scan_ira_statements as ira_tests
 from tests import test_sync_scan_netbenefits as nb_tests
 from tests.test_netbenefits_statement_pdf import PAGES as NB_PAGES
@@ -103,3 +111,27 @@ def test_ssa_apply_records_no_candidate_when_the_estimates_write_fails(store):
     assert store.keys(CANDIDATE_STORE) == []
     assert store.keys(SSA_PDF) == []
     assert state["ssa_statements"] == [stmt]
+
+
+def _scan(mock_st, result: PdfImportResult) -> None:
+    with (
+        patch.object(sync_scan_mod, "st", mock_st),
+        patch.object(sync_scan_mod, "save_ytd_snapshot", _locked),
+    ):
+        sync_scan_mod._apply_scan_result(
+            result,
+            ledger={"koinly": {}, "brokerage": {}},
+            account_overrides={},
+            owner_map={},
+            instance_owner="you",
+        )
+
+
+def test_a_scan_whose_ytd_write_fails_saves_no_statement_or_ledger(store):
+    mock_st, state = ira_tests._mock_st()
+    rec = ira_tests._rec(account_type="taxable", account_number="T1")
+    with pytest.raises(StoreUnavailableError, match="database is locked"):
+        _scan(mock_st, PdfImportResult(brokerage_records=[rec]))
+    assert store.keys(BROKERAGE_STATEMENTS) == []
+    assert store.keys(PDF_LEDGER) == []
+    assert "statement_by_account" not in state

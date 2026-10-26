@@ -9,9 +9,10 @@ snapshots in place.
 
 Nested blocks join the outer transaction (there are no savepoints). If an inner
 block raises and the caller catches the error inside the outer block, the inner
-keys are restored but the store writes are kept. Only the outermost block's
-keys are restored when the outer block fails, so list every session key the
-whole flow touches in the outermost call.
+keys are restored but the store writes are kept. When the outer block fails
+after the inner block has exited, only the outer block's keys are restored (an
+error that propagates out of the inner block restores both blocks' keys), so
+list every session key the whole flow touches in the outermost call.
 
 Rules for callers:
 

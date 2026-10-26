@@ -402,7 +402,45 @@ def _merge_ubs_orders(
     return list(merged.values())
 
 
+# Session keys _write_scan_result changes, put back if its transaction rolls back.
+_SCAN_SESSION_KEYS: tuple[str, ...] = (
+    "statement_by_account",
+    "ytd_snapshot",
+    "ira_statements",
+    "netbenefits_statements",
+    "ssa_statements",
+    "holder_name_mismatches",
+)
+
+
 def _apply_scan_result(
+    result: PdfImportResult,
+    *,
+    ledger: PdfLedger,
+    account_overrides: dict[tuple[str, str], str],
+    owner_map: dict[str, str],
+    instance_owner: str,
+    not_found_message: str = "No importable financial PDFs found.",
+) -> PdfLedger:
+    """Apply one scanned ``PdfImportResult`` (see :func:`_write_scan_result`).
+
+    Every store write of the apply -- statement cache, ledger, Koinly report,
+    YTD snapshot -- runs in ONE store transaction (spec §2): a failure saves
+    none of them and puts back the session keys the apply changed. Parsing
+    already happened in the caller, outside the transaction.
+    """
+    with store_transaction(st.session_state, *_SCAN_SESSION_KEYS):
+        return _write_scan_result(
+            result,
+            ledger=ledger,
+            account_overrides=account_overrides,
+            owner_map=owner_map,
+            instance_owner=instance_owner,
+            not_found_message=not_found_message,
+        )
+
+
+def _write_scan_result(
     result: PdfImportResult,
     *,
     ledger: PdfLedger,
@@ -414,7 +452,8 @@ def _apply_scan_result(
     """Apply one scanned ``PdfImportResult`` to the ledger + YTD snapshot and
     report the outcome; return the (possibly mutated) *ledger*.
 
-    Shared by the folder-scan handler and the uploaded-PDF handler below so
+    Run by :func:`_apply_scan_result` (shared by the folder-scan and
+    uploaded-PDF handlers) so
     their ledger-write / apply / report behavior cannot drift apart -- pure
     extraction of what used to be the "Scan folder" button's inline body,
     same session-state writes, same save_ledger/save_ytd_snapshot calls, same
@@ -906,12 +945,27 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         st.warning(f"No valid UBS CSV order parsed (0 of {len(uploaded)} file(s)).")
         return
 
-    # A corrupt store must stop the import: merging into [] and saving would
-    # replace orders this page never read (audit-1008 F-70).
+    # One transaction (spec §2): the merged orders and the recomputed YTD
+    # snapshot are saved together or not at all. A corrupt store must stop the
+    # import: merging into [] and saving would replace orders this page never
+    # read (audit-1008 F-70).
     try:
-        existing = load_ubs_orders()
-        merged = _merge_ubs_orders(existing, new_orders)
-        save_ubs_orders(merged)
+        with store_transaction(st.session_state, "ytd_snapshot"):
+            existing = load_ubs_orders()
+            merged = _merge_ubs_orders(existing, new_orders)
+            save_ubs_orders(merged)
+            # Recompute immediately so the correction/exercise-income takes
+            # effect without a separate scan/apply click -- see this
+            # function's docstring.
+            snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
+            brokerage_totals = derive_brokerage_totals(ledger, tax_year=snap.tax_year)
+            ubs_warnings = _apply_ubs_correction(
+                brokerage_totals, ledger, snap, applied_orders=existing
+            )
+            snap.with_snapshot_date()
+            st.session_state.ytd_snapshot = snap
+            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
+            save_ytd_snapshot(snap)
     except UbsActivityStoreError as exc:
         st.error(
             f"UBS CSV(s) not imported: the stored UBS exercise data is unreadable ({exc}). "
@@ -931,15 +985,6 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         )
     )
 
-    # Recompute immediately so the correction/exercise-income takes effect
-    # without a separate scan/apply click -- see this function's docstring.
-    snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
-    brokerage_totals = derive_brokerage_totals(ledger, tax_year=snap.tax_year)
-    ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, snap, applied_orders=existing)
-    snap.with_snapshot_date()
-    st.session_state.ytd_snapshot = snap
-    _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
-    save_ytd_snapshot(snap)
     if _manual_entry_kept_explicit:
         st.caption(
             "Manual entry stayed ON — you turned it on yourself, so this "
@@ -1828,27 +1873,30 @@ def _render_scan_review(
             disabled=not identity_set,
         ):
             _apply_had_mismatch = False
-            for rec in stmt_taxable.values():
-                resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
-                if _warn_on_brokerage_holder_mismatch(
-                    rec, account_overrides, instance_owner, owner_map
-                ):
-                    _apply_had_mismatch = True
-                ledger = write_brokerage_contribution(ledger, resolved, rec)
-            save_ledger(ledger)
+            # One transaction (spec §2): the ledger and the YTD snapshot are saved
+            # together or not at all.
+            with store_transaction(st.session_state, "ytd_snapshot", "holder_name_mismatches"):
+                for rec in stmt_taxable.values():
+                    resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
+                    if _warn_on_brokerage_holder_mismatch(
+                        rec, account_overrides, instance_owner, owner_map
+                    ):
+                        _apply_had_mismatch = True
+                    ledger = write_brokerage_contribution(ledger, resolved, rec)
+                save_ledger(ledger)
 
-            prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-            brokerage_totals = derive_brokerage_totals(ledger, tax_year=prev_ytd.tax_year)
-            # Correct the UBS phantom-STCG double-count and land NQO exercise
-            # income BEFORE recording this as applied below -- see
-            # _apply_ubs_correction's docstring for why the totals dict must
-            # be corrected before apply_brokerage_totals assigns it onto the
-            # snapshot.
-            ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
-            prev_ytd.with_snapshot_date()
-            st.session_state.ytd_snapshot = prev_ytd
-            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
-            save_ytd_snapshot(prev_ytd)
+                prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
+                brokerage_totals = derive_brokerage_totals(ledger, tax_year=prev_ytd.tax_year)
+                # Correct the UBS phantom-STCG double-count and land NQO exercise
+                # income BEFORE recording this as applied below -- see
+                # _apply_ubs_correction's docstring for why the totals dict must
+                # be corrected before apply_brokerage_totals assigns it onto the
+                # snapshot.
+                ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
+                prev_ytd.with_snapshot_date()
+                st.session_state.ytd_snapshot = prev_ytd
+                _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
+                save_ytd_snapshot(prev_ytd)
             st.success(
                 f"Applied {len(counted)} taxable account(s) to YTD snapshot"
                 + (
