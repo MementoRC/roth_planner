@@ -389,9 +389,13 @@ def estimate_rmd_income(
     # balance tracking. Passing the STATIC iira.balance directly (the prior code)
     # drains the entire ORIGINAL balance in the final window year instead of the
     # true (much smaller) balance-of-record, a ~10x overstatement in the balloon
-    # year for a 10-year window.
+    # year for a 10-year window. iira.balance is the base-year balance (as in
+    # run_scenario), so the replay starts at hh.base_year, not inherited_year
+    # (audit-1026 F-02).
     inherited = sum(
-        inherited_ira_drain_for_year(iira.balance, iira.inherited_year, year, iira.growth_rate)
+        inherited_ira_drain_for_year(
+            iira.balance, iira.inherited_year, year, iira.growth_rate, balance_year=hh.base_year
+        )
         for iira in hh.inherited_iras
     )
     return your_rmd + spouse_rmd + inherited

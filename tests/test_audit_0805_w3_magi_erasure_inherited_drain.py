@@ -252,3 +252,24 @@ class TestC21InheritedIraDrainParity:
         final_year = self.BASE_YEAR + 11
         assert oracle_by_year[final_year] == approx(500_000.0 * 1.07**10 / 11, tol=5.0)
         assert oracle_by_year[final_year] < 500_000.0 / 2
+
+    @pytest.mark.parametrize(
+        ("inherited_year", "growth"), [(2023, 0.0), (2023, 0.05), (2026, 0.0), (2026, 0.05)]
+    )
+    def test_balance_is_base_year_balance_as_in_run_scenario(
+        self, inherited_year: int, growth: float
+    ) -> None:
+        """audit-1026 F-02: InheritedIRA.balance is the CURRENT (base-year)
+        balance; a death year before base_year must only shift the 10-year clock,
+        not replay drain/growth from the death year."""
+        iira = InheritedIRA(
+            balance=110_000.0, inherited_year=inherited_year, owner="you", growth_rate=growth
+        )
+        hh = self._hh(iira)
+        result = run_scenario(hh, ConversionPlan(), end_age=hh.your_age + 13)
+        oracle_by_year = {yr.year: yr.your_inherited_distribution for yr in result.years}
+
+        for year in (self.BASE_YEAR, self.BASE_YEAR + 1, self.BASE_YEAR + 5):
+            assert estimate_rmd_income(hh, year) == approx(oracle_by_year[year], tol=0.01)
+        if inherited_year == 2023 and growth == 0.0:
+            assert estimate_rmd_income(hh, self.BASE_YEAR) == approx(13_750.0, tol=0.01)
