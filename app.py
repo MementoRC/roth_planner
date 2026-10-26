@@ -28,7 +28,7 @@ from engine.data_sources.candidate_store import CorruptCandidateStoreError  # no
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
-from engine.store import StoreError, StoreUnavailableError, saving_disabled  # noqa: E402
+from engine.store import StoreError, StoreUnavailableError, get_store, saving_disabled  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
@@ -404,6 +404,7 @@ def _persist_resolution(
     disabled saving, the refusal is quiet, because render_store_notice()
     already shows that banner on every run. Any other unavailable-storage
     error gets the one storage banner (shared with the boot-time reads).
+    A corrupt saved document (a ``StoreError``) gets the same one banner.
     """
     if _DEMO_MODE:
         return
@@ -411,6 +412,14 @@ def _persist_resolution(
         _save_resolution(app_res, store, choices, committed_unreadable)
     except StoreUnavailableError as exc:
         _report_refused_save(exc)
+    except StoreError as exc:
+        # A corrupt saved document met while saving (e.g. the baseline turned
+        # corrupt after get_household() read it): the transaction rolled back;
+        # show the one storage banner, not a traceback. get_household() runs
+        # outside _route_and_badge's StoreError catch.
+        if not _boot_store_errors:
+            st.error(store_error_message(exc))
+        _boot_store_errors.append(exc)
 
 
 def _save_resolution(
@@ -419,45 +428,51 @@ def _save_resolution(
     choices: ChoiceMap,
     committed_unreadable: bool,
 ) -> None:
-    # Persist: write the migrated committed baseline only on first migration
-    # (or when none existed), and always persist the candidate/choice stores.
-    # audit-0809 #11: if the saved committed baseline was corrupt (see above),
-    # app_res.committed_changed is still True here (resolve_for_app treated
-    # committed_json=None as "first load" and freshly migrated one) — but
-    # saving now would overwrite the still-intact corrupt file with the
-    # in-memory migration, destroying whatever data was in it. save_committed()
-    # itself now refuses this write unconditionally (the authoritative guard —
-    # see its docstring), so this early skip is defence in depth / an earlier,
-    # more specific warning message rather than the only thing preventing the
-    # clobber; kept so the app.py-level warning below still fires.
-    if app_res.committed_changed and not committed_unreadable:
-        save_committed(app_res.committed_json)
-    elif committed_unreadable:
-        st.warning(
-            "⚠️ Your committed baseline is unreadable (corrupt or truncated) and could "
-            "contain data with no other copy. It has been left untouched and will NOT be "
-            "overwritten this session — restore it from a backup if you have one, or "
-            "contact support before deleting it."
-        )
-    # audit-0823: mirror the committed-baseline guard above — a corrupt
-    # saved candidate store must not be silently clobbered by the
-    # in-memory store (which, per CandidateStore.load's resilience, would
-    # be EMPTY on a corrupt read). store.save() itself refuses this write
-    # (see CorruptCandidateStoreError's docstring); this except is what
-    # surfaces that refusal to the user instead of it failing silently.
-    try:
-        store.save()
-    except CorruptCandidateStoreError:
-        _warn_corrupt_candidate_store()
-    # audit-1008 F-45: same guard for the trust-choice map.
-    try:
-        choices.save()
-    except CorruptChoiceMapError:
-        st.warning(
-            "⚠️ Your saved source choices are unreadable (corrupt or truncated). They "
-            "have been left untouched and will NOT be overwritten this session — restore "
-            "them from a backup if you have one."
-        )
+    # One transaction (spec §2, the autosave): the committed baseline, the
+    # candidate store and the trust choices commit together. The two
+    # corrupt-row refusals below are caught INSIDE it, so the other saves still
+    # commit, as before; any other store error rolls all three back and
+    # _persist_resolution reports it.
+    with get_store().transaction():
+        # Persist: write the migrated committed baseline only on first migration
+        # (or when none existed), and always persist the candidate/choice stores.
+        # audit-0809 #11: if the saved committed baseline was corrupt (see above),
+        # app_res.committed_changed is still True here (resolve_for_app treated
+        # committed_json=None as "first load" and freshly migrated one) — but
+        # saving now would overwrite the still-intact corrupt file with the
+        # in-memory migration, destroying whatever data was in it. save_committed()
+        # itself now refuses this write unconditionally (the authoritative guard —
+        # see its docstring), so this early skip is defence in depth / an earlier,
+        # more specific warning message rather than the only thing preventing the
+        # clobber; kept so the app.py-level warning below still fires.
+        if app_res.committed_changed and not committed_unreadable:
+            save_committed(app_res.committed_json)
+        elif committed_unreadable:
+            st.warning(
+                "⚠️ Your committed baseline is unreadable (corrupt or truncated) and could "
+                "contain data with no other copy. It has been left untouched and will NOT be "
+                "overwritten this session — restore it from a backup if you have one, or "
+                "contact support before deleting it."
+            )
+        # audit-0823: mirror the committed-baseline guard above — a corrupt
+        # saved candidate store must not be silently clobbered by the
+        # in-memory store (which, per CandidateStore.load's resilience, would
+        # be EMPTY on a corrupt read). store.save() itself refuses this write
+        # (see CorruptCandidateStoreError's docstring); this except is what
+        # surfaces that refusal to the user instead of it failing silently.
+        try:
+            store.save()
+        except CorruptCandidateStoreError:
+            _warn_corrupt_candidate_store()
+        # audit-1008 F-45: same guard for the trust-choice map.
+        try:
+            choices.save()
+        except CorruptChoiceMapError:
+            st.warning(
+                "⚠️ Your saved source choices are unreadable (corrupt or truncated). They "
+                "have been left untouched and will NOT be overwritten this session — restore "
+                "them from a backup if you have one."
+            )
 
 
 def get_household() -> Household:

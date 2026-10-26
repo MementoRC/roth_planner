@@ -57,7 +57,7 @@ def test_f21_bundle_imported_scalars_are_committed_as_backup_import(
     monkeypatch.setattr(db, "slots_with_replaced_accounts", lambda *a: [])
     monkeypatch.setattr(db, "discard_pdf_balance_candidates", lambda *a: None)
     monkeypatch.setattr(db, "_persist_slot_captured_at", lambda *a: None)
-    monkeypatch.setattr(db, "_settle_ytd", lambda *a: False)
+    monkeypatch.setattr(db, "_settle_ytd", lambda *a: None)
     monkeypatch.setattr(st, "rerun", lambda: None)
     st.session_state.pop("_pending_defaults", None)
 

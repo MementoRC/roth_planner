@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import TRUST_CHOICES
 from models.legacy_keys import migrate_legacy_keys
 from models.sourced import Source
@@ -38,7 +38,7 @@ class TrustChoice:
         return cls(source=Source(d["source"]), locked_at=datetime.fromisoformat(d["locked_at"]))
 
 
-class CorruptChoiceMapError(Exception):
+class CorruptChoiceMapError(CorruptDocumentError):
     """Raised by :meth:`ChoiceMap.save` when the saved choices do not parse
     as a choice map (truncated/malformed write, or wrong shape).
 

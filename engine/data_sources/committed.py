@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from engine.data_sources.resolver import HOUSEHOLD_SCALAR_FIELDS
-from engine.store import CorruptStoreError, Store, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, Store, get_store
 from engine.store.namespaces import COMMITTED
 from models.grants import StockGrant
 from models.household import Household
@@ -116,7 +116,7 @@ def migrate_committed(
     return extract_committed(hh)
 
 
-class CorruptCommittedCacheError(Exception):
+class CorruptCommittedCacheError(CorruptDocumentError):
     """Raised by :func:`load_committed` and :func:`save_committed` when a saved
     baseline exists but cannot be read or has the wrong shape.
 

@@ -1,7 +1,7 @@
 """Unified folder-scan + 1040-candidate-record + cache-persist helper (W2 Part A).
 
 Pure engine module: stdlib + engine.pdf_import / engine.tax_return_pdf /
-engine.data_sources only. No streamlit import (verified by
+engine.data_sources / engine.store only. No streamlit import (verified by
 tests/test_scan_ingest.py) — this is the single writer that structurally kills
 the ``_pdf_1040_scanned`` session dual-writer (audit defect #3): before this
 module existed, ``views/ytd_income.py`` and ``views/setup/parameters.py`` each
@@ -28,6 +28,7 @@ from pathlib import Path
 
 from engine.data_sources.record import record_magi_candidates
 from engine.pdf_import import PdfImportResult
+from engine.store import get_store
 from engine.tax_return_pdf import (
     Form1040Record,
     compute_irmaa_magi,
@@ -116,16 +117,19 @@ def _record_scan_result(
     pdf_cache: dict[int, Form1040Record] = {}
     magi_candidates_recorded = 0
     if result.form_1040_records:
-        pdf_cache = _merge_and_persist_pdf_cache(result.form_1040_records)
-        magi_candidates_recorded = record_magi_candidates(
-            {
-                yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
-                for yr, rec in result.form_1040_records.items()
-            },
-            Source.PDF,
-            "Form 1040 PDF",
-            when,
-        )
+        # One transaction (spec §2): the merged 1040 records and their MAGI
+        # candidates are saved together or not at all. Parsing already happened.
+        with get_store().transaction():
+            pdf_cache = _merge_and_persist_pdf_cache(result.form_1040_records)
+            magi_candidates_recorded = record_magi_candidates(
+                {
+                    yr: compute_irmaa_magi(rec.agi, rec.tax_exempt_interest, rec.feie)
+                    for yr, rec in result.form_1040_records.items()
+                },
+                Source.PDF,
+                "Form 1040 PDF",
+                when,
+            )
 
     return ScanIngestResult(
         brokerage_count=len(result.brokerage_records),

@@ -17,6 +17,19 @@ class CorruptStoreError(StoreError):
         self.reason = reason
 
 
+class CorruptDocumentError(StoreError):
+    """A store module refused a saved document it cannot use; the row is untouched.
+
+    Base of the per-module errors (``CorruptCommittedCacheError``,
+    ``CorruptCandidateStoreError``, ...): the document's row is unreadable, or
+    decodes to a shape the module cannot use, so the module refuses to read it
+    or to save over it. A ``StoreError``, so one that escapes a page shows the
+    route-level storage banner instead of a traceback. Deliberately NOT a
+    ``CorruptStoreError``: engine code catches that around raw ``Store.get``
+    calls and must not start swallowing these.
+    """
+
+
 class StoreUnavailableError(StoreError):
     """The database cannot be opened, read or written (locked, corrupt, symlinked, newer)."""
 

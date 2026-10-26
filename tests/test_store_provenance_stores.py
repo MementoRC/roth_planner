@@ -424,6 +424,7 @@ class TestCorruptCandidateStoreAtBoot:
         assert not at.exception, [e.value for e in at.exception]
         warnings = [w.value for w in at.warning if _CORRUPT_CANDIDATE_WARNING in w.value]
         assert len(warnings) == 1
+        assert not [e.value for e in at.error if "Saved data could not be read" in e.value]
         assert store.backend.get(CANDIDATE_STORE, SINGLE_KEY).payload == payload
 
 

@@ -27,6 +27,7 @@ from engine.data_sources.committed import CorruptCommittedCacheError, save_commi
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import session_keys_for_writeback
 from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
+from engine.store import get_store
 from models.sourced import Source
 
 _MAGI_PREFIX = "prior_year_magi."
@@ -151,25 +152,29 @@ def _handle_confirm_click(
     except ValueError as exc:
         st.warning(f"⚠️ Not confirmed: {exc}")
         return False
-    # audit-0809 #11: save_committed() itself refuses to overwrite a
-    # saved committed baseline that fails to parse (see its
-    # docstring) — that is the actual guard, not this call site. Catch the
-    # refusal here so a Confirm click degrades to a warning instead of an
-    # unhandled exception, and leave it untouched.
+    # One transaction (spec §2): the confirmed value and the remembered source
+    # choice are saved together. audit-0809 #11: save_committed() refuses to
+    # overwrite an unreadable baseline; that refusal degrades to a warning and
+    # leaves it untouched. audit-1008 F-45: an unreadable choice map is caught
+    # INSIDE the transaction, so the confirm itself still commits and only the
+    # remembered source choice is lost. Any other error (e.g. a locked
+    # database) rolls both back and propagates to _render_field_card, whose
+    # defensive `except Exception` shows it as that card's "rejected" warning.
+    choices_unreadable = False
     try:
-        save_committed(committed_json)
+        with get_store().transaction():
+            save_committed(committed_json)
+            try:
+                choices.save()
+            except CorruptChoiceMapError:
+                choices_unreadable = True
     except CorruptCommittedCacheError:
         st.warning(
             "⚠️ Could not save — the committed baseline is unreadable "
             "(corrupt or truncated) and was left untouched."
         )
         return False
-    # audit-1008 F-45: ChoiceMap.save refuses to overwrite an unreadable file.
-    # The value itself is already committed above, so only the remembered
-    # source choice is lost; warn and carry on with the confirm.
-    try:
-        choices.save()
-    except CorruptChoiceMapError:
+    if choices_unreadable:
         st.warning(
             "⚠️ Saved source choices are unreadable and were left untouched, so this "
             "source choice was not remembered."

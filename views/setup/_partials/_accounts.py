@@ -25,6 +25,7 @@ from engine.upload_merge import synced_account_sums
 from models.household import Household
 from models.sourced import Source
 from views._format import fmt_dollars, md_dollars, ssa_comparison_table
+from views._store_transaction import store_transaction
 
 from ._clamp import clamp as _clamp
 
@@ -59,6 +60,7 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     directly to session_state — the value sits pending until confirmed via
     the Setup / Command Center review gate (same freeze-until-confirm seam
     as your_ira/your_roth/stock_price_now). Also caches the raw snapshot.
+    The candidate and the cached snapshot are saved in one transaction.
     Returns a warning message on failure/no-match, or None on success.
     """
     snap = fetch_ssa_snapshot()
@@ -68,12 +70,19 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     if match is None:
         return "No SSA benefit estimate found near the configured FRA age; sync skipped."
     field_key = "your_ss_fra" if owner == "you" else "spouse_ss_fra"
-    record_ss_fra_candidate(
-        field_key, match.monthly_amount, Source.FINEXTRACT_LIVE, "SSA statement", datetime.now()
-    )
-    st.session_state[f"ssa_snapshot_{owner}"] = snap
+    # One transaction (spec §2): a cache that refuses the snapshot also drops
+    # the candidate, so "this sync was not saved" is true of both.
     try:
-        save_ssa_snapshot(snap, owner=owner)
+        with store_transaction(st.session_state, f"ssa_snapshot_{owner}"):
+            record_ss_fra_candidate(
+                field_key,
+                match.monthly_amount,
+                Source.FINEXTRACT_LIVE,
+                "SSA statement",
+                datetime.now(),
+            )
+            st.session_state[f"ssa_snapshot_{owner}"] = snap
+            save_ssa_snapshot(snap, owner=owner)
     except CorruptSSACacheError:
         return "SSA cache file is unreadable; it was left untouched and this sync was not saved."
     return None

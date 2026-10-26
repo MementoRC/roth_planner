@@ -1,5 +1,6 @@
+import functools
 import hashlib
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -91,6 +92,7 @@ from views._shared import (
     run_folder_scan,
     run_uploaded_scan,
 )
+from views._store_transaction import store_transaction
 
 
 def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
@@ -401,6 +403,17 @@ def _merge_ubs_orders(
     return list(merged.values())
 
 
+# Session keys _write_scan_result changes, put back if its transaction rolls back.
+_SCAN_SESSION_KEYS: tuple[str, ...] = (
+    "statement_by_account",
+    "ytd_snapshot",
+    "ira_statements",
+    "netbenefits_statements",
+    "ssa_statements",
+    "holder_name_mismatches",
+)
+
+
 def _apply_scan_result(
     result: PdfImportResult,
     *,
@@ -410,10 +423,42 @@ def _apply_scan_result(
     instance_owner: str,
     not_found_message: str = "No importable financial PDFs found.",
 ) -> PdfLedger:
-    """Apply one scanned ``PdfImportResult`` to the ledger + YTD snapshot and
-    report the outcome; return the (possibly mutated) *ledger*.
+    """Apply one scanned ``PdfImportResult`` (see :func:`_write_scan_result`).
 
-    Shared by the folder-scan handler and the uploaded-PDF handler below so
+    Every store write of the apply -- statement cache, ledger, Koinly report,
+    YTD snapshot -- runs in ONE store transaction (spec §2): a failure saves
+    none of them and puts back the session keys the apply changed. Parsing
+    already happened in the caller, outside the transaction.
+    """
+    with store_transaction(st.session_state, *_SCAN_SESSION_KEYS):
+        ledger, report = _write_scan_result(
+            result,
+            ledger=ledger,
+            account_overrides=account_overrides,
+            owner_map=owner_map,
+            instance_owner=instance_owner,
+            not_found_message=not_found_message,
+        )
+    # Success messages only once the transaction has committed.
+    report()
+    return ledger
+
+
+def _write_scan_result(
+    result: PdfImportResult,
+    *,
+    ledger: PdfLedger,
+    account_overrides: dict[tuple[str, str], str],
+    owner_map: dict[str, str],
+    instance_owner: str,
+    not_found_message: str = "No importable financial PDFs found.",
+) -> tuple[PdfLedger, Callable[[], None]]:
+    """Apply one scanned ``PdfImportResult`` to the ledger + YTD snapshot and
+    return the (possibly mutated) *ledger* and a callable that draws the outcome
+    summary (the caller runs it after the transaction commits).
+
+    Run by :func:`_apply_scan_result` (shared by the folder-scan and
+    uploaded-PDF handlers) so
     their ledger-write / apply / report behavior cannot drift apart -- pure
     extraction of what used to be the "Scan folder" button's inline body,
     same session-state writes, same save_ledger/save_ytd_snapshot calls, same
@@ -575,7 +620,33 @@ def _apply_scan_result(
         _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
         save_ytd_snapshot(_snap)
 
-    # Summary: what was parsed, what was applied, what still needs action.
+    report = functools.partial(
+        _report_scan_summary,
+        result,
+        by_account=by_account,
+        applied_bits=applied_bits,
+        new_ira_count=new_ira_count,
+        manual_entry_kept_explicit=_manual_entry_kept_explicit,
+        stmt_unknown_now=stmt_unknown_now,
+        not_found_message=not_found_message,
+    )
+    return ledger, report
+
+
+def _report_scan_summary(
+    result: PdfImportResult,
+    *,
+    by_account: dict[str, BrokerageStatementRecord],
+    applied_bits: list[str],
+    new_ira_count: int,
+    manual_entry_kept_explicit: bool,
+    stmt_unknown_now: dict[str, BrokerageStatementRecord],
+    not_found_message: str,
+) -> None:
+    """Summary: what was parsed, what was applied, what still needs action.
+
+    Drawn by :func:`_apply_scan_result` only after its transaction commits.
+    """
     parsed_bits: list[str] = []
     if by_account:
         parsed_bits.append(f"{len(by_account)} brokerage account(s)")
@@ -603,7 +674,7 @@ def _apply_scan_result(
         st.info(not_found_message)
     if applied_bits:
         st.success("Applied to YTD snapshot: " + "; ".join(applied_bits))
-        if _manual_entry_kept_explicit:
+        if manual_entry_kept_explicit:
             st.caption(
                 "Manual entry stayed ON — you turned it on yourself, so this "
                 "import did not switch you back to synced-data display."
@@ -637,8 +708,6 @@ def _apply_scan_result(
         # redacted header lines from a Fidelity statement) intact and
         # copyable -- markdown would fold its newlines into one line.
         st.code("\n\n".join(f"{name}: {msg}" for name, msg in result.errors), language=None)
-
-    return ledger
 
 
 # Session keys holding scan results still awaiting review, plus the scanned-file
@@ -755,12 +824,15 @@ def _render_pdf_uploader(
     if scanned_digests is None:
         scanned_digests = set()
         st.session_state["_pdf_scanned_digests"] = scanned_digests
+    # Digests of this click's successful parses: remembered only once the apply
+    # below commits, so a rolled-back apply stays retryable with the same files.
+    new_digests: set[str] = set()
     with st.status(f"Scanning {n} PDF(s)…", expanded=True) as status:
         progress = st.progress(0.0)
         for i, uploaded_file in enumerate(uploaded, start=1):
             progress.progress((i - 1) / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
             digest = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
-            if digest in scanned_digests:
+            if digest in scanned_digests or digest in new_digests:
                 skipped_scanned += 1
                 st.write(f"{uploaded_file.name}: already scanned — skipped")
                 progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
@@ -792,7 +864,7 @@ def _render_pdf_uploader(
                 # Only a SUCCESSFUL parse is remembered -- a failed one
                 # (above, or single.errors just below) is retryable on the
                 # next click rather than silently stuck "skipped" forever.
-                scanned_digests.add(digest)
+                new_digests.add(digest)
                 st.write(f"{uploaded_file.name}: recognized")
             progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
 
@@ -820,6 +892,7 @@ def _render_pdf_uploader(
         instance_owner=instance_owner,
         not_found_message="No importable financial PDFs found in the uploaded files.",
     )
+    scanned_digests |= new_digests
     _render_clear_queue_button(clear_slot)
     if is_pyodide():
         st.caption(
@@ -905,12 +978,27 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         st.warning(f"No valid UBS CSV order parsed (0 of {len(uploaded)} file(s)).")
         return
 
-    # A corrupt store must stop the import: merging into [] and saving would
-    # replace orders this page never read (audit-1008 F-70).
+    # One transaction (spec §2): the merged orders and the recomputed YTD
+    # snapshot are saved together or not at all. A corrupt store must stop the
+    # import: merging into [] and saving would replace orders this page never
+    # read (audit-1008 F-70).
     try:
-        existing = load_ubs_orders()
-        merged = _merge_ubs_orders(existing, new_orders)
-        save_ubs_orders(merged)
+        with store_transaction(st.session_state, "ytd_snapshot"):
+            existing = load_ubs_orders()
+            merged = _merge_ubs_orders(existing, new_orders)
+            save_ubs_orders(merged)
+            # Recompute immediately so the correction/exercise-income takes
+            # effect without a separate scan/apply click -- see this
+            # function's docstring.
+            snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
+            brokerage_totals = derive_brokerage_totals(ledger, tax_year=snap.tax_year)
+            ubs_warnings = _apply_ubs_correction(
+                brokerage_totals, ledger, snap, applied_orders=existing
+            )
+            snap.with_snapshot_date()
+            st.session_state.ytd_snapshot = snap
+            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
+            save_ytd_snapshot(snap)
     except UbsActivityStoreError as exc:
         st.error(
             f"UBS CSV(s) not imported: the stored UBS exercise data is unreadable ({exc}). "
@@ -930,15 +1018,6 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         )
     )
 
-    # Recompute immediately so the correction/exercise-income takes effect
-    # without a separate scan/apply click -- see this function's docstring.
-    snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
-    brokerage_totals = derive_brokerage_totals(ledger, tax_year=snap.tax_year)
-    ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, snap, applied_orders=existing)
-    snap.with_snapshot_date()
-    st.session_state.ytd_snapshot = snap
-    _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
-    save_ytd_snapshot(snap)
     if _manual_entry_kept_explicit:
         st.caption(
             "Manual entry stayed ON — you turned it on yourself, so this "
@@ -1350,14 +1429,17 @@ def _render_netbenefits_review(
             disabled=not identity_set,
         ):
             outcome = apply_netbenefits_statement(snap, stmt, owner, force=True, replaces=replaces)
-            if not _save_snapshot_or_report(outcome.snapshot):
-                continue
-            st.session_state["portfolio_snapshot"] = outcome.snapshot
-            record_ira_balance_candidate(
-                outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
-            )
-            if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+            # One transaction (spec §2): the snapshot, the balance candidate and
+            # the learned holder name are saved together or not at all.
+            with store_transaction(st.session_state, "portfolio_snapshot"):
+                if not _save_snapshot_or_report(outcome.snapshot):
+                    continue
+                st.session_state["portfolio_snapshot"] = outcome.snapshot
+                record_ira_balance_candidate(
+                    outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
+                )
+                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
         if st.button("Dismiss", key=f"netbenefits_dismiss_{i}"):
@@ -1543,23 +1625,27 @@ def _render_ira_statement_review(
         apply_label = "Use anyway" if preview.kept_newer is not None else "Apply IRA balance"
         if st.button(apply_label, key=f"ira_statement_apply_{i}", disabled=not identity_set):
             outcome = apply_ira_statement(snap, rec, owner, force=True, replaces=link_key)
-            if not _save_snapshot_or_report(outcome.snapshot):
-                continue
-            save_link_map(remember_link(rec, link_key or NEW, link_map))
-            st.session_state["portfolio_snapshot"] = outcome.snapshot
-            record = (
-                record_roth_balance_candidate
-                if rec.account_type == "roth_ira"
-                else record_ira_balance_candidate
-            )
-            if outcome.other_owner_total is not None:
-                # The owner was corrected: the wrong-owner copy is gone, so
-                # that person's candidate is re-recorded at their corrected total.
-                other_field, other_total = outcome.other_owner_total
-                record(other_field, other_total, outcome.detail, datetime.now())
-            record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
-            if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
+            # One transaction (spec §2): the snapshot, the remembered link, the
+            # balance candidate(s) and the learned holder name are saved together
+            # or not at all -- a later failure no longer leaves the link map written.
+            with store_transaction(st.session_state, "portfolio_snapshot"):
+                if not _save_snapshot_or_report(outcome.snapshot):
+                    continue
+                save_link_map(remember_link(rec, link_key or NEW, link_map))
+                st.session_state["portfolio_snapshot"] = outcome.snapshot
+                record = (
+                    record_roth_balance_candidate
+                    if rec.account_type == "roth_ira"
+                    else record_ira_balance_candidate
+                )
+                if outcome.other_owner_total is not None:
+                    # The owner was corrected: the wrong-owner copy is gone, so
+                    # that person's candidate is re-recorded at their corrected total.
+                    other_field, other_total = outcome.other_owner_total
+                    record(other_field, other_total, outcome.detail, datetime.now())
+                record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
+                if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
             st.rerun()
         if st.button("Dismiss", key=f"ira_statement_dismiss_{i}"):
@@ -1631,16 +1717,19 @@ def _render_ssa_review(
             key=f"ssa_apply_{i}",
             disabled=not identity_set,
         ):
-            record_ss_fra_candidate(
-                "your_ss_fra" if owner == "you" else "spouse_ss_fra",
-                stmt.fra_monthly,
-                Source.PDF,
-                f"SSA statement PDF, dated {stmt.statement_date}",
-                datetime.now(),
-            )
-            save_ssa_pdf_estimates(owner, stmt)
-            if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+            # One transaction (spec §2): the candidate, the saved estimates and
+            # the learned holder name are saved together or not at all.
+            with store_transaction(st.session_state):
+                record_ss_fra_candidate(
+                    "your_ss_fra" if owner == "you" else "spouse_ss_fra",
+                    stmt.fra_monthly,
+                    Source.PDF,
+                    f"SSA statement PDF, dated {stmt.statement_date}",
+                    datetime.now(),
+                )
+                save_ssa_pdf_estimates(owner, stmt)
+                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
         if st.button("Dismiss", key=f"ssa_dismiss_{i}"):
@@ -1817,27 +1906,30 @@ def _render_scan_review(
             disabled=not identity_set,
         ):
             _apply_had_mismatch = False
-            for rec in stmt_taxable.values():
-                resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
-                if _warn_on_brokerage_holder_mismatch(
-                    rec, account_overrides, instance_owner, owner_map
-                ):
-                    _apply_had_mismatch = True
-                ledger = write_brokerage_contribution(ledger, resolved, rec)
-            save_ledger(ledger)
+            # One transaction (spec §2): the ledger and the YTD snapshot are saved
+            # together or not at all.
+            with store_transaction(st.session_state, "ytd_snapshot", "holder_name_mismatches"):
+                for rec in stmt_taxable.values():
+                    resolved = _brokerage_owner(rec, account_overrides, instance_owner, owner_map)
+                    if _warn_on_brokerage_holder_mismatch(
+                        rec, account_overrides, instance_owner, owner_map
+                    ):
+                        _apply_had_mismatch = True
+                    ledger = write_brokerage_contribution(ledger, resolved, rec)
+                save_ledger(ledger)
 
-            prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
-            brokerage_totals = derive_brokerage_totals(ledger, tax_year=prev_ytd.tax_year)
-            # Correct the UBS phantom-STCG double-count and land NQO exercise
-            # income BEFORE recording this as applied below -- see
-            # _apply_ubs_correction's docstring for why the totals dict must
-            # be corrected before apply_brokerage_totals assigns it onto the
-            # snapshot.
-            ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
-            prev_ytd.with_snapshot_date()
-            st.session_state.ytd_snapshot = prev_ytd
-            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
-            save_ytd_snapshot(prev_ytd)
+                prev_ytd = st.session_state.get("ytd_snapshot", YTDSnapshot())
+                brokerage_totals = derive_brokerage_totals(ledger, tax_year=prev_ytd.tax_year)
+                # Correct the UBS phantom-STCG double-count and land NQO exercise
+                # income BEFORE recording this as applied below -- see
+                # _apply_ubs_correction's docstring for why the totals dict must
+                # be corrected before apply_brokerage_totals assigns it onto the
+                # snapshot.
+                ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
+                prev_ytd.with_snapshot_date()
+                st.session_state.ytd_snapshot = prev_ytd
+                _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
+                save_ytd_snapshot(prev_ytd)
             st.success(
                 f"Applied {len(counted)} taxable account(s) to YTD snapshot"
                 + (

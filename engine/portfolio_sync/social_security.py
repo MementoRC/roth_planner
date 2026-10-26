@@ -8,7 +8,7 @@ from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import SSA
 
 from .client import _flatten_query_rows, _get
@@ -61,7 +61,7 @@ def match_fra_estimate(
     return min(estimates, key=lambda e: abs(e.retirement_age - fra_age))
 
 
-class CorruptSSACacheError(Exception):
+class CorruptSSACacheError(CorruptDocumentError):
     """save_ssa_snapshot() found the saved SSA estimates unreadable and refused to write.
 
     Same convention as ``CorruptPortfolioCacheError``: the other owner's saved
