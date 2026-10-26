@@ -77,6 +77,7 @@ from engine.data_status import (
 )
 from engine.demo_mode import is_demo_mode
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
+from engine.store import get_store
 from models.household import Household
 from models.sourced import Source
 
@@ -500,12 +501,15 @@ def _confirm_as_is_and_save(field_key: str) -> bool:
         st.info("Demo mode: nothing is saved. Leave demo mode to confirm your own values.")
         return False
     try:
-        committed_json = load_committed()
-        if committed_json is None:
-            st.warning("No committed baseline to confirm against yet.")
-            return False
-        confirm_as_is(committed_json, field_key, datetime.now())
-        save_committed(committed_json)
+        # One transaction (spec §2): the read, the re-stamp and the save cannot
+        # interleave with another session's write to the baseline.
+        with get_store().transaction():
+            committed_json = load_committed()
+            if committed_json is None:
+                st.warning("No committed baseline to confirm against yet.")
+                return False
+            confirm_as_is(committed_json, field_key, datetime.now())
+            save_committed(committed_json)
     except CorruptCommittedCacheError:
         st.warning("Committed baseline is unreadable; left untouched.")
         return False

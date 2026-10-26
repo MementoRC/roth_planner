@@ -9,6 +9,7 @@ modules, so their tests are not collected twice). Synthetic values only.
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,8 @@ import pytest
 
 import engine.data_sources.scan_ingest as scan_ingest_mod
 import views.setup.data_bridge as data_bridge_mod
+from engine.data_sources.choices import ChoiceMap
+from engine.data_sources.committed import migrate_committed
 from engine.data_sources.orchestrator import BUNDLE_SCALARS_KEY
 from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.netbenefits_statement_pdf import parse_netbenefits_text
@@ -27,6 +30,7 @@ from engine.store import StoreUnavailableError
 from engine.store.namespaces import (
     BROKERAGE_STATEMENTS,
     CANDIDATE_STORE,
+    COMMITTED,
     IRA_ACCOUNT_LINKS,
     PDF_LEDGER,
     PORTFOLIO,
@@ -35,6 +39,7 @@ from engine.store.namespaces import (
     TAX_PDF,
     YTD,
 )
+from models.household import Household
 from models.ytd_income import YTDSnapshot
 from tests import test_sync_scan_ira_statements as ira_tests
 from tests import test_sync_scan_netbenefits as nb_tests
@@ -43,6 +48,7 @@ from tests.test_netbenefits_statement_pdf import PAGES as NB_PAGES
 from tests.test_ssa_statement_pdf import PAGES as SSA_PAGES
 from tests.test_store_provenance_stores import _form_1040, _ssa_snapshot
 from views.setup._partials import _accounts as accounts_mod
+from views.setup._partials import _governance as governance_mod
 from views.ytd_income._partials import _sync_scan as sync_scan_mod
 
 
@@ -355,3 +361,21 @@ def test_a_committed_bridge_import_keeps_an_explicitly_chosen_manual_entry(store
     data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
     assert session["ytd_manual_entry"] is True
     assert any("Manual entry stayed ON" in c for c in captions)
+
+
+class _ChoicesSaveRefused(ChoiceMap):
+    def save(self) -> None:
+        _locked()
+
+
+def _confirm_your_ira(committed: dict) -> None:
+    governance_mod._handle_confirm_click(
+        "your_ira", committed, _ChoicesSaveRefused(), [], None, 1_000.0
+    )
+
+
+def test_a_refused_choice_save_rolls_back_the_confirmed_baseline(store):
+    committed = migrate_committed(Household(), datetime(2026, 1, 1, 12, 0, 0))
+    with pytest.raises(StoreUnavailableError, match="database is locked"):
+        _confirm_your_ira(committed)
+    assert store.keys(COMMITTED) == []
