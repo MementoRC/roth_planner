@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.pdf_owner import OWNER_ROLES, resolve_owner
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import ACCOUNT_ATTRIBUTION
 
 _KEY_DELIMITER = "|"
@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-class CorruptAccountAttributionError(Exception):
+class CorruptAccountAttributionError(CorruptDocumentError):
     """Raised by ``save_account_override``/``delete_account_override`` when
     the saved overrides cannot be read.
 

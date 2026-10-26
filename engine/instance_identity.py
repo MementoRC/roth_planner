@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from engine.pdf_owner import OwnerRole
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import INSTANCE_OWNER
 
 _VALID_INSTANCE_OWNERS = frozenset({OwnerRole.YOU.value, OwnerRole.SPOUSE.value})
@@ -31,7 +31,7 @@ __all__ = [
 ]
 
 
-class CorruptInstanceOwnerError(Exception):
+class CorruptInstanceOwnerError(CorruptDocumentError):
     """Raised when the saved instance owner is not a valid
     instance_owner payload (an undecodable store row, a missing key, or an
     invalid value).

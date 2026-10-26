@@ -24,7 +24,12 @@ from engine.data_bridge_browser import is_pyodide
 from engine.demo_mode import is_demo_mode
 from engine.store.backend import Backend, DictBackend, NullBackend, RoutedBackend
 from engine.store.core import META_NAMESPACE, SINGLE_KEY, Store, register_namespace
-from engine.store.errors import CorruptStoreError, StoreError, StoreUnavailableError
+from engine.store.errors import (
+    CorruptDocumentError,
+    CorruptStoreError,
+    StoreError,
+    StoreUnavailableError,
+)
 
 if TYPE_CHECKING:
     from engine.store.migrate_json import MigrationResult
@@ -32,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "META_NAMESPACE",
     "SINGLE_KEY",
+    "CorruptDocumentError",
     "CorruptStoreError",
     "Store",
     "StoreError",

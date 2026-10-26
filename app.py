@@ -404,6 +404,7 @@ def _persist_resolution(
     disabled saving, the refusal is quiet, because render_store_notice()
     already shows that banner on every run. Any other unavailable-storage
     error gets the one storage banner (shared with the boot-time reads).
+    A corrupt saved document (a ``StoreError``) gets the same one banner.
     """
     if _DEMO_MODE:
         return
@@ -411,6 +412,14 @@ def _persist_resolution(
         _save_resolution(app_res, store, choices, committed_unreadable)
     except StoreUnavailableError as exc:
         _report_refused_save(exc)
+    except StoreError as exc:
+        # A corrupt saved document met while saving (e.g. the baseline turned
+        # corrupt after get_household() read it): the transaction rolled back;
+        # show the one storage banner, not a traceback. get_household() runs
+        # outside _route_and_badge's StoreError catch.
+        if not _boot_store_errors:
+            st.error(store_error_message(exc))
+        _boot_store_errors.append(exc)
 
 
 def _save_resolution(

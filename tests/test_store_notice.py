@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+import engine.data_sources.committed as committed_mod
 import engine.portfolio_sync as portfolio_sync_mod
 import engine.tax_return_pdf as tax_return_pdf_mod
 import views.dashboard as dashboard_mod
 import views.setup.data_bridge as data_bridge_mod
 import views.store_notice as notice_mod
+from engine.data_sources.candidate_store import CorruptCandidateStoreError
+from engine.data_sources.committed import CorruptCommittedCacheError
 from engine.store import CorruptStoreError, StoreUnavailableError
 from engine.store.migrate_json import MigrationResult
 
@@ -135,3 +138,31 @@ def test_an_unavailable_store_at_boot_is_one_banner_not_a_traceback(monkeypatch)
     at = _run_app()
     assert not at.exception, [e.value for e in at.exception]
     assert sum("database is locked" in t for t in _texts(at.error)) == 1
+
+
+@pytest.mark.usefixtures("_isolated_app")
+def test_a_corrupt_candidate_store_error_from_a_page_is_the_storage_banner(monkeypatch):
+    def refused_save(*_args, **_kwargs):
+        raise CorruptCandidateStoreError("candidate_store", ValueError("synthetic truncation"))
+
+    monkeypatch.setattr(dashboard_mod, "render", refused_save)
+    at = _run_app()
+    assert not at.exception, [e.value for e in at.exception]
+    banners = [t for t in _texts(at.error) if t.startswith("Saved data could not be read")]
+    assert len(banners) == 1
+    assert "candidate store" in banners[0]
+
+
+@pytest.mark.usefixtures("_isolated_app")
+def test_a_corrupt_document_error_from_the_autosave_is_one_banner_not_a_traceback(monkeypatch):
+    """The baseline turns corrupt between get_household()'s load and its save."""
+
+    def corrupt_at_save(*_args, **_kwargs):
+        raise CorruptCommittedCacheError("committed", ValueError("synthetic truncation"))
+
+    monkeypatch.setattr(committed_mod, "save_committed", corrupt_at_save)
+    at = _run_app()  # first load: no baseline, so the migrated one is saved
+    assert not at.exception, [e.value for e in at.exception]
+    banners = [t for t in _texts(at.error) if t.startswith("Saved data could not be read")]
+    assert len(banners) == 1
+    assert "committed" in banners[0]

@@ -21,12 +21,12 @@ from dataclasses import asdict
 from datetime import date
 from typing import Any
 
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import UBS_ACTIVITY
 from engine.ubs_activity_csv import UbsActivityOrder, UbsExerciseLot
 
 
-class UbsActivityStoreError(Exception):
+class UbsActivityStoreError(CorruptDocumentError):
     """Raised when the saved UBS activity orders exist but cannot be read.
 
     Deliberately NOT swallowed into an empty list: a silently-returned ``[]``

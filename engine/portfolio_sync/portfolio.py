@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import PORTFOLIO
 from models.legacy_keys import migrate_legacy_keys
 
@@ -146,7 +146,7 @@ class EmptySnapshotWriteRefusedError(RuntimeError):
     """
 
 
-class CorruptPortfolioCacheError(Exception):
+class CorruptPortfolioCacheError(CorruptDocumentError):
     """save_snapshot() found the saved portfolio unreadable and refused to write.
 
     Mirrors ``CorruptCommittedCacheError`` / ``CorruptCandidateStoreError``:

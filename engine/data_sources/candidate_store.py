@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from engine.store import CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, get_store
 from engine.store.namespaces import CANDIDATE_STORE
 from models.grants import StockGrant
 from models.legacy_keys import migrate_legacy_keys
@@ -65,7 +65,7 @@ class Candidate:
         return cls(value=_value_from_json(d["value"]), prov=Provenance.from_json(d["prov"]))
 
 
-class CorruptCandidateStoreError(Exception):
+class CorruptCandidateStoreError(CorruptDocumentError):
     """Raised by :meth:`CandidateStore.save` when the saved store cannot be
     read or rebuilt.
 
