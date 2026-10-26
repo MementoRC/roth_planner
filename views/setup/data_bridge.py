@@ -569,8 +569,11 @@ def _preview_upload(upload_bytes: bytes, privkey: bytes | None, name: str) -> _R
     return _ReadyImport(version, bundle, data, plan, selected, local, operator)
 
 
-def _settle_ytd(result: ImportResult, ready: _ReadyImport) -> bool:
+def _settle_ytd(result: ImportResult, ready: _ReadyImport) -> list[str] | None:
     """Land the import's YTD in the session, then re-derive the ledger-derived fields.
+
+    Returns ``_rederive_ytd_from_ledger``'s result: ``None`` when nothing was
+    updated, else the kept-manual warnings for the caller to show after commit.
 
     v5: the result's YTD already holds each imported person's figures in
     their own slot (#496), so it becomes the session snapshot.
@@ -636,8 +639,10 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     stamp, the MAGI candidates, the superseded-candidate discard and the YTD
     re-derive -- runs in ONE store transaction (spec §2): a failure saves none
     of them and puts back the session keys they touched. Only after it commits
-    are the next run's defaults staged and the slot timestamps written
-    (``.user_defaults.json`` is a file, outside the store). Any exception other
+    are the next run's defaults staged, the slot timestamps written
+    (``.user_defaults.json`` is a file, outside the store), the kept-manual
+    notes shown and manual entry deselected (session bookkeeping a rollback
+    could not undo). Any exception other
     than the two refusals below is OUR defect and propagates rather than being
     reported as a bad file (audit-0823); a store error reaches the page banner.
     """
@@ -667,7 +672,7 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
             # A statement-PDF balance candidate was computed from accounts this
             # import just replaced; leaving it would offer a superseded figure.
             discard_pdf_balance_candidates(slots_with_replaced_accounts(ready.plan, ready.selected))
-            manual_entry_kept_explicit = _settle_ytd(result, ready)
+            kept_warnings = _settle_ytd(result, ready)
     except EmptySnapshotWriteRefusedError:
         st.error(
             "Import refused: this bundle would remove every account from your "
@@ -695,6 +700,11 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     _persist_slot_captured_at(result.slot_captured_at, dict(ready.local.slot_captured_at))
     st.session_state["portfolio_snapshot"] = result.snapshot
     st.session_state.pop("_suppress_snapshot_autoload", None)
+    manual_entry_kept_explicit = False
+    if kept_warnings is not None:
+        for warning in kept_warnings:
+            st.warning(warning)
+        manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
 
     # Strike prices arrived but no grants to attach them to: Household.grants
     # is still the synthetic demo default_factory, which silently poisons every
@@ -847,7 +857,7 @@ def _handle_personal_uploads() -> None:
                 st.rerun()
 
 
-def _rederive_ytd_from_ledger(ledger: object) -> bool:
+def _rederive_ytd_from_ledger(ledger: object) -> list[str] | None:
     """Re-derive brokerage + Koinly YTD fields onto the session snapshot after an import.
 
     Mirrors the exact field assignments in ``views/ytd_income.py`` (scan-folder
@@ -855,11 +865,12 @@ def _rederive_ytd_from_ledger(ledger: object) -> bool:
     across repeated bundle imports. No-op if no YTD snapshot exists yet this
     session (nothing to overwrite onto).
 
-    Returns whether the caller should surface an explicit-choice note -- true
-    when an update happened but manual entry was left ON because the user had
-    deliberately chosen it themselves (see
-    ``views._shared.auto_deselect_manual_entry``); false both when nothing was
-    updated and when the checkbox was auto-deselected as usual.
+    Returns ``None`` when nothing was updated (no snapshot), else the
+    kept-manual warning strings (possibly empty). The caller shows the
+    warnings and deselects manual entry
+    (``views._shared.auto_deselect_manual_entry``) only after the import's
+    transaction commits: ``ytd_manual_entry`` is widget-backed, so a
+    rollback could not put it back.
     """
     from engine.pdf_ledger import (
         apply_koinly_totals,
@@ -871,7 +882,7 @@ def _rederive_ytd_from_ledger(ledger: object) -> bool:
 
     snap = st.session_state.get("ytd_snapshot")
     if snap is None:
-        return False
+        return None
 
     brokerage_totals = derive_brokerage_totals(ledger, tax_year=snap.tax_year)  # type: ignore[arg-type]
     apply_brokerage_totals(snap, brokerage_totals)
@@ -879,16 +890,10 @@ def _rederive_ytd_from_ledger(ledger: object) -> bool:
         as_of=latest_brokerage_period_end(ledger, tax_year=snap.tax_year)  # type: ignore[arg-type]
     )
     kept += apply_koinly_totals(snap, ledger)  # type: ignore[arg-type]
-    for warning in describe_kept_manual(snap, kept):
-        st.warning(warning)
-
     snap.with_snapshot_date()
     st.session_state["ytd_snapshot"] = snap
-    # Save first: ``ytd_manual_entry`` is widget-backed, so the import's
-    # transaction cannot put it back if this write fails.
     save_ytd_snapshot(snap)
-    deselected = auto_deselect_manual_entry(st.session_state)
-    return not deselected
+    return describe_kept_manual(snap, kept)
 
 
 def _handle_personal_exports() -> None:

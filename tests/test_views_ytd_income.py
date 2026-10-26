@@ -702,16 +702,17 @@ class TestManualEntryAutoDeselect:
             patch.object(shared_mod, "st", mock_st),
             patch.object(data_bridge_mod, "save_ytd_snapshot"),
         ):
-            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+            kept = data_bridge_mod._rederive_ytd_from_ledger(ledger)
 
-        assert note_needed is True, "Expected the explicit-choice note flag to be True"
+        assert kept == [], "Expected an update with no kept-manual warnings"
         setitem_calls = [
             call
             for call in session_state.__setitem__.call_args_list
             if call[0][0] == "ytd_manual_entry"
         ]
-        assert not any(call[0][1] is False for call in setitem_calls), (
-            f"Expected ytd_manual_entry NOT forced off when chosen explicitly; got {setitem_calls}"
+        assert setitem_calls == [], (
+            "The re-derive must not touch ytd_manual_entry: _apply_ready_import "
+            f"does that after the commit; got {setitem_calls}"
         )
 
     def test_data_bridge_rederive_default_auto_deselects(self):
@@ -734,17 +735,26 @@ class TestManualEntryAutoDeselect:
             patch.object(shared_mod, "st", mock_st),
             patch.object(data_bridge_mod, "save_ytd_snapshot"),
         ):
-            note_needed = data_bridge_mod._rederive_ytd_from_ledger(ledger)
+            kept = data_bridge_mod._rederive_ytd_from_ledger(ledger)
 
-        assert note_needed is False, "Expected no explicit-choice note in the default case"
+        assert kept == [], "Expected an update with no kept-manual warnings"
         setitem_calls = [
             call
             for call in session_state.__setitem__.call_args_list
             if call[0][0] == "ytd_manual_entry"
         ]
-        assert any(call[0][1] is False for call in setitem_calls), (
-            f"Expected ytd_manual_entry forced off by default; got {setitem_calls}"
+        assert setitem_calls == [], (
+            f"The re-derive must leave ytd_manual_entry to the caller; got {setitem_calls}"
         )
+
+    def test_data_bridge_rederive_without_a_snapshot_returns_none(self):
+        import views.setup.data_bridge as data_bridge_mod
+
+        mock_st = MagicMock()
+        mock_st.session_state = {}
+        with patch.object(data_bridge_mod, "st", mock_st):
+            kept = data_bridge_mod._rederive_ytd_from_ledger({"koinly": {}, "brokerage": {}})
+        assert kept is None
 
     def test_data_bridge_rederive_keeps_a_newer_hand_entry_and_warns(self):
         import views._shared as shared_mod
@@ -773,12 +783,13 @@ class TestManualEntryAutoDeselect:
             patch.object(shared_mod, "st", mock_st),
             patch.object(data_bridge_mod, "save_ytd_snapshot"),
         ):
-            data_bridge_mod._rederive_ytd_from_ledger(ledger)
+            warnings = data_bridge_mod._rederive_ytd_from_ledger(ledger)
 
         assert ytd.crypto_income_ytd == 999.0
         assert ytd.crypto_stcg_ytd == 1.0
-        warnings = [str(c.args[0]) for c in mock_st.warning.call_args_list]
+        assert warnings is not None
         assert any("crypto income" in w for w in warnings)
+        mock_st.warning.assert_not_called()
 
     def test_sync_preserves_manual_only_fields_not_zeroed(self):
         """The FinExtract sync button is NQO-exercises-only now — investment income

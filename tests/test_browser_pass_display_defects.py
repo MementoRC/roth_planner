@@ -236,7 +236,7 @@ def test_apply_ready_import_drops_stale_pdf_balance_candidate():
         patch.object(data_bridge, "apply_import", return_value=result),
         patch.object(data_bridge, "commit_import"),
         patch.object(data_bridge, "_persist_slot_captured_at"),
-        patch.object(data_bridge, "_settle_ytd", return_value=False),
+        patch.object(data_bridge, "_settle_ytd", return_value=None),
     ):
         data_bridge._apply_ready_import(ready, "synthetic.enc")
 

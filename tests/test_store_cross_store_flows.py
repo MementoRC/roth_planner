@@ -266,3 +266,86 @@ def test_a_bridge_import_that_fails_last_changes_no_store_and_stages_nothing(sto
     assert "_slot_captured_at" not in session
     assert "portfolio_snapshot" not in session
     assert saved_defaults == []
+
+
+def _kept_manual_import(monkeypatch, session: dict, warnings: list) -> tuple:
+    """A v5 import whose re-derive keeps a newer hand-typed crypto figure (one warning)."""
+    from models.ytd_income import ManualMark
+
+    snap = YTDSnapshot(
+        by_owner={"you": {}},
+        crypto_income_ytd=999.0,
+        manual_marks={"household.crypto_income_ytd": ManualMark(999.0, "2026-10-01", "typed")},
+    )
+    result = SimpleNamespace(
+        snapshot=_taxable(2_000.0),
+        ledger={
+            "koinly": {
+                "you": {"stcg": 1.0, "ltcg": 2.0, "income": 3.0, "captured_at": "2026-09-20"}
+            },
+            "brokerage": {},
+        },
+        ytd=None,
+        scalar_updates={},
+        joint_conflicts=(),
+        account_type_overrides={},
+        magi_candidates={},
+        slot_captured_at={},
+    )
+    ready = SimpleNamespace(
+        bundle=None,
+        plan=None,
+        local=SimpleNamespace(account_type_overrides={}, slot_captured_at={}),
+        selected=frozenset(),
+        operator=None,
+        data={"sections": {"setup_scalars": {}}},
+        version="v5",
+    )
+    session["ytd_snapshot"] = snap
+    session["ytd_manual_entry"] = True
+    monkeypatch.setattr(data_bridge_mod.st, "session_state", session)
+    monkeypatch.setattr(data_bridge_mod.st, "warning", warnings.append)
+    monkeypatch.setattr(data_bridge_mod.st, "success", lambda *a, **k: None)
+    monkeypatch.setattr(data_bridge_mod.st, "rerun", lambda: None)
+    monkeypatch.setattr(data_bridge_mod, "apply_import", lambda *a, **k: result)
+    monkeypatch.setattr(data_bridge_mod, "slots_with_replaced_accounts", lambda *a: [])
+    monkeypatch.setattr(data_bridge_mod, "commit_import", lambda *a, **k: None)
+    monkeypatch.setattr(data_bridge_mod, "_persist_slot_captured_at", lambda *a: None)
+    return ready, snap
+
+
+def test_a_bridge_import_whose_commit_fails_keeps_manual_entry_and_shows_no_note(
+    store, monkeypatch
+):
+    """The re-derive's session bookkeeping (deselect, kept-manual warnings) waits for the commit."""
+    session: dict = {}
+    warnings: list = []
+    ready, _ = _kept_manual_import(monkeypatch, session, warnings)
+    monkeypatch.setattr(store.backend, "commit", _locked)  # the block runs fully; COMMIT fails
+    with pytest.raises(StoreUnavailableError, match="database is locked"):
+        data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    assert session["ytd_manual_entry"] is True
+    assert warnings == []
+    assert session["ytd_snapshot"].snapshot_date == ""  # the rolled-back, un-dated copy
+    assert session["ytd_snapshot"].crypto_stcg_ytd == 0.0
+    assert store.keys(YTD) == []
+
+
+def test_a_committed_bridge_import_shows_the_kept_note_and_deselects_manual_entry(
+    store, monkeypatch
+):
+    session: dict = {}
+    warnings: list = []
+    ready, _ = _kept_manual_import(monkeypatch, session, warnings)
+    data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    assert session["ytd_manual_entry"] is False
+    assert any("crypto income" in w for w in warnings)
+    assert store.keys(YTD) != []
+
+
+def test_a_committed_bridge_import_keeps_an_explicitly_chosen_manual_entry(store, monkeypatch):
+    session: dict = {"ytd_manual_entry_explicit": True}
+    warnings: list = []
+    ready, _ = _kept_manual_import(monkeypatch, session, warnings)
+    data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    assert session["ytd_manual_entry"] is True
