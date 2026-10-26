@@ -2,7 +2,7 @@
 
 F-20  read_pii_json let UnicodeDecodeError escape the (JSONDecodeError, OSError)
       handlers of its callers.
-F-23  write_pii_json was not atomic and ignored short writes.
+F-23  write_pii_json was not atomic (writer deleted: the stores live in the database).
 F-42  a non-UTF-8 committed baseline / candidate store / choice map crashed.
 F-43  save_snapshot / save_ssa_snapshot crashed on a valid-JSON non-object cache.
 
@@ -12,15 +12,12 @@ All data is synthetic.
 from __future__ import annotations
 
 import json
-import os
-import stat
 from pathlib import Path
 
 import pytest
 
 import engine.portfolio_sync.portfolio as portfolio_mod
 import engine.portfolio_sync.social_security as ssa_mod
-import engine.secure_io as secure_io
 from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import (
@@ -29,7 +26,7 @@ from engine.data_sources.committed import (
     save_committed,
 )
 from engine.portfolio_sync.shapes import PortfolioSnapshot, SSASnapshot
-from engine.secure_io import read_pii_json, write_pii_json
+from engine.secure_io import read_pii_json
 from engine.store import SINGLE_KEY
 from engine.store.namespaces import CANDIDATE_STORE, COMMITTED, PORTFOLIO, SSA, TRUST_CHOICES
 
@@ -50,49 +47,6 @@ class TestF20ReadDecodeError:
     def test_load_ssa_returns_none_on_bad_utf8(self, corrupt_row) -> None:
         corrupt_row(SSA)
         assert ssa_mod.load_ssa_snapshot(owner="you") is None
-
-
-class TestF23AtomicWrite:
-    def test_short_writes_are_looped(self, tmp_path, monkeypatch) -> None:
-        real_write = os.write
-
-        def short_write(fd: int, data: bytes) -> int:
-            return real_write(fd, bytes(data)[:3])
-
-        monkeypatch.setattr(secure_io.os, "write", short_write)
-        p = tmp_path / "c.json"
-        write_pii_json(p, {"k": list(range(50))})
-        assert json.loads(p.read_text()) == {"k": list(range(50))}
-
-    def test_failed_write_leaves_existing_file_intact(self, tmp_path, monkeypatch) -> None:
-        p = tmp_path / "c.json"
-        write_pii_json(p, {"old": 1})
-
-        def boom(fd: int, data: bytes) -> int:
-            raise OSError("disk full")
-
-        monkeypatch.setattr(secure_io.os, "write", boom)
-        with pytest.raises(OSError, match="disk full"):
-            write_pii_json(p, {"new": 2})
-        monkeypatch.undo()
-        assert json.loads(p.read_text()) == {"old": 1}
-        assert not [x.name for x in tmp_path.iterdir() if ".tmp-" in x.name]
-
-    def test_fsync_failure_is_tolerated(self, tmp_path, monkeypatch) -> None:
-        def no_fsync(fd: int) -> None:
-            raise OSError("not supported")
-
-        monkeypatch.setattr(secure_io.os, "fsync", no_fsync)
-        p = tmp_path / "c.json"
-        write_pii_json(p, {"a": 1})
-        assert json.loads(p.read_text()) == {"a": 1}
-
-    def test_mode_is_0600_and_loose_file_tightened(self, tmp_path) -> None:
-        p = tmp_path / "c.json"
-        p.write_text("{}")
-        p.chmod(0o644)
-        write_pii_json(p, {"a": 1})
-        assert stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
 class TestF42NonUtf8Corrupt:

@@ -1,79 +1,28 @@
-"""Secure I/O helpers for PII caches.
+"""Secure reads of the legacy PII JSON files.
 
-Provides :func:`write_pii_json` which atomically creates a file with mode
-0o600, closing two attack surfaces:
-
-1. TOCTOU race — ``write_text`` + ``chmod`` leaves a 0644 window between
-   creation and permission tightening; ``os.open`` with the mode argument
-   means the file is never momentarily world-readable.
-2. Symlink-follow attack — ``O_NOFOLLOW`` causes ``os.open`` to raise
-   ``OSError`` (ELOOP) if the target path is a symlink, so a pre-planted
-   symlink cannot redirect the write to an attacker-controlled location.
-
-Pattern mirrors ``engine.data_bridge_keys._write_keyfile`` (PR #172 precedent).
-
-Demo mode is handled by the document store's null store (engine.store), not
-here. Every store now lives in the database. The read helpers serve the legacy
-JSON files for the one-time import and, after a failed import, on every call
-through the read-only fallback. ``write_pii_json`` has no production callers
-left; the PR 4 cleanup deletes it.
+Every store lives in the database now (:mod:`engine.store`). These helpers read
+the legacy JSON dotfiles for the one-time import and, after a failed import, on
+every call through the read-only fallback (``engine.store.json_readonly``).
+Both refuse to follow a symlink (``O_NOFOLLOW``), so a pre-planted link cannot
+redirect a read to an attacker-controlled file. The database file gets the same
+0600 and no-symlink rules in :mod:`engine.store.sqlite_backend`.
 """
 
 from __future__ import annotations
 
-import contextlib
-import errno
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 
-def write_pii_json(path: Path, obj: Any, *, indent: int = 2) -> None:
-    """Write *obj* as JSON to *path* with mode 0o600, atomically.
-
-    ``os.open`` with the mode argument means the file is never momentarily
-    world-readable (the old ``write_text`` + ``chmod`` pattern left a 0644
-    window between creation and permission tightening).  ``os.fchmod``
-    re-asserts the exact mode on the open file descriptor so a force-overwrite
-    of a pre-existing looser-permissioned file is corrected independently of
-    the process umask.  ``os.O_NOFOLLOW`` causes ``os.open`` to raise
-    ``OSError`` (ELOOP) if *path* is a symlink, closing the symlink-follow
-    attack surface.
-    """
-    payload = json.dumps(obj, indent=indent).encode()
-    target = Path(path)
-    if target.is_symlink():
-        # os.replace would swap the link itself; keep the refuse-to-follow contract.
-        raise OSError(errno.ELOOP, "refusing to write through a symlink", str(target))
-    tmp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
-    # O_EXCL after a best-effort unlink: never reuse a stale/planted temp file.
-    tmp_path.unlink(missing_ok=True)
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        try:
-            os.fchmod(fd, 0o600)
-            view = memoryview(payload)
-            while view:
-                view = view[os.write(fd, view) :]
-            # stlite/Pyodide (emscripten FS) may not support fsync.
-            with contextlib.suppress(OSError):
-                os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.replace(tmp_path, target)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def read_pii_bytes(path: Path) -> bytes:
     """Read raw bytes from *path*, refusing to follow a symlink.
 
     Bytes-returning sibling of :func:`read_pii_json` for callers that need the
-    file's raw content (e.g. re-emitting a PII cache for encrypted export) rather
-    than parsed JSON. A pre-planted symlink at *path* makes ``os.open`` raise
-    ``OSError`` (ELOOP), so the read cannot be redirected to an attacker file.
+    file's raw content rather than parsed JSON. A pre-planted symlink at *path*
+    makes ``os.open`` raise ``OSError`` (ELOOP), so the read cannot be
+    redirected to an attacker file.
     """
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
@@ -91,13 +40,12 @@ def read_pii_bytes(path: Path) -> bytes:
 def read_pii_json(path: Path) -> Any:
     """Read JSON from *path*, refusing to follow a symlink.
 
-    Read-side mirror of :func:`write_pii_json`'s ``O_NOFOLLOW`` protection: a
-    pre-planted symlink at *path* makes ``os.open`` raise ``OSError`` (ELOOP),
-    so a PII cache read cannot be redirected to an attacker-controlled file.
+    A pre-planted symlink at *path* makes ``os.open`` raise ``OSError``
+    (ELOOP), so a PII read cannot be redirected to an attacker-controlled file.
     Raises ``OSError`` (including the symlink case) or ``json.JSONDecodeError``
-    on malformed content — both already handled by the cache-load call sites.
-    Non-UTF-8 bytes are reported as ``json.JSONDecodeError`` too (audit-1018
-    F-20), so no caller sees a bare ``UnicodeDecodeError``.
+    on malformed content. Non-UTF-8 bytes are reported as
+    ``json.JSONDecodeError`` too (audit-1018 F-20), so no caller sees a bare
+    ``UnicodeDecodeError``.
     """
     raw = read_pii_bytes(path)
     try:
