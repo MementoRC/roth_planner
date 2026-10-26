@@ -336,16 +336,22 @@ def test_a_committed_bridge_import_shows_the_kept_note_and_deselects_manual_entr
 ):
     session: dict = {}
     warnings: list = []
+    captions: list = []
     ready, _ = _kept_manual_import(monkeypatch, session, warnings)
+    monkeypatch.setattr(data_bridge_mod.st, "caption", captions.append)
     data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
     assert session["ytd_manual_entry"] is False
     assert any("crypto income" in w for w in warnings)
+    assert not any("Manual entry stayed ON" in c for c in captions)
     assert store.keys(YTD) != []
 
 
 def test_a_committed_bridge_import_keeps_an_explicitly_chosen_manual_entry(store, monkeypatch):
     session: dict = {"ytd_manual_entry_explicit": True}
     warnings: list = []
+    captions: list = []
     ready, _ = _kept_manual_import(monkeypatch, session, warnings)
+    monkeypatch.setattr(data_bridge_mod.st, "caption", captions.append)
     data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
     assert session["ytd_manual_entry"] is True
+    assert any("Manual entry stayed ON" in c for c in captions)

@@ -642,9 +642,9 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     are the next run's defaults staged, the slot timestamps written
     (``.user_defaults.json`` is a file, outside the store), the kept-manual
     notes shown and manual entry deselected (session bookkeeping a rollback
-    could not undo). Any exception other
-    than the two refusals below is OUR defect and propagates rather than being
-    reported as a bad file (audit-0823); a store error reaches the page banner.
+    could not undo). Any exception other than the two refusals below is OUR
+    defect and propagates rather than being reported as a bad file (audit-0823);
+    a store error reaches the page banner.
     """
     try:
         result = apply_import(

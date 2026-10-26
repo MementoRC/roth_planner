@@ -715,9 +715,10 @@ class TestManualEntryAutoDeselect:
             f"does that after the commit; got {setitem_calls}"
         )
 
-    def test_data_bridge_rederive_default_auto_deselects(self):
-        """Preserve prior behavior: without an explicit choice, the .enc
-        import path still auto-deselects manual entry."""
+    def test_data_bridge_rederive_default_returns_no_warnings_and_leaves_manual_entry(self):
+        """Without an explicit choice the re-derive still returns no kept-manual
+        warnings and leaves ytd_manual_entry untouched; the deselect happens in
+        the caller after the commit."""
         import views._shared as shared_mod
         import views.setup.data_bridge as data_bridge_mod
 
