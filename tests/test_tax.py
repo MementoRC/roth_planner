@@ -69,9 +69,9 @@ class TestSafeHarborPayment:
             already_paid_ytd=0.0,
             payment_date="2026-06-12",
         )
-        assert g.safe_harbor_target == pytest.approx(100_000.0)
+        assert g.safe_harbor_target == pytest.approx(90_000.0)
         assert "current estimate" in g.rule_used
-        assert g.remaining_to_pay == pytest.approx(100_000.0)
+        assert g.remaining_to_pay == pytest.approx(90_000.0)
 
     def test_prior_110pct_is_lesser_uses_prior(self):
         """110% prior ($88K) < current ($120K) → uses prior."""
@@ -87,7 +87,7 @@ class TestSafeHarborPayment:
         assert "110% prior" in g.rule_used
 
     def test_current_is_lesser_uses_current(self):
-        """current ($100K) < 110% prior ($132K) → uses current."""
+        """90% current ($90K) < 110% prior ($132K) → uses current prong."""
         from engine.tax import safe_harbor_payment
 
         g = safe_harbor_payment(
@@ -96,8 +96,28 @@ class TestSafeHarborPayment:
             already_paid_ytd=0.0,
             payment_date="2026-06-12",
         )
-        assert g.safe_harbor_target == pytest.approx(100_000.0)
+        assert g.safe_harbor_target == pytest.approx(90_000.0)
         assert "current estimate" in g.rule_used
+
+    def test_current_year_prong_is_90pct(self):
+        """IRC 6654(d)(1)(B)(i): current-year prong is 90% of current-year tax."""
+        from engine.tax import safe_harbor_payment
+
+        g = safe_harbor_payment(
+            prior_year_tax=50_000.0,
+            current_year_estimate=10_000.0,
+            already_paid_ytd=0.0,
+            payment_date="2026-06-12",
+            prior_year_agi=100_000.0,
+        )
+        assert g.safe_harbor_target == pytest.approx(9_000.0)
+        assert "90% current estimate" in g.rule_used
+
+    def test_current_year_prong_is_90pct_when_prior_unknown(self):
+        from engine.tax import safe_harbor_payment
+
+        g = safe_harbor_payment(0.0, 10_000.0, 0.0, "2026-06-12")
+        assert g.safe_harbor_target == pytest.approx(9_000.0)
 
     def test_already_paid_reduces_remaining(self):
         """Already paid $60K of $88K target → remaining = $28K."""
