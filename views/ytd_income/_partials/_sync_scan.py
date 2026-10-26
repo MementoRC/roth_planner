@@ -1,5 +1,6 @@
+import functools
 import hashlib
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -430,7 +431,7 @@ def _apply_scan_result(
     already happened in the caller, outside the transaction.
     """
     with store_transaction(st.session_state, *_SCAN_SESSION_KEYS):
-        return _write_scan_result(
+        ledger, report = _write_scan_result(
             result,
             ledger=ledger,
             account_overrides=account_overrides,
@@ -438,6 +439,9 @@ def _apply_scan_result(
             instance_owner=instance_owner,
             not_found_message=not_found_message,
         )
+    # Success messages only once the transaction has committed.
+    report()
+    return ledger
 
 
 def _write_scan_result(
@@ -448,9 +452,10 @@ def _write_scan_result(
     owner_map: dict[str, str],
     instance_owner: str,
     not_found_message: str = "No importable financial PDFs found.",
-) -> PdfLedger:
+) -> tuple[PdfLedger, Callable[[], None]]:
     """Apply one scanned ``PdfImportResult`` to the ledger + YTD snapshot and
-    report the outcome; return the (possibly mutated) *ledger*.
+    return the (possibly mutated) *ledger* and a callable that draws the outcome
+    summary (the caller runs it after the transaction commits).
 
     Run by :func:`_apply_scan_result` (shared by the folder-scan and
     uploaded-PDF handlers) so
@@ -615,7 +620,33 @@ def _write_scan_result(
         _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
         save_ytd_snapshot(_snap)
 
-    # Summary: what was parsed, what was applied, what still needs action.
+    report = functools.partial(
+        _report_scan_summary,
+        result,
+        by_account=by_account,
+        applied_bits=applied_bits,
+        new_ira_count=new_ira_count,
+        manual_entry_kept_explicit=_manual_entry_kept_explicit,
+        stmt_unknown_now=stmt_unknown_now,
+        not_found_message=not_found_message,
+    )
+    return ledger, report
+
+
+def _report_scan_summary(
+    result: PdfImportResult,
+    *,
+    by_account: dict[str, BrokerageStatementRecord],
+    applied_bits: list[str],
+    new_ira_count: int,
+    manual_entry_kept_explicit: bool,
+    stmt_unknown_now: dict[str, BrokerageStatementRecord],
+    not_found_message: str,
+) -> None:
+    """Summary: what was parsed, what was applied, what still needs action.
+
+    Drawn by :func:`_apply_scan_result` only after its transaction commits.
+    """
     parsed_bits: list[str] = []
     if by_account:
         parsed_bits.append(f"{len(by_account)} brokerage account(s)")
@@ -643,7 +674,7 @@ def _write_scan_result(
         st.info(not_found_message)
     if applied_bits:
         st.success("Applied to YTD snapshot: " + "; ".join(applied_bits))
-        if _manual_entry_kept_explicit:
+        if manual_entry_kept_explicit:
             st.caption(
                 "Manual entry stayed ON — you turned it on yourself, so this "
                 "import did not switch you back to synced-data display."
@@ -677,8 +708,6 @@ def _write_scan_result(
         # redacted header lines from a Fidelity statement) intact and
         # copyable -- markdown would fold its newlines into one line.
         st.code("\n\n".join(f"{name}: {msg}" for name, msg in result.errors), language=None)
-
-    return ledger
 
 
 # Session keys holding scan results still awaiting review, plus the scanned-file
@@ -795,12 +824,15 @@ def _render_pdf_uploader(
     if scanned_digests is None:
         scanned_digests = set()
         st.session_state["_pdf_scanned_digests"] = scanned_digests
+    # Digests of this click's successful parses: remembered only once the apply
+    # below commits, so a rolled-back apply stays retryable with the same files.
+    new_digests: set[str] = set()
     with st.status(f"Scanning {n} PDF(s)…", expanded=True) as status:
         progress = st.progress(0.0)
         for i, uploaded_file in enumerate(uploaded, start=1):
             progress.progress((i - 1) / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
             digest = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
-            if digest in scanned_digests:
+            if digest in scanned_digests or digest in new_digests:
                 skipped_scanned += 1
                 st.write(f"{uploaded_file.name}: already scanned — skipped")
                 progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
@@ -832,7 +864,7 @@ def _render_pdf_uploader(
                 # Only a SUCCESSFUL parse is remembered -- a failed one
                 # (above, or single.errors just below) is retryable on the
                 # next click rather than silently stuck "skipped" forever.
-                scanned_digests.add(digest)
+                new_digests.add(digest)
                 st.write(f"{uploaded_file.name}: recognized")
             progress.progress(i / n, text=f"Reading {uploaded_file.name} — file {i} of {n}")
 
@@ -860,6 +892,7 @@ def _render_pdf_uploader(
         instance_owner=instance_owner,
         not_found_message="No importable financial PDFs found in the uploaded files.",
     )
+    scanned_digests |= new_digests
     _render_clear_queue_button(clear_slot)
     if is_pyodide():
         st.caption(

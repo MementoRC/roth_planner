@@ -9,10 +9,11 @@ modules, so their tests are not collected twice). Synthetic values only.
 from __future__ import annotations
 
 import copy
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from engine.data_sources.scan_ingest import ScanIngestResult
 from engine.netbenefits_statement_pdf import parse_netbenefits_text
 from engine.pdf_import import PdfImportResult
 from engine.ssa_statement_pdf import parse_ssa_statement_text
@@ -27,6 +28,7 @@ from engine.store.namespaces import (
 )
 from tests import test_sync_scan_ira_statements as ira_tests
 from tests import test_sync_scan_netbenefits as nb_tests
+from tests import test_sync_scan_uploader as upload_tests
 from tests.test_netbenefits_statement_pdf import PAGES as NB_PAGES
 from tests.test_ssa_statement_pdf import PAGES as SSA_PAGES
 from views.ytd_income._partials import _sync_scan as sync_scan_mod
@@ -125,6 +127,49 @@ def _scan(mock_st, result: PdfImportResult) -> None:
             owner_map={},
             instance_owner="you",
         )
+
+
+def test_a_rolled_back_upload_apply_leaves_the_digests_so_a_retry_is_not_skipped(store):
+    rec = ira_tests._rec(account_type="taxable", account_number="T1")
+    parsed = ScanIngestResult(
+        brokerage_count=1,
+        form_1040_count=0,
+        koinly_count=0,
+        skipped_count=0,
+        unrecognized_count=0,
+        magi_candidates_recorded=0,
+        errors=[],
+        raw=PdfImportResult(brokerage_records=[rec]),
+        pdf_cache={},
+    )
+    mock_run = MagicMock(return_value=parsed)
+    mock_st, state = upload_tests._mock_st(
+        session_extra={"instance_owner": "you"},
+        uploaded_files=[upload_tests._FakeUploadedFile("a.pdf", data=b"synthetic-bytes")],
+        button_clicks={"scan_uploaded_pdfs_btn"},
+    )
+
+    def _upload() -> None:
+        with (
+            patch.object(sync_scan_mod, "st", mock_st),
+            patch.object(sync_scan_mod, "ensure_pdf_backend", return_value="ready"),
+            patch.object(sync_scan_mod, "run_uploaded_scan", mock_run),
+            patch.object(sync_scan_mod, "save_ytd_snapshot", _locked),
+        ):
+            sync_scan_mod._render_pdf_uploader(
+                instance_owner="you",
+                account_overrides={},
+                owner_map={},
+                ledger={"koinly": {}, "brokerage": {}},
+                identity_set=True,
+            )
+
+    for attempt in (1, 2):
+        with pytest.raises(StoreUnavailableError, match="database is locked"):
+            _upload()
+        assert state["_pdf_scanned_digests"] == set()
+        assert mock_run.call_count == attempt
+    mock_st.success.assert_not_called()
 
 
 def test_a_scan_whose_ytd_write_fails_saves_no_statement_or_ledger(store):
