@@ -91,6 +91,7 @@ from views._shared import (
     run_folder_scan,
     run_uploaded_scan,
 )
+from views._store_transaction import store_transaction
 
 
 def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
@@ -1350,14 +1351,17 @@ def _render_netbenefits_review(
             disabled=not identity_set,
         ):
             outcome = apply_netbenefits_statement(snap, stmt, owner, force=True, replaces=replaces)
-            if not _save_snapshot_or_report(outcome.snapshot):
-                continue
-            st.session_state["portfolio_snapshot"] = outcome.snapshot
-            record_ira_balance_candidate(
-                outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
-            )
-            if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+            # One transaction (spec §2): the snapshot, the balance candidate and
+            # the learned holder name are saved together or not at all.
+            with store_transaction(st.session_state, "portfolio_snapshot"):
+                if not _save_snapshot_or_report(outcome.snapshot):
+                    continue
+                st.session_state["portfolio_snapshot"] = outcome.snapshot
+                record_ira_balance_candidate(
+                    outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
+                )
+                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
         if st.button("Dismiss", key=f"netbenefits_dismiss_{i}"):
@@ -1543,23 +1547,27 @@ def _render_ira_statement_review(
         apply_label = "Use anyway" if preview.kept_newer is not None else "Apply IRA balance"
         if st.button(apply_label, key=f"ira_statement_apply_{i}", disabled=not identity_set):
             outcome = apply_ira_statement(snap, rec, owner, force=True, replaces=link_key)
-            if not _save_snapshot_or_report(outcome.snapshot):
-                continue
-            save_link_map(remember_link(rec, link_key or NEW, link_map))
-            st.session_state["portfolio_snapshot"] = outcome.snapshot
-            record = (
-                record_roth_balance_candidate
-                if rec.account_type == "roth_ira"
-                else record_ira_balance_candidate
-            )
-            if outcome.other_owner_total is not None:
-                # The owner was corrected: the wrong-owner copy is gone, so
-                # that person's candidate is re-recorded at their corrected total.
-                other_field, other_total = outcome.other_owner_total
-                record(other_field, other_total, outcome.detail, datetime.now())
-            record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
-            if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
+            # One transaction (spec §2): the snapshot, the remembered link, the
+            # balance candidate(s) and the learned holder name are saved together
+            # or not at all -- a later failure no longer leaves the link map written.
+            with store_transaction(st.session_state, "portfolio_snapshot"):
+                if not _save_snapshot_or_report(outcome.snapshot):
+                    continue
+                save_link_map(remember_link(rec, link_key or NEW, link_map))
+                st.session_state["portfolio_snapshot"] = outcome.snapshot
+                record = (
+                    record_roth_balance_candidate
+                    if rec.account_type == "roth_ira"
+                    else record_ira_balance_candidate
+                )
+                if outcome.other_owner_total is not None:
+                    # The owner was corrected: the wrong-owner copy is gone, so
+                    # that person's candidate is re-recorded at their corrected total.
+                    other_field, other_total = outcome.other_owner_total
+                    record(other_field, other_total, outcome.detail, datetime.now())
+                record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
+                if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
             st.rerun()
         if st.button("Dismiss", key=f"ira_statement_dismiss_{i}"):
@@ -1631,16 +1639,19 @@ def _render_ssa_review(
             key=f"ssa_apply_{i}",
             disabled=not identity_set,
         ):
-            record_ss_fra_candidate(
-                "your_ss_fra" if owner == "you" else "spouse_ss_fra",
-                stmt.fra_monthly,
-                Source.PDF,
-                f"SSA statement PDF, dated {stmt.statement_date}",
-                datetime.now(),
-            )
-            save_ssa_pdf_estimates(owner, stmt)
-            if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+            # One transaction (spec §2): the candidate, the saved estimates and
+            # the learned holder name are saved together or not at all.
+            with store_transaction(st.session_state):
+                record_ss_fra_candidate(
+                    "your_ss_fra" if owner == "you" else "spouse_ss_fra",
+                    stmt.fra_monthly,
+                    Source.PDF,
+                    f"SSA statement PDF, dated {stmt.statement_date}",
+                    datetime.now(),
+                )
+                save_ssa_pdf_estimates(owner, stmt)
+                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
+                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
         if st.button("Dismiss", key=f"ssa_dismiss_{i}"):
