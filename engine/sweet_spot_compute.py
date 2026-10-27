@@ -272,21 +272,29 @@ def _ltcg_stack_tax(
 
 
 def estimate_brokerage_income(
-    hh: Household, year: int, ytd: YTDSnapshot | None = None
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None = None,
+    brokerage: float | None = None,
 ) -> tuple[float, float, float]:
     """Estimate forecast (qualified_div, ordinary_div, realized_gains) for `year`,
     mirroring engine.scenario's compute_brokerage_dividends call and the "B1/B2"
     realized_gains suppression comment in compute_scenario (grep those markers
-    rather than a line number -- it has moved before). Uses hh.brokerage_start as a static
-    balance -- Sweet Spot Finder is a per-year snapshot, not a multi-year balance
-    projection (see estimate_ltcg_eligible for the same simplification).
+    rather than a line number -- it has moved before).
+
+    `brokerage` is the begin-of-year (pre-forced-draw) brokerage balance, as
+    run_scenario prices dividends and turnover gains on; callers pass the
+    zero-conversion projection's (:func:`zero_conversion_brokerage_balances`) so
+    the whole row shares that history (audit-1026 follow-up). None falls back to
+    hh.brokerage_start, which is right only in the base year.
 
     R1/R5 (audit 2026-07-13): in the base year, when `ytd` actuals are supplied,
     the forecast is suppressed to 0.0 -- the YTD snapshot is the source of truth
     for that year's realized dividends/gains, avoiding double-counting."""
     if ytd is not None:
         return 0.0, 0.0, 0.0
-    brokerage = hh.brokerage_start
+    if brokerage is None:
+        brokerage = hh.brokerage_start
     if hh.brokerage_growth is not None:
         qual_div = hh.brokerage_growth.qualified_div_for(year, brokerage)
         ord_div = hh.brokerage_growth.ordinary_div_for(year, brokerage)
@@ -313,8 +321,8 @@ def estimate_rmd_income(
     R3 (audit 2026-07-13): uses the CURRENT (undiminished) IRA balances
     (hh.your_ira / hh.spouse_ira) as a static proxy -- Sweet Spot Finder is a
     per-year snapshot, not a multi-year balance projection, so year-over-year
-    RMD/growth compounding is not modeled (same simplification pattern as
-    estimate_ltcg_eligible / estimate_brokerage_income).
+    RMD/growth compounding is not modeled (brokerage income, by contrast, now
+    takes the zero-conversion projection's balance -- audit-1026 follow-up).
 
     Audit findings 2+3 (HIGH, 2026-08): `ytd` (base year only, per caller
     convention) nets already-distributed YTD IRA withdrawals out of the
@@ -400,10 +408,16 @@ def estimate_rmd_income(
     return your_rmd + spouse_rmd + inherited
 
 
-def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = None) -> float:
+def estimate_ltcg_eligible(
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None = None,
+    brokerage: float | None = None,
+) -> float:
     """Estimate realized LTCG + qualified dividends eligible for the preferential-
     rate stack for `year`, mirroring engine.scenario's ltcg_eligible (realized_gains
     + qual_div_this_year). Returns 0.0 when no brokerage data is available.
+    `brokerage` is the begin-of-year balance, as in :func:`estimate_brokerage_income`.
 
     R5 (audit 2026-07-13): when `ytd` actuals are supplied (base year), the forecast
     is suppressed and replaced with the YTD LTCG + qualified dividends actually
@@ -420,16 +434,22 @@ def estimate_ltcg_eligible(hh: Household, year: int, ytd: YTDSnapshot | None = N
     """
     if ytd is not None:
         return ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
-    qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, None)
+    qual_div, _ord_div, realized_gains = estimate_brokerage_income(hh, year, None, brokerage)
     return realized_gains + qual_div
 
 
-def sweet_spot_ltcg_eligible(hh: Household, base: BaseIncome, ytd: YTDSnapshot | None) -> float:
+def sweet_spot_ltcg_eligible(
+    hh: Household,
+    base: BaseIncome,
+    ytd: YTDSnapshot | None,
+    brokerage: float | None = None,
+) -> float:
     """Issue #40: :func:`estimate_ltcg_eligible` for ``base``'s year plus the
     zero-conversion waterfall's brokerage-sale gain (``base.sale_gain``).
     engine.scenario folds that gain into realized_gains, so it stacks with the
-    rest of the year's preferential income (on top of any YTD amount)."""
-    return estimate_ltcg_eligible(hh, base.year, ytd=ytd) + base.sale_gain
+    rest of the year's preferential income (on top of any YTD amount).
+    ``brokerage`` is the year's begin-of-year balance (audit-1026 follow-up)."""
+    return estimate_ltcg_eligible(hh, base.year, ytd=ytd, brokerage=brokerage) + base.sale_gain
 
 
 def base_income_for_year(
@@ -442,6 +462,7 @@ def base_income_for_year(
     ira_draw: float = 0.0,
     sale_gain: float = 0.0,
     sale_gain_fraction: float = 0.0,
+    brokerage: float | None = None,
 ) -> BaseIncome:
     """Compute fixed income components for a given year (no conversion).
 
@@ -473,6 +494,11 @@ def base_income_for_year(
     Issue #40: `sale_gain_fraction` is the unrealized share of the year's
     begin-of-year brokerage balance (see zero_conversion_gain_fractions); it does
     not move the base, only what an extra conversion-forced sale realizes.
+
+    audit-1026 follow-up: `brokerage` is the year's begin-of-year balance in the
+    zero-conversion projection (see zero_conversion_brokerage_balances), which
+    prices the forecast dividends and turnover gains as run_scenario does; None
+    uses hh.brokerage_start.
     """
     ya = hh.your_age_in(year)
     sa = hh.spouse_age_in(year)
@@ -547,7 +573,7 @@ def base_income_for_year(
     # the base year when ytd is supplied) + RMD/inherited-IRA income, mirroring
     # engine.scenario's compute_brokerage_dividends/realized_gains + compute_rmds.
     forecast_qual_div, forecast_ord_div, forecast_realized_gains = estimate_brokerage_income(
-        hh, year, ytd
+        hh, year, ytd, brokerage
     )
     rmd_income = estimate_rmd_income(hh, year, ytd, your_qcd=your_qcd, spouse_qcd=spouse_qcd)
     # audit-0809 #08: `ira_draw` is ordinary income, so it enters the MAGI base,
@@ -849,6 +875,7 @@ def _own_history_fills(
 
     is_base = year == hh.base_year
     ytd_year = ytd if is_base else None
+    zero_year = zero_years.get(year)
     base = base_income_for_year(
         hh,
         year,
@@ -856,12 +883,12 @@ def _own_history_fills(
         ira_draw=ira_draw,
         sale_gain=sale_gain,
         sale_gain_fraction=fractions.get(year, 0.0),
+        brokerage=zero_year.brokerage_balance if zero_year is not None else None,
     )
     blind_12, blind_22 = fill_conversions_for_year(hh, base)
-    zero_year = zero_years.get(year)
     if zero_year is None:
         return blind_12, blind_22
-    ltcg = sweet_spot_ltcg_eligible(hh, base, ytd_year)
+    ltcg = sweet_spot_ltcg_eligible(hh, base, ytd_year, zero_year.brokerage_balance)
     brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     # (0, 0) only marks the year as gated so the draw solver is built.
     gated = {year: (0.0, 0.0)}
@@ -1437,6 +1464,13 @@ def zero_conversion_gain_fractions(
     return fractions
 
 
+def zero_conversion_brokerage_balances(years: Mapping[int, YearResult]) -> dict[int, float]:
+    """Per-year begin-of-year (pre-forced-draw) brokerage balance in the
+    zero-conversion projection ``years`` -- the balance run_scenario prices
+    dividends and turnover gains on (YearResult.brokerage_balance)."""
+    return {year: yr.brokerage_balance for year, yr in years.items()}
+
+
 def compute_multi_year_summary(
     hh: Household,
     *,
@@ -1486,6 +1520,7 @@ def compute_multi_year_summary(
     if sale_gains is None:
         sale_gains = zero_conversion_sale_gains(hh, zero_years) if zero_years else {}
     gain_fractions = zero_conversion_gain_fractions(hh, zero_years) if zero_years else {}
+    brokerages = zero_conversion_brokerage_balances(zero_years) if zero_years else {}
     if fills is None:
         fills = forced_draw_fills(
             hh,
@@ -1512,8 +1547,13 @@ def compute_multi_year_summary(
             ira_draw=ira_draws.get(yr, 0.0),
             sale_gain=sale_gains.get(yr, 0.0),
             sale_gain_fraction=gain_fractions.get(yr, 0.0),
+            brokerage=brokerages.get(yr),
         )
-        _le = sweet_spot_ltcg_eligible(hh, b, _yr_ytd) if include_ltcg_stacking else 0.0
+        _le = (
+            sweet_spot_ltcg_eligible(hh, b, _yr_ytd, brokerages.get(yr))
+            if include_ltcg_stacking
+            else 0.0
+        )
 
         # C23 (audit-0805) / audit-0809 #01: fill_12/fill_22 route through
         # bracket_boundary_conversion -- the module's own SS-torpedo-aware oracle

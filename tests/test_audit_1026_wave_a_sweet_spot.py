@@ -175,8 +175,9 @@ def _row_inputs(hh: Household) -> dict[int, tuple[BaseIncome, float, object]]:
             ira_draw=draws[y],
             sale_gain=gains.get(y, 0.0),
             sale_gain_fraction=fractions.get(y, 0.0),
+            brokerage=years[y].brokerage_balance,
         )
-        out[y] = (b, sweet_spot_ltcg_eligible(hh, b, None), years[y])
+        out[y] = (b, sweet_spot_ltcg_eligible(hh, b, None, years[y].brokerage_balance), years[y])
     return out
 
 
@@ -222,11 +223,34 @@ def test_f04_later_year_fill_22_ignores_earlier_years_fills(year: int) -> None:
     fill_22 = _row_fills(hh)[year][1]
     assert fill_22 > 0.0
     taxable = _taxable_with_only_this_year_converted(hh, year, fill_22)
-    # Pre-fix this missed the ceiling by ~$106k (2028). The residual here (~$1k)
-    # is the curve's, not the fill's: it does not shrink the turnover-realized
-    # gain when the extra sale lowers the brokerage balance (the per-year
-    # invariant test pins the fill to the curve to $1).
-    assert taxable == pytest.approx(_ceilings(hh, year)[1], abs=1_500.0)
+    # Pre-fix this missed the ceiling by ~$106k (2028). The ~$1k residual after
+    # that was the row pricing brokerage income on the static starting balance
+    # instead of the zero-conversion projection's (audit-1026 follow-up).
+    assert taxable == pytest.approx(_ceilings(hh, year)[1], abs=5.0)
+
+
+@pytest.mark.parametrize("year", [2027, 2028, 2029, 2030])
+def test_later_year_row_base_matches_run_scenario_on_brokerage_income(year: int) -> None:
+    hh = _hh_f04()
+    forced = _row_fills(hh)
+    base, ltcg, zero_year = _row_inputs(hh)[year]
+    got = sweep_all_in(
+        hh,
+        base,
+        [50_000.0],
+        net_inv_income=0.0,
+        ltcg_eligible=ltcg,
+        zero_year=zero_year,  # type: ignore[arg-type]
+        fills={year: forced[year]},
+    )[0]
+
+    plan = ConversionPlan(your_conversions={year: 50_000.0}, spouse_conversions={year: 0.0})
+    res = run_scenario(hh, plan, "oracle", end_age=hh.your_age + year - hh.base_year)
+    oracle = next(r for r in res.years if r.year == year)
+
+    assert got.taxable_inc == pytest.approx(oracle.taxable_income, abs=5.0)
+    assert got.magi == pytest.approx(oracle.magi, abs=5.0)
+    assert got.all_in == pytest.approx(oracle.all_in_cost, abs=5.0)
 
 
 def test_fills_land_on_the_ceiling_on_the_draw_aware_curve_every_year() -> None:
