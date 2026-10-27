@@ -7,6 +7,9 @@ grew to ~980 lines (pure mechanical reorganization, no behavior change).
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+from typing import Any
+
 import streamlit as st
 
 from config.scalar_registry import scalar_default
@@ -28,6 +31,31 @@ def filing_status_from_label(label: str) -> str:
     ``== "Single"`` branches stay dead code (R1 #6).
     """
     return _HH_FILING_LABEL_SINGLE if label == _HH_FILING_LABEL_SINGLE else "MFJ"
+
+
+_RMD_AUTO_LABEL = "Auto (from birth year)"
+
+
+def _rmd_option_label(option: int | None) -> str:
+    return _RMD_AUTO_LABEL if option is None else str(option)
+
+
+def _rmd_option_index(state: MutableMapping[str, Any], person: str) -> int:
+    """Selectbox index over ``[None, 73, 75]``: Auto unless the user chose one."""
+    if not state.get(f"{person}_rmd_age_chosen", False):
+        return 0
+    return 1 if state.get(f"{person}_rmd_start_age") == 73 else 2
+
+
+def rmd_choice_write_back(state: MutableMapping[str, Any], person: str, choice: int | None) -> None:
+    """Record the RMD-start-age selectbox result (audit-1026 F-18).
+
+    ``None`` is Auto: only the marker is cleared, so the derived age is never
+    written into state (writing it froze a derived 73 after an age correction).
+    """
+    state[f"{person}_rmd_age_chosen"] = choice is not None
+    if choice is not None:
+        state[f"{person}_rmd_start_age"] = choice
 
 
 def render_household_partial(hh: Household, container, owner: str) -> bool | None:
@@ -102,11 +130,21 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
                 f"Stored RMD start age {_your_rmd_stored} is not valid (must be 73 or 75); "
                 "falling back to 75."
             )
-        st.session_state.your_rmd_start_age = container.selectbox(
-            "Your RMD start age",
-            options=[73, 75],
-            index=0 if hh.your_rmd_start_age == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
+        rmd_choice_write_back(
+            st.session_state,
+            "your",
+            container.selectbox(
+                "Your RMD start age",
+                options=[None, 73, 75],
+                index=_rmd_option_index(st.session_state, "your"),
+                format_func=lambda o: (
+                    f"{_RMD_AUTO_LABEL}: {hh.your_rmd_start_age}"
+                    if o is None
+                    else _rmd_option_label(o)
+                ),
+                help="Auto follows your birth year: 73 if born 1951-1959, 75 if born 1960+ "
+                "(SECURE 2.0 §107). Pick 73 or 75 only to override.",
+            ),
         )
         st.session_state.your_defer_first_rmd = container.checkbox(
             "Defer first RMD to April 1 (two RMDs in year 2)",
@@ -170,11 +208,17 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
                 f"Stored spouse RMD start age {_spouse_rmd_stored} is not valid "
                 "(must be 73 or 75); falling back to 75."
             )
-        _spouse_rmd_start_age = container.selectbox(
+        _spouse_rmd_choice = container.selectbox(
             "Spouse RMD start age",
-            options=[73, 75],
-            index=0 if hh.spouse_rmd_start_age == 73 else 1,
-            help="73 if born 1951-1959 (SECURE 2.0 §107); 75 if born 1960+ (SECURE 2.0 §107)",
+            options=[None, 73, 75],
+            index=_rmd_option_index(st.session_state, "spouse"),
+            format_func=lambda o: (
+                f"{_RMD_AUTO_LABEL}: {hh.spouse_rmd_start_age}"
+                if o is None
+                else _rmd_option_label(o)
+            ),
+            help="Auto follows spouse's birth year: 73 if born 1951-1959, 75 if born 1960+ "
+            "(SECURE 2.0 §107). Pick 73 or 75 only to override.",
             disabled=_is_single,
         )
         _spouse_defer_first_rmd = container.checkbox(
@@ -224,7 +268,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         if not _is_single:
             st.session_state.spouse_age = _spouse_age
             st.session_state.spouse_has_workplace_plan = _spouse_has_workplace_plan
-            st.session_state.spouse_rmd_start_age = _spouse_rmd_start_age
+            rmd_choice_write_back(st.session_state, "spouse", _spouse_rmd_choice)
             st.session_state.spouse_defer_first_rmd = _spouse_defer_first_rmd
             st.session_state.spouse_is_sole_beneficiary = _spouse_is_sole_beneficiary
             st.session_state.spouse_fra_age = _spouse_fra_age

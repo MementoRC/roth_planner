@@ -160,6 +160,8 @@ _PRE_REFACTOR_SCALAR_KEYS = [
 _POST_498_ADDITIONS = ["net_inv_income", "terminal_ira_tax_rate", "stock_ticker"]
 # Their session keys (stock_ticker is held under "_stock_ticker").
 _POST_498_SESSION_KEYS = {"net_inv_income", "terminal_ira_tax_rate", "_stock_ticker"}
+# audit-1026 F-18: per-person "user picked the RMD start age" markers.
+_F18_RMD_CHOSEN = ["your_rmd_age_chosen", "spouse_rmd_age_chosen"]
 
 _PRE_REFACTOR_JOINT_FIELDS = frozenset(
     {
@@ -222,18 +224,19 @@ class TestPreRefactorLiteralPins:
     re-scoped, or re-valued registry entry must fail these."""
 
     def test_scalar_keys_matches_pre_refactor_literal_order(self) -> None:
-        assert [k for k in SCALAR_KEYS if k not in _POST_498_ADDITIONS] == _PRE_REFACTOR_SCALAR_KEYS
-        assert set(SCALAR_KEYS) == set(_PRE_REFACTOR_SCALAR_KEYS) | set(_POST_498_ADDITIONS)
+        added = [*_POST_498_ADDITIONS, *_F18_RMD_CHOSEN]
+        assert [k for k in SCALAR_KEYS if k not in added] == _PRE_REFACTOR_SCALAR_KEYS
+        assert set(SCALAR_KEYS) == set(_PRE_REFACTOR_SCALAR_KEYS) | set(added)
 
     def test_joint_fields_matches_pre_refactor_literal(self) -> None:
         assert _PRE_REFACTOR_JOINT_FIELDS | frozenset(_POST_498_ADDITIONS) == JOINT_FIELDS
 
-    def test_registry_has_exactly_35_session_keys(self) -> None:
-        # 32 pre-#498 session keys plus the post-#498 additions.
-        assert {spec.session_key for spec in SCALAR_REGISTRY} == set(
-            _PRE_REFACTOR_SCALAR_DEFAULTS
-        ) | _POST_498_SESSION_KEYS
-        assert len(SCALAR_REGISTRY) == 35
+    def test_registry_has_exactly_37_session_keys(self) -> None:
+        # 32 pre-#498 session keys plus the post-#498 additions plus the F-18 markers.
+        assert {spec.session_key for spec in SCALAR_REGISTRY} == (
+            set(_PRE_REFACTOR_SCALAR_DEFAULTS) | _POST_498_SESSION_KEYS | set(_F18_RMD_CHOSEN)
+        )
+        assert len(SCALAR_REGISTRY) == 37
 
     def test_every_scalar_default_matches_pre_refactor_literal(self) -> None:
         for session_key, expected in _PRE_REFACTOR_SCALAR_DEFAULTS.items():

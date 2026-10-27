@@ -157,6 +157,7 @@ def build_user_defaults_session_updates(
             "your_ss_fra": "spouse_ss_fra",
             "your_ss_start_age": "spouse_ss_start_age",
             "your_rmd_start_age": "spouse_rmd_start_age",
+            "your_rmd_age_chosen": "spouse_rmd_age_chosen",
             "your_fra_age": "spouse_fra_age",
             "your_aca": "spouse_aca",
             "your_defer_first_rmd": "spouse_defer_first_rmd",

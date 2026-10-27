@@ -67,6 +67,13 @@ SCALAR_REGISTRY: tuple[ScalarSpec, ...] = (
     ScalarSpec("spouse_ss_start_age", 70, "per_person"),
     ScalarSpec("your_rmd_start_age", 75, "per_person"),
     ScalarSpec("spouse_rmd_start_age", 75, "per_person"),
+    ScalarSpec(
+        "your_rmd_age_chosen",
+        False,
+        "per_person",
+        note="True only when the user picked the RMD start age; else it follows the birth year.",
+    ),
+    ScalarSpec("spouse_rmd_age_chosen", False, "per_person"),
     ScalarSpec("your_fra_age", 67, "per_person"),
     ScalarSpec("spouse_fra_age", 67, "per_person"),
     ScalarSpec("living_expenses", 60_000, "joint"),

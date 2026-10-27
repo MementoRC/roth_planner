@@ -328,7 +328,13 @@ from engine.data_sources.snapshot_ingest import (  # noqa: E402
     snapshot_carries_portfolio_data,
 )
 from engine.exercise_schedule_store import load_exercise_schedule  # noqa: E402
-from models.household import GrowthProfile, Household, InheritedIRA, SurvivorScenario  # noqa: E402
+from models.household import (  # noqa: E402
+    GrowthProfile,
+    Household,
+    InheritedIRA,
+    SurvivorScenario,
+    rmd_age_kwargs,
+)
 from views.option_exercise._partials._helpers import configured_ticker  # noqa: E402
 from views.setup.parameters import apply_single_filer  # noqa: E402
 
@@ -520,14 +526,8 @@ def get_household() -> Household:
             "spouse_ss_start_age",
             st.session_state.get("ss_start_age", scalar_default("spouse_ss_start_age")),
         ),
-        your_rmd_start_age=st.session_state.get(
-            "your_rmd_start_age",
-            st.session_state.get("rmd_start_age", scalar_default("your_rmd_start_age")),
-        ),
-        spouse_rmd_start_age=st.session_state.get(
-            "spouse_rmd_start_age",
-            st.session_state.get("rmd_start_age", scalar_default("spouse_rmd_start_age")),
-        ),
+        **rmd_age_kwargs(st.session_state, "your"),
+        **rmd_age_kwargs(st.session_state, "spouse"),
         your_defer_first_rmd=st.session_state.get(
             "your_defer_first_rmd", scalar_default("your_defer_first_rmd")
         ),

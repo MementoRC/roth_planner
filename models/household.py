@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from config.loader import load_defaults
 from models.exercise_schedule import ExerciseSchedule
@@ -19,6 +20,20 @@ def default_rmd_age(birth_year: int) -> int:
     born 1951-1959 → 73; born 1960+ → 75. Cohorts born ≤1950 are already past RMD and
     outside this forward planner's scope, so they also resolve to 75."""
     return 73 if 1951 <= birth_year <= 1959 else 75
+
+
+def rmd_age_kwargs(state: Mapping[str, Any], person: str) -> dict[str, Any]:
+    """Household RMD-start-age kwargs for ``person`` ("your"/"spouse") from session state.
+
+    Only a value the user explicitly picked (``<person>_rmd_age_chosen``) is passed
+    through. Otherwise the 75 sentinel is passed so ``Household.__post_init__``
+    derives the age from the birth year. This is also the migration for files saved
+    before the marker existed: a legacy stored 73 was indistinguishable from a
+    derived 73 (which froze after an age correction), so it now loads as auto.
+    """
+    chosen = bool(state.get(f"{person}_rmd_age_chosen", False))
+    value = state.get(f"{person}_rmd_start_age", 75) if chosen else 75
+    return {f"{person}_rmd_start_age": value, f"{person}_rmd_age_chosen": chosen}
 
 
 @dataclass
@@ -269,6 +284,11 @@ class Household:
         75  # SECURE 2.0 default; 1951-1959 cohort uses 73 per IRC §401(a)(9)(C)(v)(I)
     )
 
+    # True only when the user picked the RMD start age in Setup (audit-1026 F-18): a
+    # chosen 73 or 75 is kept as-is; otherwise the age is derived from the birth year.
+    your_rmd_age_chosen: bool = False
+    spouse_rmd_age_chosen: bool = False
+
     your_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(i): defer first RMD to April 1 of following year (two RMDs land in year 2)
     spouse_defer_first_rmd: bool = False  # IRC §401(a)(9)(C)(i): defer spouse's first RMD likewise
 
@@ -423,10 +443,16 @@ class Household:
         # SECURE 2.0 §107 / IRC §401(a)(9)(C)(v): born 1951-1959 → 73; born 1960+ → 75.
         # Cohort is derived from (base_year - age); a manual override for miscategorized
         # users is available via the RMD-start-age selectbox in views/setup/parameters.py.
-        if self.your_rmd_start_age != 73:
-            # 73 is the only stable explicit choice (1951-1959 cohort); derive for all else.
+        # A user-chosen 73/75 (``*_rmd_age_chosen``) is kept. Otherwise a bare 73 is still
+        # honoured for direct constructors (it is the 1951-1959 cohort value); the Setup
+        # path never passes an unchosen 73 (see rmd_age_kwargs), so a derived 73 can't freeze.
+        if not (self.your_rmd_age_chosen and self.your_rmd_start_age in (73, 75)) and (
+            self.your_rmd_start_age != 73
+        ):
             self.your_rmd_start_age = default_rmd_age(self.base_year - self.your_age)
-        if self.spouse_rmd_start_age != 73:
+        if not (self.spouse_rmd_age_chosen and self.spouse_rmd_start_age in (73, 75)) and (
+            self.spouse_rmd_start_age != 73
+        ):
             self.spouse_rmd_start_age = default_rmd_age(self.base_year - self.spouse_age)
 
     def effective_schedule(self) -> ExerciseSchedule:
