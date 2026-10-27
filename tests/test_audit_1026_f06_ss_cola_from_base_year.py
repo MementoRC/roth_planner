@@ -17,6 +17,7 @@ from engine.scenario_types import ConversionPlan
 from engine.sweet_spot_compute import base_income_for_year
 from models.household import Household
 from models.ytd_income import YTDSnapshot
+from views.ytd_income._partials._analysis import ytd_combined_ss
 
 COLA = 0.025
 YEAR = 2035  # 9 years after the base year; you are 70, the spouse 64
@@ -100,3 +101,14 @@ def test_f06_ss_cola_headroom_base_year_has_no_growth() -> None:
     with_cola = compute_headroom(_hh(your_age=72, start=65), ytd)
     without = compute_headroom(_hh(your_age=72, start=65, cola=0.0), ytd)
     assert with_cola.projected_magi_base == pytest.approx(without.projected_magi_base, rel=1e-12)
+
+
+def test_f06_ss_cola_ytd_analysis_matches_engine_for_collecting_person() -> None:
+    # Both already collecting in the base year (you 72/claimed 65, spouse 64/claimed 62):
+    # the YTD analysis must show the engine's figure, not a claim-year-grown one.
+    hh = _hh(your_age=72, start=65)
+    hh.spouse_age = 64
+    engine = social_security_benefits(
+        hh, hh.your_age, hh.spouse_age, survivor_active=False, who_dies=None, death_year=None
+    )
+    assert ytd_combined_ss(hh) == pytest.approx(sum(engine), rel=1e-12)
