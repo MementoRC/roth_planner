@@ -1940,6 +1940,22 @@ def _solve_waterfall_year(
     return outcome
 
 
+def in_rmd_era(hh: Household, your_age: float, spouse_age: float) -> bool:
+    """True once either person is at or past their own RMD start age.
+
+    The one RMD-era rule shared by the engine accumulator and the RMD Squeeze
+    page (audit-1026 F-17). A spouse only counts on a joint (MFJ) return.
+    """
+    if your_age >= hh.your_rmd_start_age:
+        return True
+    return hh.filing_status == "MFJ" and spouse_age >= hh.spouse_rmd_start_age
+
+
+def rmd_era_years(hh: Household, years: list[YearResult]) -> list[YearResult]:
+    """The projection years that fall in the household's RMD era."""
+    return [yr for yr in years if in_rmd_era(hh, yr.your_age, yr.spouse_age)]
+
+
 def run_scenario(
     hh: Household,
     plan: ConversionPlan,
@@ -1979,12 +1995,7 @@ def run_scenario(
         cum_aca += yr.aca_loss
         cum_aca_premium += yr.aca_premium_cost
         cum_niit += yr.niit_cost
-        if (
-            ya >= hh.your_rmd_start_age
-            or sa >= hh.spouse_rmd_start_age
-            or yr.extra_withdrawal > 0
-            or yr.spouse_extra_withdrawal > 0
-        ):
+        if in_rmd_era(hh, ya, sa) or yr.extra_withdrawal > 0 or yr.spouse_extra_withdrawal > 0:
             # Exclude conversion_tax from the RMD-phase accumulator so total_rmd_tax
             # reflects only the pure RMD burden.  In overlap years (RMD fires while
             # a spouse is still converting), federal_tax_amt already absorbs

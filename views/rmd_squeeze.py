@@ -21,7 +21,7 @@ import streamlit as st
 from config.scalar_registry import scalar_default
 from engine.ira import RMD_DIVISORS
 from engine.irmaa import irmaa_surcharge, irmaa_tier1_threshold
-from engine.scenario import ConversionPlan, run_no_conversion, run_scenario
+from engine.scenario import ConversionPlan, rmd_era_years, run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
@@ -128,14 +128,11 @@ def render(hh: Household):
     else:
         with_conv = run_scenario(hh, plan_12, "Fill 12%", end_age=95, ytd=_ytd, net_inv_income=_nii)
 
-    # Filter to RMD years (each person's RMD start age and later)
-    rmd_nc = [yr for yr in no_conv.years if yr.your_age >= hh.your_rmd_start_age]
-    rmd_wc = [yr for yr in with_conv.years if yr.your_age >= hh.your_rmd_start_age]
-    rmd_nc_qcd = (
-        [yr for yr in no_conv_qcd.years if yr.your_age >= hh.your_rmd_start_age]
-        if no_conv_qcd
-        else None
-    )
+    # Filter to RMD years (each person's RMD start age and later; the engine's rule)
+    rmd_nc = rmd_era_years(hh, no_conv.years)
+    rmd_wc = rmd_era_years(hh, with_conv.years)
+    rmd_nc_qcd = rmd_era_years(hh, no_conv_qcd.years) if no_conv_qcd else None
+    first_rmd_age = rmd_nc[0].your_age if rmd_nc else hh.your_rmd_start_age
 
     if not rmd_nc:
         st.warning("No RMD years in projection range.")
@@ -151,12 +148,12 @@ def render(hh: Household):
 
     with c1:
         st.metric(
-            f"IRA at {hh.your_rmd_start_age} (No Conv)",
+            f"IRA at first RMD year, age {first_rmd_age} (No Conv)",
             fmt_dollars_short(yr75_nc.your_ira_begin + yr75_nc.spouse_ira_begin, decimals=2),
         )
     with c2:
         st.metric(
-            f"IRA at {hh.your_rmd_start_age} (With Conv)",
+            f"IRA at first RMD year, age {first_rmd_age} (With Conv)",
             fmt_dollars_short(yr75_wc.your_ira_begin + yr75_wc.spouse_ira_begin, decimals=2),
             fmt_dollars_short(
                 yr75_wc.your_ira_begin
@@ -174,7 +171,7 @@ def render(hh: Household):
         # would ZeroDivisionError (audit C9 / rmd-4).
         _rmd_delta_pct = (total_rmd_wc - total_rmd_nc) / total_rmd_nc if total_rmd_nc else 0.0
         st.metric(
-            f"Total RMDs ({hh.your_rmd_start_age}-95)",
+            f"Total RMDs (your age {first_rmd_age}-95)",
             fmt_dollars_short(total_rmd_nc),
             f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct(_rmd_delta_pct, 0, sign=True)})",
         )
@@ -616,7 +613,8 @@ def render(hh: Household):
     _onset_pct = fmt_pct(1 / RMD_DIVISORS[_rmd_age])
     # IRA growth from today to RMD onset, read off the no-conversion projection.
     _ira_now = no_conv.years[0].your_ira_begin + no_conv.years[0].spouse_ira_begin
-    _ira_at_rmd = yr75_nc.your_ira_begin + yr75_nc.spouse_ira_begin
+    _own_onset = next((y for y in rmd_nc if y.your_age == _rmd_age), yr75_nc)
+    _ira_at_rmd = _own_onset.your_ira_begin + _own_onset.spouse_ira_begin
     # md_dollars escapes every "$" so Streamlit does not render text between two
     # dollar signs as LaTeX (audit-1008 F-82).
     st.markdown(
