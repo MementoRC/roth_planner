@@ -304,7 +304,11 @@ def inherited_ira_drain(balance: float, years_remaining: int) -> float:
 
 
 def inherited_ira_drain_for_year(
-    balance: float, inherited_year: int, target_year: int, growth_rate: float = 0.0
+    balance: float,
+    inherited_year: int,
+    target_year: int,
+    growth_rate: float = 0.0,
+    balance_year: int | None = None,
 ) -> float:
     """Stateless drain for an arbitrary `target_year`, replaying the same
     year-by-year recurrence engine.scenario.run_scenario tracks with a running
@@ -318,18 +322,24 @@ def inherited_ira_drain_for_year(
     the true balance-of-record; this replays growth/drain from year 0 so the
     result matches run_scenario's stateful loop exactly.
 
+    `balance_year` is the year `balance` is stated for (run_scenario's base
+    year: InheritedIRA.balance is the CURRENT balance, not the balance in the
+    year of death). The replay starts there while the 10-year clock still runs
+    from `inherited_year`. None means `balance` is the balance in
+    `inherited_year`.
+
     Returns 0.0 before `inherited_year` or once the 10-year window has elapsed.
     """
     if target_year < inherited_year:
         return 0.0
-    years_in = target_year - inherited_year
     years_remaining = inherited_ira_years_remaining(inherited_year, target_year)
     if years_remaining <= 0:
         return 0.0
+    start_year = inherited_year if balance_year is None else max(inherited_year, balance_year)
     running_balance = balance
-    for n in range(years_in):
+    for y in range(start_year, target_year):
         drain = inherited_ira_drain(
-            running_balance, inherited_ira_years_remaining(inherited_year, inherited_year + n)
+            running_balance, inherited_ira_years_remaining(inherited_year, y)
         )
         running_balance = max(running_balance - drain, 0.0) * (1 + growth_rate)
     return inherited_ira_drain(running_balance, years_remaining)

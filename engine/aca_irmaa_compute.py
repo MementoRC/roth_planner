@@ -232,7 +232,14 @@ def default_base_magi(hh: Household, *, ytd: YTDSnapshot | None, net_inv_income:
     """
     years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     draw, gain = _zero_conversion_adds(hh, years, hh.base_year)
-    return base_income_for_year(hh, hh.base_year, ytd=ytd, ira_draw=draw, sale_gain=gain).base_magi
+    return base_income_for_year(
+        hh,
+        hh.base_year,
+        ytd=ytd,
+        ira_draw=draw,
+        sale_gain=gain,
+        brokerage=_zero_brokerage(years, hh.base_year),
+    ).base_magi
 
 
 def _zero_conversion_adds(
@@ -247,6 +254,14 @@ def _zero_conversion_adds(
         yr.forced_your_ira_draw + yr.forced_spouse_ira_draw,
         zero_conversion_sale_gains(hh, years).get(year, 0.0),
     )
+
+
+def _zero_brokerage(years: Mapping[int, YearResult], year: int) -> float | None:
+    """``year``'s begin-of-year brokerage balance in the zero-conversion
+    projection, which prices the base's forecast brokerage income as run_scenario
+    does (audit-1026 follow-up); None when the year is not projected."""
+    yr = years.get(year)
+    return yr.brokerage_balance if yr is not None else None
 
 
 @dataclass
@@ -312,7 +327,8 @@ def compute_cost_curves(
     """
     zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     _, sale_gain = _zero_conversion_adds(hh, zero_years, year)
-    year_base = base_income_for_year(hh, year, ytd=ytd, sale_gain=sale_gain)
+    _brokerage = _zero_brokerage(zero_years, year)
+    year_base = base_income_for_year(hh, year, ytd=ytd, sale_gain=sale_gain, brokerage=_brokerage)
     auto_nii = year_base.net_investment_income_addl
     total_nii = net_inv_income + auto_nii
     _your_on_aca = aca_applies(hh.your_age_in(year), hh.your_aca_enrolled)
@@ -378,7 +394,7 @@ def compute_cost_curves(
         if anyone_on_aca and not hh.aca_enhanced_subsidies_active
         else None
     )
-    _preferential = sweet_spot_ltcg_eligible(hh, year_base, ytd)
+    _preferential = sweet_spot_ltcg_eligible(hh, year_base, ytd, _brokerage)
 
     # IRMAA 2-year lookback: income realized in `year` is judged against the
     # thresholds published for, and paid in, year + 2. ACA (below) stays on `year`
@@ -572,7 +588,13 @@ def compute_year_by_year_timeline(
             year_magi = base_magi
         else:
             draw, gain = _zero_conversion_adds(hh, zero_years, year)
-            year_magi = base_income_for_year(hh, year, ira_draw=draw, sale_gain=gain).base_magi
+            year_magi = base_income_for_year(
+                hh,
+                year,
+                ira_draw=draw,
+                sale_gain=gain,
+                brokerage=_zero_brokerage(zero_years, year),
+            ).base_magi
 
         # === Survivor scenario: determine filing status for this year ===
         survivor_active = surv is not None and year >= surv.death_year + 1

@@ -67,10 +67,22 @@ def _waterfall_legs(need: float, accounts: Accounts, zero_year: YearResult) -> _
     )
 
 
-def _extra_need(result: ConversionResult) -> float:
-    """Cash the conversion adds to the year's need. Excludes LTCG tax (paid from
-    the brokerage) and IRMAA (2-year lookback), as the waterfall does."""
-    return result.conv_tax + result.niit_delta + result.aca_loss
+def _extra_need(result: ConversionResult, ytd_ltcg_delta: float = 0.0) -> float:
+    """Cash the conversion adds to the year's need. Excludes the forecast LTCG
+    tax (paid from the brokerage) and IRMAA (2-year lookback), as the waterfall
+    does. audit-1026 F-03: includes ``ytd_ltcg_delta``, the base-year YTD
+    preferential stacking tax the conversion adds, which run_scenario folds into
+    federal_tax_amt and so into the cash need."""
+    return result.conv_tax + result.niit_delta + result.aca_loss + ytd_ltcg_delta
+
+
+def _ytd_ltcg_part(base: BaseIncome, ltcg_eligible: float) -> float:
+    """The YTD-actual part of ``ltcg_eligible``: the forecast is suppressed to
+    zero in a base year with a YTD snapshot, so what is left after the zero-
+    conversion sale gain is YTD. Zero when the forecast is live (no YTD)."""
+    if base.forecast_qual_div + base.forecast_realized_gains > 0.0:
+        return 0.0
+    return max(ltcg_eligible - base.sale_gain, 0.0)
 
 
 def _split_draw_tax(priced: ConversionResult, own_tax: float) -> ConversionResult:
@@ -163,6 +175,15 @@ def _draw_solver(
             hh, base, amount, net_inv_income, ltcg_eligible=ltcg_eligible, extra_gain=gain
         )
 
+    ytd_ltcg = _ytd_ltcg_part(base, ltcg_eligible)
+
+    def _ytd_delta(amount: float) -> float:
+        if ytd_ltcg <= 0.0:
+            return 0.0
+        return all_in_at_conversion(
+            hh, base, amount, net_inv_income, ltcg_eligible=ytd_ltcg
+        ).ltcg_delta
+
     def _extra(need: float) -> _Legs:
         legs = _waterfall_legs(need, accounts, zero_year)
         return _Legs(
@@ -174,7 +195,7 @@ def _draw_solver(
     def solve(conv: float, extra: _Legs) -> tuple[ConversionResult, _Legs]:
         priced = _price(conv + extra.draw, extra.gain)
         for _ in range(_MAX_PASSES):
-            new = _extra(need0 + _extra_need(priced))
+            new = _extra(need0 + _extra_need(priced, _ytd_delta(conv + extra.draw)))
             settled = (
                 abs(new.draw - extra.draw) < _TOLERANCE and abs(new.gain - extra.gain) < _TOLERANCE
             )

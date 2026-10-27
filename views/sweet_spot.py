@@ -118,8 +118,9 @@ def render(hh: Household) -> None:
     # audit-1018 F-04: the gain the same waterfall realizes by selling brokerage
     # is MAGI too, so it belongs in the base next to the IRA draw.
     _sale_gains = zero_conversion_sale_gains(hh, _zero_years)
-    # Issue #1: in a forced-draw year the Fill cards / table read what "Fill X%"
-    # converts (the auto-fill's joint solve), so they equal the Planner's Fill.
+    # audit-1026 F-04/F-07: in a forced-draw or sale year the Fill cards / table
+    # are solved on that row's own zero-conversion history, the draw and sale
+    # gain the conversion provokes included.
     # Issue #40: the gate deciding those years sees the same sale gain.
     _fills = forced_draw_fills(
         hh,
@@ -127,8 +128,13 @@ def render(hh: Household) -> None:
         net_inv_income=net_inv_income,
         ira_draws=_ira_draws,
         sale_gains=_sale_gains,
+        zero_years=_zero_years,
     )
     _selected_ytd = _ytd if selected_year == hh.base_year else None
+    # audit-1026 follow-up: forecast brokerage income is priced on the same
+    # zero-conversion projection's begin-of-year balance as the draw and gain.
+    _selected_zero = _zero_years.get(selected_year)
+    _selected_brokerage = _selected_zero.brokerage_balance if _selected_zero is not None else None
     base = base_income_for_year(
         hh,
         selected_year,
@@ -136,6 +142,7 @@ def render(hh: Household) -> None:
         ira_draw=_selected_draw,
         sale_gain=_sale_gains.get(selected_year, 0.0),
         sale_gain_fraction=zero_conversion_gain_fractions(hh, _zero_years).get(selected_year, 0.0),
+        brokerage=_selected_brokerage,
     )
 
     # --- Info bar ---
@@ -145,7 +152,7 @@ def render(hh: Household) -> None:
     c3.metric("Deductions", fmt_dollars(base.total_ded))
 
     # Issue #40: the zero-conversion sale gain stacks with the year's LTCG.
-    _ltcg_eligible = sweet_spot_ltcg_eligible(hh, base, _selected_ytd)
+    _ltcg_eligible = sweet_spot_ltcg_eligible(hh, base, _selected_ytd, _selected_brokerage)
     c4.metric("Base MAGI", fmt_dollars(base.base_magi))
     if _selected_draw > 0:
         st.caption(
