@@ -83,6 +83,8 @@ LTCG_THRESHOLDS_SINGLE = (49_450, 545_500)
 # EXCEPT married-filing-separately, which is $75K per §6654(d)(1)(C)(ii). (The app supports MFJ and
 # Single, both $150K; MFS is included for correctness.)
 SAFE_HARBOR_AGI_THRESHOLD = 150_000.0
+# IRC §6654(d)(1)(B)(i): current-year prong of the required annual payment.
+SAFE_HARBOR_CURRENT_YEAR_PCT = 0.90
 SAFE_HARBOR_AGI_THRESHOLD_MFS = 75_000.0
 
 
@@ -792,7 +794,7 @@ def safe_harbor_payment(
     IRS Form 2210 safe harbor: pay LESSER of:
     - 100% of prior year tax  (when prior-year AGI ≤ threshold)
     - 110% of prior year tax  (when prior-year AGI > threshold)
-    - current year tax estimate (90% rule approximated as 100% here)
+    - 90% of the current year tax estimate (IRC §6654(d)(1)(B)(i))
 
     Per IRC §6654(d)(1)(C) the AGI threshold is $150,000 for all filing statuses
     except married-filing-separately ($75,000). When ``prior_year_agi`` is None
@@ -818,19 +820,20 @@ def safe_harbor_payment(
         )
         prior_multiplier = 1.10 if prior_year_agi > agi_threshold else 1.00
 
+    current_prong = SAFE_HARBOR_CURRENT_YEAR_PCT * current_year_estimate
     if prior_year_tax <= 0:
-        safe_harbor_target = current_year_estimate
-        rule_used = "100% current estimate (prior year unknown)"
+        safe_harbor_target = current_prong
+        rule_used = "90% current estimate (prior year unknown)"
     else:
         prior_safe = prior_multiplier * prior_year_tax
         pct_label = "110%" if prior_multiplier > 1.0 else "100%"
         agi_note = " (assumed — prior AGI unknown)" if agi_unknown else ""
-        if prior_safe <= current_year_estimate:
+        if prior_safe <= current_prong:
             safe_harbor_target = prior_safe
             rule_used = f"{pct_label} prior year{agi_note}"
         else:
-            safe_harbor_target = current_year_estimate
-            rule_used = "100% current estimate"
+            safe_harbor_target = current_prong
+            rule_used = "90% current estimate"
 
     remaining = max(0.0, safe_harbor_target - already_paid_ytd)
 
