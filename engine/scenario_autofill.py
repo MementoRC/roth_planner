@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from engine.aca import aca_ceiling_magi, is_pre_medicare_age
+from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
 from engine.ira import (
     calc_rmd,
     inherited_ira_drain,
@@ -969,8 +969,7 @@ def auto_fill_aca(
         # the taxable portion of SS (base_magi), whereas the FPL cliff below is
         # measured against full-SS ACA MAGI (other_fixed + combined_ss). See
         # _irmaa_tier1_magi_room's docstring.
-        ya = hh.your_age + (yr - hh.base_year)
-        sa = hh.spouse_age + (yr - hh.base_year)
+        ya, sa = present_household_ages(hh, yr)
         if not (is_pre_medicare_age(ya) or is_pre_medicare_age(sa)):
             return _irmaa_tier1_magi_room(
                 base_magi, combined_ss, other_fixed, yr, cpi, filing_status

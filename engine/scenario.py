@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
-from engine.aca import aca_ceiling_magi, is_pre_medicare_age
+from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
 from engine.ira import inherited_ira_drain, inherited_ira_years_remaining
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold
 from engine.niit import niit
@@ -1825,8 +1825,7 @@ def _solve_waterfall_year(
                 zero_conv_nd.yr.filing_status,
                 year,
                 cpi,
-                zero_conv_nd.yr.your_age,
-                zero_conv_nd.yr.spouse_age,
+                *present_household_ages(hh, year),
             )
             # _ceiling is None -- the ceiling LIFTED ENTIRELY (aca_safe, once
             # both spouses are 65+: Medicare in effect, no ACA subsidy left
@@ -1929,8 +1928,7 @@ def _solve_waterfall_year(
             baseline.yr.filing_status,
             year,
             cpi,
-            baseline.yr.your_age,
-            baseline.yr.spouse_age,
+            *present_household_ages(hh, year),
         )
         # None -- ceiling lifted (Medicare, aca_safe only); nothing to check.
         if _zero_ceiling is not None:
@@ -2195,8 +2193,7 @@ def project_year_step(
             outcome.yr.filing_status,
             outcome.yr.year,
             cpi,
-            outcome.yr.your_age,
-            outcome.yr.spouse_age,
+            *present_household_ages(hh, outcome.yr.year),
         )
         # None -- ceiling lifted (Medicare, aca_safe only); nothing to check.
         if (
