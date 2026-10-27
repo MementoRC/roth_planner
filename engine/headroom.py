@@ -119,23 +119,21 @@ def compute_headroom(
     result.planned_option_income = max(0.0, opt - realized)
 
     # SS (unlikely at age 61, but handle generically)
-    from engine.ira import ss_benefit_at_age, ss_with_cola
+    from engine.ira import ss_benefit_at_age, ss_in_year
 
     # FIX #4: pass household's actual FRA (not the default 67) so early/late claim
     # adjustments use the correct reference age for each spouse.
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
     spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
     your_ss = (
-        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
-        if ya >= hh.your_ss_start_age
-        else 0.0
+        ss_in_year(your_ss_base, ya, hh.your_age, hh.ss_cola) if ya >= hh.your_ss_start_age else 0.0
     )
     # C4 (audit-0721 W5): gate spouse_ss on filing_status=="MFJ" — mirrors the
     # sibling engine.aca_irmaa_compute._nontaxable_ss, which already excludes
     # spouse SS for a non-MFJ filer. app.py zeroes spouse_age/spouse_ss_fra for
     # Single, but this restores internal consistency for any other caller.
     spouse_ss = (
-        ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+        ss_in_year(spouse_ss_base, sa, hh.spouse_age, hh.ss_cola)
         if filing_status == "MFJ" and sa >= hh.spouse_ss_start_age
         else 0.0
     )

@@ -267,6 +267,16 @@ def ss_with_cola(base_annual: float, years_collecting: int, cola: float = 0.025)
     return base_annual * (1 + cola) ** years_collecting
 
 
+def ss_in_year(base_annual: float, age: int, base_age: int, cola: float = 0.025) -> float:
+    """SS benefit when the person is ``age``, grown by COLA from the base year.
+
+    The FRA benefit is an SSA statement figure in base-year dollars, so COLA
+    compounds for every year since the base year (``age - base_age``), not just
+    from the claim year (audit-1026 F-06).
+    """
+    return ss_with_cola(base_annual, age - base_age, cola)
+
+
 # SECURE Act 10-year rule (IRC §401(a)(9)(H)(i), Reg. §1.401(a)(9)-3(c)(4)):
 # the whole account must be out by Dec 31 of the 10th calendar year FOLLOWING
 # the year of the original owner's death. With inherited_year = that death

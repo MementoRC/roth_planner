@@ -176,4 +176,7 @@ def test_fix_delta_between_schedules_is_dominated_by_base_federal_tax() -> None:
     old_gap = old_concentrated - old_spread
 
     assert new_gap > old_gap
-    assert new_gap > 200_000.0  # the real progressive-tax cost the old formula missed
+    # The real progressive-tax cost the old formula missed. audit-1026 F-06:
+    # floor 200_000 -> 150_000 (measured gap 174_727): SS now grows from the
+    # base year, so more of the RMD-year income is already in the high brackets.
+    assert new_gap > 150_000.0

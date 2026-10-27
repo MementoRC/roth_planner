@@ -27,7 +27,11 @@ from engine.aca_irmaa_compute import (
     default_base_magi,
 )
 from engine.irmaa import irmaa_next_threshold, irmaa_surcharge
-from engine.sweet_spot_compute import base_income_for_year, zero_conversion_ira_draws
+from engine.sweet_spot_compute import (
+    base_income_for_year,
+    zero_conversion_sale_gains,
+    zero_conversion_years,
+)
 from engine.tax import (
     LTCG_THRESHOLDS_MFJ,
     deductions,
@@ -114,8 +118,18 @@ def test_f01_no_cliff_marker_without_aca_or_with_enhanced_subsidies() -> None:
 def _projected_magi(hh: Household, year: int, base_magi: float) -> float:
     if year == hh.base_year:
         return base_magi
-    draws = zero_conversion_ira_draws(hh, ytd=None, net_inv_income=0.0)
-    return base_income_for_year(hh, year, ytd=None, ira_draw=draws.get(year, 0.0)).base_magi
+    zero = zero_conversion_years(hh, ytd=None, net_inv_income=0.0)
+    yr = zero.get(year)
+    if yr is None:
+        return base_income_for_year(hh, year, ytd=None).base_magi
+    return base_income_for_year(
+        hh,
+        year,
+        ytd=None,
+        ira_draw=yr.forced_your_ira_draw + yr.forced_spouse_ira_draw,
+        sale_gain=zero_conversion_sale_gains(hh, zero).get(year, 0.0),
+        brokerage=yr.brokerage_balance,
+    ).base_magi
 
 
 def test_f11_timeline_irmaa_room_uses_each_years_own_magi() -> None:
