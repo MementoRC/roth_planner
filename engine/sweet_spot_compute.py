@@ -25,7 +25,6 @@ from engine.irmaa import (
 )
 from engine.niit import niit
 from engine.scenario import run_scenario
-from engine.scenario_autofill import bracket_fill_conversions
 from engine.scenario_compute import QCD_MIN_AGE
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
@@ -765,10 +764,11 @@ def fill_conversions_for_year(hh: Household, base: BaseIncome) -> tuple[float, f
     Ceilings are $50-rounded per IRC 1(f)(6) (round50=True), matching every
     bracket-indexing call in engine/tax.py.
 
-    ``base`` carries the forced IRA draw at ZERO conversion. In a year with such
-    a draw the displayed fills come from :func:`fills_for_year` instead, which
-    reads the auto-fill's joint solve (issue #1); this is the derivation for
-    every other year.
+    ``base`` carries the forced IRA draw at ZERO conversion. In a year where the
+    conversion's own tax moves income (a draw or gain-realizing sale) the
+    displayed fills come from :func:`fills_for_year` instead, solved on the same
+    base with that draw and sale priced (audit-1026 F-04/F-07, see
+    :func:`forced_draw_fills`); this is the derivation for every other year.
     """
     brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
     ceiling_12 = _index_value(brackets[1][0], base.year, base.cpi, round50=True)
@@ -786,29 +786,100 @@ def forced_draw_fills(
     net_inv_income: float,
     ira_draws: Mapping[int, float],
     sale_gains: Mapping[int, float] | None = None,
+    zero_years: Mapping[int, YearResult] | None = None,
 ) -> dict[int, tuple[float, float]]:
-    """Issue #1: (fill_12, fill_22) for the forced-draw years in ``ira_draws``,
-    taken from the auto-fill plans so the Sweet Spot fills equal what "Fill X%"
-    converts.
+    """(fill_12, fill_22) for the years where the Fill's own tax moves income:
+    a zero-conversion IRA draw or gain-realizing sale, or a draw/sale the Fill
+    provokes (issue #3, :func:`_fill_provoked_draw_years`).
 
-    A zero-conversion draw on the base (``base_income_for_year(ira_draw=...)``)
-    understates the draw the Fill itself provokes: the conversion's tax raises
-    the year's cash need, hence the forced draw, hence shrinks the room. The
-    auto-fill solves that jointly (engine.scenario_autofill._solve_year), so
-    those years read its result instead of re-deriving it. Years without a
-    zero-conversion draw are left to :func:`fill_conversions_for_year` unless
-    the Fill's own tax forces a draw there (issue #3, see
-    :func:`_fill_provoked_draw_years`). The map is empty (and no auto-fill plan
-    is built) when no year can draw. ``sale_gains`` (issue #40,
-    :func:`zero_conversion_sale_gains`) puts the brokerage-sale gain into the
-    gate's base, as the cards' base has it; omitted means none.
+    audit-1026 F-04/F-07: solved on the row's OWN zero-conversion history (the
+    base the table, cards and curve price), plus the draw and sale gain the
+    conversion itself provokes -- the conversion C at which the draw-aware sweep
+    reaches the bracket ceiling. They are NOT the multi-year auto-fill plan,
+    whose year-N fill assumes every earlier year was filled (their taxes drain
+    the brokerage and force IRA draws), a history the rest of the row does not
+    share. In the base year, with no prior history, the two agree.
+    ``sale_gains`` (issue #40, :func:`zero_conversion_sale_gains`) is the
+    brokerage-sale gain in each base; omitted means none. ``zero_years``
+    (:func:`zero_conversion_years`) is derived when omitted. The map is empty
+    when no year qualifies.
     """
-    draw_years = {y for y, d in ira_draws.items() if d > 0.0}
-    draw_years |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws, sale_gains or {})
-    if not draw_years:
+    gains = sale_gains or {}
+    gated = {y for y, d in ira_draws.items() if d > 0.0}
+    gated |= {y for y, g in gains.items() if g > 0.0}
+    gated |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws, gains)
+    if not gated:
         return {}
-    fills = bracket_fill_conversions(hh, ytd, net_inv_income)
-    return {y: fills.get(y, (0.0, 0.0)) for y in sorted(draw_years)}
+    if zero_years is None:
+        zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+    fractions = zero_conversion_gain_fractions(hh, zero_years)
+    return {
+        y: _own_history_fills(
+            hh,
+            y,
+            ytd,
+            net_inv_income,
+            ira_draws.get(y, 0.0),
+            gains.get(y, 0.0),
+            fractions,
+            zero_years,
+        )
+        for y in sorted(gated)
+    }
+
+
+def _own_history_fills(
+    hh: Household,
+    year: int,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    ira_draw: float,
+    sale_gain: float,
+    fractions: Mapping[int, float],
+    zero_years: Mapping[int, YearResult],
+) -> tuple[float, float]:
+    """audit-1026 F-04/F-07: (fill_12, fill_22) for ``year`` -- the conversion at
+    which the draw-aware sweep's taxable income reaches the indexed, $50-rounded
+    bracket ceiling, on the row's own base. As in
+    :func:`fill_conversions_for_year`, in the base year with YTD the fill is the
+    conversion remaining on top of the YTD conversions already in the base.
+    """
+    # Deferred: engine.sweet_spot_draw_curve imports this module.
+    from engine.sweet_spot_draw_curve import draw_aware_boundary
+
+    is_base = year == hh.base_year
+    ytd_year = ytd if is_base else None
+    base = base_income_for_year(
+        hh,
+        year,
+        ytd=ytd_year,
+        ira_draw=ira_draw,
+        sale_gain=sale_gain,
+        sale_gain_fraction=fractions.get(year, 0.0),
+    )
+    blind_12, blind_22 = fill_conversions_for_year(hh, base)
+    zero_year = zero_years.get(year)
+    if zero_year is None:
+        return blind_12, blind_22
+    ltcg = sweet_spot_ltcg_eligible(hh, base, ytd_year)
+    brackets = BRACKETS_SINGLE if hh.filing_status == "Single" else BRACKETS_MFJ
+    # (0, 0) only marks the year as gated so the draw solver is built.
+    gated = {year: (0.0, 0.0)}
+
+    def _fill(bracket: int, blind: float) -> float:
+        return draw_aware_boundary(
+            hh,
+            base,
+            blind_boundary=blind,
+            target=_index_value(brackets[bracket][0], base.year, base.cpi, round50=True),
+            measure=lambda r: r.taxable_inc,
+            net_inv_income=net_inv_income,
+            ltcg_eligible=ltcg,
+            zero_year=zero_year,
+            fills=gated,
+        )
+
+    return _fill(1, blind_12), _fill(2, blind_22)
 
 
 def _fill_provoked_draw_years(
@@ -828,9 +899,11 @@ def _fill_provoked_draw_years(
     Issue #40: the fills are sized on the same base as the cards, sale gain
     included.
 
-    Issue #52: a year with no gain-realizing sale at zero conversion where the
-    Fill forces a brokerage sale with gain is gated in too, so the curve prices
-    that sale's gain as run_scenario does.
+    Issue #52: a year where the Fill forces a brokerage sale with gain is gated
+    in too, so the curve prices that sale's gain as run_scenario does.
+    audit-1026 F-07: no longer skips a year that already sells at a gain at
+    zero conversion; :func:`forced_draw_fills` gates those years in itself and
+    solves their fills with the extra sale's gain priced.
     """
     if not ira_draws:
         return set()
@@ -860,19 +933,17 @@ def _fill_provoked_draw_years(
         year
         for year, yr in projected.items()
         if yr.forced_your_ira_draw + yr.forced_spouse_ira_draw > 0.0
-        or (
-            sale_gains.get(year, 0.0) <= 0.0
-            and yr.forced_brokerage_draw * fractions.get(year, 0.0) > 0.0
-        )
+        or yr.forced_brokerage_draw * fractions.get(year, 0.0) > 0.0
     }
 
 
 def fills_for_year(
     hh: Household, base: BaseIncome, fills: Mapping[int, tuple[float, float]]
 ) -> tuple[float, float]:
-    """(fill_12, fill_22) for ``base``'s year: the auto-fill's when ``fills``
-    holds that year (a forced-draw year, see :func:`forced_draw_fills`), else
-    the bracket-boundary derivation of :func:`fill_conversions_for_year`."""
+    """(fill_12, fill_22) for ``base``'s year: the draw-aware fills solved on the
+    row's own zero-conversion history when ``fills`` holds that year (see
+    :func:`forced_draw_fills`, audit-1026 F-04/F-07), else the bracket-boundary
+    derivation of :func:`fill_conversions_for_year`."""
     return fills[base.year] if base.year in fills else fill_conversions_for_year(hh, base)
 
 
@@ -885,7 +956,8 @@ def bracket_vline_positions(
     """(conversion, rate) of each bracket guide-line for ``base``'s year.
 
     Issue #4: the 12% and 22% lines sit at the same fills as the "Fill to X%"
-    cards (:func:`fills_for_year`, draw-aware in a forced-draw year); other
+    cards (:func:`fills_for_year`, draw-aware and solved on the row's own
+    zero-conversion history in a forced-draw/sale year, audit-1026 F-04); other
     brackets keep the draw-blind :func:`bracket_boundary_conversion`. The
     top bracket (no ceiling) is not drawn. Brackets are matched to the fills
     by rate.
@@ -1386,8 +1458,9 @@ def compute_multi_year_summary(
     year -- to avoid paying for a second projection. Pass an empty dict for the
     pre-fix, draw-blind behaviour.
 
-    Issue #1: ``fills`` maps a forced-draw year to the (fill_12, fill_22) the
-    auto-fill plans convert there (see :func:`forced_draw_fills`). Derived from
+    Issue #1: ``fills`` maps a forced-draw year to its (fill_12, fill_22),
+    solved on the row's own zero-conversion history (see
+    :func:`forced_draw_fills`, audit-1026 F-04). Derived from
     ``ira_draws`` when not supplied; pass ``{}`` to size every year with the
     bracket-boundary derivation on the given base alone.
 
@@ -1420,6 +1493,7 @@ def compute_multi_year_summary(
             net_inv_income=net_inv_income,
             ira_draws=ira_draws,
             sale_gains=sale_gains,
+            zero_years=zero_years or None,
         )
 
     _base_irmaa_tiers = IRMAA_TIERS_SINGLE if hh.filing_status == "Single" else IRMAA_TIERS_MFJ

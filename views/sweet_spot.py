@@ -127,6 +127,7 @@ def render(hh: Household) -> None:
         net_inv_income=net_inv_income,
         ira_draws=_ira_draws,
         sale_gains=_sale_gains,
+        zero_years=_zero_years,
     )
     _selected_ytd = _ytd if selected_year == hh.base_year else None
     base = base_income_for_year(
