@@ -23,7 +23,12 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from engine.brokerage_statement_pdf import BrokerageStatementRecord
+from engine.brokerage_statement_pdf import (
+    BrokerageStatementRecord,
+    find_slot_key,
+    new_slot_key,
+    statement_year,
+)
 from engine.koinly_report_pdf import KoinlyReport
 from engine.store import CorruptStoreError, get_store
 from engine.store.namespaces import PDF_LEDGER
@@ -82,7 +87,10 @@ def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> Pdf
         for other in [o for o in brokerage if o not in owners]:
             for key, rec in list(brokerage[other].items()):
                 if isinstance(rec, dict) and _find_account_key(
-                    brokerage[kept], str(rec.get("broker", "")), str(rec.get("account_number", key))
+                    brokerage[kept],
+                    str(rec.get("broker", "")),
+                    str(rec.get("account_number", key)),
+                    statement_year(rec.get("statement_period_end")),
                 ):
                     del brokerage[other][key]
     return out
@@ -159,10 +167,12 @@ def write_brokerage_contribution(
     """Return a NEW ledger with *record* written into *owner*'s brokerage
     slot, keyed by account_number (broker-qualified on a number collision).
 
-    Account identity is (broker, account_number), not account_number alone.
-    Re-writing the same account under the SAME owner replaces that slot only
-    when *record*'s statement_period_end is the same or newer than the
-    stored slot's (mirrors pick_latest_per_account's comparison, C14
+    Account identity is (broker, account_number), not account_number alone,
+    and each account keeps one slot per statement tax year (audit-1026 F-15):
+    a next-year statement lands beside, not over, the current year's.
+    Re-writing the same account and year under the SAME owner replaces that
+    slot only when *record*'s statement_period_end is the same or newer than
+    the stored slot's (mirrors pick_latest_per_account's comparison, C14
     audit-0721) -- an out-of-order scan (e.g. Dec statement processed after
     Jan) leaves the newer stored record untouched.
 
@@ -206,37 +216,55 @@ def write_brokerage_contribution(
     owner_accounts = dict(updated["brokerage"].get(owner, {}))
     key = _slot_key_for(owner_accounts, record)
     if key is None:
-        # Plain account_number when free; a broker-qualified key only when
-        # another broker's account already holds that number (audit-1008 F-55).
-        key = record.account_number
-        if key in owner_accounts:
-            key = f"{record.broker}:{record.account_number}"
+        # Plain account_number when free; broker- / year-qualified only when
+        # another broker's account or another year of this account holds it
+        # (audit-1008 F-55, audit-1026 F-15).
+        key = new_slot_key(
+            owner_accounts, record.broker, record.account_number, record.statement_period_end
+        )
     owner_accounts[key] = record.to_dict()
     updated["brokerage"][owner] = owner_accounts
     return updated
 
 
 def _slot_key_for(accounts: dict[str, Any], record: BrokerageStatementRecord) -> str | None:
-    """Key of *record*'s account among one owner's brokerage slots, or None.
+    """Key of *record*'s account-and-tax-year slot among one owner's
+    brokerage slots, or None.
 
     Account identity is (broker, account_number), matching how
     account_overrides is keyed (engine.account_attribution) -- two brokers
-    reusing a number string are two distinct accounts (audit-1008 F-55). The
-    slot key is normally the bare account_number; a second broker's account
-    with the same number is stored under ``"<broker>:<account_number>"``.
+    reusing a number string are two distinct accounts (audit-1008 F-55). Each
+    account keeps one slot per statement tax year (audit-1026 F-15). Slot keys
+    are opaque (see new_slot_key); a legacy year-less key matches by the year
+    of the record it holds.
     """
-    return _find_account_key(accounts, record.broker, record.account_number)
+    return _find_account_key(
+        accounts,
+        record.broker,
+        record.account_number,
+        statement_year(record.statement_period_end),
+    )
 
 
-def _find_account_key(accounts: dict[str, Any], broker: str, account_number: str) -> str | None:
-    """Key of (broker, account_number) among one owner's brokerage slots, or None."""
-    for key, rec in accounts.items():
-        if not isinstance(rec, dict):
-            continue
-        number = str(rec.get("account_number", key))
-        if number == account_number and str(rec.get("broker", "")) == broker:
-            return key
-    return None
+def _find_account_key(
+    accounts: dict[str, Any], broker: str, account_number: str, year: int | None
+) -> str | None:
+    """Key of (broker, account_number, tax year) among one owner's brokerage slots, or None."""
+    return find_slot_key(
+        (
+            (
+                key,
+                str(rec.get("broker", "")),
+                str(rec.get("account_number", key)),
+                statement_year(rec.get("statement_period_end")),
+            )
+            for key, rec in accounts.items()
+            if isinstance(rec, dict)
+        ),
+        broker,
+        account_number,
+        year,
+    )
 
 
 def _record_year(rec: dict[str, Any]) -> int | None:

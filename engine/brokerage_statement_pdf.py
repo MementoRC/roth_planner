@@ -73,6 +73,7 @@ from engine.store.namespaces import (
     STATEMENT_ACCOUNT_OVERRIDES,
     STATEMENT_FOLDER,
 )
+from models.ytd_income import iso_day
 
 # Account types a record can carry. "unknown" means the statement gave no
 # reliable signal — MUST be excluded from YTD sums until a human confirms it.
@@ -1154,19 +1155,87 @@ def scan_statement_folder(folder: Path) -> tuple[list[BrokerageStatementRecord],
 # ---------------------------------------------------------------------------
 
 
+def statement_year(period_end: object) -> int | None:
+    """Tax year a statement's period end falls in, or None when unreadable."""
+    day = iso_day(period_end)
+    return int(day[:4]) if day else None
+
+
+def new_slot_key(
+    held_keys: Mapping[str, Any],
+    broker: str,
+    account_number: str,
+    period_end: object,
+) -> str:
+    """Free slot key for a new (broker, account, tax year) slot.
+
+    The bare account_number while free; "<broker>:<number>" when another
+    broker's account holds the bare number; a "@<year>" suffix when the same
+    account already holds a slot for another tax year (audit-1026 F-15). Keys
+    are opaque -- readers take broker/number/year from the record itself, so
+    legacy year-less keys keep working.
+    """
+    year = statement_year(period_end)
+    suffix = f"@{year if year is not None else 'undated'}"
+    bare = account_number
+    if bare not in held_keys:
+        return bare
+    qualified = f"{broker}:{account_number}"
+    holder = held_keys[bare]
+    same_broker = str(
+        holder.get("broker", "") if isinstance(holder, dict) else getattr(holder, "broker", "")
+    )
+    candidates = (
+        [bare + suffix, qualified, qualified + suffix]
+        if same_broker == broker
+        else [qualified, qualified + suffix, bare + suffix]
+    )
+    return next((c for c in candidates if c not in held_keys), qualified + suffix)
+
+
+def find_slot_key(
+    slots: Iterable[tuple[str, str, str, int | None]],
+    broker: str,
+    account_number: str,
+    year: int | None,
+) -> str | None:
+    """Key of the (broker, account_number, tax year) slot among *slots*
+    (key, broker, number, year tuples), or None.
+
+    An exact-year slot wins. An undated statement (year None, e.g. a partial
+    parse) is the same account's slot for any year, and a dated statement
+    replaces an undated slot, so a partial record never sits beside, or
+    shadows, a dated one.
+    """
+    same_account = [s for s in slots if s[1] == broker and s[2] == account_number]
+    for key, _, _, slot_year in same_account:
+        if slot_year == year:
+            return key
+    for key, _, _, slot_year in same_account:
+        if year is None or slot_year is None:
+            return key
+    return None
+
+
 def _account_slot(
     by_account: Mapping[str, BrokerageStatementRecord], rec: BrokerageStatementRecord
 ) -> str | None:
-    """Key of *rec*'s account in *by_account*, or None.
+    """Key of *rec*'s account-and-tax-year slot in *by_account*, or None.
 
     Account identity is (broker, account_number) -- two brokers reusing a
     number string are two accounts (audit-1008 F-55, same rule as
-    engine.pdf_ledger._slot_key_for).
+    engine.pdf_ledger._slot_key_for). Each account keeps one slot per
+    statement tax year (audit-1026 F-15).
     """
-    for key, held in by_account.items():
-        if held.account_number == rec.account_number and held.broker == rec.broker:
-            return key
-    return None
+    return find_slot_key(
+        (
+            (key, held.broker, held.account_number, statement_year(held.statement_period_end))
+            for key, held in by_account.items()
+        ),
+        rec.broker,
+        rec.account_number,
+        statement_year(rec.statement_period_end),
+    )
 
 
 def merge_latest_per_account(
@@ -1175,9 +1244,10 @@ def merge_latest_per_account(
     *,
     replace_on_tie: bool = True,
 ) -> dict[str, BrokerageStatementRecord]:
-    """Fold *records* into a copy of *existing*, one entry per account.
+    """Fold *records* into a copy of *existing*, one entry per account and
+    statement tax year (audit-1026 F-15).
 
-    A record replaces the held one for its account when its
+    A record replaces the held one for its account and year when its
     statement_period_end is newer (or equal, unless *replace_on_tie* is
     False); an older statement never replaces a newer one. The key is the
     bare account_number; a second broker's account with the same number is
@@ -1189,9 +1259,7 @@ def merge_latest_per_account(
     for rec in records:
         key = _account_slot(merged, rec)
         if key is None:
-            key = rec.account_number
-            if key in merged:
-                key = f"{rec.broker}:{rec.account_number}"
+            key = new_slot_key(merged, rec.broker, rec.account_number, rec.statement_period_end)
             merged[key] = rec
             continue
         held = merged[key].statement_period_end
