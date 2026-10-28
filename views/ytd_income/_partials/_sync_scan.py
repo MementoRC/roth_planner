@@ -513,6 +513,8 @@ def _write_scan_result(
     # for per-account confirmation below and are applied via the explicit
     # "Apply to YTD snapshot" button after you confirm them.
     applied_bits: list[str] = []
+    # (kind, text) notices, drawn by the deferred report only after the commit.
+    notices: list[tuple[str, str]] = []
     _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
 
     stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
@@ -535,8 +537,7 @@ def _write_scan_result(
         # corrected before apply_brokerage_totals assigns it onto the
         # snapshot.
         ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, _snap)
-        for warning in ubs_warnings:
-            st.warning(warning)
+        notices.extend(("warning", w) for w in ubs_warnings)
         applied_bits.append(
             f"{len(stmt_taxable_now)} taxable brokerage account(s) "
             f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
@@ -567,8 +568,9 @@ def _write_scan_result(
         save_ledger(ledger)
         save_koinly_report(result.koinly_reports[-1])
 
-        for warning in describe_kept_manual(_snap, apply_koinly_totals(_snap, ledger)):
-            st.warning(warning)
+        notices.extend(
+            ("warning", w) for w in describe_kept_manual(_snap, apply_koinly_totals(_snap, ledger))
+        )
         applied_bits.append(
             f"Koinly crypto ({len(result.koinly_reports)} report(s), "
             f"{len(ledger['koinly'])} owner(s))"
@@ -579,8 +581,9 @@ def _write_scan_result(
     # Statement notes are drawn by _render_scan_review (below the scan, and
     # on every later render), so they are not repeated here.
     if result.koinly_reports:
-        for note in off_year_contributions(ledger, _snap.tax_year, brokerage=False):
-            st.info(note)
+        notices.extend(
+            ("info", n) for n in off_year_contributions(ledger, _snap.tax_year, brokerage=False)
+        )
 
     # NetBenefits 403(b) statements are a BALANCE source, never YTD income:
     # they are only queued here, and applied (to the portfolio snapshot and a
@@ -629,6 +632,7 @@ def _write_scan_result(
         manual_entry_kept_explicit=_manual_entry_kept_explicit,
         stmt_unknown_now=stmt_unknown_now,
         not_found_message=not_found_message,
+        notices=notices,
     )
     return ledger, report
 
@@ -642,11 +646,14 @@ def _report_scan_summary(
     manual_entry_kept_explicit: bool,
     stmt_unknown_now: dict[str, BrokerageStatementRecord],
     not_found_message: str,
+    notices: list[tuple[str, str]],
 ) -> None:
     """Summary: what was parsed, what was applied, what still needs action.
 
     Drawn by :func:`_apply_scan_result` only after its transaction commits.
     """
+    for kind, text in notices:
+        (st.warning if kind == "warning" else st.info)(text)
     parsed_bits: list[str] = []
     if by_account:
         parsed_bits.append(f"{len(by_account)} brokerage account(s)")
