@@ -49,7 +49,6 @@ from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
 
-
 _SYNC_NOTICE_KEY = "_sync_everything_notice"
 
 
