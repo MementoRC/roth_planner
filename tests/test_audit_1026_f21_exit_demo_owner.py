@@ -37,7 +37,10 @@ def test_exit_demo_with_no_stored_owner_is_none(session, monkeypatch):
 
 @pytest.mark.parametrize(
     "exc",
-    [CorruptInstanceOwnerError("instance_owner", ValueError("bad")), StoreUnavailableError("x", "locked")],
+    [
+        CorruptInstanceOwnerError("instance_owner", ValueError("bad")),
+        StoreUnavailableError("x", "locked"),
+    ],
 )
 def test_exit_demo_with_unreadable_owner_is_none(session, monkeypatch, exc):
     def boom() -> str | None:
