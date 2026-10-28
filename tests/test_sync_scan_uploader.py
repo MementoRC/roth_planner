@@ -605,7 +605,7 @@ class TestHolderNameMismatchPanel:
             patch.object(sync_scan_mod, "st", mock_st),
             patch.object(sync_scan_mod, "load_owner_map", return_value={"jane doe": "household"}),
             patch.object(sync_scan_mod, "load_account_overrides", return_value={}),
-            patch("engine.pdf_owner.save_owner_map") as mock_save_map,
+            patch.object(sync_scan_mod, "save_owner_map") as mock_save_map,
         ):
             sync_scan_mod._render_holder_name_mismatches("you")
 

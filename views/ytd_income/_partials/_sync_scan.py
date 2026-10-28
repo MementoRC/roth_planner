@@ -69,6 +69,7 @@ from engine.ssa_statement_pdf import (
     save_ssa_pdf_estimates,
     statement_age_notice,
 )
+from engine.store import CorruptStoreError
 from engine.ubs_activity_csv import (
     UbsActivityOrder,
     UbsActivityParseError,
@@ -93,6 +94,34 @@ from views._shared import (
     run_uploaded_scan,
 )
 from views._store_transaction import store_transaction
+
+
+def _try_learn_owner(owner_key: str | None, owner: str, owner_map: dict[str, str]) -> str | None:
+    """Remember ``owner_key -> owner`` unless the map already says so.
+
+    An unreadable owner-map row (never overwritten) must not roll back the
+    statement apply that learned it: return a notice for the caller to show
+    AFTER its transaction commits, or ``None`` when learned / nothing to learn.
+    """
+    if not owner_key or resolve_owner(owner_key, owner_map) == owner:
+        return None
+    try:
+        save_owner_map(learn_owner(owner_key, owner, owner_map))
+    except CorruptStoreError:
+        return (
+            "The saved holder-name map is unreadable, so this name was not remembered "
+            "(the statement itself was applied). Repair or move that data, then apply again "
+            "to remember it."
+        )
+    return None
+
+
+def _slot_label(rec: BrokerageStatementRecord) -> str:
+    """User-facing "<account> · <year>" label for a ledger slot (slot keys are opaque)."""
+    from engine.brokerage_statement_pdf import statement_year
+
+    year = statement_year(rec.statement_period_end)
+    return f"{rec.account_number} · {year}" if year else rec.account_number
 
 
 def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
@@ -284,7 +313,6 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
         return
 
     from engine.account_attribution import CorruptAccountAttributionError, save_account_override
-    from engine.pdf_owner import learn_owner, resolve_owner, save_owner_map
 
     fresh_owner_map = load_owner_map()
     fresh_overrides = load_account_overrides()
@@ -313,9 +341,12 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
             f"maps to '{named_now}' {filed}. Which is correct?"
         )
         if st.button(f"Holder name is {resolved_now}", key=f"holder_mismatch_name_{entry_id}"):
-            save_owner_map(learn_owner(entry["owner_key"], resolved_now, fresh_owner_map))
-            del mismatches[entry_id]
-            st.rerun()
+            notice = _try_learn_owner(entry["owner_key"], resolved_now, fresh_owner_map)
+            if notice is None:
+                del mismatches[entry_id]
+                st.rerun()
+            else:
+                st.error(notice)
         if st.button(f"Account is actually {named_now}", key=f"holder_mismatch_account_{entry_id}"):
             try:
                 save_account_override(broker, account_key, named_now)
@@ -513,6 +544,8 @@ def _write_scan_result(
     # for per-account confirmation below and are applied via the explicit
     # "Apply to YTD snapshot" button after you confirm them.
     applied_bits: list[str] = []
+    # (kind, text) notices, drawn by the deferred report only after the commit.
+    notices: list[tuple[str, str]] = []
     _snap = st.session_state.get("ytd_snapshot", YTDSnapshot())
 
     stmt_taxable_now, _stmt_excluded_now, stmt_unknown_now = (
@@ -535,8 +568,7 @@ def _write_scan_result(
         # corrected before apply_brokerage_totals assigns it onto the
         # snapshot.
         ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, _snap)
-        for warning in ubs_warnings:
-            st.warning(warning)
+        notices.extend(("warning", w) for w in ubs_warnings)
         applied_bits.append(
             f"{len(stmt_taxable_now)} taxable brokerage account(s) "
             f"({sum(len(v) for v in ledger['brokerage'].values())} total ledgered)"
@@ -567,8 +599,9 @@ def _write_scan_result(
         save_ledger(ledger)
         save_koinly_report(result.koinly_reports[-1])
 
-        for warning in describe_kept_manual(_snap, apply_koinly_totals(_snap, ledger)):
-            st.warning(warning)
+        notices.extend(
+            ("warning", w) for w in describe_kept_manual(_snap, apply_koinly_totals(_snap, ledger))
+        )
         applied_bits.append(
             f"Koinly crypto ({len(result.koinly_reports)} report(s), "
             f"{len(ledger['koinly'])} owner(s))"
@@ -579,8 +612,9 @@ def _write_scan_result(
     # Statement notes are drawn by _render_scan_review (below the scan, and
     # on every later render), so they are not repeated here.
     if result.koinly_reports:
-        for note in off_year_contributions(ledger, _snap.tax_year, brokerage=False):
-            st.info(note)
+        notices.extend(
+            ("info", n) for n in off_year_contributions(ledger, _snap.tax_year, brokerage=False)
+        )
 
     # NetBenefits 403(b) statements are a BALANCE source, never YTD income:
     # they are only queued here, and applied (to the portfolio snapshot and a
@@ -613,11 +647,9 @@ def _write_scan_result(
             [*(st.session_state.get("ssa_statements") or []), *result.ssa_statements]
         )
 
-    _manual_entry_kept_explicit = False
     if applied_bits:
         _snap.with_snapshot_date()
         st.session_state.ytd_snapshot = _snap
-        _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
         save_ytd_snapshot(_snap)
 
     report = functools.partial(
@@ -626,9 +658,9 @@ def _write_scan_result(
         by_account=by_account,
         applied_bits=applied_bits,
         new_ira_count=new_ira_count,
-        manual_entry_kept_explicit=_manual_entry_kept_explicit,
         stmt_unknown_now=stmt_unknown_now,
         not_found_message=not_found_message,
+        notices=notices,
     )
     return ledger, report
 
@@ -639,14 +671,21 @@ def _report_scan_summary(
     by_account: dict[str, BrokerageStatementRecord],
     applied_bits: list[str],
     new_ira_count: int,
-    manual_entry_kept_explicit: bool,
     stmt_unknown_now: dict[str, BrokerageStatementRecord],
     not_found_message: str,
+    notices: list[tuple[str, str]],
 ) -> None:
     """Summary: what was parsed, what was applied, what still needs action.
 
-    Drawn by :func:`_apply_scan_result` only after its transaction commits.
+    Drawn by :func:`_apply_scan_result` only after its transaction commits --
+    which is also why the Manual-entry auto-deselect (a widget-backed session
+    write the transaction cannot roll back) happens here, not in the write.
     """
+    manual_entry_kept_explicit = bool(applied_bits) and not auto_deselect_manual_entry(
+        st.session_state
+    )
+    for kind, text in notices:
+        (st.warning if kind == "warning" else st.info)(text)
     parsed_bits: list[str] = []
     if by_account:
         parsed_bits.append(f"{len(by_account)} brokerage account(s)")
@@ -997,7 +1036,6 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
             )
             snap.with_snapshot_date()
             st.session_state.ytd_snapshot = snap
-            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             save_ytd_snapshot(snap)
     except UbsActivityStoreError as exc:
         st.error(
@@ -1007,6 +1045,8 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         )
         return
 
+    # Only after the commit: the checkbox write cannot be rolled back.
+    _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
     total_bargain = sum(o.bargain_element for o in merged)
     total_withholding = sum(federal_withholding(o) for o in merged)
     st.success(
@@ -1438,10 +1478,13 @@ def _render_netbenefits_review(
                 record_ira_balance_candidate(
                     outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
                 )
-                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(stmt.owner_key, owner, owner_map)
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"netbenefits_dismiss_{i}"):
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
@@ -1644,10 +1687,13 @@ def _render_ira_statement_review(
                     other_field, other_total = outcome.other_owner_total
                     record(other_field, other_total, outcome.detail, datetime.now())
                 record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
-                if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(rec.owner_key, owner, owner_map)
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"ira_statement_dismiss_{i}"):
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
             st.rerun()
@@ -1728,10 +1774,13 @@ def _render_ssa_review(
                     datetime.now(),
                 )
                 save_ssa_pdf_estimates(owner, stmt)
-                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(stmt.owner_key, owner, owner_map)
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"ssa_dismiss_{i}"):
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
@@ -1826,13 +1875,13 @@ def _render_scan_review(
             parsed.append(f"LTCG ${rec.ltcg_net_ytd:,.2f}")
         st.info(
             md_dollars(
-                f"**{rec.broker} {account_number}** parsed, but incomplete — "
+                f"**{rec.broker} {_slot_label(rec)}** parsed, but incomplete — "
                 f"could not read: {gaps}. "
                 f"Figures that DID parse: {', '.join(parsed)}. " + " ".join(notes)
             )
         )
         if st.checkbox(
-            f"Use {account_number} anyway ({gaps} missing)",
+            f"Use {_slot_label(rec)} anyway ({gaps} missing)",
             key=f"partial_ack_{account_number}",
         ):
             stmt_taxable[account_number] = rec
@@ -1841,18 +1890,22 @@ def _render_scan_review(
         st.info(
             "Excluded (retirement account, never counted toward taxable YTD income): "
             + ", ".join(
-                f"{acc} ({rec.broker}, {rec.account_type})" for acc, rec in stmt_excluded.items()
+                f"{_slot_label(rec)} ({rec.broker}, {rec.account_type})"
+                for rec in stmt_excluded.values()
             )
         )
 
     if stmt_unknown:
+        # The confirmed type is stored per (broker, account) and applies to
+        # every tax-year slot of it, so ask once per account, not per year.
+        unknown_by_account = {(r.broker, r.account_number): (a, r) for a, r in stmt_unknown.items()}
         st.warning(
-            f"{len(stmt_unknown)} account(s) have no stated tax status in their statement "
+            f"{len(unknown_by_account)} account(s) have no stated tax status in their statement "
             "(this is normal for Schwab) — confirm each before its figures count:"
         )
-        for account_number, rec in stmt_unknown.items():
+        for account_number, rec in unknown_by_account.values():
             choice = st.selectbox(
-                f"Account {account_number} ({rec.broker})",
+                f"Account {rec.account_number} ({rec.broker})",
                 options=["-- confirm --", "taxable", "traditional_ira", "roth_ira"],
                 key=f"account_type_confirm_{account_number}",
             )
@@ -1873,9 +1926,10 @@ def _render_scan_review(
         # the ledger for their own year and are explained, never listed as
         # counted (issue #12).
         snap_year = st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year
-        counted = [
-            key for key, rec in stmt_taxable.items() if statement_in_tax_year(rec, snap_year)
+        counted_recs = [
+            rec for rec in stmt_taxable.values() if statement_in_tax_year(rec, snap_year)
         ]
+        counted = [_slot_label(rec) for rec in counted_recs]
         if counted:
             st.caption(f"Counted toward YTD income: {', '.join(counted)}")
         for rec in stmt_taxable.values():
@@ -1928,8 +1982,9 @@ def _render_scan_review(
                 ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
                 prev_ytd.with_snapshot_date()
                 st.session_state.ytd_snapshot = prev_ytd
-                _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
                 save_ytd_snapshot(prev_ytd)
+            # Only after the commit: the checkbox write cannot be rolled back.
+            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             st.success(
                 f"Applied {len(counted)} taxable account(s) to YTD snapshot"
                 + (
