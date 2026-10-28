@@ -276,6 +276,7 @@ if _pdf_records:
             Source.PDF,
             "1040 PDF cache",
             datetime.now(),
+            skip_dismissed=True,
         )
     )
 
@@ -402,8 +403,13 @@ def _persist_resolution(
     store: CandidateStore,
     choices: ChoiceMap,
     committed_unreadable: bool,
-) -> None:
+) -> bool:
     """Save the committed baseline, candidate store and trust choices to the store.
+
+    Returns True when nothing is left unsaved (the transaction committed, or
+    demo mode has nothing to save), False when the save was refused or the
+    unreadable baseline was left untouched; the caller consumes its one-shot
+    session flags only on True (audit-1026 F-09).
 
     Skipped in demo mode (audit-1018 F-28): the state is built from demo seeds,
     and saving it would stamp them MANUAL. When a failed JSON import has
@@ -413,11 +419,12 @@ def _persist_resolution(
     A corrupt saved document (a ``StoreError``) gets the same one banner.
     """
     if _DEMO_MODE:
-        return
+        return True
     try:
         _save_resolution(app_res, store, choices, committed_unreadable)
     except StoreUnavailableError as exc:
         _report_refused_save(exc)
+        return False
     except StoreError as exc:
         # A corrupt saved document met while saving (e.g. the baseline turned
         # corrupt after get_household() read it): the transaction rolled back;
@@ -426,6 +433,8 @@ def _persist_resolution(
         if not _boot_store_errors:
             st.error(store_error_message(exc))
         _boot_store_errors.append(exc)
+        return False
+    return not committed_unreadable
 
 
 def _save_resolution(
@@ -608,13 +617,6 @@ def get_household() -> Household:
     # Committed-baseline household (post apply_committed) kept for the
     # post-page-body pending recompute; resolve() does not mutate it.
     _run_state["baseline_hh"] = session_hh
-    # The clear only sticks once the baseline is saved; on a corrupt baseline
-    # (save suppressed below) keep the flag so it applies on a later render.
-    if not _committed_unreadable:
-        st.session_state.pop(MAGI_CLEARED_KEY, None)
-        st.session_state.pop(SEED_VALUES_KEY, None)
-        st.session_state.pop(BUNDLE_SCALARS_KEY, None)
-
     # Growth profiles are NOT a sourced field — still derive them live from
     # the snapshot every load. A data-bridge import counts too (audit-1008
     # F-01): it never sets server_available, which left imported accounts on
@@ -642,7 +644,14 @@ def get_household() -> Household:
             # already used for these same fields.
             st.session_state[_session_key] = int(round(_value))
 
-    _persist_resolution(app_res, store, choices, _committed_unreadable)
+    # The one-shot flags are consumed only once the save commits (audit-1026
+    # F-09): the clear only sticks once the baseline is saved. On a corrupt
+    # baseline or a refused/rolled-back save they stay, so it applies on a later
+    # render instead of the committed anchor snapping back.
+    if _persist_resolution(app_res, store, choices, _committed_unreadable):
+        st.session_state.pop(MAGI_CLEARED_KEY, None)
+        st.session_state.pop(SEED_VALUES_KEY, None)
+        st.session_state.pop(BUNDLE_SCALARS_KEY, None)
 
     # Expose the review gate to the sidebar/Command Center.
     st.session_state["_pending_review"] = app_res.result.pending_review

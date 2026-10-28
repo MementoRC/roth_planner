@@ -34,6 +34,13 @@ from models.sourced import Provenance
 logger = logging.getLogger(__name__)
 
 _GRANTS_TYPE_TAG = "__stock_grants__"
+# Reserved top-level key beside the field keys; absent in stores saved before F-05.
+_DISMISSED_KEY = "__dismissed__"
+
+
+def _dismissal_value(value: Any) -> float:
+    """Whole-dollar identity of a dismissed scalar candidate (matches the Setup widget)."""
+    return float(round(float(value)))
 
 
 def _value_to_json(value: Any) -> Any:
@@ -98,6 +105,8 @@ class CandidateStore:
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Candidate]] = {}
+        # field_key -> [{"source", "value"}] candidates the user dismissed.
+        self._dismissed: dict[str, list[dict[str, Any]]] = {}
         # Set True by ``load`` when the saved row EXISTED but failed to
         # parse, so an empty-because-corrupt store is distinguishable from
         # an empty-because-nothing-was-ever-saved store (an absent row
@@ -133,14 +142,43 @@ class CandidateStore:
             del self._data[field_key]
         return True
 
+    def dismiss(self, field_key: str) -> bool:
+        """Drop every candidate for ``field_key`` and remember each as dismissed.
+
+        A dismissed (source, value) pair is skipped by ``record_candidate``
+        callers that pass ``skip_dismissed`` (the boot-time PDF re-record), so
+        the user's "Leave 0" clear survives reruns and restarts (audit-1026
+        F-05). A different value from the same source is not dismissed.
+        """
+        bucket = self._data.pop(field_key, None)
+        if not bucket:
+            return False
+        entries = self._dismissed.setdefault(field_key, [])
+        for source, candidate in bucket.items():
+            entry = {"source": source, "value": _dismissal_value(candidate.value)}
+            if entry not in entries:
+                entries.append(entry)
+        return True
+
+    def is_dismissed(self, field_key: str, source: object, value: Any) -> bool:
+        entry = {"source": str(source), "value": _dismissal_value(value)}
+        return entry in self._dismissed.get(field_key, ())
+
+    def clear_dismissals(self, field_key: str) -> bool:
+        """Forget every dismissal for ``field_key``; True if any existed."""
+        return self._dismissed.pop(field_key, None) is not None
+
     def field_keys(self) -> list[str]:
         return list(self._data.keys())
 
     def to_json(self) -> dict:
-        return {
+        out: dict = {
             field_key: {source: c.to_json() for source, c in bucket.items()}
             for field_key, bucket in self._data.items()
         }
+        if self._dismissed:
+            out[_DISMISSED_KEY] = {k: list(v) for k, v in self._dismissed.items()}
+        return out
 
     @classmethod
     def from_json(cls, d: dict) -> CandidateStore:
@@ -148,6 +186,14 @@ class CandidateStore:
         if not isinstance(d, dict):
             raise ValueError(f"candidate store must be a JSON object, got {type(d).__name__}")
         store = cls()
+        d = dict(d)
+        dismissed = d.pop(_DISMISSED_KEY, {})
+        if not isinstance(dismissed, dict):
+            raise ValueError("dismissed candidates must be a JSON object")
+        for field_key, entries in dismissed.items():
+            store._dismissed[field_key] = [
+                {"source": str(e["source"]), "value": _dismissal_value(e["value"])} for e in entries
+            ]
         # A store saved before the stock_* rename keys the price field by its old name.
         for field_key, bucket in migrate_legacy_keys(d).items():
             if not isinstance(bucket, dict):
