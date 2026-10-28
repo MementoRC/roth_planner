@@ -23,8 +23,10 @@ from engine.data_sources.candidate_store import CandidateStore
 from engine.data_sources.choices import ChoiceMap
 from engine.data_sources.committed import apply_committed, migrate_committed
 from engine.data_sources.resolver import (
+    DEFAULT_LADDER,
     HOUSEHOLD_SCALAR_FIELDS,
     ResolveResult,
+    _pick_candidate,
     magi_field_key,
     resolve,
 )
@@ -100,21 +102,28 @@ def _rounded_differs(session_value: float, committed_value: float) -> bool:
     return round(float(session_value)) != round(float(committed_value))
 
 
-def _matches_pending_candidate(store: CandidateStore | None, year: int, value: float) -> bool:
-    """True when ``value`` is a pending candidate for ``year`` written back by app.py.
+def _matches_pending_candidate(
+    store: CandidateStore | None,
+    year: int,
+    value: float,
+    choices: ChoiceMap | None = None,
+) -> bool:
+    """True when ``value`` is the pending winner for ``year`` written back by app.py.
 
-    app.py mirrors the resolved ``prior_year_magi`` (which includes pending,
-    unconfirmed candidates for years with no committed value) back into
+    app.py mirrors the resolved ``prior_year_magi`` (which includes the pending,
+    unconfirmed winning candidate for years with no committed value) back into
     session_state. On the next rerun that value must not read as a manual
     edit, or the candidate is committed as Source.MANUAL without ever being
-    confirmed (audit-1008 F-46).
+    confirmed (audit-1008 F-46). Only the resolved winner is written back, so a
+    value equal to a losing candidate is a genuine edit (audit-1026 F-10).
     """
     if store is None:
         return False
-    return any(
-        not _rounded_differs(value, float(c.value))
-        for c in store.candidates_for(magi_field_key(year))
+    field_key = magi_field_key(year)
+    winner = _pick_candidate(
+        field_key, store.candidates_for(field_key), choices or ChoiceMap(), DEFAULT_LADDER
     )
+    return winner is not None and not _rounded_differs(value, float(winner.value))
 
 
 def stamp_bundle_scalars(
@@ -175,6 +184,7 @@ def reconcile_manual_edits(
     store: CandidateStore | None = None,
     cleared_magi_years: Iterable[int] = (),
     unedited_seed: Mapping[str, float] | None = None,
+    choices: ChoiceMap | None = None,
 ) -> tuple[dict, bool]:
     """Promote Setup-form edits (raw ``session_hh`` values) to committed
     MANUAL entries, mutating and returning ``committed_json`` in place.
@@ -187,8 +197,10 @@ def reconcile_manual_edits(
     (provenance is not disturbed just because reconcile ran).
 
     For ``prior_year_magi``, a year with no committed value whose session
-    value equals one of ``store``'s candidates for that year is a written-back
-    pending candidate, not an edit, and stays pending (audit-1008 F-46).
+    value equals the resolved winning candidate (per ``choices``/the default
+    ladder) is the written-back pending candidate, not an edit, and stays
+    pending (audit-1008 F-46); a value equal to a losing candidate is an edit
+    (audit-1026 F-10).
     A committed year absent from the session dict is NOT deleted (a fresh
     session seeds ``{}``); only years in ``cleared_magi_years`` — the explicit
     "Leave 0" signal from the Setup form — are removed (audit-1008 F-64).
@@ -233,7 +245,7 @@ def reconcile_manual_edits(
                 continue
             year_key = str(year)
             existing = data.get(year_key)
-            if existing is None and _matches_pending_candidate(store, int(year), value):
+            if existing is None and _matches_pending_candidate(store, int(year), value, choices):
                 continue
             if existing is None or _rounded_differs(value, existing):
                 data[year_key] = float(value)
@@ -307,7 +319,7 @@ def resolve_for_app(
         reconciled = False
     else:
         committed_json, reconciled = reconcile_manual_edits(
-            session_hh, committed_json, recorded_at, store, cleared, unedited_seed
+            session_hh, committed_json, recorded_at, store, cleared, unedited_seed, choices
         )
 
     apply_committed(session_hh, committed_json)
