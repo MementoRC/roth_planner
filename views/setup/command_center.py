@@ -49,6 +49,8 @@ from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
 
+_SYNC_NOTICE_KEY = "_sync_everything_notice"
+
 
 def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
     """Render a one-line "portfolio: N · SS: N · scan: N files, N errors" summary."""
@@ -264,7 +266,16 @@ def render_command_center(hh: Household) -> None:
         # (parameters.py/option_exercise.py, gated on the same flag) silently
         # disabled for the rest of the session.
         st.session_state.pop("_suppress_snapshot_autoload", None)
-        st.info(_format_sync_everything_summary(summary))
+        # The sync just recorded candidates, but get_household() (which derives
+        # _pending_review) already ran this pass. Rerun so the cards and the
+        # count below match the sidebar badge; the summary survives the rerun
+        # in session_state (audit-1026 F-14).
+        st.session_state[_SYNC_NOTICE_KEY] = _format_sync_everything_summary(summary)
+        st.rerun()
+
+    notice = st.session_state.pop(_SYNC_NOTICE_KEY, None)
+    if notice:
+        st.info(notice)
 
     pending: set[str] = st.session_state.get("_pending_review", set())
     st.metric("Fields awaiting review", len(pending))

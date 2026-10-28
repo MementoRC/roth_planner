@@ -26,7 +26,12 @@ from engine.data_sources.choices import ChoiceMap, CorruptChoiceMapError
 from engine.data_sources.committed import CorruptCommittedCacheError, save_committed
 from engine.data_sources.confirm import confirm_field
 from engine.data_sources.orchestrator import session_keys_for_writeback
-from engine.data_sources.resolver import GRANTS_KEY, HOUSEHOLD_SCALAR_FIELDS
+from engine.data_sources.resolver import (
+    DEFAULT_LADDER,
+    GRANTS_KEY,
+    HOUSEHOLD_SCALAR_FIELDS,
+    _pick_candidate,
+)
 from engine.store import get_store
 from models.sourced import Source
 
@@ -207,10 +212,16 @@ def _render_field_card(
             _render_candidate_row(candidate, field_key)
 
         source_options = [c.prov.source for c in candidates]
+        # Preselect what the planner is using (trusted choice, else ladder
+        # winner) so an untouched Confirm commits that value (audit-1026 F-12).
+        # An explicit selection already in session_state wins over this index.
+        in_use = _pick_candidate(field_key, candidates, choices, DEFAULT_LADDER)
+        default_index = source_options.index(in_use.prov.source) if in_use is not None else 0
         chosen_source = (
             st.radio(
                 "Trust which source?",
                 source_options,
+                index=default_index,
                 key=f"trust_{field_key}",
                 format_func=str,
                 horizontal=True,
