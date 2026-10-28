@@ -39,6 +39,10 @@ from views.optimizer_panel import terminal_rate_pct
 
 from ._clamp import clamp as _clamp
 
+# Ceiling for the annual ACA benchmark (SLCSP) and advance APTC inputs; both the
+# widget max and the render-time clamp use it so a stored value is never cut.
+_ACA_PREMIUM_MAX = 250_000
+
 
 def _render_prior_year_magi_anchor(container, base_year: int) -> None:
     """Render the Prior-year filed MAGI anchor expander.
@@ -394,8 +398,8 @@ def render_assumptions_partial(hh: Household, container) -> None:
             container.number_input(
                 "ACA Benchmark Premium ($/yr)",
                 min_value=0,
-                max_value=60_000,
-                value=_clamp(int(_seed_benchmark), 0, 60_000),
+                max_value=_ACA_PREMIUM_MAX,
+                value=_clamp(int(_seed_benchmark), 0, _ACA_PREMIUM_MAX),
                 step=100,
                 format="%d",
                 help=(
@@ -427,11 +431,11 @@ def render_assumptions_partial(hh: Household, container) -> None:
     st.session_state["advance_aptc_annual"] = container.number_input(
         "Advance APTC ($/yr)",
         min_value=0,
-        max_value=60_000,
+        max_value=_ACA_PREMIUM_MAX,
         value=_clamp(
             int(st.session_state.get("advance_aptc_annual", scalar_default("advance_aptc_annual"))),
             0,
-            60_000,
+            _ACA_PREMIUM_MAX,
         ),
         step=100,
         format="%d",
