@@ -684,7 +684,11 @@ def _extract_ibkr_gains(section_text: str) -> tuple[float, float]:
     return stcg, ltcg
 
 
-_IBKR_STATEMENT_DATE_RE = re.compile(r"Activity Statement[ \n-]+([A-Za-z]+ \d{1,2}, \d{4})")
+_IBKR_DATE = r"[A-Za-z]+ \d{1,2}, \d{4}"
+# Group 1 = the (first) date; group 2 = the range end of a ranged header.
+_IBKR_STATEMENT_DATE_RE = re.compile(
+    rf"Activity Statement[ \n-]+({_IBKR_DATE})(?:\s*-\s*({_IBKR_DATE}))?"
+)
 
 
 def _extract_ibkr_period_end(full_text: str) -> str:
@@ -694,7 +698,7 @@ def _extract_ibkr_period_end(full_text: str) -> str:
     m = _IBKR_STATEMENT_DATE_RE.search(full_text)
     if not m:
         raise StatementParseError("No statement date found in IBKR statement text.")
-    return datetime.strptime(m.group(1), "%B %d, %Y").date().isoformat()
+    return datetime.strptime(m.group(2) or m.group(1), "%B %d, %Y").date().isoformat()
 
 
 _IBKR_NAME_LINE_RE = re.compile(r"^Name ([^\n]+)$", re.MULTILINE)
