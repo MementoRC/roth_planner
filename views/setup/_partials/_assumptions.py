@@ -58,13 +58,16 @@ def _render_prior_year_magi_anchor(container, base_year: int) -> None:
         )
         prior_magi: dict[int, float] = dict(st.session_state.get("prior_year_magi") or {})
 
+        # Filed MAGI may legitimately be negative and fractional (matches the
+        # governance card's manual input): seed the stored value exactly.
+        seed1 = _clamp(float(prior_magi.get(base_year - 2, 0.0)), -100_000_000.0, 100_000_000.0)
+        seed2 = _clamp(float(prior_magi.get(base_year - 1, 0.0)), -100_000_000.0, 100_000_000.0)
         v1 = st.number_input(
             f"{base_year - 2} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 2, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
+            min_value=-100_000_000.0,
+            max_value=100_000_000.0,
+            value=seed1,
+            step=1_000.0,
             help=(
                 f"Filed MAGI from your {base_year - 2} tax return. "
                 f"Anchors {base_year} IRMAA via the 2-year lookback."
@@ -72,11 +75,10 @@ def _render_prior_year_magi_anchor(container, base_year: int) -> None:
         )
         v2 = st.number_input(
             f"{base_year - 1} filed MAGI",
-            min_value=0,
-            max_value=100_000_000,
-            value=_clamp(int(prior_magi.get(base_year - 1, 0)), 0, 100_000_000),
-            step=1_000,
-            format="%d",
+            min_value=-100_000_000.0,
+            max_value=100_000_000.0,
+            value=seed2,
+            step=1_000.0,
             help=(
                 f"Filed MAGI from your {base_year - 1} tax return. "
                 f"Anchors {base_year + 1} IRMAA via the 2-year lookback."
@@ -88,8 +90,12 @@ def _render_prior_year_magi_anchor(container, base_year: int) -> None:
         # the user sets back to 0 is flagged explicitly for app.py's resolve.
         cleared = set(st.session_state.get(MAGI_CLEARED_KEY) or ())
         newly_cleared = False
-        for year, value in ((base_year - 2, v1), (base_year - 1, v2)):
-            if value > 0:
+        # audit-1026 F-19: only a widget value that differs from the seeded
+        # stored value is a user edit; an untouched widget changes nothing.
+        for year, value, seed in ((base_year - 2, v1, seed1), (base_year - 1, v2, seed2)):
+            if value == seed:
+                continue
+            if value != 0:
                 prior_magi[year] = float(value)
                 cleared.discard(year)
             elif prior_magi.pop(year, None) is not None:
