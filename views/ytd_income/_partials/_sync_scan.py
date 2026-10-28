@@ -116,6 +116,14 @@ def _try_learn_owner(owner_key: str | None, owner: str, owner_map: dict[str, str
     return None
 
 
+def _slot_label(rec: BrokerageStatementRecord) -> str:
+    """User-facing "<account> · <year>" label for a ledger slot (slot keys are opaque)."""
+    from engine.brokerage_statement_pdf import statement_year
+
+    year = statement_year(rec.statement_period_end)
+    return f"{rec.account_number} · {year}" if year else rec.account_number
+
+
 def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
     """Persist *snap*; on an unreadable cache file show an error and return False."""
     try:
@@ -1867,13 +1875,13 @@ def _render_scan_review(
             parsed.append(f"LTCG ${rec.ltcg_net_ytd:,.2f}")
         st.info(
             md_dollars(
-                f"**{rec.broker} {account_number}** parsed, but incomplete — "
+                f"**{rec.broker} {_slot_label(rec)}** parsed, but incomplete — "
                 f"could not read: {gaps}. "
                 f"Figures that DID parse: {', '.join(parsed)}. " + " ".join(notes)
             )
         )
         if st.checkbox(
-            f"Use {account_number} anyway ({gaps} missing)",
+            f"Use {_slot_label(rec)} anyway ({gaps} missing)",
             key=f"partial_ack_{account_number}",
         ):
             stmt_taxable[account_number] = rec
@@ -1882,18 +1890,22 @@ def _render_scan_review(
         st.info(
             "Excluded (retirement account, never counted toward taxable YTD income): "
             + ", ".join(
-                f"{acc} ({rec.broker}, {rec.account_type})" for acc, rec in stmt_excluded.items()
+                f"{_slot_label(rec)} ({rec.broker}, {rec.account_type})"
+                for rec in stmt_excluded.values()
             )
         )
 
     if stmt_unknown:
+        # The confirmed type is stored per (broker, account) and applies to
+        # every tax-year slot of it, so ask once per account, not per year.
+        unknown_by_account = {(r.broker, r.account_number): (a, r) for a, r in stmt_unknown.items()}
         st.warning(
-            f"{len(stmt_unknown)} account(s) have no stated tax status in their statement "
+            f"{len(unknown_by_account)} account(s) have no stated tax status in their statement "
             "(this is normal for Schwab) — confirm each before its figures count:"
         )
-        for account_number, rec in stmt_unknown.items():
+        for account_number, rec in unknown_by_account.values():
             choice = st.selectbox(
-                f"Account {account_number} ({rec.broker})",
+                f"Account {rec.account_number} ({rec.broker})",
                 options=["-- confirm --", "taxable", "traditional_ira", "roth_ira"],
                 key=f"account_type_confirm_{account_number}",
             )
@@ -1914,9 +1926,10 @@ def _render_scan_review(
         # the ledger for their own year and are explained, never listed as
         # counted (issue #12).
         snap_year = st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year
-        counted = [
-            key for key, rec in stmt_taxable.items() if statement_in_tax_year(rec, snap_year)
+        counted_recs = [
+            rec for rec in stmt_taxable.values() if statement_in_tax_year(rec, snap_year)
         ]
+        counted = [_slot_label(rec) for rec in counted_recs]
         if counted:
             st.caption(f"Counted toward YTD income: {', '.join(counted)}")
         for rec in stmt_taxable.values():
