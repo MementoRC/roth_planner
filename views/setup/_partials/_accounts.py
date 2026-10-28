@@ -138,6 +138,15 @@ def _synced_label_help(label: str, owner: str, kind: str) -> tuple[str, str | No
     )
 
 
+def _committed_from_sync(value: object) -> bool:
+    """True only when the committed *value* carries sync (FinExtract live)
+    provenance -- a manual/PDF/default value stays unlabelled and editable
+    even when a cached SSA snapshot exists.
+    """
+    prov = getattr(value, "prov", None)
+    return prov is not None and prov.source == Source.FINEXTRACT_LIVE
+
+
 def render_accounts_partial(hh: Household, container, owner: str) -> None:
     """Render one owner's IRA/Roth/SS-FRA accounts widgets.
 
@@ -191,7 +200,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             help=_roth_help,
         )
 
-        _ssa_synced_you = bool(st.session_state.get("ssa_snapshot_you"))
+        _ssa_synced_you = _committed_from_sync(hh.your_ss_fra)
         your_fra_age = st.session_state.get("your_fra_age", scalar_default("your_fra_age"))
         st.session_state.your_ss_fra = container.number_input(
             f"Your SS at FRA {your_fra_age} ($/mo)" + (" (synced)" if _ssa_synced_you else ""),
@@ -241,7 +250,7 @@ def render_accounts_partial(hh: Household, container, owner: str) -> None:
             help=_roth_help,
         )
 
-        _ssa_synced_spouse = bool(st.session_state.get("ssa_snapshot_spouse"))
+        _ssa_synced_spouse = _committed_from_sync(hh.spouse_ss_fra)
         spouse_fra_age = st.session_state.get("spouse_fra_age", scalar_default("spouse_fra_age"))
         st.session_state.spouse_ss_fra = container.number_input(
             f"Spouse SS at FRA {spouse_fra_age} ($/mo)"

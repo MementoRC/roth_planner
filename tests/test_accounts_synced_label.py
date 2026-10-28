@@ -105,3 +105,53 @@ def test_trad_ira_and_403b_both_synced_escapes_dollars() -> None:
     assert "403(b)" in ira.help
     # Verify every $ is escaped: must have exactly 2 escaped dollar signs (trad_ira and 403b amounts)
     assert ira.help.count("\\$") == 2
+
+
+# --- SS at FRA: "(synced)" + lock only when the committed source is the sync ---
+
+
+def _render_ss(owner, source):  # noqa: ANN001, ANN201 - AppTest source-extracts this
+    from datetime import datetime
+
+    import streamlit as st
+
+    from models.household import Household
+    from models.sourced import Provenance, Source, SourcedValue
+    from views.setup._partials import render_accounts_partial
+
+    st.session_state.setdefault("your_ira", 1_000)
+    st.session_state.setdefault("spouse_ira", 1_000)
+    st.session_state["your_ss_fra"] = 2_500
+    st.session_state["spouse_ss_fra"] = 2_500
+    st.session_state["filing_status"] = "MFJ"
+    st.session_state["ssa_snapshot_you"] = object()  # a cached snapshot exists
+    st.session_state["ssa_snapshot_spouse"] = object()
+    prov = Provenance(Source(source), datetime(2026, 1, 1))
+    hh = Household(
+        your_ss_fra=SourcedValue(2_500, prov),
+        spouse_ss_fra=SourcedValue(2_500, prov),
+    )
+    render_accounts_partial(hh, st, owner)
+
+
+def _ss_field(owner: str, source: str):  # noqa: ANN202
+    at = AppTest.from_function(_render_ss, kwargs={"owner": owner, "source": source})
+    at.run()
+    assert not at.exception
+    return next(w for w in at.number_input if " SS at FRA " in w.label)
+
+
+def test_ss_fra_synced_and_locked_when_committed_source_is_sync() -> None:
+    for owner in ("your", "spouse"):
+        w = _ss_field(owner, "FINEXTRACT_LIVE")
+        assert w.label.endswith("(synced)")
+        assert w.disabled
+
+
+def test_ss_fra_editable_when_committed_source_is_not_sync() -> None:
+    for owner in ("your", "spouse"):
+        for source in ("MANUAL", "PDF", "DEFAULT"):
+            w = _ss_field(owner, source)
+            assert "(synced)" not in w.label
+            assert not w.disabled
+            assert not w.help
