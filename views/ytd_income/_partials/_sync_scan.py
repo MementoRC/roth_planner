@@ -69,6 +69,7 @@ from engine.ssa_statement_pdf import (
     save_ssa_pdf_estimates,
     statement_age_notice,
 )
+from engine.store import CorruptStoreError
 from engine.ubs_activity_csv import (
     UbsActivityOrder,
     UbsActivityParseError,
@@ -93,6 +94,26 @@ from views._shared import (
     run_uploaded_scan,
 )
 from views._store_transaction import store_transaction
+
+
+def _try_learn_owner(owner_key: str | None, owner: str, owner_map: dict[str, str]) -> str | None:
+    """Remember ``owner_key -> owner`` unless the map already says so.
+
+    An unreadable owner-map row (never overwritten) must not roll back the
+    statement apply that learned it: return a notice for the caller to show
+    AFTER its transaction commits, or ``None`` when learned / nothing to learn.
+    """
+    if not owner_key or resolve_owner(owner_key, owner_map) == owner:
+        return None
+    try:
+        save_owner_map(learn_owner(owner_key, owner, owner_map))
+    except CorruptStoreError:
+        return (
+            "The saved holder-name map is unreadable, so this name was not remembered "
+            "(the statement itself was applied). Repair or move that data, then apply again "
+            "to remember it."
+        )
+    return None
 
 
 def _save_snapshot_or_report(snap: PortfolioSnapshot) -> bool:
@@ -284,7 +305,6 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
         return
 
     from engine.account_attribution import CorruptAccountAttributionError, save_account_override
-    from engine.pdf_owner import learn_owner, resolve_owner, save_owner_map
 
     fresh_owner_map = load_owner_map()
     fresh_overrides = load_account_overrides()
@@ -313,9 +333,12 @@ def _render_holder_name_mismatches(instance_owner: str) -> None:
             f"maps to '{named_now}' {filed}. Which is correct?"
         )
         if st.button(f"Holder name is {resolved_now}", key=f"holder_mismatch_name_{entry_id}"):
-            save_owner_map(learn_owner(entry["owner_key"], resolved_now, fresh_owner_map))
-            del mismatches[entry_id]
-            st.rerun()
+            notice = _try_learn_owner(entry["owner_key"], resolved_now, fresh_owner_map)
+            if notice is None:
+                del mismatches[entry_id]
+                st.rerun()
+            else:
+                st.error(notice)
         if st.button(f"Account is actually {named_now}", key=f"holder_mismatch_account_{entry_id}"):
             try:
                 save_account_override(broker, account_key, named_now)
@@ -1447,10 +1470,13 @@ def _render_netbenefits_review(
                 record_ira_balance_candidate(
                     outcome.field_key, outcome.ira_total, outcome.detail, datetime.now()
                 )
-                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(stmt.owner_key, owner, owner_map)
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"netbenefits_dismiss_{i}"):
             st.session_state["netbenefits_statements"] = [s for s in pending if s is not stmt]
             st.rerun()
@@ -1653,10 +1679,13 @@ def _render_ira_statement_review(
                     other_field, other_total = outcome.other_owner_total
                     record(other_field, other_total, outcome.detail, datetime.now())
                 record(outcome.field_key, outcome.total, outcome.detail, datetime.now())
-                if rec.owner_key and resolve_owner(rec.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(rec.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(rec.owner_key, owner, owner_map)
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"ira_statement_dismiss_{i}"):
             st.session_state["ira_statements"] = [r for r in pending if r is not rec]
             st.rerun()
@@ -1737,10 +1766,13 @@ def _render_ssa_review(
                     datetime.now(),
                 )
                 save_ssa_pdf_estimates(owner, stmt)
-                if stmt.owner_key and resolve_owner(stmt.owner_key, owner_map) != owner:
-                    save_owner_map(learn_owner(stmt.owner_key, owner, owner_map))
+                learn_notice = _try_learn_owner(stmt.owner_key, owner, owner_map)
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
-            st.rerun()
+            if learn_notice:
+                # Withhold the rerun so the notice survives to be seen.
+                st.warning(learn_notice)
+            else:
+                st.rerun()
         if st.button("Dismiss", key=f"ssa_dismiss_{i}"):
             st.session_state["ssa_statements"] = [s for s in pending if s is not stmt]
             st.rerun()

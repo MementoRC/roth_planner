@@ -102,7 +102,9 @@ def _apply_to_ytd(mock_st, save_ytd) -> None:
         patch.object(sync_scan_mod, "save_ytd_snapshot", save_ytd),
         patch.object(sync_scan_mod, "_apply_ubs_correction", return_value=["note"]),
     ):
-        sync_scan_mod._render_scan_review({"T1": rec}, {"koinly": {}, "brokerage": {}}, {}, {}, "you", True)
+        sync_scan_mod._render_scan_review(
+            {"T1": rec}, {"koinly": {}, "brokerage": {}}, {}, {}, "you", True
+        )
 
 
 def test_a_rolled_back_apply_to_ytd_keeps_manual_entry_on(store):
