@@ -226,6 +226,8 @@ def _clear_session_for_reseed() -> None:
         "spouse_ss_start_age",
         "your_rmd_start_age",
         "spouse_rmd_start_age",
+        "your_rmd_age_chosen",
+        "spouse_rmd_age_chosen",
         "your_fra_age",
         "spouse_fra_age",
         "living_expenses",

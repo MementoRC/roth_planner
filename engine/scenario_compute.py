@@ -14,7 +14,7 @@ from engine.aca import (
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
 )
-from engine.ira import calc_rmd, ss_benefit_at_age, ss_with_cola
+from engine.ira import calc_rmd, ss_benefit_at_age, ss_in_year
 from engine.tax import (
     BRACKETS_SINGLE,
     federal_tax,
@@ -262,12 +262,10 @@ def social_security_benefits(
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
     spouse_ss_base = ss_benefit_at_age(hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age)
     your_ss = (
-        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
-        if ya >= hh.your_ss_start_age
-        else 0.0
+        ss_in_year(your_ss_base, ya, hh.your_age, hh.ss_cola) if ya >= hh.your_ss_start_age else 0.0
     )
     spouse_ss = (
-        ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+        ss_in_year(spouse_ss_base, sa, hh.spouse_age, hh.ss_cola)
         if sa >= hh.spouse_ss_start_age
         else 0.0
     )
@@ -314,6 +312,7 @@ def social_security_benefits(
             deceased_monthly_fra = hh.your_ss_fra if who_dies == "you" else hh.spouse_ss_fra
             deceased_fra_age = hh.your_fra_age if who_dies == "you" else hh.spouse_fra_age
             deceased_current_age = ya if who_dies == "you" else sa
+            deceased_base_age = hh.your_age if who_dies == "you" else hh.spouse_age
             # The FRA benefit on file stands in for the PIA (no separate input).
             deceased_pia = ss_benefit_at_age(
                 deceased_monthly_fra, deceased_fra_age, deceased_fra_age
@@ -323,7 +322,6 @@ def social_security_benefits(
                 deceased_actual = ss_benefit_at_age(
                     deceased_monthly_fra, deceased_claim_age, deceased_fra_age
                 )
-                cola_years = deceased_current_age - deceased_claim_age
             else:
                 # Not yet claiming. audit-1008 F-25: delayed retirement credits
                 # earned through the year of death count for the survivor (20 CFR
@@ -333,7 +331,6 @@ def social_security_benefits(
                     max(deceased_death_age, deceased_fra_age),
                     deceased_fra_age,
                 )
-                cola_years = max(deceased_current_age - deceased_fra_age, 0)
             survivor_own = spouse_ss if who_dies == "you" else your_ss
 
             if survivor_current_age < 60:
@@ -351,7 +348,11 @@ def social_security_benefits(
                     survivor_benefit = min(
                         survivor_benefit, max(deceased_actual, 0.825 * deceased_pia)
                     )
-                survivor_benefit = ss_with_cola(survivor_benefit, cola_years, hh.ss_cola)
+                # F-06: the benefit is in base-year dollars, so COLA runs from the
+                # base year (the decedent's age then is deceased_base_age).
+                survivor_benefit = ss_in_year(
+                    survivor_benefit, deceased_current_age, deceased_base_age, hh.ss_cola
+                )
 
             survivor_total = max(survivor_own, survivor_benefit)
 

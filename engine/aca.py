@@ -7,8 +7,12 @@ to model a hypothetical future extension.
 """
 
 import math
+from typing import TYPE_CHECKING
 
 from engine.tax_indexing import BASE_YEAR, DEFAULT_CPI, index_value
+
+if TYPE_CHECKING:
+    from models.household import Household
 
 # HHS poverty guidelines (48 contiguous states + DC), keyed by the COVERAGE year
 # they govern. 26 CFR 1.36B-1(h) uses the guidelines most recently published as
@@ -576,6 +580,27 @@ def is_pre_medicare_age(age: int) -> bool:
     `aca_applies` and the ceiling gates cannot drift on it.
     """
     return 0 < age < 65
+
+
+def present_household_ages(hh: "Household", year: int) -> tuple[int, int]:
+    """(your_age, spouse_age) in `year`, with 0 for anyone absent or dead.
+
+    A Single filer (base spouse_age <= 0) has no spouse in any year, and in
+    survivor years (year > survivor.death_year) the deceased is gone. Zero is
+    the "not a household member" sentinel `is_pre_medicare_age` already
+    rejects, so the Medicare-age gates count only living, present people
+    (audit-1026 F-01).
+    """
+    offset = year - hh.base_year
+    ya = hh.your_age + offset if hh.your_age > 0 else 0
+    sa = hh.spouse_age + offset if hh.spouse_age > 0 else 0
+    surv = hh.survivor
+    if surv is not None and year >= surv.death_year + 1:
+        if surv.who_dies == "you":
+            ya = 0
+        else:
+            sa = 0
+    return ya, sa
 
 
 def aca_applies(your_age: int, enrolled: bool = True) -> bool:

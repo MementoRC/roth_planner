@@ -64,7 +64,9 @@ class TestScenarios:
         result = run_no_conversion(hh, end_age=95)
         yr75 = next(yr for yr in result.years if yr.your_age == 75)
         ss_at_70 = DEFAULTS["your_ss_fra"] * 1.24 * 12
-        years_cola = 75 - 70
+        # audit-1026 F-06: the statement benefit is in base-year dollars, so
+        # COLA compounds from the base year, not from the claim year.
+        years_cola = 75 - DEFAULTS["your_age"]
         ss75 = ss_at_70 * 1.025**years_cola
         assert yr75.your_ss == approx(ss75, tol=100)
 
@@ -1361,6 +1363,11 @@ class TestMagiCeilingWaterfallActivation:
         no brokerage). The old total converted past the 22% top by exactly that
         draw. The premise above is STILL TRUE -- magi_strategy is None and the
         cap is _base_headroom alone; only the absolute total moved.
+
+        UPDATE (audit-1026 F-06): 2_717_845 -> 2_751_694. Social Security now
+        grows by COLA from the base year, so every SS year is larger, which
+        shifts the base income and forced draw the fill is sized against; the
+        premise is unchanged.
         """
         hh = Household(your_age=60, spouse_age=54, your_ira=1_600_000, spouse_ira=1_600_000)
         plan = auto_fill_22(hh)
@@ -1370,7 +1377,7 @@ class TestMagiCeilingWaterfallActivation:
             sum(yr.your_conversion + yr.spouse_conversion for yr in result.years)
         )
         assert total_achieved > 0, "precondition: the 22%-fill plan must convert something"
-        assert total_achieved == approx(2_717_845, tol=1)
+        assert total_achieved == approx(2_751_694, tol=1)
 
 
 class TestWaterfallMarginalBaselineC8Followup:

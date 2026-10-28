@@ -6,10 +6,10 @@ import streamlit as st
 from engine.dividend_breakdown import qualified_breakdown
 from engine.dividend_forecast import forecast_portfolio
 from engine.headroom import compute_headroom
-from engine.ira import ss_benefit_at_age, ss_with_cola
 from engine.irmaa import IRMAA_TIERS_MFJ, IRMAA_TIERS_SINGLE, _index_irmaa_tiers, irmaa_surcharge
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from engine.portfolio_sync.holdings import positions_for_forecast_multi
+from engine.scenario_compute import social_security_benefits
 from engine.tax import (
     LTCG_RATES_MFJ,
     SafeHarborGuidance,
@@ -25,6 +25,16 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 from views.optimizer_panel import manual_nii
+
+
+def ytd_combined_ss(hh: Household) -> float:
+    """Combined base-year Social Security, from the engine's own rule (COLA
+    compounds from the base year; audit-1026 F-06)."""
+    return sum(
+        social_security_benefits(
+            hh, hh.your_age, hh.spouse_age, survivor_active=False, who_dies=None, death_year=None
+        )
+    )
 
 
 def ytd_bracket_rooms(hh: Household, ytd: YTDSnapshot) -> tuple[float, float]:
@@ -238,25 +248,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     # F20: pass combined annual SS so taxable_ss() applies IRC §86 cap.
     # Apply COLA growth for years already collecting so the YTD estimate reflects
     # the actual current-year benefit, not the bare at-claim-age amount.
-    _your_ss = (
-        ss_with_cola(
-            ss_benefit_at_age(hh.your_ss_fra, min(hh.your_ss_start_age, 70), hh.your_fra_age),
-            hh.your_age - hh.your_ss_start_age,
-            hh.ss_cola,
-        )
-        if hh.your_age >= hh.your_ss_start_age
-        else 0.0
-    )
-    _spouse_ss = (
-        ss_with_cola(
-            ss_benefit_at_age(hh.spouse_ss_fra, min(hh.spouse_ss_start_age, 70), hh.spouse_fra_age),
-            hh.spouse_age - hh.spouse_ss_start_age,
-            hh.ss_cola,
-        )
-        if hh.spouse_age >= hh.spouse_ss_start_age
-        else 0.0
-    )
-    _combined_ss = _your_ss + _spouse_ss
+    _combined_ss = ytd_combined_ss(hh)
     estimate: YTDTaxEstimate = estimate_ytd_federal_tax(ytd, hh, combined_ss=_combined_ss)
 
     st.markdown("---")

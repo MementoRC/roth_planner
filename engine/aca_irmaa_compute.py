@@ -18,7 +18,7 @@ from engine.aca import (
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
 )
-from engine.ira import ss_benefit_at_age, ss_with_cola
+from engine.ira import ss_benefit_at_age, ss_in_year
 from engine.irmaa import _index_irmaa_tiers, irmaa_next_threshold, irmaa_surcharge, irmaa_tier
 from engine.niit import niit
 from engine.scenario_types import YearResult
@@ -118,16 +118,14 @@ def _nontaxable_ss(
     """
     your_ss_base = ss_benefit_at_age(hh.your_ss_fra, hh.your_ss_start_age, hh.your_fra_age)
     your_ss = (
-        ss_with_cola(your_ss_base, ya - hh.your_ss_start_age, hh.ss_cola)
-        if ya >= hh.your_ss_start_age
-        else 0.0
+        ss_in_year(your_ss_base, ya, hh.your_age, hh.ss_cola) if ya >= hh.your_ss_start_age else 0.0
     )
     if filing_status == "MFJ" and sa is not None:
         spouse_ss_base = ss_benefit_at_age(
             hh.spouse_ss_fra, hh.spouse_ss_start_age, hh.spouse_fra_age
         )
         spouse_ss = (
-            ss_with_cola(spouse_ss_base, sa - hh.spouse_ss_start_age, hh.ss_cola)
+            ss_in_year(spouse_ss_base, sa, hh.spouse_age, hh.ss_cola)
             if sa >= hh.spouse_ss_start_age
             else 0.0
         )
