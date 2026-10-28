@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -246,16 +247,14 @@ def _resolve_grants(
 
     if isinstance(baseline, SourcedList):
         choice = choices.get(GRANTS_KEY)
-        baseline_by_key = {g.key(): g for g in baseline}
+        baseline_tranches = Counter(dataclasses.astuple(g) for g in baseline)
 
         def _grants_differ(c: Candidate) -> bool:
-            # Identity (key()) alone isn't enough: a grant matched by id/year
-            # can still have drifted values (strike, shares, expiry_year) —
-            # compare the full dataclass, not just its key set (audit-0721 C19).
-            candidate_by_key = {g.key(): g for g in c.value}
-            if set(candidate_by_key) != set(baseline_by_key):
-                return True
-            return any(candidate_by_key[k] != baseline_by_key[k] for k in candidate_by_key)
+            # Compare every tranche as an order-insensitive multiset of the full
+            # dataclass: key() alone misses drifted values (audit-0721 C19), and
+            # a dict keyed by key() collapses empty-grant_id tranches sharing
+            # year/strike/expiry so only one per key was compared (audit-1026 F-11).
+            return Counter(dataclasses.astuple(g) for g in c.value) != baseline_tranches
 
         if _trusted_source_differs(candidates, choice, _grants_differ):
             pending.add(GRANTS_KEY)
