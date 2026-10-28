@@ -616,11 +616,9 @@ def _write_scan_result(
             [*(st.session_state.get("ssa_statements") or []), *result.ssa_statements]
         )
 
-    _manual_entry_kept_explicit = False
     if applied_bits:
         _snap.with_snapshot_date()
         st.session_state.ytd_snapshot = _snap
-        _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
         save_ytd_snapshot(_snap)
 
     report = functools.partial(
@@ -629,7 +627,6 @@ def _write_scan_result(
         by_account=by_account,
         applied_bits=applied_bits,
         new_ira_count=new_ira_count,
-        manual_entry_kept_explicit=_manual_entry_kept_explicit,
         stmt_unknown_now=stmt_unknown_now,
         not_found_message=not_found_message,
         notices=notices,
@@ -643,15 +640,19 @@ def _report_scan_summary(
     by_account: dict[str, BrokerageStatementRecord],
     applied_bits: list[str],
     new_ira_count: int,
-    manual_entry_kept_explicit: bool,
     stmt_unknown_now: dict[str, BrokerageStatementRecord],
     not_found_message: str,
     notices: list[tuple[str, str]],
 ) -> None:
     """Summary: what was parsed, what was applied, what still needs action.
 
-    Drawn by :func:`_apply_scan_result` only after its transaction commits.
+    Drawn by :func:`_apply_scan_result` only after its transaction commits --
+    which is also why the Manual-entry auto-deselect (a widget-backed session
+    write the transaction cannot roll back) happens here, not in the write.
     """
+    manual_entry_kept_explicit = bool(applied_bits) and not auto_deselect_manual_entry(
+        st.session_state
+    )
     for kind, text in notices:
         (st.warning if kind == "warning" else st.info)(text)
     parsed_bits: list[str] = []
@@ -1004,7 +1005,6 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
             )
             snap.with_snapshot_date()
             st.session_state.ytd_snapshot = snap
-            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             save_ytd_snapshot(snap)
     except UbsActivityStoreError as exc:
         st.error(
@@ -1014,6 +1014,8 @@ def _render_ubs_csv_uploader(*, ledger: PdfLedger, identity_set: bool) -> None:
         )
         return
 
+    # Only after the commit: the checkbox write cannot be rolled back.
+    _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
     total_bargain = sum(o.bargain_element for o in merged)
     total_withholding = sum(federal_withholding(o) for o in merged)
     st.success(
@@ -1935,8 +1937,9 @@ def _render_scan_review(
                 ubs_warnings = _apply_ubs_correction(brokerage_totals, ledger, prev_ytd)
                 prev_ytd.with_snapshot_date()
                 st.session_state.ytd_snapshot = prev_ytd
-                _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
                 save_ytd_snapshot(prev_ytd)
+            # Only after the commit: the checkbox write cannot be rolled back.
+            _manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
             st.success(
                 f"Applied {len(counted)} taxable account(s) to YTD snapshot"
                 + (
