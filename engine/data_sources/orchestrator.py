@@ -239,6 +239,8 @@ def reconcile_manual_edits(
                 data[year_key] = float(value)
                 prov[year_key] = prov_json
                 magi_changed = True
+                if store is not None:
+                    store.clear_dismissals(magi_field_key(int(year)))
         if magi_changed:
             committed_json[_MAGI_ATTR] = {"data": data, "prov": prov}
             changed = True
@@ -263,7 +265,10 @@ def resolve_for_app(
     ``cleared_magi_years`` are prior-year MAGI years the user explicitly set
     back to 0 in Setup ("Leave 0 to use projected MAGI"): they are removed
     from the committed baseline and their candidates dropped from ``store``
-    so the anchor does not reappear (audit-1008 F-64).
+    so the anchor does not reappear (audit-1008 F-64). Their candidates are
+    recorded as dismissed in ``store`` so the boot-time PDF re-record does not
+    bring them back on a later rerun or restart (audit-1026 F-05); a manual
+    entry for the year lifts the dismissal.
 
     ``unedited_seed`` and ``bundle_scalars`` are issue #43 inputs: see
     :func:`reconcile_manual_edits` and :func:`stamp_first_load_bundle_scalars`.
@@ -271,7 +276,7 @@ def resolve_for_app(
     migrated = False
     cleared = {int(y) for y in cleared_magi_years}
     for year in cleared:
-        store.discard(magi_field_key(year))
+        store.dismiss(magi_field_key(year))
 
     if committed_json is None:
         # First load with no saved committed baseline: replicate the OLD

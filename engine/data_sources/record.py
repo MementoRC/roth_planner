@@ -29,6 +29,7 @@ def record_magi_candidates(
     source: Source,
     detail: str,
     recorded_at: datetime,
+    skip_dismissed: bool = False,
 ) -> int:
     """Record one ``prior_year_magi.<year>`` candidate per truthy value.
 
@@ -37,20 +38,31 @@ def record_magi_candidates(
     falsy/``None`` values; years cast to ``int``, values to ``float``), saves
     it back, and returns the count recorded.
 
+    ``skip_dismissed`` is for the automatic per-rerun boot re-record: a
+    candidate the user cleared with "Leave 0" is not offered again (audit-1026
+    F-05). Without it (an explicit import or sync) the dismissal is lifted and
+    the value is recorded as normal.
+
     Never writes to ``Household`` or session state directly — callers rely on
     the resolver / Command Center to surface and confirm these candidates.
     """
     store = CandidateStore.load()
     count = 0
+    lifted = False
     for year, value in magi_by_year.items():
         if not value:
             continue
+        field_key = magi_field_key(int(year))
+        if store.is_dismissed(field_key, source, value):
+            if skip_dismissed:
+                continue
+            lifted = store.clear_dismissals(field_key) or lifted
         recorded = ingest.record_candidate(
-            store, magi_field_key(int(year)), float(value), source, detail, recorded_at
+            store, field_key, float(value), source, detail, recorded_at
         )
         if recorded:
             count += 1
-    if count:
+    if count or lifted:
         store.save()
     return count
 

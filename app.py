@@ -276,6 +276,7 @@ if _pdf_records:
             Source.PDF,
             "1040 PDF cache",
             datetime.now(),
+            skip_dismissed=True,
         )
     )
 
