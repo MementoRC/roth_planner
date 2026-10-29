@@ -600,6 +600,26 @@ class TestSurvivorIncomeGate:
             survivor=SurvivorScenario(who_dies=who_dies, death_year=death_year),
         )
 
+    @staticmethod
+    def _assert_aggregates_match_no_plan(
+        hh: Household, plan: ConversionPlan, death_year: int
+    ) -> None:
+        """Post-death aggregates must equal those of the same household with no plan."""
+        with_plan = run_scenario(hh, plan, end_age=75)
+        baseline = run_scenario(hh, ConversionPlan(), end_age=75)
+        checked = 0
+        for yr, base in zip(with_plan.years, baseline.years, strict=True):
+            if yr.year <= death_year:
+                continue
+            checked += 1
+            for field in ("combined_gross", "magi", "federal_tax_amt"):
+                assert getattr(yr, field) == pytest.approx(getattr(base, field), abs=0.01), (
+                    f"year {yr.year}: {field} differs from no-plan run "
+                    f"({getattr(yr, field):.2f} vs {getattr(base, field):.2f}); "
+                    "deceased income is leaking into aggregates"
+                )
+        assert checked > 0
+
     def test_deceased_spouse_conversion_excluded_from_combined_gross(self) -> None:
         """After spouse dies, spouse_conversion must be 0 in all survivor years."""
         death_year = 2028
@@ -616,13 +636,7 @@ class TestSurvivorIncomeGate:
                 assert yr.spouse_conversion == 0.0, (
                     f"year {yr.year}: deceased spouse_conversion={yr.spouse_conversion} != 0"
                 )
-                # combined_gross must not contain the dead spouse's planned conversion
-                assert yr.combined_gross == pytest.approx(yr.combined_gross, abs=0.01), (
-                    "combined_gross sentinel — see next assertion"
-                )
-                # The net check: combined_gross without any conversion vs. the gated run
-                # is equivalent here since the no-conversion run uses the same household.
-                assert yr.magi < yr.magi + post_death_conv, "sanity: magi would be higher if leaked"
+        self._assert_aggregates_match_no_plan(hh, plan, death_year)
 
     def test_deceased_spouse_conversion_not_credited_to_spouse_roth(self) -> None:
         """Spouse Roth must not grow from a deceased spouse's post-death planned conversions.
@@ -666,6 +680,7 @@ class TestSurvivorIncomeGate:
                     f"year {yr.year}: deceased spouse_extra_withdrawal="
                     f"{yr.spouse_extra_withdrawal} != 0"
                 )
+        self._assert_aggregates_match_no_plan(hh, plan, death_year)
 
     def test_deceased_primary_conversion_excluded_when_you_die(self) -> None:
         """When 'you' die, yr.your_conversion must be 0 in all survivor years."""
@@ -681,6 +696,7 @@ class TestSurvivorIncomeGate:
                 assert yr.your_conversion == 0.0, (
                     f"year {yr.year}: deceased your_conversion={yr.your_conversion} != 0"
                 )
+        self._assert_aggregates_match_no_plan(hh, plan, death_year)
 
     def test_deceased_primary_extra_withdrawal_excluded_when_you_die(self) -> None:
         """When 'you' die, yr.extra_withdrawal must be 0 in all survivor years."""
@@ -695,6 +711,7 @@ class TestSurvivorIncomeGate:
                 assert yr.extra_withdrawal == 0.0, (
                     f"year {yr.year}: deceased extra_withdrawal={yr.extra_withdrawal} != 0"
                 )
+        self._assert_aggregates_match_no_plan(hh, plan, death_year)
 
 
 class TestConversionTaxIncludesSsTorpedo:
