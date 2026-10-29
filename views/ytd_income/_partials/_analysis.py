@@ -27,6 +27,25 @@ from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 from views.optimizer_panel import manual_nii
 
 
+def irmaa_not_yet_notice(hh: Household, headroom) -> str:
+    """Notice text for 'IRMAA not yet relevant', naming whoever sets the first year.
+
+    Mirrors engine.headroom: for MFJ the first relevant year is driven by the
+    older spouse (min years-to-Medicare over both); otherwise by you.
+    """
+    first_year = headroom.irmaa_first_relevant_year
+    elapsed = first_year - hh.base_year
+    spouse_drives = hh.filing_status == "MFJ" and hh.spouse_age > hh.your_age
+    who, age = ("Your spouse is", hh.spouse_age) if spouse_drives else ("You are", hh.your_age)
+    age_label = "spouse age" if spouse_drives else "age"
+    return (
+        f"**IRMAA does not apply to {hh.base_year} income.** "
+        f"{who} {age} — Medicare starts at 65 with a 2-year lookback. "
+        f"IRMAA first matters for income year **{first_year}** "
+        f"({age_label} {age + elapsed})."
+    )
+
+
 def ytd_combined_ss(hh: Household) -> float:
     """Combined base-year Social Security, from the engine's own rule (COLA
     compounds from the base year; audit-1026 F-06)."""
@@ -413,12 +432,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     )
 
     if not headroom.irmaa_relevant:
-        st.info(
-            f"**IRMAA does not apply to {hh.base_year} income.** "
-            f"You are {hh.your_age} — Medicare starts at 65 with a 2-year lookback. "
-            f"IRMAA first matters for income year **{headroom.irmaa_first_relevant_year}** "
-            f"(age {hh.your_age + headroom.irmaa_first_relevant_year - hh.base_year})."
-        )
+        st.info(irmaa_not_yet_notice(hh, headroom))
 
     # Show with-planned comparison if there's option income
     if headroom.planned_option_income > 0:

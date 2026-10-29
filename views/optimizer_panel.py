@@ -29,6 +29,7 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 from views._format import fmt_dollars
 from views.conversion_state import clear_conversion_widgets
+from views.setup._state import autosave_user_defaults
 
 RESULT_KEY = "_auto_opt_result"
 SIG_KEY = "_auto_opt_sig"
@@ -82,6 +83,19 @@ def _copy_to_store(widget_key: str, store_key: str) -> None:
     st.session_state[store_key] = st.session_state[widget_key]
 
 
+def _copy_terminal_rate(widget_key: str) -> None:
+    """Copy the terminal rate to its store and persist it if it changed.
+
+    The setting is a saved household scalar, but only the Profile/Data pages
+    autosave, so an edit made on the optimizer pages was lost on restart
+    (audit-1026 F-22).
+    """
+    before = st.session_state.get(TERMINAL_STORE_KEY)
+    _copy_to_store(widget_key, TERMINAL_STORE_KEY)
+    if st.session_state[TERMINAL_STORE_KEY] != before:
+        autosave_user_defaults()
+
+
 def _render_settings(half: str) -> None:
     """Discount rate and terminal IRA tax rate inputs."""
     discount_key = f"auto_opt_discount_pct_{half}"
@@ -109,8 +123,8 @@ def _render_settings(half: str) -> None:
         max_value=TERMINAL_IRA_TAX_RATE_BOUNDS[1],
         step=1.0,
         key=terminal_key,
-        on_change=_copy_to_store,
-        args=(terminal_key, TERMINAL_STORE_KEY),
+        on_change=_copy_terminal_rate,
+        args=(terminal_key,),
         help=(
             "Traditional and inherited IRA balances still unspent at the end of "
             "the projection are taxed when they come out, by the survivor or by "

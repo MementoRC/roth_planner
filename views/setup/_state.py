@@ -7,8 +7,10 @@ import streamlit as st
 from config.loader import save_user_defaults
 from config.scalar_registry import session_key_for_config_key
 from engine.demo_mode import enter_demo_mode, leave_demo_mode
+from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.portfolio_sync import merge_snapshots
 from engine.portfolio_sync.shapes import portfolio_snapshot_from_dict
+from engine.store import StoreUnavailableError
 from engine.upload_merge import SCALAR_KEYS, build_user_defaults_session_updates
 
 
@@ -394,3 +396,10 @@ def exit_demo_mode() -> None:
     _clear_session_for_reseed()
     st.session_state.pop("_suppress_snapshot_autoload", None)
     leave_demo_mode()
+    # The demo-chosen owner lives in the session only (the write went to the
+    # null store); app.py's setdefault would keep it, so re-seed from the real
+    # store with the same unreadable-owner -> None fallback (audit-1026 F-21).
+    try:
+        st.session_state["instance_owner"] = load_instance_owner()
+    except (CorruptInstanceOwnerError, StoreUnavailableError):
+        st.session_state["instance_owner"] = None
