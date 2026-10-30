@@ -13,7 +13,7 @@ from typing import Any
 import streamlit as st
 
 from config.scalar_registry import scalar_default
-from models.household import Household
+from models.household import Household, default_rmd_age
 
 from ._clamp import clamp as _clamp
 
@@ -56,6 +56,26 @@ def rmd_choice_write_back(state: MutableMapping[str, Any], person: str, choice: 
     state[f"{person}_rmd_age_chosen"] = choice is not None
     if choice is not None:
         state[f"{person}_rmd_start_age"] = choice
+
+
+def stable_age_input(
+    container, label: str, state: MutableMapping[str, Any], attr: str, fallback: int, **kwargs: Any
+) -> int:
+    """Age ``number_input`` with a stable identity, so typed edits never lag a rerun.
+
+    An unkeyed ``value=hh.<age>`` widget is re-identified whenever ``value`` changes,
+    which discarded the NEXT edit after each one. The widget is keyed instead and
+    re-seeded from ``state[attr]`` only when something other than this widget
+    (import, reset, ...) changed it since the widget last wrote it.
+    """
+    widget_key = f"_hh_{attr}_input"
+    marker = f"_hh_{attr}_synced"
+    current = state.get(attr, fallback)
+    if widget_key not in state or state.get(marker) != current:
+        state[widget_key] = current
+    value = container.number_input(label, step=1, format="%d", key=widget_key, **kwargs)
+    state[marker] = value
+    return int(value)
 
 
 def render_household_partial(hh: Household, container, owner: str) -> bool | None:
@@ -114,12 +134,10 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         return _is_single
 
     if owner == "your":
-        st.session_state.your_age = container.number_input(
-            "Your Age",
-            value=hh.your_age,
-            step=1,
-            format="%d",
+        _your_age = stable_age_input(
+            container, "Your Age", st.session_state, "your_age", hh.your_age
         )
+        st.session_state.your_age = _your_age
         st.session_state.your_has_workplace_plan = container.checkbox(
             "You have a workplace retirement plan (401k/403b)",
             value=hh.your_has_workplace_plan,
@@ -138,7 +156,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
                 options=[None, 73, 75],
                 index=_rmd_option_index(st.session_state, "your"),
                 format_func=lambda o: (
-                    f"{_RMD_AUTO_LABEL}: {hh.your_rmd_start_age}"
+                    f"{_RMD_AUTO_LABEL}: {default_rmd_age(hh.base_year - _your_age)}"
                     if o is None
                     else _rmd_option_label(o)
                 ),
@@ -190,12 +208,8 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
         _aca_val = (
             _ss.get("spouse_aca", hh.spouse_aca_enrolled) if _zeroed else hh.spouse_aca_enrolled
         )
-        _spouse_age = container.number_input(
-            "Spouse Age",
-            value=_age_val,
-            step=1,
-            format="%d",
-            disabled=_is_single,
+        _spouse_age = stable_age_input(
+            container, "Spouse Age", _ss, "spouse_age", _age_val, disabled=_is_single
         )
         _spouse_has_workplace_plan = container.checkbox(
             "Spouse has a workplace retirement plan (401k/403b)",
@@ -213,7 +227,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             options=[None, 73, 75],
             index=_rmd_option_index(st.session_state, "spouse"),
             format_func=lambda o: (
-                f"{_RMD_AUTO_LABEL}: {hh.spouse_rmd_start_age}"
+                f"{_RMD_AUTO_LABEL}: {default_rmd_age(hh.base_year - _spouse_age)}"
                 if o is None
                 else _rmd_option_label(o)
             ),

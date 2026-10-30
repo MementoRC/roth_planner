@@ -62,6 +62,8 @@ EXPECTED_WIDGET_KEYS = frozenset(
     {
         # Parameters tab
         "_hh_filing_status_choice",
+        "_hh_your_age_input",
+        "_hh_spouse_age_input",
         "_survivor_enabled",
         "_sync_ssa_you_btn",
         "_sync_ssa_spouse_btn",
