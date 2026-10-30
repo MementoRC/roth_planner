@@ -698,6 +698,14 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
     if result.account_type_overrides != dict(ready.local.account_type_overrides):
         pending["account_type_overrides"] = result.account_type_overrides
     _persist_slot_captured_at(result.slot_captured_at, dict(ready.local.slot_captured_at))
+    # Strikes must land on disk with the snapshot they price, not wait for a
+    # later autosave: a session clear + reload (e.g. leaving demo mode) falls
+    # back to the file, and a grant year missing there is dropped as "no
+    # strike". Truthy-only: an empty map would clobber hand-edited strikes.
+    # save_user_defaults is itself a no-op in demo mode (like the null store).
+    strikes = result.scalar_updates.get("_user_grant_strikes")
+    if strikes:
+        save_user_defaults({"grant_strikes": dict(strikes)})
     st.session_state["portfolio_snapshot"] = result.snapshot
     st.session_state.pop("_suppress_snapshot_autoload", None)
     manual_entry_kept_explicit = False
