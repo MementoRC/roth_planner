@@ -12,7 +12,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
-from engine.aca import aca_ceiling_magi
+from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
 from engine.irmaa import irmaa_tier1_threshold
 from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_autofill import (
@@ -160,8 +160,12 @@ def _ceiling_income_by_year(
                 0.0, total_deductions[year], year=year, cpi=cpi, filing_status=fs
             )
             ceilings[year] = min(ordinary_ceiling, bracket_cap)
-        else:  # aca-safe
+        elif _anyone_pre_medicare(hh, year):  # aca-safe
             ceilings[year] = aca_ceiling_magi(fs, year, cpi) - wedge
+        else:
+            # aca-safe once nobody is under 65 falls back to IRMAA tier-1,
+            # mirroring auto_fill_aca's _aca_room.
+            ceilings[year] = irmaa_tier1_threshold(year, fs, cpi) - wedge
     return ceilings
 
 
@@ -435,11 +439,24 @@ def _score_candidate(
     )
 
 
-def _magi_ceiling_for(strategy: str, year: int, filing_status: str, cpi: float) -> float:
-    """True-MAGI ceiling for a MAGI strategy (for over-ceiling flagging)."""
+def _magi_ceiling_for(
+    hh: Household, strategy: str, year: int, filing_status: str, cpi: float
+) -> float:
+    """True-MAGI ceiling for a MAGI strategy (for over-ceiling flagging).
+
+    aca-safe LIFTS (inf: nothing to flag) in years nobody is pre-Medicare,
+    mirroring engine.scenario._strategy_magi_ceiling."""
     if strategy == "irmaa-safe":
         return irmaa_tier1_threshold(year, filing_status, cpi)
+    if not _anyone_pre_medicare(hh, year):
+        return math.inf
     return aca_ceiling_magi(filing_status, year, cpi)  # aca-safe
+
+
+def _anyone_pre_medicare(hh: Household, year: int) -> bool:
+    """Age-only ACA gate: any present household member under 65 in ``year``."""
+    ya, sa = present_household_ages(hh, year)
+    return is_pre_medicare_age(ya) or is_pre_medicare_age(sa)
 
 
 _AutofillFn = Callable[[Household, YTDSnapshot | None, float], ConversionPlan]
@@ -530,7 +547,7 @@ def optimize_exercises(
         if strategy in _MAGI_STRATEGIES:
 
             def magi_fn(year: int, fs: str, _s: str = strategy) -> float:
-                return _magi_ceiling_for(_s, year, fs, cpi)
+                return _magi_ceiling_for(hh, _s, year, fs, cpi)
 
         plan = _score_candidate(
             hh,
