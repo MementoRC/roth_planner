@@ -287,6 +287,9 @@ def test_ceiling_income_by_year_aca_safe_subtracts_magi_wedge() -> None:
     ceiling = _ceiling_income_by_year(hh, "aca-safe", total_deductions, magi_wedge, filing_status)
 
     for year, wedge in magi_wedge.items():
+        offset = year - hh.base_year
+        if hh.your_age + offset >= 65 and hh.spouse_age + offset >= 65:
+            continue  # ACA ceiling lifts once nobody is pre-Medicare (see medicare-gate tests)
         fs = filing_status[year]
         expected = aca_ceiling_magi(fs, year, hh.cpi_assumption) - wedge
         assert ceiling[year] == pytest.approx(expected)
