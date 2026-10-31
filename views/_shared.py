@@ -45,12 +45,14 @@ Reusable pieces every later wave depends on:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import requests
 import streamlit as st
 
 from config.loader import load_defaults
@@ -278,6 +280,23 @@ def _count_candidates_from(store: CandidateStore, field_keys: list[str], source:
     )
 
 
+_log = logging.getLogger(__name__)
+
+
+def friendly_sync_error(exc: BaseException, source: str = "FinExtract") -> str:
+    """Short, user-facing text for a failed network sync (raw text goes to logs/details).
+
+    Timeout is checked before ConnectionError: ``ConnectTimeout`` subclasses both.
+    """
+    if isinstance(exc, requests.Timeout):
+        return f"{source} timed out."
+    if isinstance(exc, requests.ConnectionError):
+        return f"{source} isn't reachable — is it running?"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return f"{source} returned HTTP {exc.response.status_code}."
+    return f"{type(exc).__name__} (see details)"
+
+
 @dataclass(frozen=True)
 class PortfolioSyncSummary:
     """One leg of ``sync_everything`` — the FinExtract portfolio + MAGI sync."""
@@ -302,7 +321,10 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
     try:
         outcome = sync_portfolio_from_finextract(hh)
     except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
-        return PortfolioSyncSummary(candidates_recorded=0, server_available=False, error=str(exc))
+        _log.warning("Portfolio sync failed", exc_info=True)
+        return PortfolioSyncSummary(
+            candidates_recorded=0, server_available=False, error=friendly_sync_error(exc)
+        )
 
     if not outcome.snap.server_available:
         return PortfolioSyncSummary(
@@ -354,7 +376,8 @@ def _sync_ss_source() -> SsSyncSummary:
         try:
             warning = _sync_ssa_for(owner, fra_age)
         except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
-            warning = f"SS sync ({owner}) failed: {exc}"
+            _log.warning("SS sync (%s) failed", owner, exc_info=True)
+            warning = f"SS sync ({owner}) failed: {friendly_sync_error(exc)}"
         if warning:
             warnings.append(warning)
         else:
@@ -408,7 +431,10 @@ def _sync_market_quote_source() -> MarketQuoteSyncSummary:
     try:
         result = handle_stock_quote_fetch()
     except Exception as exc:  # noqa: BLE001 -- one source failing must not abort the others
-        return MarketQuoteSyncSummary(candidates_recorded=0, error=str(exc))
+        _log.warning("Market quote sync failed", exc_info=True)
+        return MarketQuoteSyncSummary(
+            candidates_recorded=0, error=friendly_sync_error(exc, "Yahoo Finance")
+        )
 
     if not result.ok:
         return MarketQuoteSyncSummary(candidates_recorded=0, error=result.error)

@@ -624,31 +624,32 @@ def get_household() -> Household:
     if snapshot_carries_portfolio_data(snap):
         derive_snapshot_growth(hh, snap, employer_ticker=configured_ticker())
 
-    # Mirror the resolved/committed sourced values back into session_state so
-    # reconcile_manual_edits only ever fires on a genuine user edit (not a
-    # stale snapshot-derived value), confirms from the Command Center stick,
-    # and freshly-synced-but-not-yet-confirmed values sit pending correctly
-    # rather than looking like a manual edit on the next render.
-    for _attr, _session_key in session_keys_for_writeback().items():
-        _value = getattr(hh, _attr, None)
-        if _value is None:
-            continue
-        if _attr == "prior_year_magi":
-            st.session_state[_session_key] = {int(_y): float(_v) for _y, _v in dict(_value).items()}
-        else:
-            # int, not float: every Setup number_input bound to these keys uses
-            # format="%d"/int min_value/step (whole-dollar balances and stock
-            # price), and Streamlit's number_input raises
-            # StreamlitMixedNumericTypesError if `value` doesn't match those
-            # types exactly — matches the int() cast the old direct-write code
-            # already used for these same fields.
-            st.session_state[_session_key] = int(round(_value))
-
     # The one-shot flags are consumed only once the save commits (audit-1026
     # F-09): the clear only sticks once the baseline is saved. On a corrupt
     # baseline or a refused/rolled-back save they stay, so it applies on a later
     # render instead of the committed anchor snapping back.
     if _persist_resolution(app_res, store, choices, _committed_unreadable):
+        # Mirror the resolved/committed sourced values back into session_state
+        # so reconcile_manual_edits only ever fires on a genuine user edit (not
+        # a stale snapshot-derived value), confirms from the Command Center
+        # stick, and freshly-synced-but-not-yet-confirmed values sit pending
+        # correctly rather than looking like a manual edit on the next render.
+        # Only after the save commits: on a refused save session_state keeps its
+        # prior values so it cannot diverge from the committed baseline on disk.
+        for _attr, _session_key in session_keys_for_writeback().items():
+            _value = getattr(hh, _attr, None)
+            if _value is None:
+                continue
+            if _attr == "prior_year_magi":
+                st.session_state[_session_key] = {
+                    int(_y): float(_v) for _y, _v in dict(_value).items()
+                }
+            else:
+                # int, not float: every Setup number_input bound to these keys
+                # uses format="%d"/int min_value/step, and Streamlit's
+                # number_input raises StreamlitMixedNumericTypesError if `value`
+                # doesn't match those types exactly.
+                st.session_state[_session_key] = int(round(_value))
         st.session_state.pop(MAGI_CLEARED_KEY, None)
         st.session_state.pop(SEED_VALUES_KEY, None)
         st.session_state.pop(BUNDLE_SCALARS_KEY, None)

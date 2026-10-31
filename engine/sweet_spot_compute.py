@@ -917,12 +917,16 @@ def _fill_provoked_draw_years(
     """Issue #3: years with no IRA draw at ZERO conversion where the draw-blind
     Fill-to-22% conversion's own tax nevertheless forces one.
 
-    One cheap projection with the draw-blind 22% fills as the plan. Since
-    fill_22 >= fill_12, a draw provoked by the 12% Fill is provoked here too, so
-    this is a superset gate; a year where only the 22% Fill draws is harmless,
-    as the joint solve then returns what the draw-blind derivation would.
-    Issue #40: the fills are sized on the same base as the cards, sale gain
-    included.
+    Per-year gate (follow-up to audit-1026 F-04/F-07): each year is tested with
+    ONLY its own draw-blind 22% fill applied on the zero-conversion history, the
+    same history :func:`_own_history_fills` prices the row on, so a year is
+    never gated because earlier years' fills drained the brokerage. The
+    projection is truncated at the year (later years cannot affect its draw).
+    Since fill_22 >= fill_12, a draw provoked by the 12% Fill is provoked here
+    too, so this is a superset gate; a year where only the 22% Fill draws is
+    harmless, as the joint solve then returns what the draw-blind derivation
+    would. Issue #40: the fill is sized on the same base as the cards, sale
+    gain included.
 
     Issue #52: a year where the Fill forces a brokerage sale with gain is gated
     in too, so the curve prices that sale's gain as run_scenario does.
@@ -933,7 +937,7 @@ def _fill_provoked_draw_years(
     if not ira_draws:
         return set()
     done = (ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd) if ytd is not None else 0.0
-    conversions: dict[int, float] = {}
+    flagged: set[int] = set()
     for year, draw in ira_draws.items():
         is_base = year == hh.base_year
         base = base_income_for_year(
@@ -943,23 +947,26 @@ def _fill_provoked_draw_years(
             ira_draw=draw,
             sale_gain=sale_gains.get(year, 0.0),
         )
-        conversions[year] = fill_conversions_for_year(hh, base)[1] + (done if is_base else 0.0)
-    result = run_scenario(
-        hh,
-        ConversionPlan(your_conversions=conversions),
-        "sweet-spot fill-provoked draw gate",
-        end_age=hh.your_age + max(len(ira_draws) - 1, 0),
-        ytd=ytd,
-        net_inv_income=net_inv_income,
-    )
-    projected = {yr.year: yr for yr in result.years}
-    fractions = zero_conversion_gain_fractions(hh, projected)
-    return {
-        year
-        for year, yr in projected.items()
-        if yr.forced_your_ira_draw + yr.forced_spouse_ira_draw > 0.0
-        or yr.forced_brokerage_draw * fractions.get(year, 0.0) > 0.0
-    }
+        fill = fill_conversions_for_year(hh, base)[1] + (done if is_base else 0.0)
+        result = run_scenario(
+            hh,
+            ConversionPlan(your_conversions={year: fill}),
+            "sweet-spot fill-provoked draw gate",
+            end_age=hh.your_age + max(year - hh.base_year, 0),
+            ytd=ytd,
+            net_inv_income=net_inv_income,
+        )
+        projected = {yr.year: yr for yr in result.years}
+        yr = projected.get(year)
+        if yr is None:
+            continue
+        fraction = zero_conversion_gain_fractions(hh, projected).get(year, 0.0)
+        if (
+            yr.forced_your_ira_draw + yr.forced_spouse_ira_draw > 0.0
+            or yr.forced_brokerage_draw * fraction > 0.0
+        ):
+            flagged.add(year)
+    return flagged
 
 
 def fills_for_year(

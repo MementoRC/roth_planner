@@ -400,9 +400,12 @@ class TestSyncButtonErrorIsolation:
         # fetch_option_exercises must never run once fetch_ytd_snapshot raised.
         mock_fetch_ex.assert_not_called()
         warnings = [str(c.args[0]) for c in mock_st.warning.call_args_list]
-        assert any("connection refused" in w and "sync failed" in w.lower() for w in warnings), (
-            warnings
-        )
+        # Raw exception text now lives in the Details expander (issue #75).
+        assert any("sync failed" in w.lower() and "RuntimeError" in w for w in warnings), warnings
+        assert not any("connection refused" in w for w in warnings), warnings
+        mock_st.expander.assert_called_with("Details")
+        code_args = [str(c.args[0]) for c in mock_st.code.call_args_list]
+        assert "connection refused" in code_args
         # None of the success side effects ran.
         assert mock_st.session_state.ytd_snapshot is prior_snapshot
         setitem_keys = [c.args[0] for c in mock_st.session_state.__setitem__.call_args_list]
@@ -442,9 +445,12 @@ class TestSyncButtonErrorIsolation:
             sync_scan_mod.render_ytd_finextract_sync(hh)
 
         warnings = [str(c.args[0]) for c in mock_st.warning.call_args_list]
-        assert any("malformed payload" in w and "sync failed" in w.lower() for w in warnings), (
-            warnings
-        )
+        # Raw exception text now lives in the Details expander (issue #75).
+        assert any("sync failed" in w.lower() and "RuntimeError" in w for w in warnings), warnings
+        assert not any("malformed payload" in w for w in warnings), warnings
+        mock_st.expander.assert_called_with("Details")
+        code_args = [str(c.args[0]) for c in mock_st.code.call_args_list]
+        assert "malformed payload" in code_args
         # None of the success side effects ran.
         assert mock_st.session_state.ytd_snapshot is prior_snapshot
         setitem_keys = [c.args[0] for c in mock_st.session_state.__setitem__.call_args_list]
