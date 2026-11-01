@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.scalar_registry import scalar_default
-from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario import first_rmd_era_age, in_rmd_era, run_no_conversion, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compare import compute_cumulative_net_benefit, compute_summary_rows
 from models.household import Household
@@ -100,6 +100,8 @@ def render(hh: Household):
         cum_tax_nc.append(ct_nc)
         cum_tax_wc.append(ct_wc)
 
+    first_rmd_age = first_rmd_era_age(hh, no_conv.years)
+
     # --- Top metrics ---
     col1, col2, col3, col4 = st.columns(4)
 
@@ -124,7 +126,7 @@ def render(hh: Household):
     with col3:
         tax_saved = no_conv.total_rmd_tax - with_conv.total_rmd_tax
         st.metric(
-            f"RMD Tax Saved ({hh.your_rmd_start_age}-95)",
+            f"RMD Tax Saved ({first_rmd_age}-95)",
             fmt_dollars(tax_saved),
             md_dollars(
                 f"{fmt_dollars(no_conv.total_rmd_tax)} → {fmt_dollars(with_conv.total_rmd_tax)}"
@@ -168,7 +170,7 @@ def render(hh: Household):
     )
     # RMD start line
     fig_ira.add_vline(
-        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+        x=first_rmd_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
     )
     fig_ira.update_layout(
         title="Combined IRA + Roth Trajectory (Both Spouses)",
@@ -253,9 +255,7 @@ def render(hh: Household):
     # --- Chart 4: Net Benefit Over Time ---
     # Uses compute_cumulative_net_benefit (all-in: federal + IRMAA + brok + ACA + NIIT)
     # so the chart and the col4 headline metric are consistent (audit 0705 #views-financial-10).
-    net_benefit = compute_cumulative_net_benefit(
-        with_conv, no_conv, rmd_start_age=hh.your_rmd_start_age
-    )
+    net_benefit = compute_cumulative_net_benefit(with_conv, no_conv, rmd_start_age=first_rmd_age)
 
     fig_net = go.Figure()
     fig_net.add_trace(
@@ -271,13 +271,13 @@ def render(hh: Household):
     )
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
     fig_net.add_vline(
-        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+        x=first_rmd_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
     )
 
     # Find break-even age
     breakeven = None
     for _i, (a, nb) in enumerate(zip(ages, net_benefit, strict=False)):
-        if nb >= 0 and a >= hh.your_rmd_start_age:
+        if nb >= 0 and a >= first_rmd_age:
             breakeven = a
             break
 
@@ -303,7 +303,8 @@ def render(hh: Household):
 
     # --- Summary table ---
     st.markdown("### Key Age Milestones")
-    _rmd_age = hh.your_rmd_start_age
+    # Anchor milestones at the era onset even when it predates the projection start.
+    _rmd_age = min(first_rmd_age, hh.your_rmd_start_age)
     milestones = [
         (_rmd_age, "RMDs begin"),
         (_rmd_age + 5, "5 yrs of RMDs"),
@@ -394,12 +395,12 @@ def render(hh: Household):
             )
 
     # --- RMD detail table ---
-    with st.expander(f"📋 RMD Year Detail (from age {hh.your_rmd_start_age})"):
+    with st.expander(f"📋 RMD Year Detail (from your age {first_rmd_age})"):
         import pandas as pd
 
         rmd_years = []
         for yr_nc, yr_wc in zip(no_conv.years, with_conv.years, strict=False):
-            if yr_nc.your_age >= hh.your_rmd_start_age:
+            if in_rmd_era(hh, yr_nc.your_age, yr_nc.spouse_age):
                 rmd_years.append(
                     {
                         "Year": yr_nc.year,

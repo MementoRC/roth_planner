@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.scalar_registry import scalar_default
-from engine.scenario import ScenarioResult
+from engine.scenario import ScenarioResult, first_rmd_era_age, rmd_era_years
 from engine.scenario_compare import (
     build_scenario,
     compute_conversion_rows,
@@ -137,8 +137,9 @@ def render(hh: Household):
             )
         )
 
+    first_rmd_age = first_rmd_era_age(hh, scenarios[0].years)
     fig_ira.add_vline(
-        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+        x=first_rmd_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
     )
     fig_ira.update_layout(
         xaxis_title="Your Age",
@@ -212,9 +213,7 @@ def render(hh: Household):
         if i == baseline_idx:
             continue  # skip baseline vs itself
 
-        cum_benefit = compute_cumulative_net_benefit(
-            s, baseline_s, rmd_start_age=hh.your_rmd_start_age
-        )
+        cum_benefit = compute_cumulative_net_benefit(s, baseline_s, rmd_start_age=first_rmd_age)
 
         fig_net.add_trace(
             go.Scatter(
@@ -229,7 +228,7 @@ def render(hh: Household):
 
     fig_net.add_hline(y=0, line_dash="dash", line_color="gray")
     fig_net.add_vline(
-        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+        x=first_rmd_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
     )
     fig_net.update_layout(
         xaxis_title="Your Age",
@@ -241,15 +240,13 @@ def render(hh: Household):
     st.plotly_chart(fig_net, width="stretch")
 
     # --- Chart 4: RMD Comparison ---
-    st.markdown("### RMD Size Comparison (Ages 75+)")
+    st.markdown(f"### RMD Size Comparison (Your Age {first_rmd_age}+)")
 
     fig_rmd = go.Figure()
-    rmd_ages = [a for a in ages if a >= hh.your_rmd_start_age]
+    rmd_ages = [yr.your_age for yr in rmd_era_years(hh, scenarios[0].years)]
 
     for i, s in enumerate(scenarios):
-        rmd_vals = [
-            yr.your_rmd + yr.spouse_rmd for yr in s.years if yr.your_age >= hh.your_rmd_start_age
-        ]
+        rmd_vals = [yr.your_rmd + yr.spouse_rmd for yr in rmd_era_years(hh, s.years)]
         fig_rmd.add_trace(
             go.Bar(
                 x=rmd_ages,

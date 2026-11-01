@@ -21,7 +21,13 @@ import streamlit as st
 from config.scalar_registry import scalar_default
 from engine.ira import RMD_DIVISORS
 from engine.irmaa import irmaa_surcharge, irmaa_tier1_threshold
-from engine.scenario import ConversionPlan, rmd_era_years, run_no_conversion, run_scenario
+from engine.scenario import (
+    ConversionPlan,
+    first_rmd_era_age,
+    rmd_era_years,
+    run_no_conversion,
+    run_scenario,
+)
 from engine.scenario_autofill import auto_fill_12
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
@@ -132,7 +138,7 @@ def render(hh: Household):
     rmd_nc = rmd_era_years(hh, no_conv.years)
     rmd_wc = rmd_era_years(hh, with_conv.years)
     rmd_nc_qcd = rmd_era_years(hh, no_conv_qcd.years) if no_conv_qcd else None
-    first_rmd_age = rmd_nc[0].your_age if rmd_nc else hh.your_rmd_start_age
+    first_rmd_age = first_rmd_era_age(hh, no_conv.years)
 
     if not rmd_nc:
         st.warning("No RMD years in projection range.")
@@ -172,8 +178,8 @@ def render(hh: Household):
         _rmd_delta_pct = (total_rmd_wc - total_rmd_nc) / total_rmd_nc if total_rmd_nc else 0.0
         st.metric(
             f"Total RMDs (your age {first_rmd_age}-95)",
-            fmt_dollars_short(total_rmd_nc),
-            f"Conv: {fmt_dollars_short(total_rmd_wc)} ({fmt_pct(_rmd_delta_pct, 0, sign=True)})",
+            fmt_dollars_short(total_rmd_nc, suffix="auto"),
+            f"Conv: {fmt_dollars_short(total_rmd_wc, suffix='auto')} ({fmt_pct(_rmd_delta_pct, 0, sign=True)})",
         )
     with c4:
         total_tax_nc = sum(yr.federal_tax_amt for yr in rmd_nc)
