@@ -19,6 +19,7 @@ from engine.portfolio_sync import AccountSummary, PortfolioSnapshot, load_snapsh
 from engine.portfolio_sync.as_of import as_of_label, as_of_text, force_replace
 from engine.portfolio_sync.portfolio import CorruptPortfolioCacheError
 from models.household import Household
+from views._shared import friendly_sync_error_text
 
 _SYNC_FLASH_KEY = "_portfolio_sync_flash"
 # Mirrors views.setup.portfolio.KEPT_NEWER_KEY (that module imports this one's
@@ -331,7 +332,10 @@ def render_portfolio_legacy(hh: Household, container) -> None:
                 )
                 st.rerun()
             else:
-                container.error(f"Server unavailable: {snap.error}")
+                container.error(friendly_sync_error_text(snap.error))
+                if snap.error:
+                    with container.expander("Details"):
+                        st.code(snap.error)
                 snap = st.session_state.get("portfolio_snapshot")
 
     # Re-read: the sync handler above may have reassigned snap.

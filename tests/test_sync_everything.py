@@ -326,7 +326,7 @@ def test_sync_everything_isolates_a_failing_market_quote_fetch(tmp_path, monkeyp
         result = shared_mod.sync_everything(hh)
 
     assert result.market_quote.candidates_recorded == 0
-    assert result.market_quote.error == "HTTP 503"
+    assert result.market_quote.error == "Yahoo Finance returned HTTP 503."
 
     # Independent sources still ran and recorded — a Yahoo failure isolates.
     assert result.portfolio.candidates_recorded == 1

@@ -10,7 +10,7 @@ import requests
 
 import views._shared as shared_mod
 import views.ytd_income._partials._sync_scan as sync_scan_mod
-from views._shared import friendly_sync_error
+from views._shared import friendly_sync_error, friendly_sync_error_text
 
 
 def _http_error(status: int) -> requests.HTTPError:
@@ -40,7 +40,86 @@ class TestFriendlySyncError:
         assert friendly_sync_error(RuntimeError("secret detail")) == "RuntimeError (see details)"
 
 
+_UNREACH = "FinExtract isn't reachable — is it running?"
+
+
+class TestFriendlySyncErrorText:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("HTTPConnectionPool(host='x', port=1): Read timed out. (read timeout=10)", "timeout"),
+            ("ConnectTimeout: boom", "timeout"),
+            (
+                "HTTPConnectionPool(host='127.0.0.1', port=7890): Max retries exceeded with "
+                "url: /status (Caused by NewConnectionError(...Connection refused))",
+                "unreach",
+            ),
+            ("Connection aborted.", "unreach"),
+            ("NameResolutionError: nope", "unreach"),
+            (
+                "holdings fetch failed: Unexpected redirect (302) from /query/brokerage; "
+                "refusing to follow.",
+                "FinExtract returned an unexpected redirect (HTTP 302).",
+            ),
+            (
+                "500 Server Error: Internal Server Error for url: http://127.0.0.1:7890/status",
+                "FinExtract returned HTTP 500.",
+            ),
+            ("holdings fetch failed: HTTP 500", "FinExtract returned HTTP 500."),
+            ("404 Client Error: Not Found", "FinExtract returned HTTP 404."),
+            (
+                "holdings fetch failed: Expecting value: line 1 column 1 (char 0)",
+                "FinExtract sent an unreadable response.",
+            ),
+            ("JSONDecodeError", "FinExtract sent an unreadable response."),
+            ("Extra data: line 2", "FinExtract sent an unreadable response."),
+            (None, "FinExtract sync failed."),
+            ("", "FinExtract sync failed."),
+        ],
+    )
+    def test_patterns(self, raw, expected):
+        expected = {
+            "timeout": "FinExtract timed out.",
+            "unreach": _UNREACH,
+        }.get(expected, expected)
+        assert friendly_sync_error_text(raw) == expected
+
+    def test_fallback_never_echoes_raw(self):
+        out = friendly_sync_error_text("something weird http://h/x")
+        assert out == "FinExtract sync failed (see details)."
+        assert "weird" not in out
+
+    def test_custom_source(self):
+        assert friendly_sync_error_text("timed out", "Yahoo Finance") == "Yahoo Finance timed out."
+
+
 class TestSyncLegsHideRawText:
+    def test_portfolio_leg_hides_raw_snapshot_error(self):
+        outcome = MagicMock()
+        outcome.snap.server_available = False
+        outcome.snap.error = "500 Server Error: x for url: http://127.0.0.1:7890/status"
+        with patch("views.setup.portfolio.sync_portfolio_from_finextract", return_value=outcome):
+            summary = shared_mod._sync_portfolio_source(MagicMock())
+        assert summary.error == "FinExtract returned HTTP 500."
+        assert "127.0.0.1" not in summary.error
+
+    def test_quote_leg_hides_raw_result_error(self):
+        result = MagicMock(ok=False, error="Read timed out for url: http://q.example/x")
+        with patch(
+            "views.option_exercise._partials._helpers.handle_stock_quote_fetch",
+            return_value=result,
+        ):
+            summary = shared_mod._sync_market_quote_source()
+        assert summary.error == "Yahoo Finance timed out."
+
+    def test_ssa_warning_hides_raw_url(self):
+        from views.setup import _partials
+
+        snap = MagicMock(error="500 Server Error: x for url: http://127.0.0.1:7890/ssa")
+        with patch("views.setup._partials._accounts.fetch_ssa_snapshot", return_value=snap):
+            warning = _partials._sync_ssa_for("you", 67)
+        assert warning == "SSA sync: FinExtract returned HTTP 500."
+
     def test_ss_leg_stores_friendly_text(self):
         mock_st = MagicMock()
         mock_st.session_state = {"filing_status": "Single", "your_fra_age": 67}

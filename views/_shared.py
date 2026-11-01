@@ -46,6 +46,7 @@ Reusable pieces every later wave depends on:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -297,6 +298,44 @@ def friendly_sync_error(exc: BaseException, source: str = "FinExtract") -> str:
     return f"{type(exc).__name__} (see details)"
 
 
+_TIMEOUT_MARKERS = ("timed out", "connecttimeout", "readtimeout")
+_UNREACHABLE_MARKERS = (
+    "max retries exceeded",
+    "connection refused",
+    "failed to establish a new connection",
+    "connectionerror",
+    "connection aborted",
+    "connection reset",
+    "nameresolutionerror",
+)
+_UNREADABLE_MARKERS = ("expecting value", "jsondecodeerror", "malformed response", "extra data")
+_REDIRECT_RE = re.compile(r"redirect\s*\((\d{3})\)", re.IGNORECASE)
+_HTTP_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b|\b(\d{3})\s+(?:Client|Server)\s+Error\b", re.I)
+
+
+def friendly_sync_error_text(raw: str | None, source: str = "FinExtract") -> str:
+    """Short, user-facing text for an engine-returned error *string* (never echoes it).
+
+    String twin of :func:`friendly_sync_error` for fetchers that return their
+    failure in an ``.error`` field instead of raising. Callers keep the raw
+    text for logs/details.
+    """
+    if not raw:
+        return f"{source} sync failed."
+    low = raw.lower()
+    if any(m in low for m in _TIMEOUT_MARKERS):
+        return f"{source} timed out."
+    if any(m in low for m in _UNREACHABLE_MARKERS):
+        return f"{source} isn't reachable — is it running?"
+    if m := _REDIRECT_RE.search(raw):
+        return f"{source} returned an unexpected redirect (HTTP {m.group(1)})."
+    if m := _HTTP_STATUS_RE.search(raw):
+        return f"{source} returned HTTP {m.group(1) or m.group(2)}."
+    if any(mark in low for mark in _UNREADABLE_MARKERS):
+        return f"{source} sent an unreadable response."
+    return f"{source} sync failed (see details)."
+
+
 @dataclass(frozen=True)
 class PortfolioSyncSummary:
     """One leg of ``sync_everything`` — the FinExtract portfolio + MAGI sync."""
@@ -327,8 +366,11 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
         )
 
     if not outcome.snap.server_available:
+        _log.warning("Portfolio sync unavailable: %s", outcome.snap.error)
         return PortfolioSyncSummary(
-            candidates_recorded=0, server_available=False, error=outcome.snap.error
+            candidates_recorded=0,
+            server_available=False,
+            error=friendly_sync_error_text(outcome.snap.error),
         )
 
     store = CandidateStore.load()
@@ -437,7 +479,10 @@ def _sync_market_quote_source() -> MarketQuoteSyncSummary:
         )
 
     if not result.ok:
-        return MarketQuoteSyncSummary(candidates_recorded=0, error=result.error)
+        _log.warning("Market quote unavailable: %s", result.error)
+        return MarketQuoteSyncSummary(
+            candidates_recorded=0, error=friendly_sync_error_text(result.error, "Yahoo Finance")
+        )
     return MarketQuoteSyncSummary(candidates_recorded=1, error=None)
 
 

@@ -12,6 +12,7 @@ executing every tab body every run; see that module's docstring).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import streamlit as st
@@ -25,9 +26,12 @@ from engine.upload_merge import synced_account_sums
 from models.household import Household
 from models.sourced import Source
 from views._format import fmt_dollars, md_dollars, ssa_comparison_table
+from views._shared import friendly_sync_error_text
 from views._store_transaction import store_transaction
 
 from ._clamp import clamp as _clamp
+
+_log = logging.getLogger(__name__)
 
 
 def _render_ssa_pdf_comparison(container, owner: str, *, fra_monthly: float, fra_age: int) -> None:
@@ -65,7 +69,8 @@ def _sync_ssa_for(owner: str, fra_age: int) -> str | None:
     """
     snap = fetch_ssa_snapshot()
     if snap.error:
-        return f"SSA sync failed: {snap.error}"
+        _log.warning("SSA sync failed: %s", snap.error)
+        return f"SSA sync: {friendly_sync_error_text(snap.error)}"
     match = match_fra_estimate(snap.estimates, fra_age)
     if match is None:
         return "No SSA benefit estimate found near the configured FRA age; sync skipped."
