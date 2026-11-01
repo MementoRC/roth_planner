@@ -424,7 +424,8 @@ def _sync_ss_source() -> SsSyncSummary:
             warnings.append(warning)
         else:
             recorded += 1
-    return SsSyncSummary(candidates_recorded=recorded, warnings=warnings)
+    # A single FinExtract failure yields the same text for every owner; show it once.
+    return SsSyncSummary(candidates_recorded=recorded, warnings=list(dict.fromkeys(warnings)))
 
 
 @dataclass(frozen=True)

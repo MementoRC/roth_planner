@@ -50,6 +50,7 @@ from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card
 
 _SYNC_NOTICE_KEY = "_sync_everything_notice"
+_SYNC_ALL_FAILED_KEY = "_sync_everything_all_failed"
 
 
 def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
@@ -75,6 +76,16 @@ def _format_sync_everything_summary(summary: SyncEverythingResult) -> str:
         quote += f" (unavailable: {summary.market_quote.error})"
 
     return " · ".join([portfolio, ss, scan, quote])
+
+
+def _any_sync_leg_succeeded(summary: SyncEverythingResult) -> bool:
+    """True if at least one "Sync everything" leg produced a usable result."""
+    return (
+        (summary.portfolio.server_available and not summary.portfolio.error)
+        or summary.ss.candidates_recorded > 0
+        or summary.scan.result is not None
+        or not summary.market_quote.error
+    )
 
 
 def _render_attribution_table(instance_owner: str) -> None:
@@ -271,6 +282,7 @@ def render_command_center(hh: Household) -> None:
         # count below match the sidebar badge; the summary survives the rerun
         # in session_state (audit-1026 F-14).
         st.session_state[_SYNC_NOTICE_KEY] = _format_sync_everything_summary(summary)
+        st.session_state[_SYNC_ALL_FAILED_KEY] = not _any_sync_leg_succeeded(summary)
         st.rerun()
 
     notice = st.session_state.pop(_SYNC_NOTICE_KEY, None)
@@ -280,7 +292,11 @@ def render_command_center(hh: Household) -> None:
     pending: set[str] = st.session_state.get("_pending_review", set())
     st.metric("Fields awaiting review", len(pending))
     if not pending:
-        st.success("All data sources reconciled ✓")
+        # Zero pending after a sync where every leg failed is not "reconciled" (#81).
+        if st.session_state.get(_SYNC_ALL_FAILED_KEY):
+            st.info("Nothing awaiting review")
+        else:
+            st.success("All data sources reconciled ✓")
     else:
         store = CandidateStore.load()
         choices = ChoiceMap.load()

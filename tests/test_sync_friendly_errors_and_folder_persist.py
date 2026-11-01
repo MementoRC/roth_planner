@@ -149,6 +149,52 @@ class TestSyncLegsHideRawText:
         assert summary.error == "RuntimeError (see details)"
 
 
+def test_ss_leg_dedupes_identical_warnings_keeps_distinct():
+    mock_st = MagicMock()
+    mock_st.session_state = {"filing_status": "MFJ", "your_fra_age": 67, "spouse_fra_age": 67}
+    same = "SSA sync: FinExtract returned HTTP 404."
+    with (
+        patch.object(shared_mod, "st", mock_st),
+        patch("views.setup._partials._sync_ssa_for", return_value=same),
+    ):
+        summary = shared_mod._sync_ss_source()
+    assert summary.warnings == [same]
+
+    with (
+        patch.object(shared_mod, "st", mock_st),
+        patch("views.setup._partials._sync_ssa_for", side_effect=[same, "other"]),
+    ):
+        summary = shared_mod._sync_ss_source()
+    assert summary.warnings == [same, "other"]
+
+
+def _legs(*, portfolio_ok=False, ss=0, scan_ok=False, quote_ok=False):
+    summary = MagicMock()
+    summary.portfolio.server_available = portfolio_ok
+    summary.portfolio.error = None if portfolio_ok else "FinExtract sync failed."
+    summary.ss.candidates_recorded = ss
+    summary.scan.result = object() if scan_ok else None
+    summary.scan.error = None if scan_ok else "no folder configured"
+    summary.market_quote.error = None if quote_ok else "Yahoo Finance sync failed."
+    return summary
+
+
+class TestAnyLegSucceeded:
+    def test_all_failed(self):
+        from views.setup.command_center import _any_sync_leg_succeeded
+
+        assert _any_sync_leg_succeeded(_legs()) is False
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"portfolio_ok": True}, {"ss": 1}, {"scan_ok": True}, {"quote_ok": True}],
+    )
+    def test_any_one_leg_succeeding(self, kwargs):
+        from views.setup.command_center import _any_sync_leg_succeeded
+
+        assert _any_sync_leg_succeeded(_legs(**kwargs)) is True
+
+
 def test_command_center_summary_shows_friendly_text_only():
     from views.setup.command_center import _format_sync_everything_summary
 
