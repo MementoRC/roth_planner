@@ -1956,6 +1956,12 @@ def rmd_era_years(hh: Household, years: list[YearResult]) -> list[YearResult]:
     return [yr for yr in years if in_rmd_era(hh, yr.your_age, yr.spouse_age)]
 
 
+def first_rmd_era_age(hh: Household, years: list[YearResult]) -> int:
+    """Your age in the first RMD-era year (your-age axis); your own RMD age if none."""
+    era = rmd_era_years(hh, years)
+    return int(era[0].your_age) if era else hh.your_rmd_start_age
+
+
 def run_scenario(
     hh: Household,
     plan: ConversionPlan,

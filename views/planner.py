@@ -526,7 +526,7 @@ def render(hh: Household) -> None:
     # --- IRA Trajectory Chart ---
     st.markdown("### IRA Balance Over Time")
 
-    from engine.scenario import run_no_conversion
+    from engine.scenario import first_rmd_era_age, run_no_conversion
 
     # C26 follow-up (audit-0721): thread the same YTD gating into the
     # no-conversion baseline so the IRA trajectory chart stays consistent
@@ -559,7 +559,7 @@ def render(hh: Household) -> None:
         )
     )
     fig.add_vline(
-        x=hh.your_rmd_start_age,
+        x=first_rmd_era_age(hh, result.years),
         line_dash="dot",
         line_color="gray",
         annotation_text="RMDs begin",

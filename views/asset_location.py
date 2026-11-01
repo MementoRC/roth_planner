@@ -9,6 +9,7 @@ import streamlit as st
 
 from config.scalar_registry import scalar_default
 from engine.asset_location import project_asset_location
+from engine.scenario import in_rmd_era
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
 from views._format import fmt_dollars, fmt_pct, md_dollars
@@ -122,8 +123,16 @@ def render(hh: Household):
         )
     )
 
+    first_rmd_age = next(
+        (
+            y.your_age
+            for y in eq_years
+            if in_rmd_era(hh, y.your_age, hh.spouse_age + y.your_age - hh.your_age)
+        ),
+        hh.your_rmd_start_age,
+    )
     fig_comp.add_vline(
-        x=hh.your_rmd_start_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
+        x=first_rmd_age, line_dash="dot", line_color="gray", annotation_text="RMDs begin"
     )
     fig_comp.update_layout(
         barmode="stack",

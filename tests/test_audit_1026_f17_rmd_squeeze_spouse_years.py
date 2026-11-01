@@ -6,7 +6,7 @@ that start earlier (older spouse) were dropped from totals, charts and tables.
 
 from __future__ import annotations
 
-from engine.scenario import rmd_era_years, run_no_conversion
+from engine.scenario import first_rmd_era_age, rmd_era_years, run_no_conversion
 from models.household import Household
 
 
@@ -39,6 +39,32 @@ def test_era_total_equals_sum_of_all_rmd_years() -> None:
     true_total = sum(y.your_rmd + y.spouse_rmd for y in run.years)
     assert sum(y.your_rmd + y.spouse_rmd for y in era) == true_total
     assert true_total > 0
+
+
+def test_first_rmd_era_age_older_spouse_mfj() -> None:
+    hh = _household()
+    run = run_no_conversion(hh, end_age=95)
+    # spouse is 8 years older and hits 73 when you are 65
+    assert first_rmd_era_age(hh, run.years) == 65
+
+
+def test_first_rmd_era_age_single_ignores_spouse() -> None:
+    hh = _household("Single")
+    run = run_no_conversion(hh, end_age=95)
+    assert first_rmd_era_age(hh, run.years) == 75
+
+
+def test_first_rmd_era_age_younger_spouse_uses_your_age() -> None:
+    hh = _household()
+    hh.spouse_age = 55
+    run = run_no_conversion(hh, end_age=95)
+    assert first_rmd_era_age(hh, run.years) == 75
+
+
+def test_first_rmd_era_age_empty_era_falls_back() -> None:
+    hh = _household()
+    run = run_no_conversion(hh, end_age=62)
+    assert first_rmd_era_age(hh, run.years) == 75
 
 
 def test_single_filer_unchanged() -> None:
