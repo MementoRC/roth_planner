@@ -9,7 +9,7 @@ from engine.data_sources.resolver import has_pending_candidate
 from models.exercise_schedule import ExerciseSchedule
 from models.household import GrowthProfile, Household, project_price
 from models.sourced import Source
-from views._shared import render_readonly_input
+from views._shared import friendly_sync_error_text, render_readonly_input
 from views.navigation import label_of
 from views.option_exercise._partials._helpers import _price_key, configured_ticker
 
@@ -84,7 +84,11 @@ def render_price_basis_partial(
                     "Until then this page keeps the current price."
                 )
             else:
-                st.warning(f"Couldn't fetch a live quote ({result.error}); using last known price.")
+                reason = friendly_sync_error_text(result.error, "Yahoo Finance")
+                st.warning(f"Couldn't fetch a live quote: {reason} Using last known price.")
+                if result.error:
+                    with st.expander("Details"):
+                        st.code(result.error)
     with qc2:
         render_readonly_input(
             "Current price",
