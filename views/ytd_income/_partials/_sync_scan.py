@@ -1,5 +1,6 @@
 import functools
 import hashlib
+import logging
 from collections.abc import Callable, MutableMapping, Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -89,11 +90,33 @@ from views._format import fmt_dollars, md_dollars, ssa_comparison_table
 from views._pdf_runtime import ensure_pdf_backend, pdf_backend_error
 from views._shared import (
     auto_deselect_manual_entry,
+    friendly_sync_error,
     operator_slot,
     run_folder_scan,
     run_uploaded_scan,
 )
 from views._store_transaction import store_transaction
+
+
+def _persist_statement_folder_on_edit() -> None:
+    """``on_change`` for the PDF-folder input: save a valid, changed path.
+
+    Invalid or empty input is ignored silently -- the "Scan folder" button
+    path still reports validation errors.
+    """
+    from engine.brokerage_statement_pdf import (
+        load_statement_folder_path,
+        save_statement_folder_path,
+        validate_local_folder,
+    )
+
+    folder_path, folder_err = validate_local_folder(
+        str(st.session_state.get("statement_folder_path") or "")
+    )
+    if folder_err or folder_path is None:
+        return
+    if str(folder_path) != load_statement_folder_path():
+        save_statement_folder_path(str(folder_path))
 
 
 def _try_learn_owner(owner_key: str | None, owner: str, owner_map: dict[str, str]) -> str | None:
@@ -1131,8 +1154,11 @@ def render_ytd_finextract_sync(hh: Household) -> None:
         if exercises.server_available:
             ytd_snap = apply_option_exercises(ytd_snap, exercises, hh, owner=operator_slot())
     except Exception as exc:  # noqa: BLE001 -- one bad sync must not crash the page
+        logging.getLogger(__name__).warning("FinExtract sync failed", exc_info=True)
         with col_status:
-            st.warning(f"FinExtract sync failed: {exc}")
+            st.warning(f"FinExtract sync failed: {friendly_sync_error(exc)}")
+            with st.expander("Details"):
+                st.code(str(exc))
         return
     if not ytd_status.snapshot_date:
         with col_status:
@@ -1226,6 +1252,7 @@ def render_sync_scan_partial(hh: Household) -> ScanRenderContext:
                 "PDF folder",
                 value=default_folder,
                 key="statement_folder_path",
+                on_change=_persist_statement_folder_on_edit,
                 help="Local folder holding your brokerage, Koinly, and 1040 PDFs.",
             )
             # ledger is loaded once per render up top (with account_overrides/

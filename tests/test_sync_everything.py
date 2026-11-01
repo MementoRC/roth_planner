@@ -357,7 +357,8 @@ def test_sync_everything_isolates_a_raising_market_quote_fetch(tmp_path, monkeyp
         result = shared_mod.sync_everything(hh)
 
     assert result.market_quote.candidates_recorded == 0
-    assert "Yahoo unreachable" in (result.market_quote.error or "")
+    assert "Yahoo unreachable" not in (result.market_quote.error or "")
+    assert result.market_quote.error == "RuntimeError (see details)"
     assert result.portfolio.candidates_recorded == 1
     assert result.ss.candidates_recorded == 2
 
@@ -383,7 +384,8 @@ def test_sync_everything_isolates_a_raising_portfolio_fetch(tmp_path, monkeypatc
 
     assert result.portfolio.server_available is False
     assert result.portfolio.candidates_recorded == 0
-    assert "FinExtract unreachable" in (result.portfolio.error or "")
+    assert "FinExtract unreachable" not in (result.portfolio.error or "")
+    assert result.portfolio.error == "RuntimeError (see details)"
 
     # Independent sources still ran and recorded.
     assert result.ss.candidates_recorded == 2
