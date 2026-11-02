@@ -76,7 +76,17 @@ def index_value_nearest(base_value: float, year: int, cpi: float, step: float) -
 
 
 def qcd_limit_for_year(base_limit: float, year: int, cpi: float) -> float:
-    """Projected per-person QCD cap, rounded to the nearest $1,000 (IRC §408(d)(8)(G))."""
+    """Projected per-person QCD cap, rounded to the nearest $1,000 (IRC §408(d)(8)(G)).
+
+    ``base_limit`` must be the OFFICIAL BASE_YEAR (2026) limit -- $111,000 per
+    IRS Notice 2025-67 -- not the statutory $100,000, which §408(d)(8)(G)
+    indexes from calendar year 2022. The statutory 2022-base indexation is
+    already folded into the published 2026 figure, so projecting forward from
+    it with the CPI assumption is equivalent up to the $1,000 rounding of that
+    figure. Years at or before BASE_YEAR return ``base_limit`` unchanged.
+    (audit-1101 K-24: every caller passes ``Household.qcd_limit``, whose
+    default is the 2026 value and which no UI input edits.)
+    """
     return index_value_nearest(base_limit, year, cpi, 1_000.0)
 
 
