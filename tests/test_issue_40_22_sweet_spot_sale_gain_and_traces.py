@@ -199,15 +199,19 @@ def test_fill_provoked_gate_sizes_fills_on_the_sale_gain_base(
 
     monkeypatch.setattr(ssc, "base_income_for_year", _spy_base)
     monkeypatch.setattr(ssc, "run_scenario", _spy_run)
-    ssc._fill_provoked_draw_years(hh, None, 0.0, draws, gains)
+    ssc._fill_provoked_draw_years(hh, None, 0.0, draws, gains, zero_years=years)
     by_year = {b.year: b for b in bases}
     for year, gain in gains.items():
         assert by_year[year].sale_gain == gain
-    # The gate's base is the cards' base, so its fill is the cards' fill.
+    # The gate's base is the cards' base, so its fill is the cards' fill
+    # (split between you and the spouse since audit-1101 F-04).
     cards = real_base(hh, BASE_YEAR, ira_draw=draws[BASE_YEAR], sale_gain=gains[BASE_YEAR])
     assert by_year[BASE_YEAR].base_magi == pytest.approx(cards.base_magi)
     expected = fill_conversions_for_year(hh, cards)[1]
-    assert plans[0].your_conversions[BASE_YEAR] == pytest.approx(expected)
+    gated = plans[0].your_conversions.get(BASE_YEAR, 0.0) + plans[0].spouse_conversions.get(
+        BASE_YEAR, 0.0
+    )
+    assert gated == pytest.approx(expected)
 
 
 # --------------------------------------------------------------------------
