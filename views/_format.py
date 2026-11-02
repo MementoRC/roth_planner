@@ -28,6 +28,12 @@ FORM_8606_CAPTION = (
 # SIGNIFICANT digits, so ".0s" kept one and neighbouring ticks repeated
 # ("$1M", "$1M", "$2M") (audit-1101 F-15).
 DOLLAR_TICKFORMAT = "$,.3~s"
+# Pass with every DOLLAR_TICKFORMAT axis. Below $1 per tick (e.g. a series that
+# is all $0, where Plotly picks a 0.5 step) the SI format prints milli,
+# "$500m", which reads as $500 million; plain dollars are used there instead.
+DOLLAR_TICKFORMATSTOPS: list[dict[str, object]] = [
+    {"dtickrange": [None, 1], "value": "$,.2~f"},
+]
 
 # Owner labels that read as the second/first person ("You's" -> "Your").
 _FIRST_SECOND_PERSON = {"you": ("Your", "yours"), "me": ("My", "mine")}

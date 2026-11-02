@@ -31,7 +31,13 @@ from engine.irmaa import (
 )
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from models.household import Household
-from views._format import DOLLAR_TICKFORMAT, fmt_dollars, fmt_pct, md_dollars
+from views._format import (
+    DOLLAR_TICKFORMAT,
+    DOLLAR_TICKFORMATSTOPS,
+    fmt_dollars,
+    fmt_pct,
+    md_dollars,
+)
 from views._shared import render_completeness_badge, render_readonly_input
 from views._style import render_page_header
 
@@ -204,8 +210,10 @@ def render(hh: Household):
             fig_aca.update_layout(
                 xaxis_title="MAGI ($)",
                 xaxis_tickformat=DOLLAR_TICKS,
+                xaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
                 yaxis_title="Annual ($)",
                 yaxis_tickformat=DOLLAR_TICKS,
+                yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
                 height=400,
                 legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
             )
@@ -251,8 +259,10 @@ def render(hh: Household):
         fig_irmaa.update_layout(
             xaxis_title="MAGI ($)",
             xaxis_tickformat=DOLLAR_TICKS,
+            xaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
             yaxis_title="Surcharge ($/yr)",
             yaxis_tickformat=DOLLAR_TICKS,
+            yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
             height=400,
         )
         st.plotly_chart(fig_irmaa, width="stretch")
@@ -335,8 +345,10 @@ def render(hh: Household):
     fig_hidden.update_layout(
         xaxis_title="MAGI ($)",
         xaxis_tickformat=DOLLAR_TICKS,
+        xaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         yaxis_title="Hidden Cost ($/yr)",
         yaxis_tickformat=DOLLAR_TICKS,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         yaxis2={
             "title": "Marginal Rate (%)",
             "overlaying": "y",

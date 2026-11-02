@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from engine.store import CorruptDocumentError, CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, Store, get_store
 from engine.store.namespaces import TRUST_CHOICES
 from models.legacy_keys import migrate_legacy_keys
 from models.sourced import Source
@@ -69,6 +69,9 @@ class ChoiceMap:
         # Set True by ``load`` when the saved row EXISTED but failed to parse, so an
         # empty-because-corrupt map is distinguishable from a never-saved one.
         self.load_corrupt: bool = False
+        # The Store ``load`` read from; ``save`` writes back to it (see
+        # CandidateStore._origin): demo-loaded choices never reach real storage.
+        self._origin: Store | None = None
 
     def set_choice(self, field_key: str, source: Source, locked_at: datetime) -> None:
         self._data[field_key] = TrustChoice(source=source, locked_at=locked_at)
@@ -99,9 +102,10 @@ class ChoiceMap:
         Refuses, with :class:`CorruptChoiceMapError`, to replace saved choices
         that do not parse as a choice map. They may be the only copy of the
         user's choices, and :meth:`load` already turned them into an empty map
-        (audit-1008 F-45). The check and the write are one transaction.
+        (audit-1008 F-45). The check and the write are one transaction. A
+        loaded map saves to the Store it was loaded from.
         """
-        store = get_store()
+        store = self._origin if self._origin is not None else get_store()
         with store.transaction():
             try:
                 saved = store.get(TRUST_CHOICES)
@@ -118,11 +122,13 @@ class ChoiceMap:
         An unreadable row sets ``load_corrupt`` on the returned map rather than
         raising, and :meth:`save` refuses to replace it.
         """
+        origin = get_store()
         try:
-            saved = get_store().get(TRUST_CHOICES)
-            return cls() if saved is None else cls.from_json(saved)
+            saved = origin.get(TRUST_CHOICES)
+            loaded = cls() if saved is None else cls.from_json(saved)
         except (CorruptStoreError, *_SHAPE_ERRORS) as exc:
             logger.warning("saved trust choices are unreadable (%s); using an empty map", exc)
-            empty = cls()
-            empty.load_corrupt = True
-            return empty
+            loaded = cls()
+            loaded.load_corrupt = True
+        loaded._origin = origin
+        return loaded

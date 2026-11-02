@@ -878,8 +878,9 @@ def _handle_personal_uploads() -> None:
         if is_demo_mode():
             st.caption(
                 "Demo mode is on: your saved data stays on disk, untouched, and is neither "
-                "read nor written until you leave demo mode. What you import or confirm "
-                "now applies to this session only."
+                "read nor written until you leave demo mode. Every change you make now "
+                "(edits, imports, syncs, confirms) lasts only for this browser session "
+                "and is never saved."
             )
             if st.button("Leave demo mode", key="leave_demo_mode", use_container_width=True):
                 exit_demo_mode()

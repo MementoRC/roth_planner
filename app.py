@@ -26,7 +26,7 @@ from config.scalar_registry import (  # noqa: E402
 )
 from engine.data_sources.candidate_store import CorruptCandidateStoreError  # noqa: E402
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
-from engine.demo_mode import is_demo_mode  # noqa: E402
+from engine.demo_mode import demo_for_run  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
 from engine.store import (  # noqa: E402
     StoreError,
@@ -38,7 +38,11 @@ from engine.store import (  # noqa: E402
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
-from views.setup._state import _drain_pending_defaults, session_demo_store  # noqa: E402
+from views.setup._state import (  # noqa: E402
+    _drain_pending_defaults,
+    bind_run_storage_mode,
+    session_demo_store,
+)
 from views.store_notice import render_store_notice, store_error_message  # noqa: E402
 
 _T = TypeVar("_T")
@@ -171,6 +175,12 @@ def _seed_session_state() -> None:
     st.session_state.setdefault("_seeded", True)
 
 
+# Bind this run's storage mode before anything reads or writes storage: a run
+# that began in demo mode (marker present, or this session seeded in demo mode)
+# never touches the personal file or database, even after "Leave demo mode"
+# removes the shared marker mid-run or from another tab.
+bind_run_storage_mode()
+
 # Demo mode reads and writes this session's in-memory store, never the disk
 # (audit-1101 F-12, owner decision D2): an import or a Confirm then works for
 # the session instead of vanishing into a null store.
@@ -193,7 +203,7 @@ _drain_pending_defaults()
 # Demo mode (audit-1018 D2, set by "Reset to demo"): every disk autoload of a
 # personal cache below is skipped, so the reset cannot be silently undone and
 # the personal files stay parked on disk until the user leaves demo mode.
-_DEMO_MODE = is_demo_mode()
+_DEMO_MODE = demo_for_run()
 
 # Load cached snapshots on first run (silently — Setup page shows status)
 if (

@@ -17,6 +17,7 @@ from engine.scenario_compare import compute_cumulative_net_benefit, compute_summ
 from models.household import Household
 from views._format import (
     DOLLAR_TICKFORMAT,
+    DOLLAR_TICKFORMATSTOPS,
     FORM_8606_CAPTION,
     fmt_dollars,
     fmt_dollars_short,
@@ -173,6 +174,7 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="IRA + Roth Balance ($)",
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
@@ -209,6 +211,7 @@ def render(hh: Household):
             xaxis_title="Your Age",
             yaxis_title="Tax ($)",
             yaxis_tickformat=DOLLAR_TICKFORMAT,
+            yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
             barmode="group",
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
@@ -243,6 +246,7 @@ def render(hh: Household):
             xaxis_title="Your Age",
             yaxis_title="Cumulative Tax ($)",
             yaxis_tickformat=DOLLAR_TICKFORMAT,
+            yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
             height=350,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
         )
@@ -293,6 +297,7 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Net Benefit ($)",
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=400,
     )
     st.plotly_chart(fig_net, width="stretch")
