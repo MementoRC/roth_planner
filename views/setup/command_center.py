@@ -46,6 +46,7 @@ from engine.instance_identity import (
 from engine.pdf_owner import OwnerRole, load_owner_map
 from engine.store import StoreUnavailableError, saving_disabled
 from models.household import Household
+from views._format import owner_possessive
 from views._shared import SyncEverythingResult, sync_everything
 from views.setup._partials._governance import _render_field_card, render_confirm_notices
 
@@ -235,7 +236,9 @@ def render_command_center(hh: Household) -> None:
 
     if identity_set:
         current_label = "Me" if instance_owner == OwnerRole.YOU.value else "Spouse"
-        with st.expander(f"This planner instance holds: **{current_label}**'s data"):
+        with st.expander(
+            f"This planner instance holds: **{owner_possessive(current_label)}** data"
+        ):
             st.caption(
                 "Controls the default owner assigned to scanned PDFs, which "
                 'slot an export labels as "mine", and which person-slot an '

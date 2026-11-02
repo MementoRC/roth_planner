@@ -13,7 +13,7 @@ from models.ytd_income import (
     split_manual_key,
     sum_income_events,
 )
-from views._format import fmt_dollars, fmt_pct
+from views._format import fmt_dollars, fmt_pct, owner_possessive
 from views._shared import operator_slot
 from views.ytd_drafts import (
     DRAFT_KEY,
@@ -304,7 +304,8 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
     if multi:
         st.caption(
             f"Wages, federal tax withheld and qualified dividends below are "
-            f"{OWNER_LABELS[owner]}'s. Every other field is a household total."
+            f"{owner_possessive(OWNER_LABELS[owner], standalone=True)}. "
+            "Every other field is a household total."
         )
 
     meta = (st.session_state.get(DRAFT_META_KEY) or {}).get(owner, {})

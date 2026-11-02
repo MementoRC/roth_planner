@@ -871,7 +871,9 @@ def _handle_personal_uploads() -> None:
             _apply_ready_import(ready, bundle_file.name)
         if col_b.button("Reset to demo", key="reset_demo", use_container_width=True):
             _clear_personal_session_state()
-            st.success("Reset to demo defaults.")
+            # Carried over the rerun like the import's notes (audit-1101 W9):
+            # drawn before st.rerun() it was discarded unseen.
+            st.session_state[IMPORT_NOTICES_KEY] = [("success", "Reset to demo defaults.")]
             st.rerun()
         if is_demo_mode():
             st.caption(

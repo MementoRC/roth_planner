@@ -12,7 +12,7 @@ from engine.asset_location import AssetLocationResult, AssetLocationYear, projec
 from engine.scenario import in_rmd_era
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
-from views._format import fmt_dollars, fmt_pct, md_dollars
+from views._format import DOLLAR_TICKFORMAT, fmt_dollars, fmt_pct, md_dollars
 from views._shared import render_completeness_badge
 from views._style import render_page_header
 
@@ -166,7 +166,7 @@ def render(hh: Household):
         barmode="stack",
         xaxis_title="Your Age",
         yaxis_title="IRA Balance ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )

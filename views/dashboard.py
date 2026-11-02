@@ -16,6 +16,7 @@ from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compare import compute_cumulative_net_benefit, compute_summary_rows
 from models.household import Household
 from views._format import (
+    DOLLAR_TICKFORMAT,
     FORM_8606_CAPTION,
     fmt_dollars,
     fmt_dollars_short,
@@ -24,11 +25,6 @@ from views._format import (
 )
 from views._shared import render_completeness_badge
 from views._style import render_page_header
-
-# Plotly/d3 tick format: SI prefix, up to 3 significant digits with trailing
-# zeros trimmed ("$1M", "$1.25M", "$1.5M"). d3's `s` precision counts
-# SIGNIFICANT digits, so ".1s" would round every 1.0M-1.9M tick to "$1M".
-DOLLAR_TICKFORMAT = "$,.3~s"
 
 
 def render(hh: Household):

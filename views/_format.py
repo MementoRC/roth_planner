@@ -23,6 +23,29 @@ FORM_8606_CAPTION = (
     "taxable conversion income will be lower than shown."
 )
 
+# Plotly/d3 dollar-axis tick format: SI prefix, up to 3 significant digits with
+# trailing zeros trimmed ("$250k", "$1.25M"). d3's `s` precision counts
+# SIGNIFICANT digits, so ".0s" kept one and neighbouring ticks repeated
+# ("$1M", "$1M", "$2M") (audit-1101 F-15).
+DOLLAR_TICKFORMAT = "$,.3~s"
+
+# Owner labels that read as the second/first person ("You's" -> "Your").
+_FIRST_SECOND_PERSON = {"you": ("Your", "yours"), "me": ("My", "mine")}
+
+
+def owner_possessive(label: str, *, standalone: bool = False) -> str:
+    """Possessive of an owner label: "You" -> "Your" ("yours" standalone),
+    "Me" -> "My" ("mine"), anything else -> "<label>'s" (audit-1101 F-24)."""
+    forms = _FIRST_SECOND_PERSON.get(label.strip().lower())
+    if forms is None:
+        return f"{label}'s"
+    return forms[1] if standalone else forms[0]
+
+
+def verb_for(subject: str, verb: str) -> str:
+    """Present-tense verb agreeing with an owner subject: "you die", "spouse dies"."""
+    return verb if subject.strip().lower() == "you" else f"{verb}s"
+
 
 def md_dollars(text: str) -> str:
     """Escape ``$`` so markdown does not read a pair of them as LaTeX math."""
@@ -63,6 +86,8 @@ def fmt_dollars_short(
     in domain-summary displays.
 
     - suffix="M" (default, dominant existing pattern): divide by 1e6, append "M".
+      A non-zero value the M form would round to zero ("$0.0M") falls back to
+      "auto" instead (audit-1101 F-25).
     - suffix="K": divide by 1000, append "K".
     - suffix="auto": pick by magnitude. >=1e6 → "M", >=1e3 → "K", else plain
       (no suffix). Useful for new sites where the magnitude is unknown.
@@ -77,6 +102,8 @@ def fmt_dollars_short(
     if math.isnan(v) or math.isinf(v):
         return "$0"
 
+    if suffix == "M" and v != 0 and round(v / 1_000_000, decimals) == 0:
+        suffix = "auto"
     if suffix == "auto":
         abs_v = abs(v)
         if abs_v >= 1_000_000:
