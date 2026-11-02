@@ -7,9 +7,9 @@ state. All stateful / ordering-sensitive blocks stay in run_scenario().
 from __future__ import annotations
 
 from engine.aca import (
+    aca_allowed_ptc,
     aca_applies,
     aca_excess_aptc_repayment,
-    aca_net_cost,
     aca_subsidy_loss,
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
@@ -35,8 +35,13 @@ from models.ytd_income import YTDSnapshot
 # beginning age. The engine carries only whole-year ages, so it cannot represent
 # the mid-year 70½ attainment date. To avoid granting an exclusion that is not yet
 # legally available (a Jul–Dec birthday never reaches 70½ during the year they turn
-# 70), eligibility is gated at the first whole year in which the taxpayer is past
-# 70½ for its entirety — i.e. the year they attain age 71.
+# 70), eligibility is gated at the year they attain age 71 — the first year in
+# which every birth date reaches 70½ (a Jul–Dec birthday reaches it in Jan–Jun,
+# and a QCD may be made any time after that date, so the full annual amount is
+# available). For a Jan–Jun birthday this is conservative: QCDs made late in the
+# year they turn 70 would already qualify but are not modelled. The household
+# carries no birth month, so the approximation cannot be refined (audit-1101 K-54:
+# verified against IRC §408(d)(8)(B)(ii); kept by design, never over-grants).
 QCD_MIN_AGE = 71
 
 # ---------------------------------------------------------------------------
@@ -742,7 +747,8 @@ def compute_aca(
     # is a flat Household-level assumption applied to every projected year, so
     # without this check a stale value fired a clawback even in years when both
     # spouses are 65+ and on Medicare, with no ACA enrollment at all.
-    if advance_aptc_annual > 0 and num_on_aca > 0:
+    advance_aptc_paid = advance_aptc_annual > 0 and num_on_aca > 0
+    if advance_aptc_paid:
         aca_clawback = aca_excess_aptc_repayment(
             advance_aptc_annual=advance_aptc_annual,
             actual_magi=aca_magi,
@@ -756,18 +762,18 @@ def compute_aca(
         aca_clawback = 0.0
 
     if num_on_aca > 0:
-        aca_premium_cost = max(
-            aca_net_cost(
-                aca_magi,
-                effective_benchmark,
-                enhanced_subsidies_active=aca_enhanced_subsidies_active,
-                filing_status=current_filing_status,
-                year=year,
-                cpi=cpi,
-            )
-            - aca_clawback,
-            0.0,
+        # Net cost on the SAME allowed credit the clawback reconciles against
+        # (audit-1101 F-03: below 100% FPL with APTC paid, §1.36B-2(b)(6)).
+        allowed_ptc = aca_allowed_ptc(
+            aca_magi,
+            effective_benchmark,
+            aca_enhanced_subsidies_active,
+            current_filing_status,
+            year=year,
+            cpi=cpi,
+            advance_aptc_paid=advance_aptc_paid,
         )
+        aca_premium_cost = max(max(effective_benchmark - allowed_ptc, 0.0) - aca_clawback, 0.0)
     else:
         aca_premium_cost = 0.0
 

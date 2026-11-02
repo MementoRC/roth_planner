@@ -523,6 +523,39 @@ def aca_net_cost(
     )
 
 
+def aca_allowed_ptc(
+    magi: float,
+    benchmark: float,
+    enhanced_subsidies_active: bool,
+    filing_status: str = "MFJ",
+    *,
+    year: int,
+    cpi: float = DEFAULT_CPI,
+    advance_aptc_paid: bool = False,
+) -> float:
+    """Premium tax credit allowed on Form 8962 for the year.
+
+    Same as ``aca_subsidy`` except below 100% FPL when advance credit payments
+    were made: Treas. Reg. §1.36B-2(b)(6) still treats that taxpayer as an
+    applicable taxpayer (the Exchange estimated 100%-400% FPL at enrollment
+    and APTC was paid), so the credit is computed on the actual income at the
+    bottom band's applicable percentage instead of being zero. P.L. 119-21
+    repealed §36B(c)(1)(B) (lawfully present aliens) and the §36B(f)(2)(B)
+    repayment cap but not this rule (audit-1101 F-03). The §1.36B-2(b)(6)(ii)
+    exception for intentionally or recklessly wrong Exchange information is
+    not modelled.
+    """
+    fpl = _fpl(filing_status, year=year, cpi=cpi)
+    if advance_aptc_paid and magi < fpl:
+        bottom_rate = aca_premium_cap_rate(
+            fpl, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+        )
+        return max(benchmark - max(magi, 0.0) * bottom_rate, 0.0)
+    return aca_subsidy(
+        magi, benchmark, enhanced_subsidies_active, filing_status, year=year, cpi=cpi
+    )
+
+
 def aca_excess_aptc_repayment(
     advance_aptc_annual: float,
     actual_magi: float,
@@ -554,13 +587,14 @@ def aca_excess_aptc_repayment(
             f"APTC cap table for tax year {year} is not modeled — base_year=2026; "
             "see IRC §36B(f)(2)(B) cap table for pre-P.L. 119-21 years."
         )
-    actual_ptc = aca_subsidy(
+    actual_ptc = aca_allowed_ptc(
         actual_magi,
         benchmark_premium_annual,
-        enhanced_subsidies_active=enhanced_subsidies_active,
-        filing_status=filing_status,
+        enhanced_subsidies_active,
+        filing_status,
         year=year,
         cpi=cpi,
+        advance_aptc_paid=advance_aptc_annual > 0,
     )
     return advance_aptc_annual - actual_ptc
 

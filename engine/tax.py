@@ -135,6 +135,12 @@ def taxable_ss(combined_ss: float, other_income: float, filing_status: str = "MF
     if combined_ss <= 0:
         return 0.0
     if filing_status == "MFS":
+        # IRC §86(c)(1)(C)/(c)(2)(C): the zero base amounts apply only to a married
+        # filer who did NOT live apart from their spouse at all times during the
+        # year. An MFS filer who lived apart all year falls under §86(c)(1)(A)/(c)(2)(A)
+        # ($25,000 / $34,000, the Single tiers). That lived-apart case is NOT
+        # modelled: the household has no lived-apart input, so every MFS filer
+        # gets the zero bases (owner decision, audit-1101 K-14).
         tier1 = tier2 = 0
     elif filing_status in ("Single", "HoH"):
         tier1 = SS_TIER_1_SINGLE
