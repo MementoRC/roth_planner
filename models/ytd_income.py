@@ -177,9 +177,32 @@ def iso_day(value: object) -> str | None:
         return None
 
 
-def sum_income_events(events: list[IncomeEvent], *, kind: str, owner: str | None = None) -> float:
-    """Sum event amounts matching kind (and owner, if given)."""
-    return sum(e.amount for e in events if e.kind == kind and (owner is None or e.owner == owner))
+def sum_income_events(
+    events: list[IncomeEvent],
+    *,
+    kind: str,
+    owner: str | None = None,
+    tax_year: int | None = None,
+) -> float:
+    """Sum event amounts matching kind (and owner, if given).
+
+    With ``tax_year``, an event dated in another year is left out: a December
+    conversion logged before New Year is last year's income, not this year's
+    (audit-1101 F-18). An undated or unparsable date still counts, since its
+    year cannot be told.
+    """
+
+    def _in_year(e: IncomeEvent) -> bool:
+        if tax_year is None:
+            return True
+        day = iso_day(e.date)
+        return day is None or int(day[:4]) == tax_year
+
+    return sum(
+        e.amount
+        for e in events
+        if e.kind == kind and (owner is None or e.owner == owner) and _in_year(e)
+    )
 
 
 def _net_capital_gain_split(short_term: float, long_term: float) -> tuple[float, float]:

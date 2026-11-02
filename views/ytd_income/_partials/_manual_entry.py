@@ -509,9 +509,15 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
 
     income_events = render_event_log_partial(hh, ytd)
 
-    conversions_done = sum_income_events(income_events, kind="conversion", owner="you")
-    spouse_conversions_done = sum_income_events(income_events, kind="conversion", owner="spouse")
-    distributions_done = sum_income_events(income_events, kind="distribution")
+    # Only events dated in the tax year count toward it (audit-1101 F-18).
+    year = hh.base_year
+    conversions_done = sum_income_events(
+        income_events, kind="conversion", owner="you", tax_year=year
+    )
+    spouse_conversions_done = sum_income_events(
+        income_events, kind="conversion", owner="spouse", tax_year=year
+    )
+    distributions_done = sum_income_events(income_events, kind="distribution", tax_year=year)
 
     # Overlay the event-log totals onto the previously-persisted snapshot
     # (audit-0805 C42): a fresh YTDSnapshot(...) here would drop every field
