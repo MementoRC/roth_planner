@@ -7,14 +7,14 @@ plain dataclasses with all curves the view needs. No Streamlit, no plotly.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from engine.aca import (
+    aca_allowed_ptc,
     aca_applies,
     aca_ceiling_magi,
     aca_net_cost,
     aca_subsidy,
-    aca_subsidy_loss,
     effective_benchmark_premium,
     resolve_couple_benchmark_annual,
 )
@@ -298,6 +298,13 @@ class CostCurves:
     # audit-1101 F-19: Medicare head count in the IRMAA payment year that
     # irmaa_vals was priced with, so the legend can name it.
     irmaa_people: int = 0
+    # Issue #102: Form 8962 reconciliation at each point, advance APTC minus the
+    # allowed credit: positive is repaid at filing (no cap for TY 2026+),
+    # negative comes back as extra credit. All zeros when no advance was taken
+    # or nobody is on ACA.
+    aca_repayment_vals: list[float] = field(default_factory=list)
+    # The advance APTC the curves were priced with (clamped to >= 0).
+    advance_aptc: float = 0.0
 
 
 def compute_cost_curves(
@@ -309,6 +316,7 @@ def compute_cost_curves(
     year: int,
     cpi: float,
     ytd: YTDSnapshot | None = None,
+    advance_aptc: float = 0.0,
 ) -> CostCurves:
     """Build cost curves for ACA, IRMAA, NIIT, federal tax, and total hidden cost.
 
@@ -325,7 +333,20 @@ def compute_cost_curves(
     Issue #52: the base carries the zero-conversion waterfall's brokerage-sale
     gain, so the LTCG stack (:func:`sweet_spot_ltcg_eligible`) and the auto NII
     are the ones Sweet Spot uses.
+
+    Issue #102: ``advance_aptc`` is the annual advance premium tax credit paid
+    to the insurer (a what-if; negative values count as 0). Every ACA figure
+    uses the credit allowed on Form 8962 (:func:`engine.aca.aca_allowed_ptc`),
+    so with an advance a household that ends the year below 100% FPL keeps a
+    credit (Treas. Reg. §1.36B-2(b)(6)) instead of owing the full premium.
+    The net cost is the premium after reconciliation (benchmark minus allowed
+    credit, however the advance split it between in-year premium and filing),
+    and ``aca_repayment_vals`` carries the reconciliation itself. With no
+    advance the allowed credit equals :func:`engine.aca.aca_subsidy`, so the
+    curves are unchanged.
     """
+    advance_aptc = max(advance_aptc, 0.0)
+    aptc_paid = advance_aptc > 0
     zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     _, sale_gain = _zero_conversion_adds(hh, zero_years, year)
     _brokerage = _zero_brokerage(zero_years, year)
@@ -424,9 +445,23 @@ def compute_cost_curves(
     _niit_magi_shift = net_inv_income - _tei
     base_niit = niit(base_magi + _niit_magi_shift, total_nii, filing_status=hh.filing_status)
 
+    def allowed_ptc(aca_magi: float) -> float:
+        return aca_allowed_ptc(
+            aca_magi,
+            effective_benchmark,
+            hh.aca_enhanced_subsidies_active,
+            hh.filing_status,
+            year=year,
+            cpi=cpi,
+            advance_aptc_paid=aptc_paid,
+        )
+
+    base_ptc = allowed_ptc(base_magi + nontaxable_ss) if anyone_on_aca else 0.0
+
     aca_subsidy_vals: list[float] = []
     aca_net_cost_vals: list[float] = []
     aca_loss_vals: list[float] = []
+    aca_repayment_vals: list[float] = []
     irmaa_vals: list[float] = []
     irmaa_tier_vals: list[int] = []
     niit_vals: list[float] = []
@@ -440,40 +475,19 @@ def compute_cost_curves(
         )
         # ACA (only meaningful if enrolled and pre-65)
         if anyone_on_aca:
-            sub = aca_subsidy(
-                magi + point_nontaxable_ss,
-                benchmark=effective_benchmark,
-                enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                filing_status=hh.filing_status,
-                year=year,
-                cpi=cpi,
-            )
+            # Issue #102: the Form 8962 allowed credit; equals aca_subsidy when
+            # no advance was paid, so aca_net_cost / aca_subsidy_loss values
+            # are reproduced exactly.
+            sub = allowed_ptc(magi + point_nontaxable_ss)
             aca_subsidy_vals.append(sub)
-            aca_net_cost_vals.append(
-                aca_net_cost(
-                    magi + point_nontaxable_ss,
-                    benchmark=effective_benchmark,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    filing_status=hh.filing_status,
-                    year=year,
-                    cpi=cpi,
-                )
-            )
-            aca_loss_vals.append(
-                aca_subsidy_loss(
-                    base_magi + nontaxable_ss,
-                    magi + point_nontaxable_ss,
-                    benchmark=effective_benchmark,
-                    enhanced_subsidies_active=hh.aca_enhanced_subsidies_active,
-                    filing_status=hh.filing_status,
-                    year=year,
-                    cpi=cpi,
-                )
-            )
+            aca_net_cost_vals.append(max(effective_benchmark - sub, 0))
+            aca_loss_vals.append(max(base_ptc - sub, 0))
+            aca_repayment_vals.append(advance_aptc - sub if aptc_paid else 0.0)
         else:
             aca_subsidy_vals.append(0)
             aca_net_cost_vals.append(0)
             aca_loss_vals.append(0)
+            aca_repayment_vals.append(0.0)
 
         # IRMAA
         surcharge = irmaa_surcharge(
@@ -536,6 +550,8 @@ def compute_cost_curves(
         aca_cliff_magi=aca_cliff_magi,
         auto_nii=auto_nii,
         irmaa_people=on_medicare,
+        aca_repayment_vals=aca_repayment_vals,
+        advance_aptc=advance_aptc,
     )
 
 

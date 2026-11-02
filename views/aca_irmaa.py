@@ -44,6 +44,19 @@ from views._style import render_page_header
 # The shared 3-significant-digit dollar tick format (views/_format.py).
 DOLLAR_TICKS = DOLLAR_TICKFORMAT
 
+# Upper bound for the advance-APTC what-if; same ceiling as Setup › Assumptions.
+_ADVANCE_APTC_MAX = 250_000
+
+ADVANCE_APTC_CAPTION = (
+    "Advance APTC is the premium tax credit the Marketplace pays your insurer "
+    "during the year, based on the income you estimated at enrollment. On "
+    "Form 8962 it is reconciled against the credit your actual income allows: "
+    "any excess is repaid in full (no cap from 2026), any shortfall comes back "
+    "as extra credit. If income ends below 100% of the poverty line after "
+    'advance APTC was paid, a credit is still allowed. "You Pay" is the '
+    "premium after that reconciliation."
+)
+
 IRMAA_ROOM_CAPTION = (
     "IRMAA Room is for income earned that year (premiums two years later), "
     "measured against that year's own projected no-conversion MAGI (the base year "
@@ -133,6 +146,23 @@ def render(hh: Household):
             where="Profile › Assumptions",
             stacked=True,
         )
+        advance_aptc = 0
+        if anyone_on_aca:
+            # Issue #102: a what-if seeded from the profile value. It is not
+            # written back; Setup › Assumptions stays the saved value's one home.
+            advance_aptc = st.number_input(
+                "Advance APTC received ($/yr)",
+                min_value=0,
+                max_value=_ADVANCE_APTC_MAX,
+                value=min(max(int(hh.advance_aptc_annual), 0), _ADVANCE_APTC_MAX),
+                step=500,
+                format="%d",
+                help=(
+                    "Premium tax credit paid to your insurer during the year. "
+                    "Defaults to Profile › Assumptions; changing it here only "
+                    "changes this page. Set 0 if you pay the full premium."
+                ),
+            )
 
     # --- Generate cost curves ---
     magi_points = list(range(magi_range[0], magi_range[1] + 1, 1_000))
@@ -141,7 +171,14 @@ def render(hh: Household):
     _view_cpi = hh.cpi_assumption
 
     curves = compute_cost_curves(
-        magi_points, base_magi, net_inv_income, hh, year=_view_year, cpi=_view_cpi, ytd=_ytd
+        magi_points,
+        base_magi,
+        net_inv_income,
+        hh,
+        year=_view_year,
+        cpi=_view_cpi,
+        ytd=_ytd,
+        advance_aptc=float(advance_aptc),
     )
 
     # --- Chart 1: ACA Subsidy & Net Premium ---
@@ -170,6 +207,16 @@ def render(hh: Household):
                     hovertemplate="MAGI: $%{x:,.0f}<br>You Pay: $%{y:,.0f}<extra></extra>",
                 )
             )
+            if curves.advance_aptc > 0:
+                fig_aca.add_trace(
+                    go.Scatter(
+                        x=magi_points,
+                        y=curves.aca_repayment_vals,
+                        name="Repaid at filing (− = refund)",
+                        line={"color": "#a855f7", "width": 2, "dash": "dash"},
+                        hovertemplate=("MAGI: $%{x:,.0f}<br>Form 8962: $%{y:,.0f}<extra></extra>"),
+                    )
+                )
             _resolved_couple_benchmark = resolve_couple_benchmark_annual(
                 hh.aca_benchmark_premium_annual,
                 your_age=hh.your_age,
@@ -218,6 +265,7 @@ def render(hh: Household):
                 legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
             )
             st.plotly_chart(fig_aca, width="stretch")
+            st.caption(ADVANCE_APTC_CAPTION)
         else:
             if hh.your_age >= 65 or hh.spouse_age >= 65:
                 st.info("On Medicare. See IRMAA section below.")
