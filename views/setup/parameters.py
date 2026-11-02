@@ -67,6 +67,10 @@ _FILING_STATUS_LABELS = {
     "head_of_household": "Head of Household",
 }
 
+# A 1040 save's notes, carried over the st.rerun() that follows it: drawn before
+# it, they were discarded before anyone could read them (audit-1101 F-23).
+_SAVE_1040_NOTICES_KEY = "_pdf_1040_save_notices"
+
 
 def _render_pdf_1040_import() -> None:
     """Confirm-and-save UI for Form 1040 records already scanned elsewhere.
@@ -87,6 +91,8 @@ def _render_pdf_1040_import() -> None:
     candidate by the scan — this loop never re-records it.
     """
     with st.expander("📄 Import 1040 PDF (TurboTax export)", expanded=False):
+        for kind, text in st.session_state.pop(_SAVE_1040_NOTICES_KEY, None) or ():
+            getattr(st, kind)(text)
         scanned_records: dict[int, Form1040Record] = st.session_state.get("_pdf_1040_scanned", {})
         if not scanned_records:
             st.caption(
@@ -131,16 +137,20 @@ def _render_pdf_1040_import() -> None:
                 records[rec.tax_year] = rec
                 with st.spinner("Saving…"):
                     save_pdf_tax_records(records)
-                st.info(
-                    "1 prior-year MAGI value detected — review & confirm it on the "
-                    "**Review Changes** page."
-                )
                 # Drop the confirmed year so it doesn't re-prompt on rerun
                 scanned_records.pop(_year, None)
                 st.session_state["_pdf_1040_scanned"] = scanned_records
-                st.success(
-                    f"Saved {rec.tax_year} 1040 record "
-                    f"(MAGI {fmt_dollars(rec.magi)}, {_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}). "
-                    "Rerunning…"
-                )
+                st.session_state[_SAVE_1040_NOTICES_KEY] = [
+                    (
+                        "success",
+                        f"Saved {rec.tax_year} 1040 record "
+                        f"(MAGI {fmt_dollars(rec.magi)}, "
+                        f"{_FILING_STATUS_LABELS.get(chosen_status, chosen_status)}).",
+                    ),
+                    (
+                        "info",
+                        "1 prior-year MAGI value detected — review & confirm it on the "
+                        "**Review Changes** page.",
+                    ),
+                ]
                 st.rerun()

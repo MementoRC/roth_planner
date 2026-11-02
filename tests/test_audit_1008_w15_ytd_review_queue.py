@@ -436,7 +436,7 @@ class TestForm1040Messages:
         from views.setup import parameters as params_mod
 
         rec = _f1040()
-        mock_st, _ = _mock_st(
+        mock_st, state = _mock_st(
             state_extra={"_pdf_1040_scanned": {2025: rec}}, clicks={"_pdf_1040_save_2025"}
         )
         mock_st.expander.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -450,6 +450,9 @@ class TestForm1040Messages:
             contextlib.suppress(_RerunError),
         ):
             params_mod._render_pdf_1040_import()
-        infos = " ".join(str(c.args[0]) for c in mock_st.info.call_args_list)
+        # The note is carried over the rerun and drawn in the next run
+        # (audit-1101 F-23), so read it from the carried notices.
+        notices = state[params_mod._SAVE_1040_NOTICES_KEY]
+        infos = " ".join(text for kind, text in notices if kind == "info")
         assert "Command Center" not in infos
         assert "Review Changes" in infos

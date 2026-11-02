@@ -283,6 +283,16 @@ def _click_apply(at) -> None:
     at.run()
 
 
+def _successes_after_rerun(at) -> list[str]:
+    """Apply's success note, drawn in the run its (stubbed) st.rerun() starts.
+
+    The note is carried over the rerun, not drawn before it (audit-1101 F-13).
+    """
+    at.run()
+    assert not at.exception
+    return [s.value for s in at.success]
+
+
 def test_import_slot_control_is_the_absolute_v4_picker_only(monkeypatch) -> None:
     """Rewritten for bridge v5 (plan B4). The operator-relative "Whose data
     is in this file?" radio is gone, and pc_role never returns: once a legacy
@@ -310,7 +320,8 @@ def test_apply_enabled_without_instance_identity(monkeypatch) -> None:
 
     assert not at.exception
     assert captured["target_owner"] == "spouse"
-    assert any("Applied" in s.value for s in at.success), [s.value for s in at.success]
+    successes = _successes_after_rerun(at)
+    assert any("Applied" in s for s in successes), successes
 
 
 def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
@@ -369,9 +380,8 @@ def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
     monkeypatch.setattr(data_bridge_mod, "_save_pdf_ledger", lambda ledger: None)
     monkeypatch.setattr(data_bridge_mod, "_resolve_privkey_bytes", lambda: None)
     monkeypatch.setattr(data_bridge_mod, "load_pubkey", lambda: None)
-    # Neutralise st.rerun() at data_bridge.py:382 so the success element
-    # (rendered immediately before it) survives to the end of this run
-    # instead of being wiped by a fresh script execution.
+    # Neutralise st.rerun() after Apply; the run it would start is driven
+    # explicitly below, where the carried success note is drawn.
     monkeypatch.setattr(st_mod, "rerun", lambda: None)
 
     def _render() -> None:
@@ -395,7 +405,7 @@ def test_apply_uploads_end_to_end_imports_as_other_owner(monkeypatch) -> None:
     assert not at.exception
     assert captured["target_owner"] == "spouse"
 
-    success_texts = [s.value for s in at.success]
+    success_texts = _successes_after_rerun(at)
     assert any("roth_bridge.enc" in t and "spouse" in t for t in success_texts), success_texts
 
 
@@ -463,7 +473,8 @@ def test_import_never_adopts_ytd_from_sender(monkeypatch, slot: str) -> None:
     assert not at.exception
     # The import really ran, into the chosen slot -- otherwise the YTD
     # assertions below would pass vacuously.
-    assert any(f"({slot})" in s.value for s in at.success), [s.value for s in at.success]
+    successes = _successes_after_rerun(at)
+    assert any(f"({slot})" in s for s in successes), successes
     ytd_snap = at.session_state["ytd_snapshot"]
     assert ytd_snap.wages_ytd != 100_000.0
     assert ytd_snap.ira_conversions_ytd != 30_000.0

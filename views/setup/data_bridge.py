@@ -70,6 +70,10 @@ from ._state import (
     exit_demo_mode,
 )
 
+# The import's notes, carried over the st.rerun() that follows Apply: drawn
+# before it, they were discarded before anyone could read them (audit-1101 F-13).
+IMPORT_NOTICES_KEY = "_bundle_import_notices"
+
 
 def _resolved_pubkey() -> bytes | None:
     """Resolve V2 public key for encryption.
@@ -708,10 +712,10 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
         save_user_defaults({"grant_strikes": dict(strikes)})
     st.session_state["portfolio_snapshot"] = result.snapshot
     st.session_state.pop("_suppress_snapshot_autoload", None)
+    notices: list[tuple[str, str]] = []
     manual_entry_kept_explicit = False
     if kept_warnings is not None:
-        for warning in kept_warnings:
-            st.warning(warning)
+        notices.extend(("warning", warning) for warning in kept_warnings)
         manual_entry_kept_explicit = not auto_deselect_manual_entry(st.session_state)
 
     # Strike prices arrived but no grants to attach them to: Household.grants
@@ -728,21 +732,34 @@ def _apply_ready_import(ready: _ReadyImport, name: str) -> None:
         or v4_strikes
     )
     if strikes_present and not getattr(result.snapshot, "equity_grants", None):
-        st.warning(
-            "⚠️ Option strike prices were imported, but no stock-option grants came "
-            "with them — option/NQO income is being computed from this app's "
-            "built-in demo grants, not the real ones. Figures on the Conversion "
-            "Plan and YTD pages will be wrong until the sender re-exports with a "
-            "current version."
+        notices.append(
+            (
+                "warning",
+                "⚠️ Option strike prices were imported, but no stock-option grants came "
+                "with them — option/NQO income is being computed from this app's "
+                "built-in demo grants, not the real ones. Figures on the Conversion "
+                "Plan and YTD pages will be wrong until the sender re-exports with a "
+                "current version.",
+            )
         )
     applied = " + ".join(s for s in SLOT_ORDER if s in ready.selected)
-    st.success(f"Applied: {name} ({applied}). Rerunning…")
+    notices.append(("success", f"Applied: {name} ({applied})."))
     if manual_entry_kept_explicit:
-        st.caption(
-            "Manual entry stayed ON — you turned it on yourself, so this import did "
-            "not switch you back to synced-data display."
+        notices.append(
+            (
+                "caption",
+                "Manual entry stayed ON — you turned it on yourself, so this import did "
+                "not switch you back to synced-data display.",
+            )
         )
+    st.session_state[IMPORT_NOTICES_KEY] = notices
     st.rerun()
+
+
+def _render_import_notices() -> None:
+    """Show the last import's notes once, in the run after its st.rerun()."""
+    for kind, text in st.session_state.pop(IMPORT_NOTICES_KEY, None) or ():
+        getattr(st, kind)(text)
 
 
 def _render_joint_field_conflicts() -> None:
@@ -799,6 +816,7 @@ def _handle_personal_uploads() -> None:
             "Values stay in this browser only; refresh = back to demo. "
             "`.enc` files require the private key configured above."
         )
+        _render_import_notices()
         _render_joint_field_conflicts()
         bundle_file = st.file_uploader(
             "roth_bridge.enc (setup scalars + portfolio + PDF ledger)",

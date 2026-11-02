@@ -119,6 +119,15 @@ def _texts(elements) -> list[str]:
     return [e.value for e in elements]
 
 
+def _successes_after_rerun(at) -> list[str]:
+    """Apply's success note, drawn in the run its (stubbed) st.rerun() starts.
+
+    The note is carried over the rerun, not drawn before it (audit-1101 F-13).
+    """
+    at.run()
+    return _texts(at.success)
+
+
 class TestUploadStash:
     """B1 -- decrypt from bytes captured at upload, never a re-read of the handle."""
 
@@ -137,8 +146,9 @@ class TestUploadStash:
         at.session_state["data_bridge_privkey_b64"] = _b64(right_priv)
         _click_apply(at)
         assert not at.exception
-        assert any("Applied" in t for t in _texts(at.success)), _texts(at.error)
         assert decrypt_seen == [payload, payload], "each attempt must see the full upload"
+        errors = _texts(at.error)
+        assert any("Applied" in t for t in _successes_after_rerun(at)), errors
 
     def test_new_upload_replaces_stash(self, decrypt_seen: list[bytes]) -> None:
         first = _plain_bundle_bytes()
@@ -198,7 +208,8 @@ class TestMalformedEnvKey:
         assert _apply_button(at).disabled is False
         _click_apply(at)
         assert not at.exception
-        assert any("Applied" in t for t in _texts(at.success)), _texts(at.error)
+        errors = _texts(at.error)
+        assert any("Applied" in t for t in _successes_after_rerun(at)), errors
 
 
 _NO_KEY_REASON = "no private key is configured"
@@ -284,7 +295,7 @@ class TestEveryDecryptFailureIsDistinct:
         at.session_state["data_bridge_privkey_b64"] = _b64(priv)
         _click_apply(at)
         assert not at.exception
-        messages["retry_success"] = _texts(at.success)[0]
+        messages["retry_success"] = _successes_after_rerun(at)[0]
 
         assert len(set(messages.values())) == 6, messages
         assert "decrypt" in messages["wrong_key"].lower()
