@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.scalar_registry import scalar_default
-from engine.asset_location import project_asset_location
+from engine.asset_location import AssetLocationResult, AssetLocationYear, project_asset_location
 from engine.scenario import in_rmd_era
 from engine.scenario_autofill import auto_fill_12
 from models.household import Household
@@ -21,6 +21,47 @@ STRATEGIES = {
     "proportional": ("Proportional", "#3b82f6"),
     "bond_first": ("Bond First", "#ef4444"),
 }
+
+
+def milestone_ages(hh: Household) -> tuple[int, int]:
+    """The two comparison ages: 75 and 85, or your current age once past one.
+
+    The engine reports NaN for a milestone the projection never reaches, which
+    rendered as "$0" / "0.0%" for a household already past 75 (audit-1101
+    F-17). Past a milestone, the table compares the current year instead.
+    """
+    return max(75, hh.your_age), max(85, hh.your_age)
+
+
+def _milestone_label(age: int, nominal: int) -> str:
+    return f"at {age}" if age == nominal else f"at {age} (now)"
+
+
+def _year_at(result: AssetLocationResult, age: int) -> AssetLocationYear | None:
+    return next((y for y in result.years if y.your_age == age), None)
+
+
+def strategy_summary_rows(
+    hh: Household, results: dict[str, AssetLocationResult]
+) -> list[dict[str, str]]:
+    """One Strategy Comparison row per strategy, at the household's milestone ages."""
+    a75, a85 = milestone_ages(hh)
+    l75, l85 = _milestone_label(a75, 75), _milestone_label(a85, 85)
+    rows = []
+    for strat, (label, _) in STRATEGIES.items():
+        y75 = _year_at(results[strat], a75)
+        y85 = _year_at(results[strat], a85)
+        rows.append(
+            {
+                "Strategy": label,
+                f"IRA {l75}": fmt_dollars(y75.ira_total_end) if y75 else "—",
+                f"IRA {l85}": fmt_dollars(y85.ira_total_end) if y85 else "—",
+                f"RMD {l75}": fmt_dollars(y75.rmd) if y75 else "—",
+                f"RMD {l85}": fmt_dollars(y85.rmd) if y85 else "—",
+                f"IRA Growth {l75}": fmt_pct(y75.ira_growth_rate) if y75 else "—",
+            }
+        )
+    return rows
 
 
 def render(hh: Household):
@@ -66,38 +107,25 @@ def render(hh: Household):
     # --- Summary table ---
     st.markdown("### Strategy Comparison")
 
-    summary_data = []
-    for strat, (label, _) in STRATEGIES.items():
-        r = results[strat]
-        summary_data.append(
-            {
-                "Strategy": label,
-                "IRA at 75": fmt_dollars(r.ira_at_75),
-                "IRA at 85": fmt_dollars(r.ira_at_85),
-                "RMD at 75": fmt_dollars(r.rmd_at_75),
-                "RMD at 85": fmt_dollars(r.rmd_at_85),
-                "IRA Growth at 75": fmt_pct(r.ira_growth_at_75),
-            }
-        )
-
     import pandas as pd
 
-    st.dataframe(pd.DataFrame(summary_data), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame(strategy_summary_rows(hh, results)), hide_index=True, width="stretch")
 
     # Key insight callout
-    eq_r = results["equity_first"]
-    prop_r = results["proportional"]
-    ira_diff_85 = prop_r.ira_at_85 - eq_r.ira_at_85
-    rmd_diff_85 = prop_r.rmd_at_85 - eq_r.rmd_at_85
-
-    if ira_diff_85 > 0:
+    a75, a85 = milestone_ages(hh)
+    eq75, eq85 = _year_at(results["equity_first"], a75), _year_at(results["equity_first"], a85)
+    pr75, pr85 = _year_at(results["proportional"], a75), _year_at(results["proportional"], a85)
+    if eq75 and eq85 and pr75 and pr85 and pr85.ira_total_end - eq85.ira_total_end > 0:
+        ira_diff_85 = pr85.ira_total_end - eq85.ira_total_end
+        rmd_diff_85 = pr85.rmd - eq85.rmd
         # Two $ amounts: escape them or markdown renders the text between as LaTeX.
         st.success(
             md_dollars(
-                f"**Equity-first leaves {fmt_dollars(ira_diff_85)} less in traditional IRA at 85** (more in Roth), "
+                f"**Equity-first leaves {fmt_dollars(ira_diff_85)} less in traditional IRA "
+                f"{_milestone_label(a85, 85)}** (more in Roth), "
                 f"reducing RMDs by ~{fmt_dollars(rmd_diff_85)}/yr. "
-                f"After converting equities, IRA growth drops to ~{fmt_pct(eq_r.ira_growth_at_75)} "
-                f"(mostly bonds) vs {fmt_pct(prop_r.ira_growth_at_75)} proportional."
+                f"After converting equities, IRA growth drops to ~{fmt_pct(eq75.ira_growth_rate)} "
+                f"(mostly bonds) vs {fmt_pct(pr75.ira_growth_rate)} proportional."
             )
         )
 

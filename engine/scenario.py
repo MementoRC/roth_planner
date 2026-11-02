@@ -1945,7 +1945,17 @@ def in_rmd_era(hh: Household, your_age: float, spouse_age: float) -> bool:
 
     The one RMD-era rule shared by the engine accumulator and the RMD Squeeze
     page (audit-1026 F-17). A spouse only counts on a joint (MFJ) return.
+
+    In survivor years (from death_year + 1) only the survivor's age counts:
+    the deceased's IRA has rolled into the survivor's, whose own RMD age then
+    governs every RMD (audit-1101 F-07). The year is read off your age, which
+    keeps ticking on the projection's your-age axis after either death.
     """
+    surv = hh.survivor
+    if surv is not None and hh.base_year + int(your_age - hh.your_age) > surv.death_year:
+        if surv.who_dies == "you":
+            return spouse_age >= hh.spouse_rmd_start_age
+        return your_age >= hh.your_rmd_start_age
     if your_age >= hh.your_rmd_start_age:
         return True
     return hh.filing_status == "MFJ" and spouse_age >= hh.spouse_rmd_start_age
