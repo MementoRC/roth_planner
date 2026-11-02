@@ -132,6 +132,38 @@ def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> Pdf
     return out
 
 
+def merge_owner_slots(owner_slice: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Return a NEW owner slice: *incoming*'s Koinly and brokerage slots merged into *owner_slice*.
+
+    Slots are matched by what they hold, never by storage key (audit-1101
+    F-08): a Koinly report by its tax year, a brokerage statement by (broker,
+    account_number, tax year), as write_brokerage_contribution does. Brokerage
+    slot keys are opaque and depend on scan order (new_slot_key), so two
+    instances can file the same account-year under different keys; a keyed
+    merge then kept both (summed twice) and overwrote another year's slot.
+
+    An incoming slot replaces the matching one; a brokerage statement only
+    when its period end is the same or newer (the same staleness rule as a
+    scan). Unmatched slots on either side are kept.
+    """
+    koinly = dict(koinly_slots(owner_slice.get("koinly")))
+    koinly.update(copy.deepcopy(koinly_slots(incoming.get("koinly"))))
+    brokerage = copy.deepcopy(dict(owner_slice.get("brokerage") or {}))
+    for rec in (incoming.get("brokerage") or {}).values():
+        if not isinstance(rec, dict):
+            continue
+        broker = str(rec.get("broker", ""))
+        number = str(rec.get("account_number", ""))
+        period_end = rec.get("statement_period_end")
+        key = _find_account_key(brokerage, broker, number, statement_year(period_end))
+        if key is None:
+            key = new_slot_key(brokerage, broker, number, period_end)
+        elif str(brokerage[key].get("statement_period_end", "")) > str(period_end or ""):
+            continue
+        brokerage[key] = copy.deepcopy(rec)
+    return {"koinly": koinly, "brokerage": brokerage}
+
+
 def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyReport) -> PdfLedger:
     """Return a NEW ledger with *owner*'s Koinly slot for *report*'s tax year
     set to its figures, pruning that SAME report from any OTHER owner slot it

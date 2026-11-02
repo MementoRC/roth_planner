@@ -11,7 +11,25 @@ from engine.instance_identity import CorruptInstanceOwnerError, load_instance_ow
 from engine.portfolio_sync import merge_snapshots
 from engine.portfolio_sync.shapes import portfolio_snapshot_from_dict
 from engine.store import StoreUnavailableError
+from engine.store.backend import DictBackend
+from engine.store.core import Store
 from engine.upload_merge import SCALAR_KEYS, build_user_defaults_session_updates
+
+# This browser session's in-memory store while demo mode is on (audit-1101 F-12).
+DEMO_STORE_KEY = "_demo_session_store"
+
+
+def session_demo_store() -> Store:
+    """This session's demo-mode store, created empty on first use.
+
+    app.py installs this as engine.store's demo provider, so in demo mode an
+    import, a sync or a Confirm applies to this session only and nothing
+    reaches disk (owner decision D2).
+    """
+    store = st.session_state.get(DEMO_STORE_KEY)
+    if not isinstance(store, Store):
+        store = st.session_state[DEMO_STORE_KEY] = Store(DictBackend())
+    return store
 
 
 def _build_user_defaults_session_updates(data: dict, *, as_spouse: bool) -> dict:
@@ -351,6 +369,9 @@ def _clear_session_for_reseed() -> None:
         # (views/setup/portfolio.py KEPT_NEWER_KEY). They carry the user's account
         # names, and their "Use anyway" button reloaded the personal cache.
         "portfolio_kept_newer",
+        # The session's demo store (audit-1101 F-12): entering or leaving demo
+        # mode starts from an empty one.
+        DEMO_STORE_KEY,
         # TODO(audit ui-7): the dynamic PDF-cache-prefix keys remain a separate
         # low-severity finding and are still not cleared here.
     ]
@@ -397,7 +418,7 @@ def exit_demo_mode() -> None:
     st.session_state.pop("_suppress_snapshot_autoload", None)
     leave_demo_mode()
     # The demo-chosen owner lives in the session only (the write went to the
-    # null store); app.py's setdefault would keep it, so re-seed from the real
+    # session's demo store); app.py's setdefault would keep it, so re-seed from the real
     # store with the same unreadable-owner -> None fallback (audit-1026 F-21).
     try:
         st.session_state["instance_owner"] = load_instance_owner()

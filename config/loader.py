@@ -156,8 +156,9 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
     readers can never disagree and the autosave always lands in the file the
     next load reads (audit-1008 F-38). Order: the ``ROTH_PLANNER_DEFAULTS``
     file, then ``.user_defaults.json``, then ``.user_defaults.py``; a missing
-    or empty file falls through to the next one. ``source_path`` is None when
-    no file supplied any override.
+    or empty file falls through to the next one. A local ``.user_defaults.py``
+    beside a non-empty ``.user_defaults.json`` still counts for the keys the
+    JSON lacks. ``source_path`` is None when no file supplied any override.
 
     In demo mode (:mod:`engine.demo_mode`, set by "Reset to demo") no file
     counts, so the demo ``DEFAULTS`` apply and the autosave has no target; the
@@ -175,10 +176,17 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
     if os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
         return None, {}
 
-    for local_path in (_USER_DEFAULTS_PATH, Path(".user_defaults.py")):
+    legacy_py = Path(".user_defaults.py")
+    for local_path in (_USER_DEFAULTS_PATH, legacy_py):
         if local_path.exists():
             overrides = _load_override_file(local_path)
             if overrides:
+                if local_path == _USER_DEFAULTS_PATH and legacy_py.exists():
+                    # The first autosave of a .py user creates the JSON file;
+                    # keep reading the .py underneath it, key by key, or its
+                    # grants/strikes/employer silently fall back to the demo
+                    # DEFAULTS (audit-1101 F-20). The JSON (newer) wins.
+                    overrides = {**_load_override_file(legacy_py), **overrides}
                 return local_path, overrides
     return None, {}
 
@@ -190,8 +198,8 @@ def _save_target() -> Path:
     yet, a ``.json`` ``ROTH_PLANNER_DEFAULTS`` path is preferred over the local
     ``.user_defaults.json`` because the env file wins at load time once it is
     non-empty. A Python override file cannot be written, so a ``.py`` source
-    falls back to the local JSON file, which the loader reads only while that
-    ``.py`` file supplies nothing.
+    falls back to the local JSON file; once that holds a key, the loader reads
+    the JSON on top of the local ``.py`` (see :func:`_resolve_overrides`).
     """
     source, _overrides = _resolve_overrides()
     if source is not None and source.suffix == ".json":
