@@ -38,7 +38,7 @@ from collections.abc import Mapping
 from importlib import util
 from pathlib import Path
 
-from engine.demo_mode import is_demo_mode
+from engine.demo_mode import demo_for_run
 from models.legacy_keys import migrate_legacy_keys
 
 from .defaults import DEFAULTS
@@ -164,7 +164,7 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
     counts, so the demo ``DEFAULTS`` apply and the autosave has no target; the
     personal files are left on disk untouched (audit-1018 D2).
     """
-    if is_demo_mode():
+    if demo_for_run():
         return None, {}
     env_path = _env_override_path()
     if env_path is not None:
@@ -189,6 +189,21 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
                     overrides = {**_load_override_file(legacy_py), **overrides}
                 return local_path, overrides
     return None, {}
+
+
+def personal_defaults_files() -> list[Path]:
+    """The existing override files that can hold the user's settings.
+
+    For a safety copy (:mod:`engine.store.backup`); ignores demo mode, so it
+    also answers while a demo-bound run is leaving demo mode.
+    """
+    candidates: list[Path] = []
+    env_path = _env_override_path()
+    if env_path is not None:
+        candidates.append(env_path)
+    if not os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
+        candidates += [_USER_DEFAULTS_PATH, Path(".user_defaults.py")]
+    return [path for path in candidates if path.is_file()]
 
 
 def _save_target() -> Path:
@@ -226,8 +241,11 @@ def save_user_defaults(data: dict) -> None:
     On success, the file is chmod'd to 0o600 (best-effort) since we are the
     writer this time and can proactively enforce safe permissions.
     """
-    if is_demo_mode():
-        return  # demo values must never land in the personal file (audit-1018 F-28)
+    if demo_for_run():
+        # Demo values must never land in the personal file (audit-1018 F-28),
+        # including from a run that began in demo mode and saves after
+        # "Leave demo mode" removed the marker.
+        return
     path = _save_target()
     # Preserve manually-added override keys the app doesn't manage (e.g.
     # grant_strikes): merge the incoming managed data ON TOP of whatever is

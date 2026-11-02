@@ -2,21 +2,59 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import streamlit as st
 
-from config.loader import save_user_defaults
+from config.loader import personal_defaults_files, save_user_defaults
 from config.scalar_registry import session_key_for_config_key
-from engine.demo_mode import enter_demo_mode, leave_demo_mode
+from engine.demo_mode import (
+    begin_run,
+    enter_demo_mode,
+    is_demo_mode,
+    leave_demo_mode,
+    reading_real_storage,
+)
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner
 from engine.portfolio_sync import merge_snapshots
 from engine.portfolio_sync.shapes import portfolio_snapshot_from_dict
-from engine.store import StoreUnavailableError
+from engine.store import StoreUnavailableError, personal_db_file
 from engine.store.backend import DictBackend
+from engine.store.backup import backup_files
 from engine.store.core import Store
 from engine.upload_merge import SCALAR_KEYS, build_user_defaults_session_updates
 
 # This browser session's in-memory store while demo mode is on (audit-1101 F-12).
 DEMO_STORE_KEY = "_demo_session_store"
+# Whether this session's values were seeded in demo mode (True) or not (False).
+STORAGE_MODE_KEY = "_storage_mode_demo"
+
+
+def bind_run_storage_mode() -> None:
+    """Bind this run's storage mode; app.py calls it first thing in every run.
+
+    The run is demo-bound when the demo marker exists OR this session was
+    seeded in demo mode: then no read or write of the run touches the personal
+    file or database (engine.demo_mode.demo_for_run), even after "Leave demo
+    mode" (this tab or another) removed the marker. Before this, a run holding
+    demo values saved them over the user's real settings.
+
+    When the marker no longer matches how the session was seeded (another tab
+    entered or left demo mode), the session's values belong to the other mode:
+    clear them and rerun so they are re-seeded for the current mode. The clear
+    happens in this demo-bound run, so nothing is saved on the way.
+    """
+    now_demo = is_demo_mode()
+    seeded_demo = st.session_state.get(STORAGE_MODE_KEY)
+    begin_run(demo=now_demo or bool(seeded_demo))
+    st.session_state[STORAGE_MODE_KEY] = now_demo
+    if seeded_demo is not None and seeded_demo != now_demo:
+        _clear_session_for_reseed()
+        if now_demo:
+            st.session_state["_suppress_snapshot_autoload"] = True
+        else:
+            st.session_state.pop("_suppress_snapshot_autoload", None)
+        st.rerun()
 
 
 def session_demo_store() -> Store:
@@ -416,17 +454,38 @@ def _clear_personal_session_state() -> None:
     # clears this via _apply_portfolio_snapshot().
     st.session_state["_suppress_snapshot_autoload"] = True
     enter_demo_mode()
+    st.session_state[STORAGE_MODE_KEY] = True
+
+
+def backup_personal_files(label: str) -> list:
+    """Dated copies of the personal settings file(s) and database (best-effort)."""
+    files = [*personal_defaults_files()]
+    db_file = personal_db_file()
+    if db_file is not None:
+        files.append(db_file)
+    return backup_files(files, label=label, now=datetime.now())
 
 
 def exit_demo_mode() -> None:
-    """Leave demo mode: the personal on-disk data is read again from the next run."""
+    """Leave demo mode: the personal on-disk data is read again from the next run.
+
+    This run stays demo-bound (it began in demo mode), so nothing it still
+    holds is saved; the next run re-seeds from the personal data. A dated copy
+    of the personal settings file and database is taken first, before any run
+    can write them again.
+    """
     _clear_session_for_reseed()
     st.session_state.pop("_suppress_snapshot_autoload", None)
+    begin_run(demo=True)  # already true via bind_run_storage_mode; made explicit here
     leave_demo_mode()
+    st.session_state[STORAGE_MODE_KEY] = False
+    backup_personal_files("demo-exit")
     # The demo-chosen owner lives in the session only (the write went to the
     # session's demo store); app.py's setdefault would keep it, so re-seed from the real
     # store with the same unreadable-owner -> None fallback (audit-1026 F-21).
+    # A read only: this run is still demo-bound for writes.
     try:
-        st.session_state["instance_owner"] = load_instance_owner()
+        with reading_real_storage():
+            st.session_state["instance_owner"] = load_instance_owner()
     except (CorruptInstanceOwnerError, StoreUnavailableError):
         st.session_state["instance_owner"] = None

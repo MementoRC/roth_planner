@@ -39,6 +39,7 @@ from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
 from views._format import (
     DOLLAR_TICKFORMAT,
+    DOLLAR_TICKFORMATSTOPS,
     FORM_8606_CAPTION,
     fmt_dollars,
     fmt_pct,
@@ -415,6 +416,7 @@ def render(hh: Household) -> None:
         xaxis_title="Conversion Amount ($)",
         yaxis_title="Marginal Cost per $1,000",
         xaxis_tickformat=DOLLAR_TICKFORMAT,
+        xaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         yaxis_tickformat="$,.0f",
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
@@ -598,7 +600,9 @@ def render(hh: Household) -> None:
             "range": [0, 40],
         },
         xaxis_tickformat=DOLLAR_TICKFORMAT,
+        xaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )

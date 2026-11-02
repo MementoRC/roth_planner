@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from engine.store import CorruptDocumentError, CorruptStoreError, get_store
+from engine.store import CorruptDocumentError, CorruptStoreError, Store, get_store
 from engine.store.namespaces import CANDIDATE_STORE
 from models.grants import StockGrant
 from models.legacy_keys import migrate_legacy_keys
@@ -114,6 +114,10 @@ class CandidateStore:
         # that), so this attribute is the recoverable signal in its place —
         # see ``load``'s docstring.
         self.load_corrupt: bool = False
+        # The Store ``load`` read from; ``save`` writes back to it, so a store
+        # loaded in demo mode can never be saved into the personal database
+        # after the mode flips (and vice versa).
+        self._origin: Store | None = None
 
     def record_candidate(self, field_key: str, value: Any, prov: Provenance) -> None:
         """Upsert the latest candidate for ``field_key`` from ``prov.source``."""
@@ -214,9 +218,9 @@ class CandidateStore:
         empty store ``load`` returned for it must never clobber the user's
         candidates (audit-0823). An unknown Source or stale StockGrant fields
         count as unreadable too (audit-1008 F-44). The check and the write are
-        one transaction.
+        one transaction. A loaded store saves to the Store it was loaded from.
         """
-        store = get_store()
+        store = self._origin if self._origin is not None else get_store()
         with store.transaction():
             try:
                 saved = store.get(CANDIDATE_STORE)
@@ -236,11 +240,13 @@ class CandidateStore:
         run (``load_corrupt`` stays False). Storage that cannot be opened at
         all still raises ``StoreUnavailableError``.
         """
+        origin = get_store()
         try:
-            saved = get_store().get(CANDIDATE_STORE)
-            return cls() if saved is None else cls.from_json(saved)
+            saved = origin.get(CANDIDATE_STORE)
+            loaded = cls() if saved is None else cls.from_json(saved)
         except (CorruptStoreError, *_SHAPE_ERRORS) as exc:
             logger.warning("saved candidate store is unreadable (%s); using an empty one", exc)
-            empty = cls()
-            empty.load_corrupt = True
-            return empty
+            loaded = cls()
+            loaded.load_corrupt = True
+        loaded._origin = origin
+        return loaded

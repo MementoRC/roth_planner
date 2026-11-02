@@ -24,6 +24,7 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from models.household import Household
 from views._format import (
     DOLLAR_TICKFORMAT,
+    DOLLAR_TICKFORMATSTOPS,
     FORM_8606_CAPTION,
     fmt_dollars,
     fmt_dollars_short,
@@ -152,6 +153,7 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="IRA + Roth Balance ($)",
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
@@ -177,6 +179,7 @@ def render(hh: Household):
             xaxis_title="Your Age",
             yaxis_title="Federal Tax ($)",
             yaxis_tickformat=DOLLAR_TICKFORMAT,
+            yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
             height=350,
         )
         st.plotly_chart(fig_tax, width="stretch")
@@ -241,6 +244,7 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title=f"Net Benefit vs {baseline_s.name} ($)",
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
@@ -270,6 +274,7 @@ def render(hh: Household):
         xaxis_title="Your Age",
         yaxis_title="Annual RMD ($)",
         yaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformatstops=DOLLAR_TICKFORMATSTOPS,
         height=400,
     )
     st.plotly_chart(fig_rmd, width="stretch")

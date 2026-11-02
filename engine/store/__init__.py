@@ -2,7 +2,9 @@
 
 ``get_store()`` picks the backend on every call (cheap):
 
-1. demo mode -> the session's demo store from :func:`set_demo_store_provider`
+1. demo mode (the marker, or a run that began in demo mode; see
+   :func:`engine.demo_mode.demo_for_run`) -> the session's demo store from
+   :func:`set_demo_store_provider`
    (app.py installs a per-browser-session in-memory store, so an import or a
    confirm works for that session; audit-1101 F-12), else a null store:
    reads absent, writes dropped. Either way nothing reaches disk (audit-1018
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from engine.data_bridge_browser import is_pyodide
-from engine.demo_mode import is_demo_mode
+from engine.demo_mode import demo_for_run
 from engine.store.backend import Backend, DictBackend, NullBackend, RoutedBackend
 from engine.store.core import META_NAMESPACE, SINGLE_KEY, Store, register_namespace
 from engine.store.errors import (
@@ -50,6 +52,7 @@ __all__ = [
     "get_store",
     "legacy_dir",
     "migration_notice",
+    "personal_db_file",
     "register_namespace",
     "saving_disabled",
     "set_demo_store_provider",
@@ -81,6 +84,17 @@ def legacy_dir() -> Path:
     return _LEGACY_DIR
 
 
+def personal_db_file() -> Path | None:
+    """The database file a real (non-demo) run writes, if it exists; else None.
+
+    None when a test store is installed or in the browser build (in-memory).
+    """
+    if _override is not None or is_pyodide():
+        return None
+    path = db_path()
+    return path if path.is_file() else None
+
+
 def set_store(store: Store | None) -> None:
     """Install *store* for every ``get_store()`` call (tests); ``None`` restores selection."""
     global _override
@@ -99,7 +113,7 @@ def set_demo_store_provider(provider: Callable[[], Store] | None) -> None:
 
 def get_store() -> Store:
     """The Store for the current environment; see the module docstring."""
-    if is_demo_mode():
+    if demo_for_run():  # the marker, or a run that began in demo mode
         return _demo_store_provider() if _demo_store_provider is not None else _null_store
     if _override is not None:
         return _override

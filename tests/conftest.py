@@ -221,6 +221,16 @@ def _isolated_store(_redirect_cache_paths_to_tmp):
     store.backend.close()
 
 
+@pytest.fixture(autouse=True)
+def _clear_demo_run_binding():
+    """A run binding (engine.demo_mode.begin_run) must not leak between tests."""
+    import engine.demo_mode as demo_mode
+
+    demo_mode.clear_run_binding()
+    yield
+    demo_mode.clear_run_binding()
+
+
 @pytest.fixture
 def store(_isolated_store):
     """The test's Store (same object get_store() returns)."""

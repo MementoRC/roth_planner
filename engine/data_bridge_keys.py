@@ -15,7 +15,7 @@ import stat
 import warnings
 from pathlib import Path
 
-from engine.demo_mode import is_demo_mode
+from engine.demo_mode import demo_for_run
 
 PUBKEY_PATH = Path.home() / ".finextract" / "data-bridge.pub"
 PRIVKEY_PATH = Path.home() / ".finextract" / "data-bridge.priv"
@@ -198,7 +198,7 @@ def write_keypair(pubkey: bytes, privkey: bytes, *, force: bool = False) -> None
     - Demo mode (audit-1018 W9b, issue #43): a no-op -- demo mode never touches
       personal files.
     """
-    if is_demo_mode():
+    if demo_for_run():
         return
     PUBKEY_PATH.parent.mkdir(parents=True, exist_ok=True)
     exclusive = not force
