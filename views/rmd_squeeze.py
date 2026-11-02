@@ -33,6 +33,7 @@ from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_value as _index_value
 from models.household import Household
 from views._format import (
+    DOLLAR_TICKFORMAT,
     FORM_8606_CAPTION,
     fmt_dollars,
     fmt_dollars_short,
@@ -335,7 +336,7 @@ def render(hh: Household):
         barmode="stack",
         xaxis_title="Your Age",
         yaxis_title="Income ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
@@ -419,7 +420,7 @@ def render(hh: Household):
             barmode="stack",
             xaxis_title="Your Age",
             yaxis_title="Annual Cost ($)",
-            yaxis_tickformat="$,.0s",
+            yaxis_tickformat=DOLLAR_TICKFORMAT,
             height=350,
         )
         st.plotly_chart(fig_nc, width="stretch")
@@ -463,7 +464,7 @@ def render(hh: Household):
             barmode="stack",
             xaxis_title="Your Age",
             yaxis_title="Annual Cost ($)",
-            yaxis_tickformat="$,.0s",
+            yaxis_tickformat=DOLLAR_TICKFORMAT,
             height=350,
         )
         st.plotly_chart(fig_wc, width="stretch")
@@ -501,7 +502,7 @@ def render(hh: Household):
     fig_brok.update_layout(
         xaxis_title="Your Age",
         yaxis_title="Brokerage Balance ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=350,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
@@ -538,7 +539,7 @@ def render(hh: Household):
         fig_qcd.update_layout(
             xaxis_title="Your Age",
             yaxis_title="Annual Federal Tax ($)",
-            yaxis_tickformat="$,.0s",
+            yaxis_tickformat=DOLLAR_TICKFORMAT,
             height=400,
             legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
         )

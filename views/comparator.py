@@ -22,7 +22,14 @@ from engine.scenario_compare import (
 )
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from models.household import Household
-from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_dollars_short, fmt_pct
+from views._format import (
+    DOLLAR_TICKFORMAT,
+    FORM_8606_CAPTION,
+    fmt_dollars,
+    fmt_dollars_short,
+    fmt_pct,
+    verb_for,
+)
 from views._shared import render_completeness_badge
 from views._style import render_page_header
 
@@ -144,7 +151,7 @@ def render(hh: Household):
     fig_ira.update_layout(
         xaxis_title="Your Age",
         yaxis_title="IRA + Roth Balance ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "right", "x": 0.99},
     )
@@ -169,7 +176,7 @@ def render(hh: Household):
         fig_tax.update_layout(
             xaxis_title="Your Age",
             yaxis_title="Federal Tax ($)",
-            yaxis_tickformat="$,.0s",
+            yaxis_tickformat=DOLLAR_TICKFORMAT,
             height=350,
         )
         st.plotly_chart(fig_tax, width="stretch")
@@ -233,7 +240,7 @@ def render(hh: Household):
     fig_net.update_layout(
         xaxis_title="Your Age",
         yaxis_title=f"Net Benefit vs {baseline_s.name} ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=400,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
@@ -262,7 +269,7 @@ def render(hh: Household):
         barmode="group",
         xaxis_title="Your Age",
         yaxis_title="Annual RMD ($)",
-        yaxis_tickformat="$,.0s",
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=400,
     )
     st.plotly_chart(fig_rmd, width="stretch")
@@ -310,7 +317,8 @@ def render(hh: Household):
             base_age = hh.your_age if who_dies == "you" else hh.spouse_age
             death_age_display = base_age + (surv.death_year - hh.base_year)
             st.caption(
-                f"Modeling: **{who_dies}** dies in **{surv.death_year}** (age {death_age_display})."
+                f"Modeling: **{who_dies}** {verb_for(who_dies, 'die')} in "
+                f"**{surv.death_year}** (age {death_age_display})."
             )
         else:
             st.caption(

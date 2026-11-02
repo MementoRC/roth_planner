@@ -31,19 +31,26 @@ from engine.irmaa import (
 )
 from engine.niit import NIIT_RATE, NIIT_THRESHOLD_MFJ, NIIT_THRESHOLD_SINGLE
 from models.household import Household
-from views._format import fmt_dollars, fmt_pct, md_dollars
+from views._format import DOLLAR_TICKFORMAT, fmt_dollars, fmt_pct, md_dollars
 from views._shared import render_completeness_badge, render_readonly_input
 from views._style import render_page_header
 
-# d3 "~s" with 3 significant digits: "$250k", "$1.25M". ".0s" kept one digit,
-# so neighbouring ticks repeated ("$200k", "$200k") and $0.50 showed as "$500m".
-DOLLAR_TICKS = "$,.3~s"
+# The shared 3-significant-digit dollar tick format (views/_format.py).
+DOLLAR_TICKS = DOLLAR_TICKFORMAT
 
 IRMAA_ROOM_CAPTION = (
     "IRMAA Room is for income earned that year (premiums two years later), "
     "measured against that year's own projected no-conversion MAGI (the base year "
     "uses the MAGI above); from the year after a death the survivor files Single."
 )
+
+
+def irmaa_legend_name(people: int) -> str:
+    """Legend for the IRMAA curve, naming the Medicare head count it was computed
+    with (audit-1101 F-19: it said "2 people" for every MFJ household)."""
+    if people <= 0:
+        return "IRMAA Surcharge (nobody on Medicare)"
+    return f"IRMAA Surcharge ({people} {'person' if people == 1 else 'people'})"
 
 
 def hidden_cost_is_flat(*series: list[float]) -> bool:
@@ -220,7 +227,7 @@ def render(hh: Household):
             go.Scatter(
                 x=magi_points,
                 y=curves.irmaa_vals,
-                name=f"IRMAA Surcharge ({'1 person' if hh.filing_status == 'Single' else '2 people'})",
+                name=irmaa_legend_name(curves.irmaa_people),
                 line={"color": "#f59e0b", "width": 2},
                 fill="tozeroy",
                 fillcolor="rgba(245,158,11,0.15)",

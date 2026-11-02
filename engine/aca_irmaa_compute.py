@@ -295,6 +295,9 @@ class CostCurves:
     # income, if applied) folded into every NIIT computation below. Exposed so the
     # view can show the manual field's "on top of X auto-detected" meaning.
     auto_nii: float = 0.0
+    # audit-1101 F-19: Medicare head count in the IRMAA payment year that
+    # irmaa_vals was priced with, so the legend can name it.
+    irmaa_people: int = 0
 
 
 def compute_cost_curves(
@@ -532,6 +535,7 @@ def compute_cost_curves(
         nontaxable_ss=nontaxable_ss,
         aca_cliff_magi=aca_cliff_magi,
         auto_nii=auto_nii,
+        irmaa_people=on_medicare,
     )
 
 

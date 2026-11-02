@@ -37,7 +37,13 @@ from engine.sweet_spot_draw_curve import (
 from engine.tax import BRACKETS_MFJ, BRACKETS_SINGLE
 from engine.tax_indexing import index_bracket_list as _index_brackets
 from models.household import Household
-from views._format import FORM_8606_CAPTION, fmt_dollars, fmt_pct, md_dollars
+from views._format import (
+    DOLLAR_TICKFORMAT,
+    FORM_8606_CAPTION,
+    fmt_dollars,
+    fmt_pct,
+    md_dollars,
+)
 from views._shared import render_completeness_badge, render_readonly_input
 from views._style import render_page_header
 
@@ -408,7 +414,7 @@ def render(hh: Household) -> None:
     fig_m.update_layout(
         xaxis_title="Conversion Amount ($)",
         yaxis_title="Marginal Cost per $1,000",
-        xaxis_tickformat="$,.0s",
+        xaxis_tickformat=DOLLAR_TICKFORMAT,
         yaxis_tickformat="$,.0f",
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
@@ -591,8 +597,8 @@ def render(hh: Household) -> None:
             "side": "right",
             "range": [0, 40],
         },
-        xaxis_tickformat="$,.0s",
-        yaxis_tickformat="$,.0s",
+        xaxis_tickformat=DOLLAR_TICKFORMAT,
+        yaxis_tickformat=DOLLAR_TICKFORMAT,
         height=450,
         legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
     )
