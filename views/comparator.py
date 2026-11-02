@@ -33,6 +33,7 @@ from views._format import (
 )
 from views._shared import render_completeness_badge
 from views._style import render_page_header
+from views.ytd_drafts import OWNER_LABELS
 
 COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6"]
 SCENARIO_PRESETS = {
@@ -54,6 +55,27 @@ def _baseline_index(scenarios: list[ScenarioResult]) -> int:
     while the chart searched for "No Conv" by name).
     """
     return next((i for i, s in enumerate(scenarios) if "No Conv" in s.name), 0)
+
+
+def survivor_caption(
+    who_dies: str,
+    death_ages: list[int],
+    *,
+    death_year: int | None = None,
+    death_age: int | None = None,
+) -> str:
+    """Caption naming whose death the Surviving Spouse table models.
+
+    The owner is shown by its display label ("You", "Spouse"), never the raw
+    lowercase slot key (issue #101)."""
+    label = OWNER_LABELS.get(who_dies, who_dies.capitalize())
+    verb = verb_for(who_dies, "die")
+    if death_year is not None:
+        return f"Modeling: **{label}** {verb} in **{death_year}** (age {death_age})."
+    return (
+        f"Default sweep: {label} {verb} at ages {death_ages} — set a Survivor scenario "
+        "in **Profile › Assumptions** to model a specific case."
+    )
 
 
 def render(hh: Household):
@@ -322,13 +344,15 @@ def render(hh: Household):
             base_age = hh.your_age if who_dies == "you" else hh.spouse_age
             death_age_display = base_age + (surv.death_year - hh.base_year)
             st.caption(
-                f"Modeling: **{who_dies}** {verb_for(who_dies, 'die')} in "
-                f"**{surv.death_year}** (age {death_age_display})."
+                survivor_caption(
+                    who_dies,
+                    death_ages,
+                    death_year=surv.death_year,
+                    death_age=death_age_display,
+                )
             )
         else:
-            st.caption(
-                f"Default sweep: you die at ages {death_ages} — set a Survivor scenario in **Profile › Assumptions** to model a specific case."
-            )
+            st.caption(survivor_caption(who_dies, death_ages))
 
         survivor_rows = compute_survivor_snapshot(hh, scenarios, who_dies, death_ages)
 

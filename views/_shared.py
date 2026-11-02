@@ -556,12 +556,18 @@ def render_completeness_badge(hh: Household) -> None:
         st.caption(
             f"Data completeness: {pct}% -- {len(completeness.issues)} item(s) need attention"
         )
+    note = st.session_state.pop(CONFIRM_AS_IS_NOTICE_KEY, None)
+    if note:
+        st.success(note)
     with st.expander("Data sources", expanded=False):
         st.markdown(data_source_table(completeness.items))
         _render_confirm_as_is_buttons(completeness.items)
 
 
 CONFIRMABLE_SEVERITIES = ("unconfirmed", "stale")
+# A "Mark X as confirmed" note, carried over the st.rerun() that follows it and
+# drawn once by the badge (issue #99; same pattern as Review Changes' Confirm).
+CONFIRM_AS_IS_NOTICE_KEY = "_confirm_as_is_notice"
 
 
 def _confirm_as_is_and_save(field_key: str) -> bool:
@@ -598,6 +604,7 @@ def _render_confirm_as_is_buttons(items: tuple[DataStatusItem, ...]) -> None:
             continue
         clicked = st.button(f"Mark {item.label} as confirmed", key=f"confirm_asis_{item.field}")
         if clicked and _confirm_as_is_and_save(item.field):
+            st.session_state[CONFIRM_AS_IS_NOTICE_KEY] = f"Confirmed {item.label}."
             st.rerun()
 
 
