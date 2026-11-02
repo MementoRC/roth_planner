@@ -77,17 +77,45 @@ class OptimizerResult:
     baseline_score: float = 0.0
 
 
+@dataclass
+class _BaseProjection:
+    """Per-year results of the conversion-free base projection (see
+    ``_base_projection_detail``)."""
+
+    base_ordinary: dict[int, float]
+    magi_wedge: dict[int, float]
+    # audit-1101 F-05: aca_magi - combined_gross. ACA MAGI (IRC §36B(d)(2)(B))
+    # adds the non-taxable part of Social Security back, so the aca-safe ceiling
+    # needs this wedge, not the IRMAA-MAGI one.
+    aca_magi_wedge: dict[int, float]
+    total_deductions: dict[int, float]
+    filing_status: dict[int, str]
+
+
 def _base_projection(
     hh: Household,
     end_age: int = 95,
     ytd: YTDSnapshot | None = None,
     net_inv_income: float = 0.0,
 ) -> tuple[dict[int, float], dict[int, float], dict[int, float], dict[int, str]]:
-    """Conversion-free base projection. Returns per-year dicts:
-    (base_ordinary, magi_wedge, total_deductions, filing_status).
+    """(base_ordinary, magi_wedge, total_deductions, filing_status) of
+    ``_base_projection_detail``."""
+    base = _base_projection_detail(hh, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income)
+    return base.base_ordinary, base.magi_wedge, base.total_deductions, base.filing_status
+
+
+def _base_projection_detail(
+    hh: Household,
+    end_age: int = 95,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> _BaseProjection:
+    """Conversion-free base projection, as per-year dicts.
     base_ordinary nets option income out of ordinary gross (schedule-independent
-    baseline); magi_wedge = magi - combined_gross (LTCG/dividends/muni/taxable-SS
-    delta above ordinary gross), used to put MAGI ceilings on the ordinary basis.
+    baseline); magi_wedge = magi - combined_gross (LTCG/dividends/muni delta
+    above ordinary gross), used to put MAGI ceilings on the ordinary basis;
+    aca_magi_wedge is the same for ACA MAGI, which also counts the non-taxable
+    part of Social Security.
 
     The projection always runs the default hold-to-expiry schedule, never the
     household's stored one (issue #546): option cash funds living expenses, so
@@ -111,6 +139,7 @@ def _base_projection(
     realized_nqo = ytd.nqo_exercise_ytd if ytd is not None else 0.0
     base_ordinary: dict[int, float] = {}
     magi_wedge: dict[int, float] = {}
+    aca_magi_wedge: dict[int, float] = {}
     total_deductions: dict[int, float] = {}
     filing_status: dict[int, str] = {}
     for yr in result.years:
@@ -124,9 +153,12 @@ def _base_projection(
         )
         base_ordinary[yr.year] = yr.combined_gross - option_counted
         magi_wedge[yr.year] = yr.magi - yr.combined_gross
+        aca_magi_wedge[yr.year] = yr.aca_magi - yr.combined_gross
         total_deductions[yr.year] = yr.total_deductions
         filing_status[yr.year] = yr.filing_status or hh.filing_status
-    return base_ordinary, magi_wedge, total_deductions, filing_status
+    return _BaseProjection(
+        base_ordinary, magi_wedge, aca_magi_wedge, total_deductions, filing_status
+    )
 
 
 def _ceiling_income_by_year(
@@ -135,10 +167,16 @@ def _ceiling_income_by_year(
     total_deductions: dict[int, float],
     magi_wedge: dict[int, float],
     filing_status: dict[int, str],
+    *,
+    aca_magi_wedge: dict[int, float] | None = None,
 ) -> dict[int, float]:
     """Per-year ORDINARY-income ceiling for a strategy. Bracket strategies:
     deductions + indexed bracket top (== room_to_X at gross 0). MAGI strategies:
-    the MAGI ceiling converted to the ordinary basis by subtracting magi_wedge."""
+    the MAGI ceiling converted to the ordinary basis by subtracting magi_wedge.
+
+    audit-1101 F-05: the aca-safe cliff is an ACA-MAGI test, so in pre-Medicare
+    years it subtracts ``aca_magi_wedge`` (which counts the non-taxable part of
+    Social Security) when given; ``magi_wedge`` otherwise."""
     cpi = hh.cpi_assumption
     ceilings: dict[int, float] = {}
     if strategy in _BRACKET_ROOM_FNS:
@@ -161,7 +199,8 @@ def _ceiling_income_by_year(
             )
             ceilings[year] = min(ordinary_ceiling, bracket_cap)
         elif _anyone_pre_medicare(hh, year):  # aca-safe
-            ceilings[year] = aca_ceiling_magi(fs, year, cpi) - wedge
+            aca_wedge = aca_magi_wedge[year] if aca_magi_wedge is not None else wedge
+            ceilings[year] = aca_ceiling_magi(fs, year, cpi) - aca_wedge
         else:
             # aca-safe once nobody is under 65 falls back to IRMAA tier-1,
             # mirroring auto_fill_aca's _aca_room.
@@ -326,6 +365,13 @@ def _lifetime_total_cost(years: list[YearResult]) -> float:
     equivalent to ``all_in_cost + (federal_tax_amt - conversion_tax)`` without
     double-counting conversion_tax.
 
+    audit-1101 F-02: the ACA term is ``yr.aca_premium_cost`` -- the premium the
+    household actually pays -- not ``yr.aca_loss``. aca_loss is the
+    conversion-marginal subsidy loss, so option income (present with and
+    without the conversion) never moved it, and a schedule that pushed MAGI
+    over the ACA cliff looked free. aca_premium_cost is net of any excess-APTC
+    repayment, which is already in federal_tax_amt, so nothing is counted twice.
+
     audit-1008 F-07: the 10% early-withdrawal penalty the waterfall charges when
     a plan forces pre-59½ IRA/Roth draws is a real cost of that plan too.
     """
@@ -337,7 +383,7 @@ def _year_cost(yr: YearResult) -> float:
     return (
         yr.federal_tax_amt
         + yr.irmaa_cost
-        + yr.aca_loss
+        + yr.aca_premium_cost
         + yr.niit_cost
         + yr.conversion_ltcg_cost
         + yr.forced_early_withdrawal_penalty
@@ -392,6 +438,7 @@ def _score_candidate(
     end_age: int,
     *,
     magi_ceiling_fn: Callable[[int, str], float] | None = None,
+    magi_of: Callable[[YearResult], float] | None = None,
     discount_rate: float = 0.0,
     terminal_tax_rate: float = DEFAULT_TERMINAL_IRA_TAX_RATE,
     qcds: Mapping[int, float] | None = None,
@@ -405,7 +452,9 @@ def _score_candidate(
     When ``magi_ceiling_fn`` is provided, ``over_ceiling_years`` is recomputed
     from the SCORED result's true per-year MAGI (rather than trusting the
     caller-supplied list), so MAGI-strategy candidates report over-ceiling
-    years that reflect the actual auto-filled/scenario-run MAGI.
+    years that reflect the actual auto-filled/scenario-run MAGI. ``magi_of``
+    picks which MAGI a year is tested on (default ``yr.magi``; the aca-safe
+    strategy passes ACA MAGI -- audit-1101 F-05).
 
     audit-1008 F-60: ``qcds`` / ``spouse_qcds`` are the current plan's QCDs.
     QCDs are a giving decision, not a conversion strategy, and Apply keeps the
@@ -422,10 +471,11 @@ def _score_candidate(
     result = run_scenario(hh_copy, plan, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income)
     lifetime = _lifetime_total_cost(result.years)
     if magi_ceiling_fn is not None:
+        tested_magi = magi_of or (lambda yr: yr.magi)
         over_ceiling_years = [
             yr.year
             for yr in result.years
-            if yr.magi > magi_ceiling_fn(yr.year, yr.filing_status or hh.filing_status)
+            if tested_magi(yr) > magi_ceiling_fn(yr.year, yr.filing_status or hh.filing_status)
         ]
     terminal = _terminal_deferred_tax(result.years, terminal_tax_rate)
     return OptimizedPlan(
@@ -451,6 +501,11 @@ def _magi_ceiling_for(
     if not _anyone_pre_medicare(hh, year):
         return math.inf
     return aca_ceiling_magi(filing_status, year, cpi)  # aca-safe
+
+
+def _aca_magi(yr: YearResult) -> float:
+    """ACA MAGI of a year: what the aca-safe cliff is tested on."""
+    return yr.aca_magi
 
 
 def _anyone_pre_medicare(hh: Household, year: int) -> bool:
@@ -506,9 +561,7 @@ def optimize_exercises(
         raise ValueError(f"discount_rate must be greater than -1, got {discount_rate}")
     if ceilings is None:
         ceilings = DEFAULT_CEILINGS
-    base_ordinary, magi_wedge, total_deductions, filing_status = _base_projection(
-        hh, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
-    )
+    base = _base_projection_detail(hh, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income)
     cpi = hh.cpi_assumption
     # Redesign PR 4a: option income already realized this year is a floor on
     # the base year's year-total schedule. Per-grant attribution comes from
@@ -532,13 +585,18 @@ def optimize_exercises(
     candidates: list[OptimizedPlan] = []
     for label, strategy, autofill_fn in ceilings:
         ceiling_by_year = _ceiling_income_by_year(
-            hh, strategy, total_deductions, magi_wedge, filing_status
+            hh,
+            strategy,
+            base.total_deductions,
+            base.magi_wedge,
+            base.filing_status,
+            aca_magi_wedge=base.aca_magi_wedge,
         )
         schedule, over = _build_candidate_schedule(
             hh.grants,
             hh.base_year,
             ceiling_by_year,
-            base_ordinary,
+            base.base_ordinary,
             price_for_year,
             option_income_floor=option_floor,
             floor_by_grant=floor_by_grant,
@@ -558,6 +616,7 @@ def optimize_exercises(
             ytd,
             end_age,
             magi_ceiling_fn=magi_fn,
+            magi_of=_aca_magi if strategy == "aca-safe" else None,
             discount_rate=discount_rate,
             terminal_tax_rate=terminal_tax_rate,
             qcds=current_plan.qcds if current_plan is not None else None,
