@@ -451,7 +451,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
     c4.metric(
         "Room to NIIT",
         fmt_dollars(headroom.room_to_niit),
-        help=f"MAGI-based ({fmt_dollars_short(_niit_thr, decimals=0, suffix='K')}) — LTCG DOES consume this",
+        help=f"MAGI-based ({fmt_dollars_short(_niit_thr, decimals=0, suffix='auto')}) — LTCG DOES consume this",
     )
 
     if not headroom.irmaa_relevant:
