@@ -104,7 +104,7 @@ class TestBuildV5:
         b = _build()
         assert BUNDLE_FORMAT_VERSION_V5 == 5
         assert BUNDLE_FORMAT_VERSION == 4  # v4 builder untouched
-        assert b["format_version"] == 5
+        assert b["format_version"] == 6  # per-year Koinly slots (issue #96)
         assert b["exported_at"] == NOW
         assert b["exported_by"] == "you"
         assert set(b) == {
@@ -260,7 +260,7 @@ class TestClassify:
         with pytest.raises(UnsupportedBundleVersionError, match="no format_version"):
             classify_bundle({"your_age": 61, "filing_status": "MFJ"})
 
-    @pytest.mark.parametrize("version", [6, 0, -1, "5", True, 5.0])
+    @pytest.mark.parametrize("version", [7, 0, -1, "5", True, 5.0])
     def test_classify_future_or_bogus_version_refused(self, version):
         with pytest.raises(UnsupportedBundleVersionError, match=repr(version)):
             classify_bundle({"format_version": version})

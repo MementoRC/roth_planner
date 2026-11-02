@@ -25,6 +25,7 @@ from .shapes import (
     Holding,
     PortfolioSnapshot,
     account_summary_from_dict,
+    kept_saved_from,
     known_fields,
 )
 
@@ -155,8 +156,24 @@ def fetch_portfolio(
     if kept:
         what = " and ".join(kept)
         snap.error = f"equity {what} fetch failed; kept the saved {what}"
+        snap.kept_saved = kept
 
     return snap
+
+
+def kept_saved_note(snap: PortfolioSnapshot | None, part: str) -> str | None:
+    """A caption saying *part* ("grants" / "shares") is the saved copy, or None.
+
+    Shown beside the grants table and the shares section for as long as the
+    saved portfolio records that the last sync could not fetch *part*
+    (issue #97); the one-shot "Synced:" message is gone after one run.
+    """
+    if snap is None or part not in snap.kept_saved:
+        return None
+    return (
+        f"The last sync could not fetch the equity {part}, so these are the "
+        f"previously saved {part}. Sync again to refresh them."
+    )
 
 
 class EmptySnapshotWriteRefusedError(RuntimeError):
@@ -276,6 +293,7 @@ def _snapshot_from_cache(data: dict) -> PortfolioSnapshot:
         error=data.get("error"),
         imported_from_bundle=bool(data.get("imported_from_bundle", False)),
         equity_grants_owner=str(data.get("equity_grants_owner", "") or ""),
+        kept_saved=kept_saved_from(data.get("kept_saved")),
         equity_sales_lots=equity_sales.get("lots") or [],
         equity_sales_executions=equity_sales.get("executions") or [],
         order_detail_summary_captured_at=(ods_meta or {}).get("captured_at", "") or "",

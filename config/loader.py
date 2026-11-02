@@ -11,6 +11,12 @@ A missing or empty file falls through to the next one. The autosave
 (:func:`save_user_defaults`) writes to the JSON file this order selects, so an
 edit survives a restart even when ``ROTH_PLANNER_DEFAULTS`` is set.
 
+The first autosave beside a legacy ``.user_defaults.py`` migrates it: every
+key the ``.py`` holds is written into ``.user_defaults.json`` (the JSON wins
+where both have it), and once the JSON is confirmed to hold them all the
+``.py`` is renamed ``.user_defaults.py.migrated`` so it is never read again
+(issue #98).
+
 The .py override file should define `OVERRIDES: dict` with any subset of
 the keys in DEFAULTS; partial overrides are merged on top.
 
@@ -50,6 +56,8 @@ _log = logging.getLogger(__name__)
 # monkeypatch.setattr(config.loader, "_USER_DEFAULTS_PATH", tmp_path) instead
 # of every call site re-deriving the same literal.
 _USER_DEFAULTS_PATH = Path(".user_defaults.json")
+# The legacy Python override file, read underneath the JSON (cwd-relative).
+_LEGACY_PY_PATH = Path(".user_defaults.py")
 
 
 def _warn_if_insecure_permissions(path: Path) -> None:
@@ -176,7 +184,7 @@ def _resolve_overrides() -> tuple[Path | None, dict]:
     if os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
         return None, {}
 
-    legacy_py = Path(".user_defaults.py")
+    legacy_py = _LEGACY_PY_PATH
     for local_path in (_USER_DEFAULTS_PATH, legacy_py):
         if local_path.exists():
             overrides = _load_override_file(local_path)
@@ -202,7 +210,7 @@ def personal_defaults_files() -> list[Path]:
     if env_path is not None:
         candidates.append(env_path)
     if not os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
-        candidates += [_USER_DEFAULTS_PATH, Path(".user_defaults.py")]
+        candidates += [_USER_DEFAULTS_PATH, _LEGACY_PY_PATH]
     return [path for path in candidates if path.is_file()]
 
 
@@ -247,6 +255,8 @@ def save_user_defaults(data: dict) -> None:
         # "Leave demo mode" removed the marker.
         return
     path = _save_target()
+    legacy = _legacy_py_to_migrate(path)
+    legacy_overrides = _load_override_file(legacy) if legacy is not None else {}
     # Preserve manually-added override keys the app doesn't manage (e.g.
     # grant_strikes): merge the incoming managed data ON TOP of whatever is
     # already on disk rather than overwriting the whole file. Without this the
@@ -261,7 +271,9 @@ def save_user_defaults(data: dict) -> None:
                 # Rewrite pre-rename keys so the merged file carries only
                 # current names (old names are read, never written).
                 existing = migrate_legacy_keys(loaded)
-    merged = {**existing, **data}
+    # A legacy .py's keys go in underneath: the JSON (newer) wins key by key,
+    # exactly as _resolve_overrides already reads the two.
+    merged = {**legacy_overrides, **existing, **data}
     try:
         path.write_text(json.dumps(merged, indent=2, default=str))
     except OSError:
@@ -269,6 +281,56 @@ def save_user_defaults(data: dict) -> None:
         return
     with contextlib.suppress(OSError):
         path.chmod(0o600)
+    if legacy is not None and legacy_overrides:
+        _retire_legacy_py(legacy, path, legacy_overrides)
+
+
+def _legacy_py_to_migrate(target: Path) -> Path | None:
+    """The legacy ``.user_defaults.py`` a save to *target* should migrate, if any.
+
+    Only the local ``.user_defaults.json`` is read on top of the ``.py`` (see
+    :func:`_resolve_overrides`), so only a save there migrates it, and only a
+    ``.py`` in that same folder: the read is cwd-relative, and a test that
+    redirects the JSON must never reach a developer's real file in the cwd.
+    """
+    if target != _USER_DEFAULTS_PATH or os.environ.get("ROTH_PLANNER_IGNORE_USER_DEFAULTS"):
+        return None
+    legacy = _LEGACY_PY_PATH
+    if not legacy.is_file():
+        return None
+    try:
+        same_folder = legacy.resolve().parent == target.resolve().parent
+    except OSError:
+        return None
+    return legacy if same_folder else None
+
+
+def _retire_legacy_py(legacy: Path, target: Path, legacy_overrides: dict) -> None:
+    """Rename *legacy* out of the way once *target* holds every one of its keys.
+
+    Issue #98: left in place, the ``.py`` keeps supplying any key the JSON
+    lacks, so a setting deliberately removed from the JSON comes back. The
+    JSON is re-read rather than trusted: a partial write keeps the ``.py``.
+    An earlier ``.migrated`` copy is never overwritten.
+    """
+    written = migrate_legacy_keys(_load_overrides_from_json(target))
+    missing = [key for key in legacy_overrides if key not in written]
+    if missing:
+        _log.warning(
+            "Kept %s: %s does not hold %s after the save", legacy, target, ", ".join(missing)
+        )
+        return
+    retired = legacy.with_name(f"{legacy.name}.migrated")
+    n = 2
+    while retired.exists():
+        retired = legacy.with_name(f"{legacy.name}.migrated-{n}")
+        n += 1
+    try:
+        legacy.rename(retired)
+    except OSError:
+        _log.warning("Could not rename %s after migrating it to %s", legacy, target)
+        return
+    _log.info("Migrated %s into %s; renamed it %s", legacy, target, retired)
 
 
 def load_raw_user_defaults() -> dict:

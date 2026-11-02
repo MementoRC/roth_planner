@@ -99,7 +99,7 @@ class TestExportV5:
         assert not at.exception
 
         payload = _exported_payload(spy)
-        assert payload["format_version"] == 5
+        assert payload["format_version"] == 6  # the v5 slot envelope, per-year Koinly (#96)
         assert payload["exported_by"] == "spouse"
         spouse_slot = payload["slots"]["spouse"]
         assert spouse_slot["setup_scalars"] == {"spouse_age": 56}

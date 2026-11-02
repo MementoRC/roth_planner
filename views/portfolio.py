@@ -11,6 +11,7 @@ import streamlit as st
 from config.loader import load_defaults
 from engine.data_sources.resolver import GRANTS_KEY
 from engine.portfolio_sync import EXPECTED_RETURNS, EquityGrant, PortfolioSnapshot
+from engine.portfolio_sync.portfolio import kept_saved_note
 from models.grants import StockGrant
 from models.household import Household
 from models.sourced import Source
@@ -284,6 +285,10 @@ def render_stock_shares(snap: PortfolioSnapshot) -> None:
         c1, c2 = st.columns(2)
         c1.metric("Shares", f"{snap.stock_shares_held:,}")
         c2.metric("Value", fmt_dollars(snap.stock_shares_value))
+    # Issue #97: the last sync kept the saved shares; say so until one fetches them.
+    note = kept_saved_note(snap, "shares")
+    if note:
+        st.caption(f":warning: {note}")
 
 
 def render_growth_mapping(snap: PortfolioSnapshot, hh: Household) -> None:

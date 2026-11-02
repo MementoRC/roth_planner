@@ -233,6 +233,14 @@ def apply_bundle(target_owner, bundle, *, existing_snapshot, existing_ledger):
 # The v4 builder/reader/apply above stay untouched for the legacy path.
 BUNDLE_FORMAT_VERSION_V5 = 5
 
+# v5 -> v6 (issue #96): the same slot envelope, but each owner's
+# records.ledger.koinly entry is now a map of one slot per tax year
+# (audit-1101 F-10) instead of one flat slot. A build that reads only the flat
+# shape would take that as zero crypto income, so the bump makes every build
+# that reads 1-5 refuse the bundle instead. A format-5 bundle still reads
+# here: koinly_slots() accepts the flat slot.
+BUNDLE_FORMAT_VERSION_V6 = 6
+
 SLOT_NAMES: tuple[str, ...] = ("you", "spouse")
 SLOT_PREFIX: dict[str, str] = {"you": "your_", "spouse": "spouse_"}
 RECORD_OWNERS: tuple[str, ...] = ("you", "spouse", "household")
@@ -314,6 +322,9 @@ def build_bundle_v5(
 ) -> dict:
     """Assemble a v5 envelope. Pure: inputs are deep-copied, never mutated.
 
+    Stamped ``format_version`` 6 (:data:`BUNDLE_FORMAT_VERSION_V6`): the
+    ledger's Koinly slots are per tax year.
+
     ``grants`` and ``grant_strikes`` ride in ``grants_owner``'s slot -- the
     person the grants belong to, as recorded when they were imported
     (``PortfolioSnapshot.equity_grants_owner``). ``None``/"" means the
@@ -377,7 +388,7 @@ def build_bundle_v5(
     joint = {k: v for k, v in scalars.items() if k in _JOINT_SCALAR_KEYS}
 
     return {
-        "format_version": BUNDLE_FORMAT_VERSION_V5,
+        "format_version": BUNDLE_FORMAT_VERSION_V6,
         "exported_at": now,
         "exported_by": exporter,
         "slots": slots,
@@ -404,15 +415,21 @@ class BundleFormatError(ValueError):
 
 
 _LEGACY_VERSIONS: frozenset[int] = frozenset({1, 2, 3, BUNDLE_FORMAT_VERSION})
+_SLOT_ENVELOPE_VERSIONS: frozenset[int] = frozenset(
+    {BUNDLE_FORMAT_VERSION_V5, BUNDLE_FORMAT_VERSION_V6}
+)
+_NEWEST_VERSION = max(_LEGACY_VERSIONS | _SLOT_ENVELOPE_VERSIONS)
 
 
 def classify_bundle(raw: Any) -> Literal["v4", "v5"]:
     """Classify a decrypted payload by ``format_version`` -- never guess.
 
     1-4 are the additive legacy history (see the notes at the top of this
-    module) and all route through the v4 path; 5 is the slot envelope.
-    Anything else -- missing, a string, a bool, a float, a future version --
-    is refused with the offending value named. Note that an unversioned
+    module) and all route through the v4 path; 5 and 6 are the slot envelope
+    ("v5"; 6 differs only in its per-year Koinly slots). Anything else --
+    missing, a string, a bool, a float, a future version -- is refused with
+    the offending value named; a future version is called out as made by a
+    newer version of the app. Note that an unversioned
     legacy ``.user_defaults.json`` payload is refused here too: callers that
     still accept those must branch on ``read_format_version(raw) is None``
     BEFORE classifying.
@@ -425,10 +442,15 @@ def classify_bundle(raw: Any) -> Literal["v4", "v5"]:
     if type(version) is int:
         if version in _LEGACY_VERSIONS:
             return "v4"
-        if version == BUNDLE_FORMAT_VERSION_V5:
+        if version in _SLOT_ENVELOPE_VERSIONS:
             return "v5"
+        if version > _NEWEST_VERSION:
+            raise UnsupportedBundleVersionError(
+                f"bundle format_version {version} was made by a newer version of the app; "
+                f"update this app to import it (this build reads 1-{_NEWEST_VERSION})"
+            )
     raise UnsupportedBundleVersionError(
-        f"unsupported bundle format_version {version!r}; this build reads 1-5"
+        f"unsupported bundle format_version {version!r}; this build reads 1-{_NEWEST_VERSION}"
     )
 
 
