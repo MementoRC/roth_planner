@@ -27,7 +27,7 @@ from engine.headroom import HeadroomResult, compute_headroom
 from engine.irmaa import irmaa_payment_year, irmaa_tier, irmaa_tier1_threshold
 from engine.niit import niit_threshold
 from engine.scenario import run_no_conversion, run_scenario
-from engine.scenario_autofill import bracket_fill_conversions
+from engine.scenario_autofill import base_year_bracket_fills
 from engine.scenario_types import ConversionPlan, ScenarioResult, YearResult
 from engine.tax import indexed_bracket_ceiling
 from models.exercise_schedule import ExerciseSchedule, rebalance_schedule
@@ -202,13 +202,15 @@ def draw_aware_bracket_rooms(
     conversion "Fill X%" lands on for the base year, in EVERY year (issues
     #1/#5, audit-1018 F-03/F-06, owner decision D1).
 
-    Always the full-year projection basis (bracket_fill_conversions): forced and
+    Always the full-year projection basis (base_year_bracket_fills, the base
+    year of bracket_fill_conversions and the one solver the Sweet Spot Fill
+    cards read too, issue #104): forced and
     fill-provoked IRA draws, forecast RMD, inherited drains, dividends,
     scheduled options, and the senior-bonus phase-out per converted dollar. The
     YTD-actuals-only compute_headroom rooms are a different quantity and are
     not used here.
     """
-    return bracket_fill_conversions(hh, ytd, net_inv_income).get(hh.base_year, (0.0, 0.0))
+    return base_year_bracket_fills(hh, ytd, net_inv_income)
 
 
 def _magi_rooms_after(hh: Household, base: YearResult) -> tuple[float, float]:
