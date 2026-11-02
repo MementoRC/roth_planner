@@ -28,11 +28,17 @@ from engine.data_sources.candidate_store import CorruptCandidateStoreError  # no
 from engine.data_sources.record import record_magi_candidates, record_ss_fra_candidate  # noqa: E402
 from engine.demo_mode import is_demo_mode  # noqa: E402
 from engine.instance_identity import CorruptInstanceOwnerError, load_instance_owner  # noqa: E402
-from engine.store import StoreError, StoreUnavailableError, get_store, saving_disabled  # noqa: E402
+from engine.store import (  # noqa: E402
+    StoreError,
+    StoreUnavailableError,
+    get_store,
+    saving_disabled,
+    set_demo_store_provider,
+)
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
 from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
 from models.sourced import Source  # noqa: E402
-from views.setup._state import _drain_pending_defaults  # noqa: E402
+from views.setup._state import _drain_pending_defaults, session_demo_store  # noqa: E402
 from views.store_notice import render_store_notice, store_error_message  # noqa: E402
 
 _T = TypeVar("_T")
@@ -164,6 +170,11 @@ def _seed_session_state() -> None:
     }
     st.session_state.setdefault("_seeded", True)
 
+
+# Demo mode reads and writes this session's in-memory store, never the disk
+# (audit-1101 F-12, owner decision D2): an import or a Confirm then works for
+# the session instead of vanishing into a null store.
+set_demo_store_provider(session_demo_store)
 
 # Open the store before any cached snapshot is read: the first open imports the
 # legacy JSON files, and an unavailable database stops here with one banner.
@@ -367,7 +378,7 @@ def _current_pending_review() -> set[str]:
     """
     published = set(st.session_state.get("_pending_review") or ())
     base = _run_state.get("baseline_hh")
-    if base is None or _DEMO_MODE:
+    if base is None:
         return published
     try:
         committed_json = load_committed()
@@ -406,20 +417,18 @@ def _persist_resolution(
 ) -> bool:
     """Save the committed baseline, candidate store and trust choices to the store.
 
-    Returns True when nothing is left unsaved (the transaction committed, or
-    demo mode has nothing to save), False when the save was refused or the
-    unreadable baseline was left untouched; the caller consumes its one-shot
-    session flags only on True (audit-1026 F-09).
+    Returns True when nothing is left unsaved (the transaction committed),
+    False when the save was refused or the unreadable baseline was left
+    untouched; the caller consumes its one-shot session flags only on True
+    (audit-1026 F-09).
 
-    Skipped in demo mode (audit-1018 F-28): the state is built from demo seeds,
-    and saving it would stamp them MANUAL. When a failed JSON import has
-    disabled saving, the refusal is quiet, because render_store_notice()
+    In demo mode this saves to the session's in-memory demo store, never the
+    personal store (audit-1018 F-28, audit-1101 F-12). When a failed JSON
+    import has disabled saving, the refusal is quiet, because render_store_notice()
     already shows that banner on every run. Any other unavailable-storage
     error gets the one storage banner (shared with the boot-time reads).
     A corrupt saved document (a ``StoreError``) gets the same one banner.
     """
-    if _DEMO_MODE:
-        return True
     try:
         _save_resolution(app_res, store, choices, committed_unreadable)
     except StoreUnavailableError as exc:
@@ -578,12 +587,12 @@ def get_household() -> Household:
     )
 
     # Demo mode (audit-1018 F-28): the personal committed baseline, candidate
-    # store and trust choices stay parked in the real store. Resolve against empty
-    # in-memory ones (the "first load" path, so the demo seeds are the baseline)
-    # and write none of them back -- demo values must never overwrite personal
-    # files or be stamped MANUAL there.
-    store = CandidateStore() if _DEMO_MODE else CandidateStore.load()
-    choices = ChoiceMap() if _DEMO_MODE else ChoiceMap.load()
+    # store and trust choices stay parked in the real store. get_store() is the
+    # session's demo store, empty at first (the "first load" path, so the demo
+    # seeds are the baseline), which keeps an import's candidates and the
+    # user's confirms for this session only (audit-1101 F-12).
+    store = CandidateStore.load()
+    choices = ChoiceMap.load()
     # audit-0809 #11: a corrupt (e.g. truncated mid-write) committed baseline
     # must NOT be treated the same as "nothing committed yet" — see
     # CorruptCommittedCacheError's docstring. On a corrupt baseline we proceed
@@ -593,11 +602,10 @@ def get_household() -> Household:
     # left untouched.
     _committed_unreadable = False
     committed_json: dict | None = None
-    if not _DEMO_MODE:
-        try:
-            committed_json = load_committed()
-        except CorruptCommittedCacheError:
-            _committed_unreadable = True
+    try:
+        committed_json = load_committed()
+    except CorruptCommittedCacheError:
+        _committed_unreadable = True
 
     # audit-1008 F-64: years the Setup MAGI-anchor form set back to 0.
     _cleared_magi = st.session_state.get(MAGI_CLEARED_KEY) or ()

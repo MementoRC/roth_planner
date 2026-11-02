@@ -215,6 +215,8 @@ def _isolated_store(_redirect_cache_paths_to_tmp):
     store_pkg.set_store(store)
     yield store
     store_pkg.set_store(None)
+    # An AppTest run of app.py installs a session demo store (audit-1101 F-12).
+    store_pkg.set_demo_store_provider(None)
     store_pkg._reset_cached_stores()
     store.backend.close()
 

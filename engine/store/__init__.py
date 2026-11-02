@@ -2,8 +2,11 @@
 
 ``get_store()`` picks the backend on every call (cheap):
 
-1. demo mode -> a null store: reads absent, writes dropped (audit-1018 D2).
-   Checked first so a store installed by a test sees what the app would:
+1. demo mode -> the session's demo store from :func:`set_demo_store_provider`
+   (app.py installs a per-browser-session in-memory store, so an import or a
+   confirm works for that session; audit-1101 F-12), else a null store:
+   reads absent, writes dropped. Either way nothing reaches disk (audit-1018
+   D2). Checked first so a store installed by a test sees what the app would:
    nothing in demo mode, the untouched store after leaving it;
 2. a store installed with :func:`set_store` (tests);
 3. Pyodide/stlite -> one in-memory store per session (SQLite if ``sqlite3``
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,6 +52,7 @@ __all__ = [
     "migration_notice",
     "register_namespace",
     "saving_disabled",
+    "set_demo_store_provider",
     "set_store",
 ]
 
@@ -62,6 +67,7 @@ _file_store: Store | None = None
 _session_store: Store | None = None
 _migration_result: MigrationResult | None = None
 _null_store = Store(NullBackend())
+_demo_store_provider: Callable[[], Store] | None = None
 
 
 def db_path() -> Path:
@@ -81,10 +87,20 @@ def set_store(store: Store | None) -> None:
     _override = store
 
 
+def set_demo_store_provider(provider: Callable[[], Store] | None) -> None:
+    """Install the callable that returns this session's in-memory demo store.
+
+    ``None`` restores the null store. The provider must return an in-memory
+    store: demo mode never writes to disk (audit-1018 D2).
+    """
+    global _demo_store_provider
+    _demo_store_provider = provider
+
+
 def get_store() -> Store:
     """The Store for the current environment; see the module docstring."""
     if is_demo_mode():
-        return _null_store
+        return _demo_store_provider() if _demo_store_provider is not None else _null_store
     if _override is not None:
         return _override
     if is_pyodide():

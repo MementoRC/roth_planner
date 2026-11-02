@@ -42,7 +42,12 @@ from engine.bridge_bundle import (
     classify_bundle,
     parse_v5,
 )
-from engine.pdf_ledger import prune_duplicates_elsewhere, replace_owner
+from engine.pdf_ledger import (
+    extract_owner,
+    merge_owner_slots,
+    prune_duplicates_elsewhere,
+    replace_owner,
+)
 from engine.portfolio_sync.classify import _resolve_override
 from engine.portfolio_sync.portfolio import EmptySnapshotWriteRefusedError
 from engine.portfolio_sync.shapes import (
@@ -54,6 +59,7 @@ from engine.upload_merge import (
     build_user_defaults_session_updates,
     extract_bundle_magi,
     receiver_joint_value_is_set,
+    sanitize_session_updates,
 )
 from models.ytd_income import OWNED_YTD_FIELDS, YTDSnapshot, iso_day, manual_key
 
@@ -592,13 +598,12 @@ def _apply_ledger(
         )
     winners = set(record_slots)
     if any_selected:
-        household_koinly = incoming.get("koinly", {}).get("household")
-        if household_koinly:
-            out["koinly"]["household"] = copy.deepcopy(household_koinly)
-            winners.add("household")
-        household_brokerage = incoming.get("brokerage", {}).get("household")
-        if household_brokerage:
-            out["brokerage"].setdefault("household", {}).update(copy.deepcopy(household_brokerage))
+        household = {s: incoming.get(s, {}).get("household") or {} for s in ("koinly", "brokerage")}
+        if household["koinly"] or household["brokerage"]:
+            # Matched by tax year / account-and-year, not by storage key (audit-1101 F-08).
+            out = replace_owner(
+                out, "household", merge_owner_slots(extract_owner(out, "household"), household)
+            )
             winners.add("household")
     # Move, never copy: the same account / report under a receiver-side owner
     # would be summed twice by derive_*_totals (audit-1018 F-08).
@@ -677,6 +682,8 @@ def _apply_v5(
             joint_updates["_survivor_enabled"] = bool(joint_updates["survivor"])
         scalar_updates.update(joint_updates)
         magi = extract_bundle_magi(dict(bundle.joint))
+    # The same numeric clean-up as the v4 path (audit-1101 F-14).
+    sanitize_session_updates(scalar_updates)
 
     return ImportResult(
         snapshot=snapshot,
@@ -714,6 +721,11 @@ def _apply_v4(
         existing_snapshot=snapshot,
         existing_ledger=copy.deepcopy(dict(local.ledger)),
     )
+    # The bundle's accounts are the target slot's now; mark them as _apply_v5
+    # does, or the receiver's next sync closes them (audit-1101 F-09).
+    new_snapshot.accounts = [
+        _imported(a) if _owner(a) == target else a for a in new_snapshot.accounts
+    ]
     # audit-1008 F-01/F-06/F-05: see _apply_v5.
     new_snapshot.imported_from_bundle = True
     if isinstance(sections.get("grants"), list):

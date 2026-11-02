@@ -68,8 +68,12 @@ def sanitize_living_expenses(value: Any) -> Any:
     return max(value, 0)
 
 
-def _sanitized(updates: dict) -> dict:
-    """Run the numeric sanitizers over a session-updates dict (in place)."""
+def sanitize_session_updates(updates: dict) -> dict:
+    """Run the numeric sanitizers over a session-updates dict (in place).
+
+    Every import path runs this: the upload/v4 path here, the v5 path in
+    engine.bridge_import (audit-1101 F-14).
+    """
     key = _session_key_for("living_expenses")
     if key in updates:
         updates[key] = sanitize_living_expenses(updates[key])
@@ -189,7 +193,7 @@ def build_user_defaults_session_updates(
                     )
             if conflicts:
                 updates["_bundle_joint_conflicts"] = conflicts
-        return _sanitized(updates)
+        return sanitize_session_updates(updates)
     for k in SCALAR_KEYS:
         if k in data:
             updates[_session_key_for(k)] = data[k]
@@ -216,7 +220,7 @@ def build_user_defaults_session_updates(
     # inherited_iras is a joint field; each entry carries its own owner field
     if "inherited_iras" in data and not as_spouse:
         updates["inherited_iras"] = data["inherited_iras"]
-    return _sanitized(updates)
+    return sanitize_session_updates(updates)
 
 
 def extract_bundle_magi(data: dict) -> dict[int, float]:
