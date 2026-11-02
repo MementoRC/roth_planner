@@ -25,6 +25,7 @@ from engine.irmaa import (
 )
 from engine.niit import niit
 from engine.scenario import run_scenario
+from engine.scenario_autofill import _allocate_room, _write_cells
 from engine.scenario_compute import QCD_MIN_AGE
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
@@ -831,7 +832,11 @@ def forced_draw_fills(
     gains = sale_gains or {}
     gated = {y for y, d in ira_draws.items() if d > 0.0}
     gated |= {y for y, g in gains.items() if g > 0.0}
-    gated |= _fill_provoked_draw_years(hh, ytd, net_inv_income, ira_draws, gains)
+    if zero_years is None and ira_draws:
+        zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
+    gated |= _fill_provoked_draw_years(
+        hh, ytd, net_inv_income, ira_draws, gains, zero_years=zero_years
+    )
     if not gated:
         return {}
     if zero_years is None:
@@ -913,6 +918,8 @@ def _fill_provoked_draw_years(
     net_inv_income: float,
     ira_draws: Mapping[int, float],
     sale_gains: Mapping[int, float],
+    *,
+    zero_years: Mapping[int, YearResult] | None = None,
 ) -> set[int]:
     """Issue #3: years with no IRA draw at ZERO conversion where the draw-blind
     Fill-to-22% conversion's own tax nevertheless forces one.
@@ -933,10 +940,18 @@ def _fill_provoked_draw_years(
     audit-1026 F-07: no longer skips a year that already sells at a gain at
     zero conversion; :func:`forced_draw_fills` gates those years in itself and
     solves their fills with the extra sale's gain priced.
+
+    audit-1101 F-04: the fill is split between you and the spouse as auto-fill
+    splits it (:func:`engine.scenario_autofill._allocate_room`, on the
+    zero-conversion opening IRA balances ``zero_years`` holds, derived when
+    omitted), with each person's YTD conversions on their own cell. Projected
+    as YOUR conversion alone, run_scenario zeroed it once you reached your RMD
+    age, so a year only the spouse can convert in never provoked a draw.
     """
     if not ira_draws:
         return set()
-    done = (ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd) if ytd is not None else 0.0
+    if zero_years is None:
+        zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     flagged: set[int] = set()
     for year, draw in ira_draws.items():
         is_base = year == hh.base_year
@@ -947,10 +962,22 @@ def _fill_provoked_draw_years(
             ira_draw=draw,
             sale_gain=sale_gains.get(year, 0.0),
         )
-        fill = fill_conversions_for_year(hh, base)[1] + (done if is_base else 0.0)
+        fill = fill_conversions_for_year(hh, base)[1]
+        zero_year = zero_years.get(year)
+        offset = year - hh.base_year
+        your_cell, spouse_cell = _allocate_room(
+            hh,
+            fill,
+            hh.your_age + offset,
+            hh.spouse_age + offset,
+            zero_year.your_ira_begin if zero_year is not None else hh.your_ira,
+            zero_year.spouse_ira_begin if zero_year is not None else hh.spouse_ira,
+        )
+        plan = ConversionPlan()
+        _write_cells(plan, year, your_cell, spouse_cell, ytd if is_base else None)
         result = run_scenario(
             hh,
-            ConversionPlan(your_conversions={year: fill}),
+            plan,
             "sweet-spot fill-provoked draw gate",
             end_age=hh.your_age + max(year - hh.base_year, 0),
             ytd=ytd,
@@ -1088,12 +1115,15 @@ def all_in_at_conversion(
     # year (income_year + 2). ya/sa stay income-year ages — irmaa_for_year adds 2
     # internally for the Medicare-eligibility gate. Matches the yr + 2 already used
     # in compute_multi_year_summary.
+    # audit-1101 F-06: surcharge on the household's own Part B base premium,
+    # as run_scenario prices it.
     payment_year = irmaa_payment_year(year)
+    part_b = hh.medicare_part_b_base_monthly * 12
     irmaa_cost, _ = irmaa_for_year(
-        magi, ya, sa, filing_status=hh.filing_status, year=payment_year, cpi=cpi
+        magi, ya, sa, part_b, filing_status=hh.filing_status, year=payment_year, cpi=cpi
     )
     base_irmaa, _ = irmaa_for_year(
-        base.base_magi, ya, sa, filing_status=hh.filing_status, year=payment_year, cpi=cpi
+        base.base_magi, ya, sa, part_b, filing_status=hh.filing_status, year=payment_year, cpi=cpi
     )
     irmaa_delta = irmaa_cost - base_irmaa
 

@@ -316,7 +316,13 @@ def compute_headroom(
     # IRMAA only matters if someone will be on Medicare in the lookback year (income_year + 2)
     # IRMAA 2-yr lookback: index thresholds to the payment year (income_year + 2)
     irmaa_cost, _ = irmaa_for_year(
-        planned_magi, ya, sa, filing_status=filing_status, year=irmaa_payment_year(_year), cpi=_cpi
+        planned_magi,
+        ya,
+        sa,
+        hh.medicare_part_b_base_monthly * 12,
+        filing_status=filing_status,
+        year=irmaa_payment_year(_year),
+        cpi=_cpi,
     )
     if filing_status == "MFJ":
         result.irmaa_relevant = irmaa_cost > 0 or (ya + 2 >= 65 or sa + 2 >= 65)

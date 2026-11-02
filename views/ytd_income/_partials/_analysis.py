@@ -27,6 +27,29 @@ from views._format import fmt_dollars, fmt_dollars_short, fmt_pct
 from views.optimizer_panel import manual_nii
 
 
+def irmaa_warning_surcharges(hh: Household, magi: float) -> tuple[float, float]:
+    """(1-person, 2-person) annual IRMAA surcharge at ``magi`` for the IRMAA
+    Impact Warning.
+
+    IRMAA 2-year lookback: the surcharge shown is what will be charged in
+    base_year + 2 Medicare premiums, so index the MAGI thresholds to the
+    payment year (base_year + 2), not the income year. audit-1101 F-06: on
+    the household's own Part B base premium, as run_scenario prices it.
+    """
+    one, two = (
+        irmaa_surcharge(
+            magi,
+            people,
+            base_part_b=hh.medicare_part_b_base_monthly * 12,
+            filing_status=hh.filing_status,
+            year=hh.base_year + 2,
+            cpi=hh.cpi_assumption,
+        )
+        for people in (1, 2)
+    )
+    return one, two
+
+
 def irmaa_not_yet_notice(hh: Household, headroom) -> str:
     """Notice text for 'IRMAA not yet relevant', naming whoever sets the first year.
 
@@ -462,23 +485,7 @@ def render_analysis_partial(hh: Household, ytd: YTDSnapshot) -> None:
             f"This means 2-year lookback will affect **{hh.base_year + 2} Medicare premiums**."
         )
 
-        # IRMAA 2-year lookback: the surcharge shown is what will be charged in
-        # base_year + 2 Medicare premiums, so index the MAGI thresholds to the
-        # payment year (base_year + 2), not the income year.
-        surcharge_1p = irmaa_surcharge(
-            headroom.projected_magi_base,
-            1,
-            filing_status=hh.filing_status,
-            year=hh.base_year + 2,
-            cpi=hh.cpi_assumption,
-        )
-        surcharge_2p = irmaa_surcharge(
-            headroom.projected_magi_base,
-            2,
-            filing_status=hh.filing_status,
-            year=hh.base_year + 2,
-            cpi=hh.cpi_assumption,
-        )
+        surcharge_1p, surcharge_2p = irmaa_warning_surcharges(hh, headroom.projected_magi_base)
 
         s1, s2 = st.columns(2)
         s1.metric(
