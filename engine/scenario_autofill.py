@@ -309,6 +309,7 @@ def _auto_fill_core(
     bracket_target: int | None = None,
     magi_strategy: str | None = None,
     net_inv_income: float = 0.0,
+    max_years: int | None = None,
 ) -> ConversionPlan:
     """Shared body of auto_fill_12 / auto_fill_22 / auto_fill_irmaa_safe.
 
@@ -341,6 +342,10 @@ def _auto_fill_core(
     NIIT in the year's cash need matches the final run_scenario.
     ``bracket_target`` and ``magi_strategy`` are set on the plan up front so
     every probe sees the plan the final projection will run.
+
+    ``max_years`` stops after that many years (issue #104: the base year alone
+    is :func:`base_year_bracket_fills`); a year never depends on later ones,
+    so the years it does fill are identical to the full plan's.
     """
     plan = ConversionPlan(bracket_target=bracket_target, magi_strategy=magi_strategy)
     proj = ProjectionState.initial(hh)
@@ -375,9 +380,11 @@ def _auto_fill_core(
     _your_window = hh.your_rmd_start_age - hh.your_age  # years until your RMD
     _spouse_window = hh.spouse_rmd_start_age - hh.spouse_age  # years until spouse RMD
     _squeeze_tail = max(_spouse_window - _your_window, 6)
-    for yr_idx in range(
-        hh.your_rmd_start_age - 1 - hh.your_age + 1 + _squeeze_tail
-    ):  # _squeeze_tail covers actual spouse tail (>= 6 for same-age backward compat)
+    # _squeeze_tail covers actual spouse tail (>= 6 for same-age backward compat)
+    n_years = hh.your_rmd_start_age - 1 - hh.your_age + 1 + _squeeze_tail
+    if max_years is not None:
+        n_years = min(n_years, max_years)
+    for yr_idx in range(n_years):
         year = hh.base_year + yr_idx
         ya = hh.your_age + yr_idx
         sa = hh.spouse_age + yr_idx
@@ -713,13 +720,13 @@ def auto_fill_12(
     Runs iteratively since each year's conversion affects the next year's IRA balance.
     Pass the ``ytd`` / ``net_inv_income`` the final run_scenario uses.
     """
-    return _auto_fill_core(
-        hh,
-        ytd,
-        room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
-            fg, ded, css, of, 1, yr, cpi, fs
-        ),
-        net_inv_income=net_inv_income,
+    return _auto_fill_core(hh, ytd, room_fn=_bracket_room_fn(1), net_inv_income=net_inv_income)
+
+
+def _bracket_room_fn(bracket_index: int) -> RoomFn:
+    """Room fn filling to the indexed ceiling of bracket ``bracket_index``."""
+    return lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
+        fg, ded, css, of, bracket_index, yr, cpi, fs
     )
 
 
@@ -733,14 +740,7 @@ def auto_fill_22(
     More aggressive than fill_12 — converts more but at higher marginal rates.
     Pass the ``ytd`` / ``net_inv_income`` the final run_scenario uses.
     """
-    return _auto_fill_core(
-        hh,
-        ytd,
-        room_fn=lambda fg, ded, _bm, css, of, yr, cpi, fs: _bracket_room_with_ss_torpedo(
-            fg, ded, css, of, 2, yr, cpi, fs
-        ),
-        net_inv_income=net_inv_income,
-    )
+    return _auto_fill_core(hh, ytd, room_fn=_bracket_room_fn(2), net_inv_income=net_inv_income)
 
 
 def bracket_fill_conversions(
@@ -760,14 +760,48 @@ def bracket_fill_conversions(
     left to convert) are absent: Fill converts nothing there.
     """
     plans = (auto_fill_12(hh, ytd, net_inv_income), auto_fill_22(hh, ytd, net_inv_income))
+    years = {y for p in plans for y in (*p.your_conversions, *p.spouse_conversions)}
+    return {y: _fill_pair(hh, ytd, plans, y) for y in sorted(years)}
+
+
+def base_year_bracket_fills(
+    hh: Household,
+    ytd: YTDSnapshot | None = None,
+    net_inv_income: float = 0.0,
+) -> tuple[float, float]:
+    """(Fill-to-12%, Fill-to-22%) for the base year alone: the base year of
+    :func:`bracket_fill_conversions`, to the bit, without projecting the
+    later years (issue #104).
+
+    The one base-year solver every "room to the 12% / 22% top" that must equal
+    what Fill converts reads -- the Room This Year tiles and the Sweet Spot Fill
+    cards both -- so the two surfaces can never disagree, not even by cents.
+    The base year has no fill history, so the first year of the auto-fill
+    loop is exactly the full plan's base year. (0, 0) when Fill converts
+    nothing there.
+    """
+    plans = (
+        _auto_fill_core(hh, ytd, _bracket_room_fn(1), net_inv_income=net_inv_income, max_years=1),
+        _auto_fill_core(hh, ytd, _bracket_room_fn(2), net_inv_income=net_inv_income, max_years=1),
+    )
+    return _fill_pair(hh, ytd, plans, hh.base_year)
+
+
+def _fill_pair(
+    hh: Household,
+    ytd: YTDSnapshot | None,
+    plans: tuple[ConversionPlan, ConversionPlan],
+    year: int,
+) -> tuple[float, float]:
+    """(fill_12, fill_22) in ``year`` from the (12%, 22%) Fill plans. Base-year
+    amounts are net of conversions already done (``ytd``)."""
     done = (ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd) if ytd is not None else 0.0
 
-    def _remaining(plan: ConversionPlan, year: int) -> float:
+    def _remaining(plan: ConversionPlan) -> float:
         total = plan.your_conversions.get(year, 0.0) + plan.spouse_conversions.get(year, 0.0)
         return max(total - (done if year == hh.base_year else 0.0), 0.0)
 
-    years = {y for p in plans for y in (*p.your_conversions, *p.spouse_conversions)}
-    return {y: (_remaining(plans[0], y), _remaining(plans[1], y)) for y in sorted(years)}
+    return _remaining(plans[0]), _remaining(plans[1])
 
 
 def _irmaa_tier1_magi_room(
@@ -1011,10 +1045,13 @@ def add_bracket_fill_withdrawals(
         net_inv_income: Manual NII estimate; the internal base run prices
             NIIT on it like the final projection does (issue #8).
     """
-    # Run the base scenario first to get IRA balances and bracket room
-    from engine.scenario import run_scenario
+    # Issue #95: each year is sized on the RUNNING projection -- the earlier
+    # years' fill withdrawals already taken out of the balances -- like
+    # _auto_fill_core. Sizing every year off one run of the base plan priced a
+    # later year's RMD on balances the earlier fills had not drawn down, so the
+    # real (smaller) RMD left that year under the ceiling instead of on it.
+    from engine.scenario import project_year_step
 
-    result = run_scenario(hh, base_plan, "temp", end_age=95, ytd=ytd, net_inv_income=net_inv_income)
     _cpi_fill = hh.cpi_assumption
 
     # Base (unindexed) bracket ceiling for the target rate, resolved PER YEAR from that
@@ -1039,16 +1076,17 @@ def add_bracket_fill_withdrawals(
         bracket_target=base_plan.bracket_target,
     )
 
-    for yr in result.years:
+    def _size_fill_withdrawal(yr: YearResult) -> bool:
+        """Size ``yr``'s fill withdrawal into ``plan``; True if one was written."""
         if yr.your_age < hh.your_rmd_start_age:
-            continue  # only post-RMD
+            return False  # only post-RMD
 
         # round50 matches the tax engine's bracket indexing (indexed_bracket_ceiling),
         # so the fill cannot spill up to $49.99 into the next bracket (audit-1101 F-22).
         bracket_ceiling = _iv(_base_ceiling(yr.filing_status), yr.year, _cpi_fill, round50=True)
         # Room to fill the target bracket.
         #
-        # audit-0823 AF-2. `yr` came from a run_scenario over the BASE plan, so
+        # audit-0823 AF-2. `yr` was projected WITHOUT this year's withdrawal, so
         # BOTH inputs to the closed form
         #     room = max(yr.total_deductions + ceiling - yr.combined_gross, 0)
         # were measured before the withdrawal this loop is about to size, and
@@ -1075,7 +1113,7 @@ def add_bracket_fill_withdrawals(
         # candidate.
         naive_room = max(yr.total_deductions + bracket_ceiling - yr.combined_gross, 0)
         if naive_room <= 0:
-            continue
+            return False
 
         def _taxable_income_at(draw: float, _yr: YearResult = yr) -> float:
             # leg 2: swap the stale taxable-SS figure for one re-priced at the
@@ -1109,17 +1147,19 @@ def add_bracket_fill_withdrawals(
         # exact rather than contraction-dependent.
         room = bisect_conversion_for_ceiling(_taxable_income_at, bracket_ceiling, naive_room)
         if room <= 0:
-            continue
+            return False
 
         # Allocate withdrawal: your IRA first, then spouse IRA for remainder.
         # Mirror the "older first, larger on tie" rule from _auto_fill_core:
         # in post-RMD years you are at or past your RMD age, so "you first"
         # is the natural primary source.
+        wrote = False
         your_available = max(yr.your_ira_begin - yr.your_rmd - yr.your_conversion, 0)
         your_extra = min(room, your_available)
         if your_extra > 1000:  # only if meaningful
             plan.extra_withdrawals[yr.year] = your_extra
             room -= your_extra
+            wrote = True
 
         # Offer spouse IRA for any remaining room (spouse still has balance)
         if room > 1000 and yr.spouse_ira_begin > yr.spouse_rmd:
@@ -1127,5 +1167,20 @@ def add_bracket_fill_withdrawals(
             spouse_extra = min(room, spouse_available)
             if spouse_extra > 1000:
                 plan.spouse_extra_withdrawals[yr.year] = spouse_extra
+                wrote = True
+        return wrote
+
+    state = ProjectionState.initial(hh)
+    for yr_idx in range(95 - hh.your_age + 1):
+        # The year as projected so far, before its own withdrawal is sized.
+        # project_year_step mutates the state's MAGI history and inherited
+        # balances, so each projection runs on a copy and the final one is kept.
+        year_state = state.copy()
+        outcome = project_year_step(yr_idx, hh, plan, ytd, net_inv_income, year_state)
+        if _size_fill_withdrawal(outcome.yr):
+            year_state = state.copy()
+            outcome = project_year_step(yr_idx, hh, plan, ytd, net_inv_income, year_state)
+        year_state.advance(outcome)
+        state = year_state
 
     return plan

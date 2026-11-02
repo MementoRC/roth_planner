@@ -80,22 +80,25 @@ def test_i8_comparator_preset_passes_nii_to_the_fill(monkeypatch) -> None:
     import engine.scenario_compare as compare_mod
 
     seen: dict[str, float] = {}
+    inner: set[float] = set()
     real_fill = compare_mod.add_bracket_fill_withdrawals
-    real_run = scenario_mod.run_scenario
+    real_step = scenario_mod.project_year_step
 
     def fill_spy(*args, **kwargs):
         seen["fill"] = kwargs.get("net_inv_income", 0.0)
         return real_fill(*args, **kwargs)
 
-    def run_spy(*args, **kwargs):
-        if kwargs.get("end_age") == 95 and args[2:3] == ("temp",):
-            seen["inner"] = kwargs.get("net_inv_income", 0.0)
-        return real_run(*args, **kwargs)
+    # Issue #95: the fill sizes each year on its own running projection
+    # (project_year_step), so every projected year must see the caller's NII.
+    def step_spy(yr_idx, hh, plan, ytd, net_inv_income, state):
+        inner.add(net_inv_income)
+        return real_step(yr_idx, hh, plan, ytd, net_inv_income, state)
 
     monkeypatch.setattr(compare_mod, "add_bracket_fill_withdrawals", fill_spy)
-    monkeypatch.setattr(scenario_mod, "run_scenario", run_spy)
+    monkeypatch.setattr(scenario_mod, "project_year_step", step_spy)
     build_scenario(_post_rmd_hh(), "fill_12_bf", ytd=_ytd(), net_inv_income=20_000.0)
-    assert seen == {"fill": 20_000.0, "inner": 20_000.0}
+    assert seen == {"fill": 20_000.0}
+    assert inner == {20_000.0}
 
 
 def test_i8_fill_default_nii_equals_explicit_zero() -> None:

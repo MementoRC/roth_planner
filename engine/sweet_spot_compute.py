@@ -25,7 +25,7 @@ from engine.irmaa import (
 )
 from engine.niit import niit
 from engine.scenario import run_scenario
-from engine.scenario_autofill import _allocate_room, _write_cells
+from engine.scenario_autofill import _allocate_room, _write_cells, base_year_bracket_fills
 from engine.scenario_compute import QCD_MIN_AGE
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
@@ -823,8 +823,11 @@ def forced_draw_fills(
     reaches the bracket ceiling. They are NOT the multi-year auto-fill plan,
     whose year-N fill assumes every earlier year was filled (their taxes drain
     the brokerage and force IRA draws), a history the rest of the row does not
-    share. In the base year, with no prior history, the two agree.
-    ``sale_gains`` (issue #40, :func:`zero_conversion_sale_gains`) is the
+    share. In the base year, with no prior history, the two agree -- and issue
+    #104 makes that exact: the base year is read from the Fill's own solver
+    (:func:`engine.scenario_autofill.base_year_bracket_fills`, which the Room
+    This Year tiles read too) instead of re-solved here, since the two solvers
+    differed by cents. ``sale_gains`` (issue #40, :func:`zero_conversion_sale_gains`) is the
     brokerage-sale gain in each base; omitted means none. ``zero_years``
     (:func:`zero_conversion_years`) is derived when omitted. The map is empty
     when no year qualifies.
@@ -843,15 +846,19 @@ def forced_draw_fills(
         zero_years = zero_conversion_years(hh, ytd=ytd, net_inv_income=net_inv_income)
     fractions = zero_conversion_gain_fractions(hh, zero_years)
     return {
-        y: _own_history_fills(
-            hh,
-            y,
-            ytd,
-            net_inv_income,
-            ira_draws.get(y, 0.0),
-            gains.get(y, 0.0),
-            fractions,
-            zero_years,
+        y: (
+            base_year_bracket_fills(hh, ytd, net_inv_income)
+            if y == hh.base_year
+            else _own_history_fills(
+                hh,
+                y,
+                ytd,
+                net_inv_income,
+                ira_draws.get(y, 0.0),
+                gains.get(y, 0.0),
+                fractions,
+                zero_years,
+            )
         )
         for y in sorted(gated)
     }
