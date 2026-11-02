@@ -43,7 +43,7 @@ _LEDGER_SECTIONS = ("koinly", "brokerage")
 
 
 def ledger_reader(path: Path) -> dict[str, Any]:
-    """``{"koinly": {owner: slot}, "brokerage": {owner: {...}}}`` -> one row per owner."""
+    """``{"koinly": {owner: {...}}, "brokerage": {owner: {...}}}`` -> one row per owner."""
     raw = read_pii_json(path)
     if not isinstance(raw, dict):
         raise ValueError(f"expected a JSON object, got {type(raw).__name__}")

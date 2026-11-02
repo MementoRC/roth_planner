@@ -114,25 +114,47 @@ def fetch_portfolio(
 
     snap.accounts = list(accounts_map.values())
 
-    # --- Equity awards (NQO grants) ---
+    # A failed awards or shares fetch keeps the saved values rather than
+    # reporting "no grants" / "no shares", which save_snapshot would write
+    # over them (audit-1101 F-11). A successful empty answer still clears.
     awards_raw = fetch_equity_awards()
-    for row in awards_raw:
-        if row.get("outstanding", 0) > 0:
-            snap.equity_grants.append(
-                EquityGrant(
-                    grant_id=row.get("grant_id", ""),
-                    grant_type=row.get("grant_type", ""),
-                    grant_date=row.get("grant_date", ""),
-                    shares_granted=row.get("shares_granted", 0),
-                    outstanding=row.get("outstanding", 0),
-                    current_value=row.get("current_value", 0),
+    shares_raw = fetch_shares()
+    cached = load_snapshot() if awards_raw is None or shares_raw is None else None
+    kept: list[str] = []
+
+    # --- Equity awards (NQO grants) ---
+    if awards_raw is None:
+        if cached is not None:
+            snap.equity_grants = list(cached.equity_grants)
+            snap.equity_grants_owner = cached.equity_grants_owner
+        kept.append("grants")
+    else:
+        for row in awards_raw:
+            if row.get("outstanding", 0) > 0:
+                snap.equity_grants.append(
+                    EquityGrant(
+                        grant_id=row.get("grant_id", ""),
+                        grant_type=row.get("grant_type", ""),
+                        grant_date=row.get("grant_date", ""),
+                        shares_granted=row.get("shares_granted", 0),
+                        outstanding=row.get("outstanding", 0),
+                        current_value=row.get("current_value", 0),
+                    )
                 )
-            )
 
     # --- Employer-stock shares held ---
-    shares_raw = fetch_shares()
-    snap.stock_shares_held = sum(r.get("shares_available", 0) for r in shares_raw)
-    snap.stock_shares_value = sum(r.get("available_value", 0) for r in shares_raw)
+    if shares_raw is None:
+        if cached is not None:
+            snap.stock_shares_held = cached.stock_shares_held
+            snap.stock_shares_value = cached.stock_shares_value
+        kept.append("shares")
+    else:
+        snap.stock_shares_held = sum(r.get("shares_available", 0) for r in shares_raw)
+        snap.stock_shares_value = sum(r.get("available_value", 0) for r in shares_raw)
+
+    if kept:
+        what = " and ".join(kept)
+        snap.error = f"equity {what} fetch failed; kept the saved {what}"
 
     return snap
 

@@ -646,7 +646,9 @@ class TestAwardsRedirectGuard:
 
         monkeypatch.setattr(client_module.requests, "get", fake_get)
         result = fetch_equity_awards()
-        assert result == []
+        # A failed fetch is None, not [] -- an empty list reads as "no grants"
+        # and would be saved over the cached ones (audit-1101 F-11).
+        assert result is None
 
     def test_fetch_shares_302_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A 302 from FinExtract must yield [] for fetch_shares, not follow the redirect."""
@@ -661,4 +663,4 @@ class TestAwardsRedirectGuard:
 
         monkeypatch.setattr(client_module.requests, "get", fake_get)
         result = fetch_shares()
-        assert result == []
+        assert result is None  # failed fetch, not "no shares" (audit-1101 F-11)

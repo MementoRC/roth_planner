@@ -36,13 +36,16 @@ from models.ytd_income import YTDSnapshot, iso_day
 
 # Ledger shape:
 # {
-#   "koinly": {"<owner>": {"stcg": float, "ltcg": float, "income": float,
+#   "koinly": {"<owner>": {"<tax_year>": {"tax_year": int,
+#                            "stcg": float, "ltcg": float, "income": float,
 #                            "interest": float,  # lending-interest part of income
 #                            "captured_at": str, "source": str,
 #                            "parser_version": str, "provenance": dict,
-#                            "owner_key": str | None}},
+#                            "owner_key": str | None}}},
 #   "brokerage": {"<owner>": {"<account_number>": {...record.to_dict()...}}},
 # }
+# Each owner keeps one Koinly slot per tax year (audit-1101 F-10). A ledger
+# saved before that holds ONE flat slot per owner; koinly_slots() reads both.
 # A second broker's account reusing a number already held by the same owner is
 # keyed "<broker>:<account_number>" (see _slot_key_for); readers should take
 # the account number from the record dict, not the key.
@@ -66,6 +69,30 @@ def _same_report(slot: dict[str, Any], other: dict[str, Any]) -> bool:
     return all(slot.get(f) == other.get(f) for f in _REPORT_IDENTITY_FIELDS)
 
 
+def koinly_slots(owner_entry: Any) -> dict[str, dict[str, Any]]:
+    """One owner's Koinly slots keyed by tax year (as a string).
+
+    Reads both shapes: the per-year map written since audit-1101 F-10, and
+    the single flat slot of a ledger saved before it (recognised by its own
+    ``tax_year`` / ``stcg`` keys), which is returned under its tax year.
+    """
+    if not isinstance(owner_entry, dict):
+        return {}
+    if "tax_year" in owner_entry or "stcg" in owner_entry:
+        year = _koinly_year(owner_entry)
+        return {str(year) if year is not None else "unknown": owner_entry}
+    return {k: v for k, v in owner_entry.items() if isinstance(v, dict)}
+
+
+def _iter_koinly(ledger: PdfLedger) -> list[tuple[str, dict[str, Any]]]:
+    """Every (owner, slot) Koinly pair in *ledger*, across all tax years."""
+    return [
+        (owner, slot)
+        for owner, entry in ledger.get("koinly", {}).items()
+        for slot in koinly_slots(entry).values()
+    ]
+
+
 def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> PdfLedger:
     """Return a NEW ledger where every Koinly report / brokerage account held
     by an owner in *owners* is removed from all owners NOT in *owners*.
@@ -79,9 +106,18 @@ def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> Pdf
     out = copy.deepcopy(ledger)
     koinly = out.get("koinly", {})
     for kept in [o for o in owners if o in koinly]:
+        kept_slots = koinly_slots(koinly[kept]).values()
         for other in [o for o in koinly if o not in owners]:
-            if _same_report(koinly[other], koinly[kept]):
+            slots = koinly_slots(koinly[other])
+            remaining = {
+                year: slot
+                for year, slot in slots.items()
+                if not any(_same_report(slot, k) for k in kept_slots)
+            }
+            if not remaining:
                 del koinly[other]
+            elif len(remaining) < len(slots):
+                koinly[other] = remaining
     brokerage = out.get("brokerage", {})
     for kept in [o for o in owners if o in brokerage]:
         for other in [o for o in brokerage if o not in owners]:
@@ -97,17 +133,17 @@ def prune_duplicates_elsewhere(ledger: PdfLedger, owners: frozenset[str]) -> Pdf
 
 
 def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyReport) -> PdfLedger:
-    """Return a NEW ledger with *owner*'s Koinly slot set to *report*'s
-    figures, pruning that SAME report from any OTHER owner slot it was
-    previously (mis)filed under.
+    """Return a NEW ledger with *owner*'s Koinly slot for *report*'s tax year
+    set to its figures, pruning that SAME report from any OTHER owner slot it
+    was previously (mis)filed under.
 
-    Re-writing the same owner with the SAME or a NEWER tax_year replaces that
-    owner's prior contribution (idempotent re-scan); a report from an OLDER
-    tax_year than what's already stored is skipped (C15 audit-0721) -- a
-    multi-year folder scan must keep the latest tax_year's figures rather
-    than silently collapsing to whichever Koinly PDF happens to be processed
-    last. A different owner's DISTINCT report is untouched (additive across
-    owners, the module's core purpose).
+    Each owner keeps one slot per tax year (audit-1101 F-10): a next-year
+    report lands beside, not over, this year's, and an older-year report
+    scanned after a newer one fills its own year instead of being skipped
+    (the totals are year-gated, so neither shadows the other). Re-writing the
+    same owner and tax year replaces that slot (idempotent re-scan). A
+    different owner's DISTINCT report is untouched (additive across owners,
+    the module's core purpose).
 
     Koinly reports carry no account number (unlike brokerage statements), so
     cross-owner report identity is inferred from content: tax_year, source,
@@ -133,9 +169,6 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
         "koinly": dict(ledger.get("koinly", {})),
         "brokerage": dict(ledger.get("brokerage", {})),
     }
-    existing = updated["koinly"].get(owner)
-    if existing is not None and int(existing.get("tax_year", report.tax_year)) > report.tax_year:
-        return updated
     new_slot = {
         "tax_year": report.tax_year,
         "stcg": float(report.crypto_stcg),
@@ -153,11 +186,19 @@ def write_koinly_contribution(ledger: PdfLedger, owner: str, report: KoinlyRepor
     # assignment (e.g. the "household" fallback later corrected to a named
     # owner) MOVES the slot rather than leaving a duplicate that
     # derive_koinly_totals would sum a second time.
-    for other_owner, slot in list(updated["koinly"].items()):
-        if other_owner != owner and _same_report(slot, new_slot):
+    for other_owner, entry in list(updated["koinly"].items()):
+        if other_owner == owner:
+            continue
+        slots = koinly_slots(entry)
+        remaining = {y: s for y, s in slots.items() if not _same_report(s, new_slot)}
+        if not remaining:
             del updated["koinly"][other_owner]
+        elif len(remaining) < len(slots):
+            updated["koinly"][other_owner] = remaining
 
-    updated["koinly"][owner] = new_slot
+    owner_slots = dict(koinly_slots(updated["koinly"].get(owner)))
+    owner_slots[str(report.tax_year)] = new_slot
+    updated["koinly"][owner] = owner_slots
     return updated
 
 
@@ -308,9 +349,7 @@ def off_year_contributions(
     select which document kinds are described.
     """
     notes: list[str] = []
-    for owner, slot in sorted(ledger.get("koinly", {}).items() if koinly else ()):
-        if not isinstance(slot, dict):
-            continue
+    for owner, slot in sorted(_iter_koinly(ledger) if koinly else (), key=lambda p: p[0]):
         year = _koinly_year(slot)
         if not _in_year(year, tax_year):
             notes.append(
@@ -372,15 +411,11 @@ def derive_koinly_totals(ledger: PdfLedger, tax_year: int | None = None) -> dict
     report values (non-regression). Multiple owners -> summed (the fix).
     With *tax_year*, a report for any other year is skipped (audit-1008 F-10).
     """
-    by_owner = {
-        k: v
-        for k, v in ledger.get("koinly", {}).items()
-        if isinstance(v, dict) and _in_year(_koinly_year(v), tax_year)
-    }
+    slots = [v for _, v in _iter_koinly(ledger) if _in_year(_koinly_year(v), tax_year)]
     return {
-        "stcg": sum(float(v.get("stcg", 0.0)) for v in by_owner.values()),
-        "ltcg": sum(float(v.get("ltcg", 0.0)) for v in by_owner.values()),
-        "income": sum(float(v.get("income", 0.0)) for v in by_owner.values()),
+        "stcg": sum(float(v.get("stcg", 0.0)) for v in slots),
+        "ltcg": sum(float(v.get("ltcg", 0.0)) for v in slots),
+        "income": sum(float(v.get("income", 0.0)) for v in slots),
     }
 
 
@@ -408,8 +443,8 @@ def derive_koinly_interest(ledger: PdfLedger, tax_year: int | None = None) -> fl
     derive_koinly_totals.
     """
     total = 0.0
-    for slot in ledger.get("koinly", {}).values():
-        if not isinstance(slot, dict) or not _in_year(_koinly_year(slot), tax_year):
+    for _, slot in _iter_koinly(ledger):
+        if not _in_year(_koinly_year(slot), tax_year):
             continue
         if "interest" in slot:
             total += float(slot.get("interest") or 0.0)
@@ -441,8 +476,8 @@ def latest_koinly_capture(ledger: PdfLedger, tax_year: int | None = None) -> str
     With *tax_year*, only reports for that year count."""
     dates = [
         iso_day(v.get("captured_at"))
-        for v in ledger.get("koinly", {}).values()
-        if isinstance(v, dict) and _in_year(_koinly_year(v), tax_year)
+        for _, v in _iter_koinly(ledger)
+        if _in_year(_koinly_year(v), tax_year)
     ]
     return max((d for d in dates if d), default=None)
 
@@ -530,7 +565,8 @@ def replace_owner(ledger: PdfLedger, owner: str, slice_: dict) -> PdfLedger:
 
 # ---------------------------------------------------------------------------
 # Saved ledger -- document store namespace ``pdf_ledger``, one row per owner:
-# {"koinly": <slot>, "brokerage": {<account>: {...}}}, each section optional.
+# {"koinly": {<tax_year>: <slot>}, "brokerage": {<account>: {...}}}, each
+# section optional (an older row holds one flat Koinly slot; see koinly_slots).
 # ---------------------------------------------------------------------------
 
 _SECTIONS = ("koinly", "brokerage")

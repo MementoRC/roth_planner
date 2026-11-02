@@ -221,8 +221,9 @@ class TestKoinlyNamelessReports:
                 owner_map={},
                 instance_owner="you",
             )
-        assert ledger["koinly"]["you"]["stcg"] == 100.0
-        assert ledger["koinly"]["spouse"]["stcg"] == 200.0
+        # One Koinly slot per owner per tax year (audit-1101 F-10).
+        assert ledger["koinly"]["you"]["2026"]["stcg"] == 100.0
+        assert ledger["koinly"]["spouse"]["2026"]["stcg"] == 200.0
 
     def test_legacy_unknown_override_still_applies_after_upgrade(self) -> None:
         legacy = {("koinly", "unknown"): "spouse"}

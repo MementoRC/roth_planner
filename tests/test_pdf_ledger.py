@@ -126,10 +126,11 @@ class TestKoinlyProvenancePreservedOnMerge:
         )
         ledger = write_koinly_contribution(ledger, "you", you_report)
         ledger = write_koinly_contribution(ledger, "spouse", _koinly(10.0, 20.0, 5.0))
-        assert ledger["koinly"]["you"]["provenance"] == {
+        # One slot per owner per tax year (audit-1101 F-10).
+        assert ledger["koinly"]["you"]["2026"]["provenance"] == {
             "income_total_mismatch": "reported $500 != summed $450"
         }
-        assert ledger["koinly"]["you"]["owner_key"] == "you@example.com"
+        assert ledger["koinly"]["you"]["2026"]["owner_key"] == "you@example.com"
 
 
 class TestKoinlyEmptyLedger:
@@ -203,17 +204,23 @@ class TestKoinlyStaleOwnerSlotPruned:
         totals = derive_koinly_totals(ledger)
         assert totals == {"stcg": 2000.0, "ltcg": 4000.0, "income": 1000.0}
 
-    def test_older_tax_year_write_is_skipped_staleness_guard_preserved(self) -> None:
-        """The pre-existing C15 audit-0721 guard (~:59-61): a report from an
-        OLDER tax_year than what's stored for that owner is skipped. Must
-        survive the pruning change unchanged."""
+    def test_older_tax_year_write_does_not_touch_the_newer_year(self) -> None:
+        """C15 audit-0721: a multi-year folder scan must keep the latest
+        tax_year's figures. Since audit-1101 F-10 the older report is kept in
+        its OWN year's slot (it used to be skipped, and a next-year report
+        erased this year's); the newer year's totals are unchanged."""
         ledger: dict = {}
         ledger = write_koinly_contribution(
             ledger, "you", _koinly(100.0, 200.0, 50.0, tax_year=2026)
         )
         ledger = write_koinly_contribution(ledger, "you", _koinly(1.0, 2.0, 3.0, tax_year=2025))
-        totals = derive_koinly_totals(ledger)
+        totals = derive_koinly_totals(ledger, tax_year=2026)
         assert totals == {"stcg": 100.0, "ltcg": 200.0, "income": 50.0}
+        assert derive_koinly_totals(ledger, tax_year=2025) == {
+            "stcg": 1.0,
+            "ltcg": 2.0,
+            "income": 3.0,
+        }
 
     def test_same_owner_rewrite_still_just_overwrites(self) -> None:
         """Writing under the same owner twice still replaces that owner's

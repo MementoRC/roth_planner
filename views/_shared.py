@@ -373,6 +373,10 @@ def _sync_portfolio_source(hh: Household) -> PortfolioSyncSummary:
             error=friendly_sync_error_text(outcome.snap.error),
         )
 
+    if outcome.snap.error:
+        # Partial failure (audit-1101 F-11): the saved grants/shares were kept.
+        _log.warning("Portfolio sync partial: %s", outcome.snap.error)
+
     store = CandidateStore.load()
     strikes = st.session_state.get("_user_grant_strikes") or load_defaults().get(
         "grant_strikes", {}

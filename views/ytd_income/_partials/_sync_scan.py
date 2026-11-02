@@ -47,6 +47,7 @@ from engine.pdf_ledger import (
     PdfLedger,
     apply_koinly_totals,
     derive_brokerage_totals,
+    derive_koinly_totals,
     latest_brokerage_period_end,
     load_ledger,
     off_year_contributions,
@@ -2080,8 +2081,12 @@ def _render_koinly_summary(ledger: PdfLedger) -> None:
             st.warning(_mismatch)
 
     if ledger.get("koinly"):
-        with st.expander("Per-owner crypto breakdown"):
-            for owner, figures in sorted(ledger["koinly"].items()):
+        crypto_year = st.session_state.get("ytd_snapshot", YTDSnapshot()).tax_year
+        with st.expander(f"Per-owner crypto breakdown ({crypto_year})"):
+            for owner, entry in sorted(ledger["koinly"].items()):
+                figures = derive_koinly_totals(
+                    {"koinly": {owner: entry}, "brokerage": {}}, tax_year=crypto_year
+                )
                 st.caption(
                     md_dollars(
                         f"{owner.title()}: STCG {fmt_dollars(figures['stcg'])}, "

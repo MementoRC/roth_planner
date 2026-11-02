@@ -193,7 +193,9 @@ class TestC15KoinlyMultiYearScanKeepsLatestYear:
         # Simulates a multi-year folder scan processing the older PDF second.
         ledger = write_koinly_contribution(ledger, "you", older)
 
-        totals = derive_koinly_totals(ledger)
+        # Totals are year-gated by every caller (apply_koinly_totals); since
+        # audit-1101 F-10 the 2025 report is kept in its own year's slot.
+        totals = derive_koinly_totals(ledger, tax_year=2026)
         assert totals == {"stcg": 100.0, "ltcg": 200.0, "income": 50.0}, (
             "2025 report must not clobber the already-stored 2026 report"
         )
@@ -219,7 +221,7 @@ class TestC15KoinlyMultiYearScanKeepsLatestYear:
         ledger = write_koinly_contribution(ledger, "you", older)
         ledger = write_koinly_contribution(ledger, "you", newer)
 
-        totals = derive_koinly_totals(ledger)
+        totals = derive_koinly_totals(ledger, tax_year=2026)
         assert totals == {"stcg": 100.0, "ltcg": 200.0, "income": 50.0}
 
     def test_same_tax_year_rescan_still_replaces(self) -> None:

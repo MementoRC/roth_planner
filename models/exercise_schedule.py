@@ -45,6 +45,19 @@ def _require_mapping(value: Any, name: str) -> dict:
     return value
 
 
+def _share_count(n: Any) -> int:
+    """A saved share count as a non-negative int.
+
+    json.loads accepts bare NaN/Infinity, and int(inf) raises OverflowError,
+    which load_exercise_schedule does not catch -- the app crashed on boot
+    (audit-1101 F-21). A non-finite count raises ValueError instead, like a
+    non-finite price (audit-1018 F-46), so the cache reads as "none saved".
+    """
+    if isinstance(n, float) and not math.isfinite(n):
+        raise ValueError(f"non-finite share count {n}")
+    return max(int(n), 0)
+
+
 @dataclass
 class ExerciseSchedule:
     """``grant.key()`` -> ``{year -> shares exercised}``, plus a per-year stock
@@ -260,7 +273,7 @@ class ExerciseSchedule:
         raw_shares = _require_mapping(d.get("shares_by_grant_year", {}), "shares_by_grant_year")
         shares_by_grant_year = {
             key: {
-                int(year): max(int(n), 0)
+                int(year): _share_count(n)
                 for year, n in _require_mapping(years, f"shares_by_grant_year[{key!r}]").items()
             }
             for key, years in raw_shares.items()

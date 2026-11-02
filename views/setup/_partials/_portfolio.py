@@ -329,6 +329,8 @@ def render_portfolio_legacy(hh: Household, container) -> None:
                     + (", YTD income" if outcome.ytd_synced else "")
                     + (", dividend history" if outcome.dividend_history_synced else "")
                     + (", option exercises" if outcome.option_exercises_synced else "")
+                    # A partial failure (audit-1101 F-11), e.g. the saved grants kept.
+                    + (f". Note: {snap.error}" if snap.error else "")
                 )
                 st.rerun()
             else:
