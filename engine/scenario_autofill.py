@@ -346,7 +346,6 @@ def _auto_fill_core(
     proj = ProjectionState.initial(hh)
     your_ira = hh.your_ira
     spouse_ira = hh.spouse_ira
-    brokerage = hh.brokerage_start
     _cpi = hh.cpi_assumption
     # C16 (audit-0805 W5, mirrors engine/scenario.py's ira-rmd-1 seeding and
     # engine/asset_location.py's identical audit-0802 F7 fix): seed the prior-
@@ -495,6 +494,10 @@ def _auto_fill_core(
         # fixed_gross, MAGI, and SS provisional); qualified dividends and realized LTCG
         # are MAGI/provisional ONLY (preferential rate, excluded from the ordinary
         # bracket base) — see engine/scenario.py:360-361 and :629.
+        # Priced off the projection state's begin-of-year balance -- the same
+        # balance run_scenario uses -- so RMD surplus flowed into the brokerage
+        # in earlier years is in the base (audit-1101 F-01).
+        brokerage = proj.brokerage
         brok_ordinary = 0.0
         brok_magi_extra = 0.0
         if ytd_year is None:
@@ -641,15 +644,6 @@ def _auto_fill_core(
 
         prev_your_ira = cur_your_begin
         prev_spouse_ira = cur_spouse_begin
-
-        # Roll the taxable brokerage forward by total return (appreciation + reinvested
-        # yield), net of the waterfall's forced brokerage sale (issue #598). Simplified
-        # vs engine/scenario.py:660-666, which also nets LTCG tax out and flows excess
-        # RMD in — those are plan-dependent second-order effects, so autofill uses the
-        # total-return proxy to size conversion room.
-        brokerage = max(brokerage - year_result.forced_brokerage_draw, 0.0) * (
-            1 + hh.brokerage_rate(year)
-        )
 
     return plan
 
@@ -1049,7 +1043,9 @@ def add_bracket_fill_withdrawals(
         if yr.your_age < hh.your_rmd_start_age:
             continue  # only post-RMD
 
-        bracket_ceiling = _iv(_base_ceiling(yr.filing_status), yr.year, _cpi_fill)
+        # round50 matches the tax engine's bracket indexing (indexed_bracket_ceiling),
+        # so the fill cannot spill up to $49.99 into the next bracket (audit-1101 F-22).
+        bracket_ceiling = _iv(_base_ceiling(yr.filing_status), yr.year, _cpi_fill, round50=True)
         # Room to fill the target bracket.
         #
         # audit-0823 AF-2. `yr` came from a run_scenario over the BASE plan, so
