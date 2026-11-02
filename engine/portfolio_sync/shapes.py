@@ -155,6 +155,11 @@ class PortfolioSnapshot:
     # EquityGrant has no owner, and without this an export filed the other
     # person's grants under the exporter's slot, bouncing a stale copy back.
     equity_grants_owner: str = ""
+    # Issue #97: which of "grants" / "shares" the last sync failed to fetch and
+    # kept from the saved portfolio instead (audit-1101 F-11). Saved with the
+    # snapshot so the pages can say the values are stale until a sync fetches
+    # them; empty when both were fetched.
+    kept_saved: list[str] = field(default_factory=list)
     # FinExtract PRs #19/#20/#21: equity_sales from the saved portfolio
     equity_sales_lots: list[dict[str, Any]] = field(default_factory=list)
     equity_sales_executions: list[dict[str, Any]] = field(default_factory=list)
@@ -270,7 +275,18 @@ def portfolio_snapshot_from_dict(data: dict) -> PortfolioSnapshot:
         error=data.get("error"),
         imported_from_bundle=bool(data.get("imported_from_bundle", False)),
         equity_grants_owner=str(data.get("equity_grants_owner", "") or ""),
+        kept_saved=kept_saved_from(data.get("kept_saved")),
     )
+
+
+KEPT_SAVED_PARTS: tuple[str, ...] = ("grants", "shares")
+
+
+def kept_saved_from(raw: Any) -> list[str]:
+    """A saved ``kept_saved`` value, keeping only the known parts in order."""
+    if not isinstance(raw, list):
+        return []
+    return [part for part in KEPT_SAVED_PARTS if part in raw]
 
 
 @dataclass

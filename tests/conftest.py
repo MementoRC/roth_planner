@@ -48,6 +48,8 @@ _WATCHED_CACHE_PATHS: list[Path] = [
     _REPO_ROOT / ".committed_household.json",
     _REPO_ROOT / ".exercise_schedule_cache.json",
     _config_loader_mod._USER_DEFAULTS_PATH.resolve(),
+    # The legacy override a save may now rename once migrated (issue #98).
+    _REPO_ROOT / ".user_defaults.py",
     _REPO_ROOT / ".account_attribution.json",
     _REPO_ROOT / ".instance_owner.json",
     _REPO_ROOT / ".ubs_activity_cache.json",

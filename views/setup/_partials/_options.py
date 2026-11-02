@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from config.scalar_registry import scalar_default
+from engine.portfolio_sync.portfolio import kept_saved_note
 from models.household import Household
 from views.portfolio import render_grants_pending_caption
 
@@ -99,6 +100,10 @@ def render_options_partial(hh: Household, container) -> None:
         )
         render_grants_pending_caption(container)
         container.caption("Grants are held for the household, not per person — all are shown here.")
+    # Issue #97: the last sync kept the saved grants; say so until one fetches them.
+    note = kept_saved_note(snap, "grants")
+    if note:
+        container.caption(f":warning: {note}")
 
 
 def render_stock_price_widget(container) -> None:
