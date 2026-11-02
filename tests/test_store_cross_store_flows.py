@@ -348,6 +348,8 @@ def test_a_committed_bridge_import_shows_the_kept_note_and_deselects_manual_entr
     ready, _ = _kept_manual_import(monkeypatch, session, warnings)
     monkeypatch.setattr(data_bridge_mod.st, "caption", captions.append)
     data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    # The notes are drawn in the run after the rerun (audit-1101 F-13).
+    data_bridge_mod._render_import_notices()
     assert session["ytd_manual_entry"] is False
     assert any("crypto income" in w for w in warnings)
     assert not any("Manual entry stayed ON" in c for c in captions)
@@ -361,6 +363,7 @@ def test_a_committed_bridge_import_keeps_an_explicitly_chosen_manual_entry(store
     ready, _ = _kept_manual_import(monkeypatch, session, warnings)
     monkeypatch.setattr(data_bridge_mod.st, "caption", captions.append)
     data_bridge_mod._apply_ready_import(ready, "synthetic.enc")
+    data_bridge_mod._render_import_notices()  # the run after the rerun (audit-1101 F-13)
     assert session["ytd_manual_entry"] is True
     assert any("Manual entry stayed ON" in c for c in captions)
 
@@ -393,6 +396,7 @@ def test_an_unreadable_choice_map_still_commits_the_confirm(store, corrupt_row, 
     confirmed = governance_mod._handle_confirm_click(
         "your_ira", committed, ChoiceMap(), [], None, 1_000.0
     )
+    governance_mod.render_confirm_notices()  # the run after the rerun (audit-1101 F-23)
     assert confirmed is True
     assert store.keys(COMMITTED) != []
     assert store.backend.get(TRUST_CHOICES, SINGLE_KEY).payload == payload

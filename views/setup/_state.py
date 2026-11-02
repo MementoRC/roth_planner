@@ -331,6 +331,9 @@ def _clear_session_for_reseed() -> None:
         # mirrors are distinct keys from "survivor" / "filing_status" above, so
         # clearing only the aggregates left the widgets holding personal values.
         "_pdf_1040_scanned",
+        # A 1040 save's note awaiting display (parameters._SAVE_1040_NOTICES_KEY);
+        # it carries that return's MAGI.
+        "_pdf_1040_save_notices",
         "exercises_captured_at",
         # Issue #487: pending holder-name-mismatch entries
         # (views/ytd_income/_partials/_sync_scan.py) reference statement
@@ -359,6 +362,9 @@ def _clear_session_for_reseed() -> None:
         # Apply decode once (views/setup/data_bridge.py::_prepared_upload), and
         # the preview's slot choices.
         "_bundle_prepared",
+        # The last import's notes awaiting display (data_bridge.IMPORT_NOTICES_KEY);
+        # they can name the user's accounts.
+        "_bundle_import_notices",
         "import_slot_you",
         "import_slot_spouse",
         "import_v4_slot",

@@ -47,7 +47,7 @@ from engine.pdf_owner import OwnerRole, load_owner_map
 from engine.store import StoreUnavailableError, saving_disabled
 from models.household import Household
 from views._shared import SyncEverythingResult, sync_everything
-from views.setup._partials._governance import _render_field_card
+from views.setup._partials._governance import _render_field_card, render_confirm_notices
 
 _SYNC_NOTICE_KEY = "_sync_everything_notice"
 _SYNC_ALL_FAILED_KEY = "_sync_everything_all_failed"
@@ -288,6 +288,7 @@ def render_command_center(hh: Household) -> None:
     notice = st.session_state.pop(_SYNC_NOTICE_KEY, None)
     if notice:
         st.info(notice)
+    render_confirm_notices()
 
     pending: set[str] = st.session_state.get("_pending_review", set())
     st.metric("Fields awaiting review", len(pending))

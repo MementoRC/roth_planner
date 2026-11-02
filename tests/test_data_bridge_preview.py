@@ -271,6 +271,16 @@ def _click_apply(at) -> None:
     assert not at.exception
 
 
+def _successes_after_rerun(at) -> list[str]:
+    """Apply's success note, drawn in the run its (stubbed) st.rerun() starts.
+
+    The note is carried over the rerun, not drawn before it (audit-1101 F-13).
+    """
+    at.run()
+    assert not at.exception
+    return _texts(at.success)
+
+
 class TestApplyHonoursThePreview:
     def test_deselect_you_slot_applies_spouse_only(self, bridge_env: dict) -> None:
         at = _app(seed={"your_age": 61, "spouse_age": 50})
@@ -281,7 +291,8 @@ class TestApplyHonoursThePreview:
         pending = at.session_state["_pending_defaults"]
         assert pending["spouse_age"] == 56
         assert "your_age" not in pending, "the deselected slot must be left untouched"
-        assert any("(spouse)" in s for s in _texts(at.success)), _texts(at.success)
+        successes = _successes_after_rerun(at)
+        assert any("(spouse)" in s for s in successes), successes
 
     def test_default_apply_leaves_receivers_own_scalars_untouched(self, bridge_env: dict) -> None:
         """One Apply click on a spouse's export fills Spouse and leaves Your data alone."""
@@ -292,7 +303,8 @@ class TestApplyHonoursThePreview:
         pending = at.session_state["_pending_defaults"]
         assert pending["spouse_age"] == 56
         assert "your_age" not in pending, "the sender's copy of you must not land by default"
-        assert any("(spouse)" in s for s in _texts(at.success)), _texts(at.success)
+        successes = _successes_after_rerun(at)
+        assert any("(spouse)" in s for s in successes), successes
 
     def test_ticking_non_exporter_slot_restores_it(self, bridge_env: dict) -> None:
         """Opting in to the other slot restores both people in one pass."""
@@ -304,7 +316,8 @@ class TestApplyHonoursThePreview:
         pending = at.session_state["_pending_defaults"]
         assert pending["your_age"] == 62
         assert pending["spouse_age"] == 56
-        assert any("(you + spouse)" in s for s in _texts(at.success)), _texts(at.success)
+        successes = _successes_after_rerun(at)
+        assert any("(you + spouse)" in s for s in successes), successes
 
     def test_nothing_selected_disables_apply(self, bridge_env: dict) -> None:
         at = _app()

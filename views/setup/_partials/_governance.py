@@ -36,6 +36,9 @@ from engine.store import get_store
 from models.sourced import Source
 
 _MAGI_PREFIX = "prior_year_magi."
+# A Confirm's notes, carried over the st.rerun() that follows it: drawn before
+# it, they were discarded before anyone could read them (audit-1101 F-23).
+CONFIRM_NOTICES_KEY = "_governance_confirm_notices"
 
 _FIELD_LABELS: dict[str, str] = {
     "your_ira": "Your IRA balance",
@@ -179,14 +182,25 @@ def _handle_confirm_click(
             "(corrupt or truncated) and was left untouched."
         )
         return False
+    notices: list[tuple[str, str]] = []
     if choices_unreadable:
-        st.warning(
-            "⚠️ Saved source choices are unreadable and were left untouched, so this "
-            "source choice was not remembered."
+        notices.append(
+            (
+                "warning",
+                "⚠️ Saved source choices are unreadable and were left untouched, so this "
+                "source choice was not remembered.",
+            )
         )
     _apply_confirm_to_session(field_key, value)
-    st.success(f"Confirmed {_field_label(field_key)} from {source}.")
+    notices.append(("success", f"Confirmed {_field_label(field_key)} from {source}."))
+    st.session_state[CONFIRM_NOTICES_KEY] = notices
     return True
+
+
+def render_confirm_notices() -> None:
+    """Show the last Confirm's notes once, in the run after its st.rerun()."""
+    for kind, text in st.session_state.pop(CONFIRM_NOTICES_KEY, None) or ():
+        getattr(st, kind)(text)
 
 
 def _render_field_card(

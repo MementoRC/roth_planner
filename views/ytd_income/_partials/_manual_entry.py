@@ -131,7 +131,7 @@ def _save(owner: str) -> None:
             st.session_state.get(DRAFT_META_KEY) or {},
             current_owner=owner,
             today=date.today().isoformat(),
-        )
+        ).with_snapshot_date()
     st.session_state.pop(DRAFT_KEY, None)
     st.session_state.pop(DRAFT_META_KEY, None)
     st.session_state[_SAVED_FLASH_KEY] = True
@@ -523,14 +523,18 @@ def render_manual_entry_partial(hh: Household) -> YTDSnapshot:
     # (audit-0805 C42): a fresh YTDSnapshot(...) here would drop every field
     # this form has no widget for (e.g. nqo_exercise_ytd). Field values are
     # written only by Save (redesign PR 1b).
-    ytd = ytd.overlay(
-        tax_year=hh.base_year,
-        ira_conversions_ytd=conversions_done,
-        spouse_ira_conversions_ytd=spouse_conversions_done,
-        ira_distributions_ytd=distributions_done,
-        income_events=income_events,
-        manually_entered=True,
-    ).with_snapshot_date()
+    logged = {
+        "ira_conversions_ytd": conversions_done,
+        "spouse_ira_conversions_ytd": spouse_conversions_done,
+        "ira_distributions_ytd": distributions_done,
+        "income_events": income_events,
+    }
+    changed = any(getattr(ytd, name) != value for name, value in logged.items())
+    ytd = ytd.overlay(tax_year=hh.base_year, manually_entered=True, **logged)
+    # Only a real change is dated: re-dating on every render made merely
+    # viewing the page clear the stale-data warning (audit-1101 F-16).
+    if changed:
+        ytd.with_snapshot_date()
 
     st.session_state.ytd_snapshot = ytd
     return ytd
