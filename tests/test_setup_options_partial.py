@@ -134,7 +134,7 @@ def test_stock_price_widget_stock_price_round_trip() -> None:
     at.run()
     assert not at.exception
 
-    widget = next(w for w in at.number_input if w.label == "Stock Current Price")
+    widget = next(w for w in at.number_input if w.label == "ACME Current Price")
     widget.set_value(321).run()
     assert at.session_state["stock_price"] == 321
 

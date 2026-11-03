@@ -182,6 +182,12 @@ def scalar_default(session_key: str) -> object:
     return copy.deepcopy(_BY_SESSION_KEY[current_key(session_key)].default)
 
 
+def normalize_ticker(raw: object) -> str:
+    """Strip + uppercase a typed ticker; blank/None falls back to the registry default."""
+    text = str(raw).strip().upper() if raw is not None else ""
+    return text or str(scalar_default("_stock_ticker"))
+
+
 def scalar_default_by_config_key(config_key: str) -> object:
     """Same as :func:`scalar_default`, keyed by the SCALAR_KEYS/config name."""
     return copy.deepcopy(_BY_CONFIG_KEY[current_key(config_key)].default)
