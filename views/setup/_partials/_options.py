@@ -15,7 +15,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from config.scalar_registry import scalar_default
+from config.scalar_registry import normalize_ticker, scalar_default
 from engine.portfolio_sync.portfolio import kept_saved_note
 from models.household import Household
 from views.portfolio import render_grants_pending_caption
@@ -107,8 +107,10 @@ def render_options_partial(hh: Household, container) -> None:
 
 
 def render_stock_price_widget(container) -> None:
-    """Render the ``stock_price_now`` stock-price ``number_input`` and the
-    assumed stock growth rate (``stock_price_growth_rate``) input.
+    """Render the employer stock ticker (``_stock_ticker``, normalised: trimmed,
+    upper-cased, blank -> registry default), the ``stock_price_now`` stock-price
+    ``number_input`` and the assumed stock growth rate
+    (``stock_price_growth_rate``) input.
 
     Extracted out of ``render_options_partial`` (PR B, 2026-09) so
     ``views/profile_pages.py``'s Assumptions page can render it; the
@@ -121,8 +123,15 @@ def render_stock_price_widget(container) -> None:
     ``st.session_state.stock_price`` rather than ``hh.stock_price_now``).
     """
     container.subheader("Stock Price")
+    ticker = st.session_state["_stock_ticker"] = normalize_ticker(
+        container.text_input(
+            "Stock ticker",
+            value=str(st.session_state.get("_stock_ticker") or scalar_default("_stock_ticker")),
+            help="Used for the price quote, the price label and dividend forecasts.",
+        )
+    )
     st.session_state.stock_price = container.number_input(
-        f"{st.session_state.get('_stock_ticker', 'Stock')} Current Price",
+        f"{ticker} Current Price",
         min_value=0,
         value=_clamp(st.session_state.stock_price, 0),
         step=5,
