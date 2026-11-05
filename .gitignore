@@ -10,6 +10,9 @@ build/
 # Pixi
 .pixi/
 
+# mutmut working copy (local mutation testing)
+mutants/
+
 # IDE
 .idea/
 .vscode/

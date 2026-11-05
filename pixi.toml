@@ -44,8 +44,14 @@ build = "python -m build"
 acceptance-record = "python scripts/acceptance_checksum.py record"
 acceptance-verify = "python scripts/acceptance_checksum.py verify"
 
+[feature.dev.dependencies]
+mutmut = ">=3.8,<4"
+
 [feature.dev.tasks]
 app = "streamlit run app.py"
+mutation = "mutmut run"
+mutation-results = "mutmut results"
+mutation-show = "mutmut show"
 
 [environments]
 default = { solve-group = "default" }
