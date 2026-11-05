@@ -497,6 +497,10 @@ class YTDTaxEstimate:
     effective_rate: float = 0.0
     marginal_bracket_pct: float = 0.0
     room_to_next_bracket: float = 0.0
+    # Dollars of preferential income (LTCG + qualified dividends) taxed at each rate.
+    ltcg_at_0: float = 0.0
+    ltcg_at_15: float = 0.0
+    ltcg_at_20: float = 0.0
 
 
 def estimate_ytd_federal_tax(
@@ -617,6 +621,7 @@ def estimate_ytd_federal_tax(
         min(ltcg_end, _ltcg_thresholds[1]) - max(ltcg_start, _ltcg_thresholds[0]),
     )
     ltcg_at_20 = max(0.0, ltcg_end - max(ltcg_start, _ltcg_thresholds[1]))
+    ltcg_at_0 = max(0.0, ltcg_preferential - ltcg_at_15 - ltcg_at_20)
     _ltcg_rates = LTCG_RATES_SINGLE if is_single else LTCG_RATES_MFJ
     ltcg_tax = ltcg_at_15 * _ltcg_rates[1] + ltcg_at_20 * _ltcg_rates[2]
 
@@ -665,6 +670,9 @@ def estimate_ytd_federal_tax(
         effective_rate=effective_rate,
         marginal_bracket_pct=marginal,
         room_to_next_bracket=room_next,
+        ltcg_at_0=ltcg_at_0,
+        ltcg_at_15=ltcg_at_15,
+        ltcg_at_20=ltcg_at_20,
     )
 
 
