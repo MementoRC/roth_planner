@@ -33,6 +33,10 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+bdd_features_base_dir = "tests/acceptance/features"
+markers = [
+    "acceptance: human-owned acceptance specs (pytest-bdd)",
+]
 
 [tool.coverage.run]
 source = ["engine", "models"]
