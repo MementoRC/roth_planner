@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
 from engine.ira import inherited_ira_drain, inherited_ira_years_remaining
-from engine.irmaa import irmaa_for_year, irmaa_next_threshold
+from engine.irmaa import irmaa_for_year, irmaa_next_threshold, irmaa_part_b_for_year
 from engine.niit import niit
 from engine.scenario_compute import (
     compute_aca,
@@ -822,6 +822,16 @@ def _project_year(
         cpi=cpi,
     )
     yr.irmaa_cost = irmaa_cost
+    yr.irmaa_part_b = irmaa_part_b_for_year(
+        magi_for_irmaa,
+        ya_irmaa - 2,
+        sa_irmaa - 2,
+        base_part_b=hh.medicare_part_b_base_monthly * 12,
+        filing_status=irmaa_filing_status,
+        year=year,
+        cpi=cpi,
+    )
+    yr.irmaa_part_d = irmaa_cost - yr.irmaa_part_b
     yr.irmaa_room = irmaa_next_threshold(
         yr.magi, filing_status=current_filing_status, year=year + 2, cpi=cpi
     )  # +2: this year's MAGI is judged against payment-year (income_year + 2) thresholds

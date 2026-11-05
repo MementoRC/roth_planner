@@ -100,7 +100,9 @@ class YearResult:
     federal_tax_amt: float = 0.0
     marginal_bracket: float = 0.0
     conversion_tax: float = 0.0
-    irmaa_cost: float = 0.0
+    irmaa_cost: float = 0.0  # annual Part B + Part D surcharge; == irmaa_part_b + irmaa_part_d
+    irmaa_part_b: float = 0.0  # annual Part B share of irmaa_cost
+    irmaa_part_d: float = 0.0  # annual Part D share of irmaa_cost
     aca_loss: float = 0.0
     aca_clawback: float = 0.0  # Form 8962 excess-APTC repayment (positive = owed, negative = refund); added to federal_tax_amt
     aca_premium_cost: float = 0.0  # out-of-pocket ACA premium actually paid this year (benchmark - PTC), net of any advance APTC already reconciled through aca_clawback; FUNDED via income_needed, unlike the display-only delta aca_loss

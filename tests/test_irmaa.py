@@ -586,3 +586,54 @@ class TestIrmaaLookbackHelpers:
         got = irmaa_tier1_threshold(2030, "MFJ", 0.025)
         assert got == _index_irmaa_tiers(IRMAA_TIERS_MFJ, 2032, 0.025)[0][0]
         assert got == 252_000.0
+
+
+class TestYearResultIrmaaSplit:
+    """YearResult.irmaa_part_b / irmaa_part_d split the annual irmaa_cost."""
+
+    @staticmethod
+    def _first_year(status: str, age: int, spouse_age: int, lookback_magi: float):
+        from engine.scenario import run_no_conversion
+        from models.ytd_income import YTDSnapshot
+
+        hh = Household(
+            your_age=age,
+            spouse_age=spouse_age,
+            filing_status=status,
+            base_year=2026,
+            cpi_assumption=0.0,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            your_roth=0.0,
+            spouse_roth=0.0,
+            your_ss_fra=0.0,
+            spouse_ss_fra=0.0,
+            grants=[],
+            brokerage_start=0.0,
+            living_expenses=0.0,
+            medicare_part_b_base_monthly=202.90,
+            prior_year_magi={2024: lookback_magi},
+        )
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=50_000.0)
+        return run_no_conversion(hh, end_age=age + 1, ytd=ytd).years[0]
+
+    def test_single_aged_66_tier2(self) -> None:
+        yr = self._first_year("Single", 66, 0, 150_000)
+        assert yr.irmaa_part_b == pytest.approx(202.90 * 12)
+        assert yr.irmaa_part_d == pytest.approx(37.50 * 12)
+        assert yr.irmaa_cost == pytest.approx(yr.irmaa_part_b + yr.irmaa_part_d)
+        assert yr.irmaa_cost == pytest.approx((202.90 + 37.50) * 12)
+
+    def test_mfj_both_on_medicare_counts_both(self) -> None:
+        yr = self._first_year("MFJ", 66, 66, 300_000)
+        assert yr.irmaa_part_b == pytest.approx(2 * 202.90 * 12)
+        assert yr.irmaa_part_d == pytest.approx(2 * 37.50 * 12)
+        assert yr.irmaa_cost == pytest.approx(yr.irmaa_part_b + yr.irmaa_part_d)
+
+    def test_below_threshold_is_zero(self) -> None:
+        yr = self._first_year("Single", 66, 0, 100_000)
+        assert (yr.irmaa_part_b, yr.irmaa_part_d, yr.irmaa_cost) == (0.0, 0.0, 0.0)
+
+    def test_under_65_is_zero(self) -> None:
+        yr = self._first_year("Single", 60, 0, 150_000)
+        assert (yr.irmaa_part_b, yr.irmaa_part_d, yr.irmaa_cost) == (0.0, 0.0, 0.0)
