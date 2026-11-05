@@ -287,13 +287,11 @@ def extract_owner_key(full_text: str) -> str | None:
     text, for owner attribution. Dispatches by detected broker; returns None
     (never guesses) if no recognized broker or no holder-name line matches.
 
-    TODO(verify): only Schwab's and Vanguard's single-holder patterns are
-    covered by the layout fixtures in this repo. IBKR and
-    Fidelity's per-account "Account Information" sections were not inspected
-    for a holder-name line as part of this plan -- extend
-    _detect_ibkr_account / _detect_fidelity_account-style anchors if needed;
-    until then, IBKR/Fidelity records fall back to owner_key=None (manual
-    confirmation in the UI), which is an acceptable degraded outcome.
+    Schwab and Vanguard statements are single-account, so the holder name is
+    read here from the whole text. IBKR and Fidelity statements are
+    multi-account: their holder names are read per account section inside
+    _parse_ibkr / _parse_fidelity (_extract_ibkr_holder,
+    _extract_fidelity_holder), and this function returns None for them.
     """
     broker = detect_broker(full_text)
     if broker == "schwab":
@@ -1107,7 +1105,7 @@ def _parse_ubs(full_text: str) -> BrokerageStatementRecord:
         ltcg_net_ytd=ltcg_net,
         captured_at=datetime.now(UTC).isoformat(),
         provenance={"pdf_pages_total": full_text.count("--- page")},
-        owner_key=None,  # UBS owner extraction out of scope -- see extract_owner_key TODO(verify)
+        owner_key=None,  # UBS owner extraction out of scope
         missing_fields=missing,
     )
 
