@@ -33,6 +33,18 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+bdd_features_base_dir = "tests/acceptance/features"
+markers = [
+    "acceptance: human-owned acceptance specs (pytest-bdd)",
+]
+
+[tool.mutmut]
+# Local-only mutation testing over the T1 acceptance specs (not run in CI).
+# mutmut 3.x mutates copies under mutants/; sources are never rewritten.
+source_paths = ["engine/ira.py", "engine/irmaa.py", "engine/niit.py", "engine/tax.py"]
+pytest_add_cli_args_test_selection = ["tests/acceptance/"]
+also_copy = ["models/", "engine/", "config/", "pyproject.toml"]
+pytest_add_cli_args = ["--no-cov", "-m", "acceptance"]
 
 [tool.coverage.run]
 source = ["engine", "models"]
