@@ -746,9 +746,11 @@ def _parse_ibkr(full_text: str) -> list[BrokerageStatementRecord]:
                 account_type=account_type,
                 statement_period_end=period_end,
                 interest_taxable_ytd=interest,
-                # IBKR's Cash Report gives no tax-exempt/taxable split at all
-                # (unlike Schwab/Vanguard) -- UNVERIFIED against a muni-holding
-                # IBKR account, since neither sampled account holds one.
+                # IBKR's Cash Report gives no tax-exempt/taxable split and no
+                # qualified/ordinary split (unlike Schwab/Vanguard): a single
+                # "Dividends" and a single "Broker Interest Paid and Received"
+                # row (checked against a July 2026 Activity Statement). A
+                # muni-holding account has not been sampled.
                 interest_tax_exempt_ytd=0.0,
                 dividends_taxable_ytd=dividends,
                 dividends_tax_exempt_ytd=0.0,
