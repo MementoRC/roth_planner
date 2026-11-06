@@ -18,11 +18,14 @@ from engine.irmaa import (
     irmaa_tier,
 )
 from engine.niit import niit
-from engine.tax import LTCG_RATES_MFJ, estimate_ytd_federal_tax
+from engine.scenario import run_no_conversion
+from engine.tax import estimate_ytd_federal_tax
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
 _MONTHS = 12
+_MEDICARE_AGE = 66
+_MAGI_TOLERANCE = 1.0
 
 
 def distribution_period(age: int, beneficiary_age: int | None) -> float:
@@ -65,12 +68,53 @@ def niit_for(status: str, magi: float, nii: float) -> float:
     return niit(magi, nii, status)
 
 
+def projected_part_b_premium(
+    status: str, magi_by_year: Mapping[int, float], year: int
+) -> tuple[float, float]:
+    """Monthly (IRMAA, total Part B) for ``year`` from a one-year engine projection.
+
+    A synthetic single-filer household aged 66 earns only wages equal to
+    ``magi_by_year[year]``; every other entry is filed MAGI for the engine's
+    lookback. engine.scenario.run_no_conversion prices the year's IRMAA
+    (annual Part B surcharge, YearResult.irmaa_part_b, shown monthly) on top of
+    the household's Part B base. The projected MAGI must reproduce the stated
+    figure, proving that income really was low and that the engine ignored it.
+    """
+    hh = Household(
+        your_age=_MEDICARE_AGE,
+        spouse_age=0,
+        filing_status=status,
+        base_year=year,
+        cpi_assumption=0.0,
+        your_ira=0.0,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=0.0,
+        living_expenses=0.0,
+        medicare_part_b_base_monthly=BASE_PART_B / _MONTHS,
+        prior_year_magi={y: m for y, m in magi_by_year.items() if y != year},
+    )
+    ytd = YTDSnapshot(tax_year=year, wages_ytd=magi_by_year[year])
+    projected = run_no_conversion(hh, end_age=_MEDICARE_AGE + 1, ytd=ytd).years[0]
+    assert projected.year == year
+    assert abs(projected.magi - magi_by_year[year]) <= _MAGI_TOLERANCE, projected.magi
+    irmaa = projected.irmaa_part_b / _MONTHS
+    return irmaa, hh.medicare_part_b_base_monthly + irmaa
+
+
 @dataclass(frozen=True)
 class TaxOutcome:
     ordinary_tax: float
     ltcg_tax: float
     total: float
     magi: float
+    ltcg_at_0: float = 0.0
+    ltcg_at_15: float = 0.0
+    ltcg_at_20: float = 0.0
 
 
 def federal_tax_outcome(
@@ -93,14 +137,12 @@ def federal_tax_outcome(
     )
     ytd = YTDSnapshot(tax_year=year, wages_ytd=wages, ira_conversions_ytd=conversion, ltcg_ytd=ltcg)
     est = estimate_ytd_federal_tax(ytd, hh)
-    return TaxOutcome(est.ordinary_tax, est.ltcg_tax, est.total, ytd.magi_ytd)
-
-
-def ltcg_taxed_at_15(outcome: TaxOutcome) -> float:
-    """Gain amount the engine's LTCG tax implies was taxed at 15% (MFJ).
-
-    The engine exposes only the LTCG tax, not the band split, so the 15% band
-    is recovered from engine.tax.LTCG_RATES_MFJ[1]. Valid only when no gain
-    reaches the 20% band (true for the specs that use it).
-    """
-    return outcome.ltcg_tax / LTCG_RATES_MFJ[1]
+    return TaxOutcome(
+        est.ordinary_tax,
+        est.ltcg_tax,
+        est.total,
+        ytd.magi_ytd,
+        est.ltcg_at_0,
+        est.ltcg_at_15,
+        est.ltcg_at_20,
+    )
