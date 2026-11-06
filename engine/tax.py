@@ -501,6 +501,12 @@ class YTDTaxEstimate:
     ltcg_at_0: float = 0.0
     ltcg_at_15: float = 0.0
     ltcg_at_20: float = 0.0
+    # Return line items (see estimate_ytd_federal_tax docstring for definitions).
+    taxable_ss: float = 0.0
+    agi: float = 0.0
+    standard_deduction: float = 0.0
+    senior_deduction: float = 0.0
+    taxable_income: float = 0.0
 
 
 def estimate_ytd_federal_tax(
@@ -524,6 +530,14 @@ def estimate_ytd_federal_tax(
     Standard deduction and OBBBA senior bonus are applied to derive taxable
     ordinary income (IRC §63(a)). All bracket-dependent outputs — ordinary_tax,
     marginal_bracket_pct, room_to_next_bracket — use taxable_ordinary, not gross.
+
+    Return line items: ``taxable_ss`` is the §86 includable benefit; ``agi`` is
+    the NIIT-basis MAGI plus taxable_ss (excludes tax-exempt interest);
+    ``standard_deduction`` is the indexed standard deduction including the aged
+    extras; ``senior_deduction`` is the OBBBA bonus, reported separately.
+    ``taxable_income`` is the ORDINARY taxable income the brackets are applied
+    to (``taxable_ordinary``): total taxable income minus the preferential
+    LTCG/qualified-dividend slice, so it EXCLUDES preferential income.
     """
     from engine.niit import niit
 
@@ -567,7 +581,7 @@ def estimate_ytd_federal_tax(
             STD_DEDUCTION_SINGLE, _year, _cpi, round50=True
         ) + senior_count * index_value(SENIOR_EXTRA_SINGLE, _year, _cpi, round50=True)
     # OBBBA senior bonus deduction also lowers the taxable income base.
-    std_ded += senior_bonus_deduction(
+    senior_ded = senior_bonus_deduction(
         hh.your_age,
         hh.spouse_age,
         niit_magi_with_ss,
@@ -575,6 +589,7 @@ def estimate_ytd_federal_tax(
         cpi=_cpi,
         filing_status=hh.filing_status,
     )
+    total_ded = std_ded + senior_ded
     # Step 4: LTCG + qualified dividends taxed at preferential rate. Computed
     # BEFORE taxable_ordinary because IRC §1(h)'s Qualified Dividends and
     # Capital Gain Tax Worksheet floors TOTAL taxable income (ordinary + LTCG)
@@ -602,7 +617,7 @@ def estimate_ytd_federal_tax(
     # Capital Gain Tax Worksheet, Form 1040 Instructions, lines 1/6/7/9: the
     # preferential amount actually taxed is capped at total taxable income, and
     # ordinary taxable income is whatever total taxable income remains).
-    taxable_total = max(ordinary_income_with_ss + ltcg_taxable - std_ded, 0.0)
+    taxable_total = max(ordinary_income_with_ss + ltcg_taxable - total_ded, 0.0)
     ltcg_preferential = min(ltcg_taxable, taxable_total)
     taxable_ordinary = taxable_total - ltcg_preferential
 
@@ -673,6 +688,11 @@ def estimate_ytd_federal_tax(
         ltcg_at_0=ltcg_at_0,
         ltcg_at_15=ltcg_at_15,
         ltcg_at_20=ltcg_at_20,
+        taxable_ss=tss,
+        agi=niit_magi_with_ss,
+        standard_deduction=std_ded,
+        senior_deduction=senior_ded,
+        taxable_income=taxable_ordinary,
     )
 
 
