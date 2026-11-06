@@ -174,6 +174,17 @@ def irmaa_surcharge(
     Returns:
         Total annual surcharge above base premiums.
     """
+    part_b, part_d = _tier_surcharges_per_person(magi, base_part_b, filing_status, year, cpi)
+    # Index surcharge dollars forward at the medical-inflation rate (audit A1).
+    # Both tier and base premiums share this rate, so scaling the net
+    # surcharge is exact; at year==BASE_YEAR the factor is 1.0 (no change).
+    return index_value(part_b + part_d, year, medical_cpi) * num_people
+
+
+def _tier_surcharges_per_person(
+    magi: float, base_part_b: float, filing_status: str, year: int, cpi: float
+) -> tuple[float, float]:
+    """Unindexed (Part B, Part D) annual surcharge per person for the MAGI's tier."""
     base_tiers = IRMAA_TIERS_SINGLE if filing_status == "Single" else IRMAA_TIERS_MFJ
     # Index MAGI thresholds; Tier 5 is frozen through 2027, indexed 2028+ —
     # see _index_irmaa_tiers.
@@ -188,13 +199,8 @@ def irmaa_surcharge(
             # BASE_PART_B scales with the user's base instead of shrinking as
             # the base rises. Exact at the default base. Part D is independent.
             part_b_surcharge = (part_b_annual - BASE_PART_B) * (base_part_b / BASE_PART_B)
-            surcharge_per_person = part_b_surcharge + (part_d_annual - BASE_PART_D)
-            # Index surcharge dollars forward at the medical-inflation rate (audit A1).
-            # Both tier and base premiums share this rate, so scaling the net
-            # surcharge is exact; at year==BASE_YEAR the factor is 1.0 (no change).
-            surcharge_per_person = index_value(surcharge_per_person, year, medical_cpi)
-            return surcharge_per_person * num_people
-    return 0.0
+            return part_b_surcharge, part_d_annual - BASE_PART_D
+    return 0.0, 0.0
 
 
 def irmaa_tier(
@@ -225,6 +231,41 @@ def irmaa_tier(
     return len(tiers)
 
 
+def _on_medicare(your_age_income_year: int, spouse_age_income_year: int, filing_status: str) -> int:
+    """People on Medicare in the payment year (income year + 2)."""
+    medicare_your_age = your_age_income_year + 2
+    medicare_spouse_age = spouse_age_income_year + 2
+    # Only MFJ has a second Medicare beneficiary. For any non-MFJ status the spouse age is not a
+    # real second enrollee — IRMAA surcharges are per-beneficiary (42 U.S.C. §1395r(i) / IRC
+    # §1839(i)) — so cap the count at the primary. Mirrors the _is_mfj_curves guard in
+    # engine/aca_irmaa_compute.py.
+    if filing_status == "MFJ":
+        return sum(1 for a in [medicare_your_age, medicare_spouse_age] if a >= 65)
+    return 1 if medicare_your_age >= 65 else 0
+
+
+def irmaa_part_b_for_year(
+    income_year_magi: float,
+    your_age_income_year: int,
+    spouse_age_income_year: int,
+    base_part_b: float = BASE_PART_B,
+    filing_status: str = "MFJ",
+    *,
+    year: int = BASE_YEAR,
+    cpi: float = DEFAULT_CPI,
+    medical_cpi: float = MEDICAL_INFLATION,
+) -> float:
+    """Part B share of irmaa_for_year's annual surcharge (same arguments and scope).
+
+    The Part D share is the remainder: irmaa_for_year()[0] minus this.
+    """
+    on_medicare = _on_medicare(your_age_income_year, spouse_age_income_year, filing_status)
+    if on_medicare == 0:
+        return 0.0
+    part_b, _ = _tier_surcharges_per_person(income_year_magi, base_part_b, filing_status, year, cpi)
+    return index_value(part_b, year, medical_cpi) * on_medicare
+
+
 def irmaa_for_year(
     income_year_magi: float,
     your_age_income_year: int,
@@ -250,16 +291,7 @@ def irmaa_for_year(
     Only counts people who are 65+ in that payment year.
     year/cpi: index MAGI thresholds to the payment year (income_year + 2), matching CMS published thresholds.
     """
-    medicare_your_age = your_age_income_year + 2
-    medicare_spouse_age = spouse_age_income_year + 2
-    # Only MFJ has a second Medicare beneficiary. For any non-MFJ status the spouse age is not a
-    # real second enrollee — IRMAA surcharges are per-beneficiary (42 U.S.C. §1395r(i) / IRC
-    # §1839(i)) — so cap the count at the primary. Mirrors the _is_mfj_curves guard in
-    # engine/aca_irmaa_compute.py.
-    if filing_status == "MFJ":
-        on_medicare = sum(1 for a in [medicare_your_age, medicare_spouse_age] if a >= 65)
-    else:
-        on_medicare = 1 if medicare_your_age >= 65 else 0
+    on_medicare = _on_medicare(your_age_income_year, spouse_age_income_year, filing_status)
 
     if on_medicare == 0:
         return 0.0, 0

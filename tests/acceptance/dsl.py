@@ -12,10 +12,14 @@ Interpretation choices (also reported to the owner):
   values are compared to the cent.
 - Federal tax with/without a conversion or gain: the engine's full YTD
   federal estimate for a household with only wages (+ conversion / LTCG).
-- "$X of the gain is taxed at 15%" is recovered from the engine's LTCG tax
-  (driver.ltcg_taxed_at_15); the 0% part is the remainder of the gain.
+- "$X of the gain is taxed at 0% / 15%" is read from the engine's own band
+  amounts on the YTD estimate (ltcg_at_0 / ltcg_at_15).
 - Part B figures are monthly, per person; "2026 premium" uses the 2026
   engine tier tables; the lookback income year comes from the engine.
+- When a scenario also states the premium year's own MAGI, the premium comes
+  from an engine projection of that year (a single filer aged 66 whose only
+  income is wages equal to that MAGI, lookback MAGI filed): the projected MAGI
+  must match the stated one, proving it was ignored, not just never read.
 """
 
 from __future__ import annotations
@@ -75,6 +79,8 @@ class Beneficiary:
 
 
 def premium_for(person: Beneficiary, year: int) -> tuple[float, float]:
+    if year in person.magi_by_year:
+        return driver.projected_part_b_premium(person.status, person.magi_by_year, year)
     magi = driver.magi_that_sets_premium(person.magi_by_year, year)
     return driver.part_b_premium(person.status, magi, year)
 
@@ -123,8 +129,8 @@ def added_tax(before: driver.TaxOutcome, after: driver.TaxOutcome) -> float:
 
 
 def gain_taxed_at_15(after: driver.TaxOutcome) -> float:
-    return driver.ltcg_taxed_at_15(after)
+    return after.ltcg_at_15
 
 
 def gain_taxed_at_0(after: driver.TaxOutcome, gain: float) -> float:
-    return gain - driver.ltcg_taxed_at_15(after)
+    return after.ltcg_at_0

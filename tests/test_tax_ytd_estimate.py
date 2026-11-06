@@ -336,3 +336,48 @@ class TestA1SS86ProvisionalIncomeMagi:
         # ordinary_income_with_ss = 20K + 16.2K = 36.2K; taxable = 36.2K - 32.2K = 4K
         taxable_ordinary = max(20_000 + expected_tss - STD_DEDUCTION_MFJ, 0.0)
         assert result.ordinary_tax == pytest.approx(federal_tax(taxable_ordinary), abs=1.0)
+
+
+class TestLtcgBandAmounts:
+    """T1 phase 2 — YTDTaxEstimate exposes dollars of LTCG taxed at 0% / 15% / 20%."""
+
+    @staticmethod
+    def _assert_invariants(result: object, preferential: float) -> None:
+        band_total = result.ltcg_at_0 + result.ltcg_at_15 + result.ltcg_at_20
+        assert band_total == approx(preferential, 0.01)
+        band_tax = result.ltcg_at_15 * 0.15 + result.ltcg_at_20 * 0.20
+        assert band_tax == approx(result.ltcg_tax, 0.01)
+
+    def test_straddles_zero_and_fifteen_bands(self) -> None:
+        """MFJ $130K wages + $20K LTCG: taxable ordinary 97,800 → $1,100 at 0%, rest at 15%."""
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=130_000, ltcg_ytd=20_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        assert result.ltcg_at_0 == approx(1_100.0, 0.01)
+        assert result.ltcg_at_15 == approx(18_900.0, 0.01)
+        assert result.ltcg_at_20 == approx(0.0, 0.01)
+        assert result.ltcg_tax == approx(2_835.0, 0.01)
+        self._assert_invariants(result, 20_000.0)
+
+    def test_gain_entirely_in_zero_band(self) -> None:
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=60_000, ltcg_ytd=10_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        assert result.ltcg_at_0 == approx(10_000.0, 0.01)
+        assert result.ltcg_at_15 == approx(0.0, 0.01)
+        assert result.ltcg_at_20 == approx(0.0, 0.01)
+        self._assert_invariants(result, 10_000.0)
+
+    def test_gain_crossing_into_twenty_band(self) -> None:
+        """Taxable ordinary 567,800 → 45,900 up to the 613,700 threshold, 4,100 above."""
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=600_000, ltcg_ytd=50_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        assert result.ltcg_at_0 == approx(0.0, 0.01)
+        assert result.ltcg_at_15 == approx(45_900.0, 0.01)
+        assert result.ltcg_at_20 == approx(4_100.0, 0.01)
+        self._assert_invariants(result, 50_000.0)
+
+    def test_no_gain_yields_all_zero(self) -> None:
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=130_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        assert result.ltcg_at_0 == 0.0
+        assert result.ltcg_at_15 == 0.0
+        assert result.ltcg_at_20 == 0.0
