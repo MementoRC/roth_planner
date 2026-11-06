@@ -147,6 +147,27 @@ class TestJointLastSurvivorTable:
         assert rmd == pytest.approx(1_000_000 / 26.5, rel=1e-6)
 
 
+class TestSpouseSoleBeneficiaryFlag:
+    """T1 — Table II applies only when the spouse is the SOLE beneficiary."""
+
+    def test_sole_spouse_15_years_younger_uses_table_ii(self):
+        assert rmd_divisor(75, 60) == 28.3
+        assert rmd_divisor(75, 60, spouse_sole_beneficiary=True) == 28.3
+
+    def test_not_sole_uses_uniform_table(self):
+        assert rmd_divisor(75, 60, spouse_sole_beneficiary=False) == 24.6
+
+    def test_spouse_5_years_younger_is_uniform_either_way(self):
+        assert rmd_divisor(75, 70) == 24.6
+        assert rmd_divisor(75, 70, spouse_sole_beneficiary=False) == 24.6
+
+    def test_calc_rmd_threads_flag(self):
+        sole = calc_rmd(283_000, 75, 73, beneficiary_age=60)
+        shared = calc_rmd(283_000, 75, 73, beneficiary_age=60, spouse_sole_beneficiary=False)
+        assert sole == approx(10_000.0, tol=0.01)
+        assert shared == approx(283_000 / 24.6, tol=0.01)
+
+
 class TestSSBenefit:
     def test_ss_at_70(self):
         annual = ss_benefit_at_age(3_600, 70, 67)

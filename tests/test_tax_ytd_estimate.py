@@ -381,3 +381,26 @@ class TestLtcgBandAmounts:
         assert result.ltcg_at_0 == 0.0
         assert result.ltcg_at_15 == 0.0
         assert result.ltcg_at_20 == 0.0
+
+
+class TestReturnLineItems:
+    """T1 — YTDTaxEstimate exposes taxable SS, AGI, deductions and taxable income."""
+
+    def test_retired_mfj_couple_both_66(self) -> None:
+        ytd = YTDSnapshot(tax_year=2026, ira_distributions_ytd=150_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj(66, 66), combined_ss=50_000)
+        assert result.taxable_ss == approx(42_500.0, 0.01)
+        assert result.agi == approx(192_500.0, 0.01)
+        assert result.standard_deduction == approx(35_500.0, 0.01)
+        assert result.senior_deduction == approx(6_900.0, 0.01)
+        assert result.taxable_income == approx(150_100.0, 0.01)
+        assert result.total == approx(22_446.0, 0.5)
+
+    def test_wages_only_under_65_has_no_ss_or_senior_deduction(self) -> None:
+        ytd = YTDSnapshot(tax_year=2026, wages_ytd=100_000)
+        result = estimate_ytd_federal_tax(ytd, _hh_mfj())
+        assert result.taxable_ss == 0.0
+        assert result.senior_deduction == 0.0
+        assert result.agi == approx(100_000.0, 0.01)
+        assert result.standard_deduction == approx(STD_DEDUCTION_MFJ, 0.01)
+        assert result.taxable_income == approx(100_000 - STD_DEDUCTION_MFJ, 0.01)
