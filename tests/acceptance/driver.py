@@ -19,23 +19,37 @@ from engine.irmaa import (
 )
 from engine.niit import niit
 from engine.scenario import run_no_conversion
-from engine.tax import estimate_ytd_federal_tax
+from engine.tax import estimate_ytd_federal_tax, senior_bonus_deduction, taxable_ss
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
 _MONTHS = 12
 _MEDICARE_AGE = 66
 _MAGI_TOLERANCE = 1.0
+_NO_INFLATION = 0.0
 
 
-def distribution_period(age: int, beneficiary_age: int | None) -> float:
+def distribution_period(
+    age: int, beneficiary_age: int | None, *, spouse_sole_beneficiary: bool = True
+) -> float:
     """engine.ira.rmd_divisor (Uniform Lifetime or Joint-Life table as the engine selects)."""
-    return rmd_divisor(age, beneficiary_age)
+    return rmd_divisor(age, beneficiary_age, spouse_sole_beneficiary=spouse_sole_beneficiary)
 
 
-def rmd_for(balance: float, age: int, beneficiary_age: int | None) -> float:
+def rmd_for(
+    balance: float,
+    age: int,
+    beneficiary_age: int | None,
+    *,
+    spouse_sole_beneficiary: bool = True,
+) -> float:
     """engine.ira.calc_rmd for a lifetime owner (no first-year deferral)."""
-    return calc_rmd(balance, age, beneficiary_age=beneficiary_age)
+    return calc_rmd(
+        balance,
+        age,
+        beneficiary_age=beneficiary_age,
+        spouse_sole_beneficiary=spouse_sole_beneficiary,
+    )
 
 
 def part_b_premium(status: str, magi: float, year: int) -> tuple[float, float]:
@@ -145,4 +159,72 @@ def federal_tax_outcome(
         est.ltcg_at_0,
         est.ltcg_at_15,
         est.ltcg_at_20,
+    )
+
+
+def taxable_social_security(
+    status: str,
+    *,
+    benefits: float,
+    other_income: float,
+    tax_exempt_interest: float,
+    year: int,
+) -> float:
+    """engine.tax.taxable_ss, fed the MAGI the engine itself builds (YTDSnapshot.magi_ytd).
+
+    ``other_income`` is entered as an IRA distribution; tax-exempt interest is
+    its own snapshot field, which magi_ytd folds into provisional income.
+    """
+    ytd = YTDSnapshot(
+        tax_year=year,
+        ira_distributions_ytd=other_income,
+        tax_exempt_interest_ytd=tax_exempt_interest,
+    )
+    return taxable_ss(benefits, ytd.magi_ytd, filing_status=status)
+
+
+def enhanced_senior_deduction(
+    status: str, *, your_age: int, spouse_age: int, magi: float, year: int
+) -> float:
+    """engine.tax.senior_bonus_deduction (the OBBBA enhanced deduction for seniors)."""
+    return senior_bonus_deduction(
+        your_age, spouse_age, magi, year=year, cpi=_NO_INFLATION, filing_status=status
+    )
+
+
+@dataclass(frozen=True)
+class RetireeReturn:
+    taxable_benefits: float
+    agi: float
+    standard_deduction: float
+    senior_deduction: float
+    taxable_income: float
+    ordinary_tax: float
+    total_tax: float
+
+
+def retiree_return(
+    *, age: int, year: int, benefits: float, ira_distribution: float
+) -> RetireeReturn:
+    """Whole-year MFJ federal return for two spouses of ``age`` on SS plus an IRA distribution.
+
+    Every figure is read from the engine.tax.estimate_ytd_federal_tax result.
+    """
+    hh = Household(
+        your_age=age,
+        spouse_age=age,
+        filing_status="MFJ",
+        base_year=year,
+        cpi_assumption=_NO_INFLATION,
+    )
+    ytd = YTDSnapshot(tax_year=year, ira_distributions_ytd=ira_distribution)
+    est = estimate_ytd_federal_tax(ytd, hh, combined_ss=benefits)
+    return RetireeReturn(
+        taxable_benefits=est.taxable_ss,
+        agi=est.agi,
+        standard_deduction=est.standard_deduction,
+        senior_deduction=est.senior_deduction,
+        taxable_income=est.taxable_income,
+        ordinary_tax=est.ordinary_tax,
+        total_tax=est.total,
     )

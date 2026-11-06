@@ -54,6 +54,7 @@ class Ira:
     beneficiary_age: int | None = None
     balance: float = 0.0
     year: int = 2026
+    spouse_sole_beneficiary: bool = True
 
 
 def an_ira_owner(age: int) -> Ira:
@@ -65,11 +66,20 @@ def with_spouse_beneficiary_younger_by(ira: Ira, years: int) -> None:
 
 
 def rmd_period(ira: Ira) -> float:
-    return driver.distribution_period(ira.owner_age, ira.beneficiary_age)
+    return driver.distribution_period(
+        ira.owner_age, ira.beneficiary_age, spouse_sole_beneficiary=ira.spouse_sole_beneficiary
+    )
 
 
 def rmd_amount(ira: Ira) -> int:
-    return round(driver.rmd_for(ira.balance, ira.owner_age, ira.beneficiary_age))
+    return round(
+        driver.rmd_for(
+            ira.balance,
+            ira.owner_age,
+            ira.beneficiary_age,
+            spouse_sole_beneficiary=ira.spouse_sole_beneficiary,
+        )
+    )
 
 
 @dataclass
@@ -134,3 +144,93 @@ def gain_taxed_at_15(after: driver.TaxOutcome) -> float:
 
 def gain_taxed_at_0(after: driver.TaxOutcome, gain: float) -> float:
     return after.ltcg_at_0
+
+
+def with_spouse_sharing_the_ira(ira: Ira, years: int) -> None:
+    """A younger spouse who is NOT the sole beneficiary.
+
+    The spouse's age is set exactly as for a sole beneficiary; the IRA is marked
+    shared, so the engine must decline the Joint-Life table despite the gap.
+    """
+    with_spouse_beneficiary_younger_by(ira, years)
+    ira.spouse_sole_beneficiary = False
+
+
+@dataclass
+class BenefitsCase:
+    status: str
+    benefits: float
+    other_income: float = 0.0
+    tax_exempt_interest: float = 0.0
+    year: int = 2026
+
+
+def a_beneficiary_household(status: str, benefits: float) -> BenefitsCase:
+    return BenefitsCase(status=status, benefits=benefits)
+
+
+def taxable_benefits(case: BenefitsCase) -> float:
+    return driver.taxable_social_security(
+        case.status,
+        benefits=case.benefits,
+        other_income=case.other_income,
+        tax_exempt_interest=case.tax_exempt_interest,
+        year=case.year,
+    )
+
+
+_SENIOR_AGE = 66
+_SENIOR_COUNT = {"neither": 0, "one": 1, "both": 2}
+
+
+@dataclass
+class SeniorCase:
+    status: str
+    seniors: int
+    magi: float = 0.0
+    year: int = 2026
+
+
+def senior_count(word: str) -> int:
+    return _SENIOR_COUNT[word.strip().lower()]
+
+
+def a_senior_household(status: str, seniors: int) -> SeniorCase:
+    return SeniorCase(status=status, seniors=seniors)
+
+
+def _senior_deduction(case: SeniorCase, seniors: int) -> float:
+    ages = [_SENIOR_AGE] * seniors + [_UNDER_65] * (2 - seniors)
+    return driver.enhanced_senior_deduction(
+        case.status, your_age=ages[0], spouse_age=ages[1], magi=case.magi, year=case.year
+    )
+
+
+def total_senior_deduction(case: SeniorCase) -> float:
+    return _senior_deduction(case, case.seniors)
+
+
+def senior_deduction_each(case: SeniorCase) -> float:
+    """What the engine gives one qualifying spouse at this MAGI (zero if none qualify)."""
+    return _senior_deduction(case, 1) if case.seniors else 0.0
+
+
+@dataclass
+class Retirees:
+    age: int
+    benefits: float = 0.0
+    ira_distribution: float = 0.0
+    year: int = 2026
+
+
+def retired_couple(age: int) -> Retirees:
+    return Retirees(age=age)
+
+
+def retiree_return(couple: Retirees) -> driver.RetireeReturn:
+    return driver.retiree_return(
+        age=couple.age,
+        year=couple.year,
+        benefits=couple.benefits,
+        ira_distribution=couple.ira_distribution,
+    )
