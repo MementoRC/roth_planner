@@ -164,7 +164,9 @@ def joint_life_divisor(owner_age: int, beneficiary_age: int) -> float | None:
     return JOINT_LAST_SURVIVOR.get((owner_age, beneficiary_age))
 
 
-def rmd_divisor(age: int, beneficiary_age: int | None = None) -> float:
+def rmd_divisor(
+    age: int, beneficiary_age: int | None = None, *, spouse_sole_beneficiary: bool = True
+) -> float:
     """Get RMD divisor for a given age. Returns 0 if below RMD age.
 
     The IRS Uniform Lifetime Table terminates at "120 and older"
@@ -176,8 +178,10 @@ def rmd_divisor(age: int, beneficiary_age: int | None = None) -> float:
       applicable only when the owner's SOLE beneficiary is that spouse.
       Falls back to Table III when the (age, beneficiary_age) cell isn't in
       the embedded Table II data (see JOINT_LAST_SURVIVOR above).
+    spouse_sole_beneficiary: Table II applies only when True; when False the
+      Uniform Lifetime Table is used regardless of the age gap.
     """
-    if beneficiary_age is not None and age - beneficiary_age > 10:
+    if spouse_sole_beneficiary and beneficiary_age is not None and age - beneficiary_age > 10:
         joint_div = joint_life_divisor(age, beneficiary_age)
         if joint_div is not None:
             return joint_div
@@ -193,6 +197,8 @@ def calc_rmd(
     first_year_deferred: bool = False,
     prior_year_balance: float = 0.0,
     beneficiary_age: int | None = None,
+    *,
+    spouse_sole_beneficiary: bool = True,
 ) -> float:
     """Calculate Required Minimum Distribution.
 
@@ -202,13 +208,14 @@ def calc_rmd(
       deferred prior-year RMD (computed from prior_year_balance).
     beneficiary_age: passed through to rmd_divisor() — see its docstring for
       the Table II (Joint & Last Survivor) qualifying rule and fallback.
+    spouse_sole_beneficiary: passed through to rmd_divisor(); False forces Table III.
     """
     if age < rmd_start_age or ira_balance <= 0:
         return 0.0
     # April-1 deferral: skip first year, double second year
     if first_year_deferred and age == rmd_start_age:
         return 0.0
-    div = rmd_divisor(age, beneficiary_age)
+    div = rmd_divisor(age, beneficiary_age, spouse_sole_beneficiary=spouse_sole_beneficiary)
     if div <= 0:
         return 0.0
     rmd = ira_balance / div
@@ -219,7 +226,9 @@ def calc_rmd(
         # Reusing the current-year beneficiary age shrinks the gap by one,
         # which can flip an 11-year gap to the Uniform table (audit-1008 F-50).
         prior_bene_age = beneficiary_age - 1 if beneficiary_age is not None else None
-        prior_div = rmd_divisor(rmd_start_age, prior_bene_age)
+        prior_div = rmd_divisor(
+            rmd_start_age, prior_bene_age, spouse_sole_beneficiary=spouse_sole_beneficiary
+        )
         if prior_div > 0:
             rmd += prior_year_balance / prior_div
     return rmd
