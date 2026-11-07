@@ -1,0 +1,7 @@
+# Trial T1: owner-approved acceptance specs and their checksum gate.
+# Documentation of ownership only. Agents currently push with the owner's
+# account, so this is not enforced via required review.
+/tests/acceptance/ @MementoRC
+/tests/acceptance.sha256 @MementoRC
+/scripts/acceptance_checksum.py @MementoRC
+/.github/CODEOWNERS @MementoRC
