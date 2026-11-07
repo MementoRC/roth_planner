@@ -63,7 +63,9 @@ plan-failure signal.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from engine.roth_five_year import RothExposure
 
 
 @dataclass
@@ -74,6 +76,9 @@ class Accounts:
     spouse_ira: float
     your_roth: float
     spouse_roth: float
+    # 5-year rule split of each Roth balance (default: no exposure tracked).
+    your_roth_exposure: RothExposure = field(default_factory=RothExposure)
+    spouse_roth_exposure: RothExposure = field(default_factory=RothExposure)
 
 
 @dataclass
@@ -101,6 +106,10 @@ _SWEEP_EPSILON = 0.005
 # year, so the sweep is bounded. Three passes take a sub-dollar residue to
 # well under a cent.
 _MAX_TOPUP_PASSES = 5
+# The Roth penalty gross-up is a contraction (slope = penalty_rate), so a dozen
+# passes settle it far below a cent.
+_MAX_ROTH_PENALTY_PASSES = 12
+_ROTH_PENALTY_TOLERANCE = 1e-9
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -294,8 +303,29 @@ def solve_waterfall(
             remaining_after_ira = max(0.0, remaining_need - net_spendable)
 
     roth_available = accounts.your_roth + accounts.spouse_roth
+
+    def roth_penalty_of(draw: float) -> float:
+        your_take = min(draw, accounts.your_roth)
+        spouse_take = draw - your_take
+        base = 0.0
+        if not free["your"]:
+            base += accounts.your_roth_exposure.exposed_part(your_take)
+        if not free["spouse"]:
+            base += accounts.spouse_roth_exposure.exposed_part(spouse_take)
+        return penalty_rate * base
+
+    # Converted principal drawn inside its 5-year period before 59 1/2 owes the
+    # 10% additional tax, paid out of the draw itself: gross the draw up by it.
     roth_draw = _clamp(remaining_after_ira, 0.0, roth_available)
-    unfunded = max(0.0, remaining_after_ira - roth_draw)
+    for _ in range(_MAX_ROTH_PENALTY_PASSES):
+        grossed = _clamp(remaining_after_ira + roth_penalty_of(roth_draw), 0.0, roth_available)
+        if abs(grossed - roth_draw) < _ROTH_PENALTY_TOLERANCE:
+            roth_draw = grossed
+            break
+        roth_draw = grossed
+    roth_penalty = roth_penalty_of(roth_draw)
+    penalty += roth_penalty
+    unfunded = max(0.0, remaining_after_ira + roth_penalty - roth_draw)
     # `unfunded > 0` must IMPLY every account is exhausted. Sub-cent residue
     # left when balances remain is arithmetic noise from the tolerance, not a
     # funding failure, so it is not reported as one.
