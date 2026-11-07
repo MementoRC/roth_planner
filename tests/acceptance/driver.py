@@ -18,7 +18,8 @@ from engine.irmaa import (
     irmaa_tier,
 )
 from engine.niit import niit
-from engine.scenario import run_no_conversion
+from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario_types import ConversionPlan
 from engine.tax import estimate_ytd_federal_tax, senior_bonus_deduction, taxable_ss
 from models.household import Household
 from models.ytd_income import YTDSnapshot
@@ -190,6 +191,65 @@ def enhanced_senior_deduction(
     return senior_bonus_deduction(
         your_age, spouse_age, magi, year=year, cpi=_NO_INFLATION, filing_status=status
     )
+
+
+@dataclass(frozen=True)
+class RothYear:
+    year: int
+    age: int
+    converted: float
+    roth_draw: float
+    ira_draw: float
+    early_withdrawal_penalty: float
+
+
+def roth_conversion_projection(
+    *,
+    age: int,
+    base_year: int,
+    ira_balance: float,
+    conversions: Mapping[int, float],
+    living_expenses: float,
+    years: int,
+) -> list[RothYear]:
+    """engine.scenario.run_scenario for a single filer living on a converted Roth.
+
+    The household starts with a traditional IRA and NO Roth balance, no wages,
+    no Social Security and no brokerage account. ``conversions`` (year ->
+    amount) is projected in full (no bracket cap). Living expenses the engine
+    cannot fund from other income are drawn by the engine's own withdrawal
+    waterfall (brokerage, then traditional IRA, then Roth). Every figure is
+    read from the projection's YearResult rows.
+    """
+    hh = Household(
+        your_age=age,
+        spouse_age=0,
+        filing_status="Single",
+        base_year=base_year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=ira_balance,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=0.0,
+        living_expenses=living_expenses,
+    )
+    plan = ConversionPlan(your_conversions=dict(conversions), bracket_cap=False)
+    result = run_scenario(hh, plan, end_age=age + years)
+    return [
+        RothYear(
+            year=yr.year,
+            age=yr.your_age,
+            converted=yr.your_conversion,
+            roth_draw=yr.forced_your_roth_draw,
+            ira_draw=yr.forced_your_ira_draw,
+            early_withdrawal_penalty=yr.forced_early_withdrawal_penalty,
+        )
+        for yr in result.years
+    ]
 
 
 @dataclass(frozen=True)
