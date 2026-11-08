@@ -1,6 +1,9 @@
 # Trial T1: owner-approved acceptance specs and their checksum gate.
-# Documentation of ownership only. Agents currently push with the owner's
-# account, so this is not enforced via required review.
+# Enforced since 2026-11-08: agents push and open PRs as CIFrameworkBot (own
+# git MCP instance), and branch protection on development/main requires a
+# code-owner review. Agents share the owner's OS user, so this is an
+# attribution and review bar, not a hard boundary; CI's checksum job remains
+# the gate.
 /tests/acceptance/ @MementoRC
 /tests/acceptance.sha256 @MementoRC
 /scripts/acceptance_checksum.py @MementoRC

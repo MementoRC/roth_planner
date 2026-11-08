@@ -47,11 +47,7 @@ def _roth_draw(ctx: dict[str, Any], year: int) -> None:
     assert dsl.roth_draws_within_converted(ctx["case"], year), ctx["case"].rows
 
 
-@then(
-    parsers.parse(
-        "the {year:d} early-withdrawal additional tax is 10% of that year's Roth draw"
-    )
-)
+@then(parsers.parse("the {year:d} early-withdrawal additional tax is 10% of that year's Roth draw"))
 def _penalty(ctx: dict[str, Any], year: int) -> None:
     row = dsl.roth_year(ctx["case"], year)
     assert dsl.close_to_cent(row.early_withdrawal_penalty, 0.10 * row.roth_draw), row
