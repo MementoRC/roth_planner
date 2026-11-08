@@ -7,12 +7,13 @@ IRA balances, brokerage tracking, and net benefit analysis.
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
 from engine.ira import inherited_ira_drain, inherited_ira_years_remaining
 from engine.irmaa import irmaa_for_year, irmaa_next_threshold, irmaa_part_b_for_year
 from engine.niit import niit
+from engine.roth_five_year import RothConversionLedger, RothExposure
 from engine.scenario_compute import (
     compute_aca,
     compute_bracket_room,
@@ -1366,7 +1367,12 @@ def _magi_for_strategy(strategy: str, outcome: _YearOutcome) -> float:
     return outcome.yr.magi if strategy == "irmaa_safe" else outcome.yr.aca_magi
 
 
-def waterfall_accounts(nd_yr: YearResult, brokerage_basis: float) -> Accounts:
+def waterfall_accounts(
+    nd_yr: YearResult,
+    brokerage_basis: float,
+    your_roth_ledger: RothConversionLedger | None = None,
+    spouse_roth_ledger: RothConversionLedger | None = None,
+) -> Accounts:
     """The balances this year's waterfall may draw on, read from ``nd_yr`` --
     the year's projection with NO forced draw (none of these depend on the
     conversion).
@@ -1379,8 +1385,20 @@ def waterfall_accounts(nd_yr: YearResult, brokerage_basis: float) -> Accounts:
     are deliberately NOT subtracted: per the approved design the draw is sized
     first and the conversion is capped against the leftover headroom
     afterwards.
+
+    The optional Roth ledgers carry each owner's converted principal so the
+    solver can apply the 5-year additional tax (engine.roth_five_year); without
+    them no Roth draw is exposed.
     """
     brok_begin = nd_yr.brokerage_balance
+    your_exposure = (
+        your_roth_ledger.exposure(nd_yr.year) if your_roth_ledger is not None else RothExposure()
+    )
+    spouse_exposure = (
+        spouse_roth_ledger.exposure(nd_yr.year)
+        if spouse_roth_ledger is not None
+        else RothExposure()
+    )
     your_mandatory = max(nd_yr.your_rmd, nd_yr.qcd) + nd_yr.extra_withdrawal
     spouse_mandatory = max(nd_yr.spouse_rmd, nd_yr.spouse_qcd) + nd_yr.spouse_extra_withdrawal
     return Accounts(
@@ -1390,6 +1408,8 @@ def waterfall_accounts(nd_yr: YearResult, brokerage_basis: float) -> Accounts:
         spouse_ira=max(nd_yr.spouse_ira_begin - spouse_mandatory, 0.0),
         your_roth=nd_yr.your_roth_begin,
         spouse_roth=nd_yr.spouse_roth_begin,
+        your_roth_exposure=your_exposure,
+        spouse_roth_exposure=spouse_exposure,
     )
 
 
@@ -1414,6 +1434,7 @@ def _solve_waterfall_year(
     inherited_balances: list[float],
     baseline: _YearOutcome,
     irmaa_fallback_magi: float | None = None,
+    roth_ledgers: tuple[RothConversionLedger, RothConversionLedger] | None = None,
 ) -> _YearOutcome:
     """Solve the IRA-withdrawal waterfall for a shortfall year and re-run
     `_project_year` once more with the solved draws (stage 3b activation).
@@ -1478,7 +1499,7 @@ def _solve_waterfall_year(
         nd_tax = nd.yr.federal_tax_amt
         nd_aca_premium = nd.yr.aca_premium_cost
         nd_niit = nd.yr.niit_cost
-        accounts = waterfall_accounts(nd.yr, brokerage_basis)
+        accounts = waterfall_accounts(nd.yr, brokerage_basis, *(roth_ledgers or (None, None)))
 
         def tax_of(extra_ordinary: float) -> float:
             # Returns the marginal NON-DISCRETIONARY OUTFLOW of the draw --
@@ -2084,6 +2105,9 @@ class ProjectionState:
     magi_history: dict[int, float]
     # Mutable copies of inherited IRA balances (one per InheritedIRA), keyed by index
     inherited_balances: list[float]
+    # Converted Roth principal by conversion year, for the 5-year additional tax.
+    your_roth_ledger: RothConversionLedger = field(default_factory=RothConversionLedger)
+    spouse_roth_ledger: RothConversionLedger = field(default_factory=RothConversionLedger)
 
     @classmethod
     def initial(cls, hh: Household) -> ProjectionState:
@@ -2110,6 +2134,8 @@ class ProjectionState:
             rollover_done=False,
             magi_history={},
             inherited_balances=[iira.balance for iira in hh.inherited_iras],
+            your_roth_ledger=RothConversionLedger(hh.your_roth),
+            spouse_roth_ledger=RothConversionLedger(hh.spouse_roth),
         )
 
     def copy(self) -> ProjectionState:
@@ -2118,10 +2144,19 @@ class ProjectionState:
             self,
             magi_history=dict(self.magi_history),
             inherited_balances=list(self.inherited_balances),
+            your_roth_ledger=self.your_roth_ledger.copy(),
+            spouse_roth_ledger=self.spouse_roth_ledger.copy(),
         )
 
     def advance(self, outcome: _YearOutcome) -> None:
         """Carry ``outcome``'s end-of-year balances into the next year."""
+        # Draws come out of the begin-of-year balance, so they consume the
+        # ledger before this year's conversion joins it.
+        yr = outcome.yr
+        self.your_roth_ledger.record_draw(yr.forced_your_roth_draw)
+        self.spouse_roth_ledger.record_draw(yr.forced_spouse_roth_draw)
+        self.your_roth_ledger.record_conversion(yr.year, yr.your_conversion)
+        self.spouse_roth_ledger.record_conversion(yr.year, yr.spouse_conversion)
         self.your_ira = outcome.your_ira
         self.spouse_ira = outcome.spouse_ira
         self.your_roth = outcome.your_roth
@@ -2202,6 +2237,7 @@ def project_year_step(
             inherited_balances,
             outcome,
             irmaa_fallback,
+            roth_ledgers=(state.your_roth_ledger, state.spouse_roth_ledger),
         )
     else:
         inherited_balances[:] = _inherited_baseline
