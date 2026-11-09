@@ -18,6 +18,16 @@ def _converter(ctx: dict[str, Any], age: int, ira: str) -> None:
     ctx["case"] = dsl.a_roth_converter(age, dsl.money(ira))
 
 
+@given(
+    parsers.parse(
+        "a single filer aged {age:d} in 2026 with a {ira} traditional IRA"
+        " and a {roth} Roth IRA of regular contributions"
+    )
+)
+def _converter_with_roth(ctx: dict[str, Any], age: int, ira: str, roth: str) -> None:
+    ctx["case"] = dsl.a_roth_converter(age, dsl.money(ira), dsl.money(roth))
+
+
 @given(parsers.parse("living expenses of {amount} a year and no other income"))
 def _expenses(ctx: dict[str, Any], amount: str) -> None:
     ctx["case"].living_expenses = dsl.money(amount)

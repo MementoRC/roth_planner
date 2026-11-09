@@ -241,7 +241,8 @@ _BASE_YEAR = 2026
 
 @dataclass
 class RothConverter:
-    """A single filer with a traditional IRA, no Roth IRA and no other income.
+    """A single filer with a traditional IRA, an optional Roth IRA of regular
+    contributions and no other income.
 
     Interpretation choices (also reported to the owner):
     - "converts the whole IRA" / "the rest of the IRA" plans a conversion of
@@ -251,19 +252,22 @@ class RothConverter:
     - Every converted dollar was taxable at conversion (no basis).
     - "draws from the Roth IRA" means the engine's withdrawal waterfall funded
       the year's living expenses from the Roth, with no traditional IRA draw,
-      and the Roth draws so far do not exceed the amounts converted (so only
-      converted principal, never earnings, has come out).
+      and the Roth draws so far do not exceed the regular contributions plus
+      the amounts converted (so only principal, never earnings, has come out).
+    - "a $X Roth IRA of regular contributions" is the household's starting
+      Roth balance; all of it is contributions (no earnings, no conversions).
     """
 
     age: int
     ira: float
+    roth: float = 0.0
     living_expenses: float = 0.0
     conversions: dict[int, float] = field(default_factory=dict)
     rows: list[driver.RothYear] = field(default_factory=list)
 
 
-def a_roth_converter(age: int, ira: float) -> RothConverter:
-    return RothConverter(age=age, ira=ira)
+def a_roth_converter(age: int, ira: float, roth: float = 0.0) -> RothConverter:
+    return RothConverter(age=age, ira=ira, roth=roth)
 
 
 def converts(case: RothConverter, year: int, amount: float | None = None) -> None:
@@ -279,6 +283,7 @@ def project_through(case: RothConverter, last_year: int) -> None:
         conversions=case.conversions,
         living_expenses=case.living_expenses,
         years=last_year - _BASE_YEAR,
+        roth_balance=case.roth,
     )
 
 
@@ -292,4 +297,4 @@ def roth_year(case: RothConverter, year: int) -> driver.RothYear:
 def roth_draws_within_converted(case: RothConverter, year: int) -> bool:
     drawn = sum(r.roth_draw for r in case.rows if r.year <= year)
     converted = sum(r.converted for r in case.rows if r.year <= year)
-    return drawn <= converted
+    return drawn <= case.roth + converted

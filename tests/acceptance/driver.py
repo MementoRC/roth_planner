@@ -211,10 +211,12 @@ def roth_conversion_projection(
     conversions: Mapping[int, float],
     living_expenses: float,
     years: int,
+    roth_balance: float = 0.0,
 ) -> list[RothYear]:
     """engine.scenario.run_scenario for a single filer living on a converted Roth.
 
-    The household starts with a traditional IRA and NO Roth balance, no wages,
+    The household starts with a traditional IRA, a Roth balance of
+    ``roth_balance`` (regular contributions; zero by default), no wages,
     no Social Security and no brokerage account. ``conversions`` (year ->
     amount) is projected in full (no bracket cap). Living expenses the engine
     cannot fund from other income are drawn by the engine's own withdrawal
@@ -229,7 +231,7 @@ def roth_conversion_projection(
         cpi_assumption=_NO_INFLATION,
         your_ira=ira_balance,
         spouse_ira=0.0,
-        your_roth=0.0,
+        your_roth=roth_balance,
         spouse_roth=0.0,
         your_ss_fra=0.0,
         spouse_ss_fra=0.0,
