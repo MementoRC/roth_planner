@@ -41,7 +41,7 @@ markers = [
 [tool.mutmut]
 # Local-only mutation testing over the T1 acceptance specs (not run in CI).
 # mutmut 3.x mutates copies under mutants/; sources are never rewritten.
-source_paths = ["engine/ira.py", "engine/irmaa.py", "engine/niit.py", "engine/scenario.py", "engine/tax.py"]
+source_paths = ["engine/ira.py", "engine/irmaa.py", "engine/niit.py", "engine/roth_five_year.py", "engine/scenario.py", "engine/tax.py", "engine/withdrawal_waterfall.py"]
 pytest_add_cli_args_test_selection = ["tests/acceptance/"]
 also_copy = ["models/", "engine/", "config/", "pyproject.toml"]
 pytest_add_cli_args = ["--no-cov", "-m", "acceptance"]
