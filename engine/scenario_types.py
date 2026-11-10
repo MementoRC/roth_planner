@@ -155,6 +155,12 @@ class YearResult:
     forced_your_roth_draw: float = 0.0
     forced_spouse_roth_draw: float = 0.0
     forced_early_withdrawal_penalty: float = 0.0
+    # Earnings part of each owner's Roth draw (Pub 590-B ordering: contributions,
+    # then conversions, then earnings). Non-qualified earnings are gross income.
+    forced_your_roth_earnings_draw: float = 0.0
+    forced_spouse_roth_earnings_draw: float = 0.0
+    # The year-2 MAGI this year's IRMAA was priced on.
+    irmaa_lookback_magi: float | None = None
     # False ONLY when the tax gross-up iteration failed to settle (it
     # oscillated, or pinned against the IRA ceiling and still left the
     # household short). It is NOT a resource-exhaustion signal: test

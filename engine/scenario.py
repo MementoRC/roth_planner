@@ -130,8 +130,13 @@ def _project_year(
     waterfall_baseline_aca_magi: float | None = None,
     waterfall_baseline_taxable: float | None = None,
     irmaa_fallback_magi: float | None = None,
+    roth_ledgers: tuple[RothConversionLedger, RothConversionLedger] | None = None,
 ) -> _YearOutcome:
     """Compute a single projection year — verbatim extraction of the run_scenario loop body.
+
+    `roth_ledgers` (your, spouse): the owners' Roth principal at the start of the
+    year. With the forced Roth draws they give the earnings part of the draw;
+    non-qualified earnings are gross income (Pub 590-B). None reports no earnings.
 
     `irmaa_fallback_magi` (issue #54): the MAGI IRMAA reads when the year has no
     lookback MAGI -- the year's zero-conversion MAGI, see
@@ -359,6 +364,14 @@ def _project_year(
     yr.forced_your_roth_draw = forced_your_roth_draw
     yr.forced_spouse_roth_draw = forced_spouse_roth_draw
     yr.forced_early_withdrawal_penalty = forced_early_withdrawal_penalty
+    # Earnings in the Roth draws; the non-qualified part is ordinary income below.
+    (
+        yr.forced_your_roth_earnings_draw,
+        yr.forced_spouse_roth_earnings_draw,
+        roth_earnings_income,
+    ) = _roth_earnings_draws(
+        year, ya, sa, roth_ledgers, forced_your_roth_draw, forced_spouse_roth_draw
+    )
 
     # === scenario-core-5: clamp conversions to available IRA balance ===
     # A planned conversion can exceed the IRA balance when the IRA has been
@@ -508,6 +521,7 @@ def _project_year(
         # that caught the parallel MAGI omission, since taxable_ss_amt feeds both.
         forced_your_ira_draw=forced_your_ira_draw,
         forced_spouse_ira_draw=forced_spouse_ira_draw,
+        roth_earnings=roth_earnings_income,
     )
 
     # === MAGI (for IRMAA/ACA — uses full amounts, not taxable) ===
@@ -544,6 +558,7 @@ def _project_year(
         ytd_year,
         forced_your_ira_draw=forced_your_ira_draw,
         forced_spouse_ira_draw=forced_spouse_ira_draw,
+        roth_earnings=roth_earnings_income,
     )
 
     # === Brokerage realized gains added to MAGI ===
@@ -569,6 +584,7 @@ def _project_year(
         + yr.spouse_inherited_distribution
         + forced_your_ira_draw
         + forced_spouse_ira_draw
+        + roth_earnings_income
     )
     # YTD: add all ordinary income components to gross.
     # LTCG and qualified dividends are excluded (taxed at preferential rate).
@@ -694,6 +710,7 @@ def _project_year(
         # default household). See TestZeroConversionTaxInvariant.
         forced_your_ira_draw=forced_your_ira_draw,
         forced_spouse_ira_draw=forced_spouse_ira_draw,
+        roth_earnings=roth_earnings_income,
     )
     conversion_ss_delta = yr.taxable_ss_amt - _taxable_ss_no_conv
 
@@ -823,6 +840,7 @@ def _project_year(
         cpi=cpi,
     )
     yr.irmaa_cost = irmaa_cost
+    yr.irmaa_lookback_magi = magi_for_irmaa
     yr.irmaa_part_b = irmaa_part_b_for_year(
         magi_for_irmaa,
         ya_irmaa - 2,
@@ -1367,6 +1385,28 @@ def _magi_for_strategy(strategy: str, outcome: _YearOutcome) -> float:
     return outcome.yr.magi if strategy == "irmaa_safe" else outcome.yr.aca_magi
 
 
+def _roth_earnings_draws(
+    year: int,
+    ya: float,
+    sa: float,
+    ledgers: tuple[RothConversionLedger, RothConversionLedger] | None,
+    your_draw: float,
+    spouse_draw: float,
+) -> tuple[float, float, float]:
+    """(your, spouse) earnings in this year's Roth draws, and the part of them
+    that is gross income (earnings in a draw that is not qualified)."""
+    if ledgers is None:
+        return 0.0, 0.0, 0.0
+    earned: list[float] = []
+    income = 0.0
+    for ledger, age, draw in zip(ledgers, (ya, sa), (your_draw, spouse_draw), strict=True):
+        earnings = ledger.exposure(year).earnings_part(draw)
+        earned.append(earnings)
+        if not ledger.earnings_qualified(year, age):
+            income += earnings
+    return earned[0], earned[1], income
+
+
 def waterfall_accounts(
     nd_yr: YearResult,
     brokerage_basis: float,
@@ -1563,7 +1603,58 @@ def _solve_waterfall_year(
                 + speculative.yr.niit_cost
             ) - (nd_tax + nd_aca_premium + nd_niit)
 
-        draw = solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa)
+        def roth_tax_of(roth_draw: float, ira_draw: float) -> float:
+            # Marginal outflow (federal tax, ACA premium, NIIT) of the
+            # NON-QUALIFIED earnings in a Roth draw, on top of the IRA draw
+            # already taken. Roth earnings are gross income and MAGI but not
+            # net investment income (IRC §1411(c)(5)); the projection's NII
+            # never includes them, so only the MAGI-driven NIIT moves.
+            if roth_ledgers is None:
+                return 0.0
+            your_roth_draw = min(roth_draw, nd.yr.your_roth_begin)
+            spouse_roth_draw = roth_draw - your_roth_draw
+            taxable = _roth_earnings_draws(
+                year, nd.ya, nd.sa, roth_ledgers, your_roth_draw, spouse_roth_draw
+            )[2]
+            if taxable <= 0.0:
+                return 0.0
+            your_probe, spouse_probe = allocate_ira_draw(
+                ira_draw, accounts.your_ira, accounts.spouse_ira, nd.ya, nd.sa
+            )
+
+            def outflow(your_r: float, spouse_r: float) -> float:
+                probe = _project_year(
+                    yr_idx,
+                    hh,
+                    plan,
+                    cpi,
+                    ytd,
+                    net_inv_income,
+                    surv,
+                    your_ira,
+                    spouse_ira,
+                    your_roth,
+                    spouse_roth,
+                    prev_your_ira_begin,
+                    prev_spouse_ira_begin,
+                    brokerage,
+                    rollover_done,
+                    dict(magi_history),  # isolation: speculative probe, see above
+                    list(inherited_balances),
+                    brokerage_basis=brokerage_basis,
+                    forced_your_ira_draw=your_probe,
+                    forced_spouse_ira_draw=spouse_probe,
+                    forced_your_roth_draw=your_r,
+                    forced_spouse_roth_draw=spouse_r,
+                    conversion_cap=conversion_cap,
+                    irmaa_fallback_magi=irmaa_fallback_magi,
+                    roth_ledgers=roth_ledgers,
+                ).yr
+                return probe.federal_tax_amt + probe.aca_premium_cost + probe.niit_cost
+
+            return outflow(your_roth_draw, spouse_roth_draw) - outflow(0.0, 0.0)
+
+        draw = solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
         if draw.brokerage_draw <= 0.0:
             return draw
 
@@ -1605,6 +1696,7 @@ def _solve_waterfall_year(
                 forced_early_withdrawal_penalty=d.early_withdrawal_penalty,
                 conversion_cap=conversion_cap,
                 irmaa_fallback_magi=irmaa_fallback_magi,
+                roth_ledgers=roth_ledgers,
             )
             raised = d.brokerage_draw + d.your_ira_draw + d.spouse_ira_draw + d.roth_draw
             return check.yr.income_needed - raised - d.unfunded
@@ -1616,10 +1708,10 @@ def _solve_waterfall_year(
                 return draw
             need = max(0.0, need + gap)
             max_need = max(max_need, need)
-            draw = solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa)
+            draw = solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
         if abs(_residual(draw)) < _RESIZE_TOLERANCE:
             return draw
-        draw = solve_waterfall(max_need, accounts, tax_of, nd.ya, nd.sa)
+        draw = solve_waterfall(max_need, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
         return dataclasses.replace(draw, converged=False)
 
     def _base_headroom(zero_conv_nd: _YearOutcome) -> float:
@@ -1725,6 +1817,7 @@ def _solve_waterfall_year(
             forced_early_withdrawal_penalty=_pdraw.early_withdrawal_penalty,
             conversion_cap=conversion_cap,
             irmaa_fallback_magi=irmaa_fallback_magi,
+            roth_ledgers=roth_ledgers,
         )
         return _magi_for_strategy(strategy, _probe)
 
@@ -1807,6 +1900,7 @@ def _solve_waterfall_year(
             forced_early_withdrawal_penalty=zero_conv_draw.early_withdrawal_penalty,
             conversion_cap=0.0,
             irmaa_fallback_magi=irmaa_fallback_magi,
+            roth_ledgers=roth_ledgers,
         )
         waterfall_baseline_tax = zero_conv_outcome.yr.federal_tax_amt
         waterfall_baseline_magi = zero_conv_outcome.yr.magi
@@ -1926,6 +2020,7 @@ def _solve_waterfall_year(
         waterfall_baseline_aca_magi=waterfall_baseline_aca_magi,
         waterfall_baseline_taxable=waterfall_baseline_taxable,
         irmaa_fallback_magi=irmaa_fallback_magi,
+        roth_ledgers=roth_ledgers,
     )
     # The solver's own residual/convergence flag is authoritative -- it
     # accounts for the brokerage + IRA + Roth allocation as a whole, which
@@ -2134,8 +2229,8 @@ class ProjectionState:
             rollover_done=False,
             magi_history={},
             inherited_balances=[iira.balance for iira in hh.inherited_iras],
-            your_roth_ledger=RothConversionLedger(hh.your_roth),
-            spouse_roth_ledger=RothConversionLedger(hh.spouse_roth),
+            your_roth_ledger=RothConversionLedger(hh.your_roth, hh.your_first_roth_year),
+            spouse_roth_ledger=RothConversionLedger(hh.spouse_roth, hh.spouse_first_roth_year),
         )
 
     def copy(self) -> ProjectionState:
@@ -2326,6 +2421,7 @@ def project_year_with_draw(
         forced_spouse_roth_draw=draw.roth_draw - your_roth_draw,
         forced_early_withdrawal_penalty=draw.early_withdrawal_penalty,
         irmaa_fallback_magi=irmaa_fallback,
+        roth_ledgers=(state.your_roth_ledger, state.spouse_roth_ledger),
     )
 
 

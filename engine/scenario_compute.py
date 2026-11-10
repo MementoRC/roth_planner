@@ -393,6 +393,7 @@ def compute_social_security(
     death_year: int | None = None,
     forced_your_ira_draw: float = 0.0,
     forced_spouse_ira_draw: float = 0.0,
+    roth_earnings: float = 0.0,
 ) -> tuple[float, float, float, float, float]:
     """Return (your_ss, spouse_ss, combined_ss, taxable_ss_amt, provisional_base).
 
@@ -416,11 +417,15 @@ def compute_social_security(
     like the sibling extra_withdrawal quantities. Defaulted to 0.0 so callers
     that predate the waterfall are unaffected.
 
-    Deliberately EXCLUDED from provisional income: the Roth leg (a qualified
-    Roth distribution is not includible), the brokerage leg (its realized gain
-    already reaches provisional income via realized_gains — adding the draw
-    itself would double-count return of basis), and the §72(t) early-withdrawal
-    penalty (an additional tax, not income).
+    ``roth_earnings`` is the NON-qualified earnings part of a Roth draw: gross
+    income (Pub 590-B), hence in provisional income like any other ordinary
+    income.
+
+    Deliberately EXCLUDED from provisional income: the rest of the Roth leg
+    (principal and qualified earnings are not includible), the brokerage leg
+    (its realized gain already reaches provisional income via realized_gains —
+    adding the draw itself would double-count return of basis), and the §72(t)
+    early-withdrawal penalty (an additional tax, not income).
     """
     your_ss, spouse_ss = social_security_benefits(
         hh, ya, sa, survivor_active=survivor_active, who_dies=who_dies, death_year=death_year
@@ -446,6 +451,7 @@ def compute_social_security(
         # and the gap test still passed.
         + forced_your_ira_draw
         + forced_spouse_ira_draw
+        + roth_earnings
     )
     # YTD ordinary income affects SS taxation.
     # Includes wages, NEC, STCG, ordinary dividends, conversions already
@@ -510,6 +516,7 @@ def compute_magi(
     ytd_year: YTDSnapshot | None,
     forced_your_ira_draw: float = 0.0,
     forced_spouse_ira_draw: float = 0.0,
+    roth_earnings: float = 0.0,
 ) -> float:
     """Return partial MAGI (for IRMAA/ACA) BEFORE adding realized_gains.
 
@@ -528,7 +535,11 @@ def compute_magi(
     They were added to combined_gross when the waterfall was wired in but omitted here,
     so 23 of 41 projected years reported a MAGI short by the whole draw.
 
-    NOT included, deliberately: the waterfall's Roth leg (tax-free, not includible), the
+    ``roth_earnings`` (the non-qualified earnings part of a Roth draw) IS gross income
+    (Pub 590-B) and so is in MAGI.
+
+    NOT included, deliberately: the rest of the waterfall's Roth leg (principal and qualified
+    earnings are tax-free, not includible), the
     brokerage leg (its realized GAIN already reaches MAGI via realized_gains — adding the
     draw itself would double-count), and the 10% early-withdrawal penalty (an additional
     TAX under IRC §72(t), not income).
@@ -548,6 +559,7 @@ def compute_magi(
         + spouse_inherited_distribution
         + forced_your_ira_draw
         + forced_spouse_ira_draw
+        + roth_earnings
     )
     # YTD: add all MAGI components via the canonical magi_ytd property.
     # Using the property ensures parity with _auto_fill_core and avoids
