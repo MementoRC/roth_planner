@@ -55,9 +55,11 @@ class RothExposure:
 class RothConversionLedger:
     """FIFO ledger of one owner's Roth principal, by conversion year.
 
-    ``first_year`` is the owner's first Roth contribution year when known; it
-    overrides the first recorded conversion year for the qualified-distribution
-    5-year period.
+    ``first_year`` is the owner's first Roth contribution year when known. The
+    qualified-distribution 5-year period starts at the EARLIEST Roth
+    contribution or conversion year (Pub 590-B), so the effective first year is
+    ``min(first_year, earliest recorded conversion year)``, ignoring whichever
+    is unknown.
     """
 
     def __init__(self, opening_balance: float = 0.0, first_year: int | None = None) -> None:
@@ -74,7 +76,7 @@ class RothConversionLedger:
     def record_conversion(self, year: int, amount: float) -> None:
         if amount > 0:
             self._tranches.append([year, amount])
-            if self._first_year is None:
+            if self._first_year is None or year < self._first_year:
                 self._first_year = year
 
     def earnings_qualified(self, year: int, age: float) -> bool:

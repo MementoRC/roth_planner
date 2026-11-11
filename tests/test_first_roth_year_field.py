@@ -81,6 +81,24 @@ def test_out_of_range_stored_value_is_clamped_not_crashing(tmp_path, monkeypatch
     assert [n.value for n in _inputs(at)] == [1998, 2026]
 
 
+def test_float_and_string_stored_years_display_as_ints(tmp_path, monkeypatch):
+    at = _profile_app(tmp_path, monkeypatch)
+    at.session_state["your_first_roth_year"] = 2015.0
+    at.session_state["spouse_first_roth_year"] = "2010"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert [n.value for n in _inputs(at)] == [2015, 2010]
+
+
+def test_non_integral_stored_year_shows_blank(tmp_path, monkeypatch):
+    at = _profile_app(tmp_path, monkeypatch)
+    at.session_state["your_first_roth_year"] = 2015.5
+    at.session_state["spouse_first_roth_year"] = "abc"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert [n.value for n in _inputs(at)] == [None, None]
+
+
 def test_spouse_input_hidden_value_kept_when_single(tmp_path, monkeypatch):
     at = _profile_app(tmp_path, monkeypatch)
     at.session_state["spouse_first_roth_year"] = 2010

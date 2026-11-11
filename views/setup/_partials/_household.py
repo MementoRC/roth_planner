@@ -90,6 +90,22 @@ _FIRST_ROTH_YEAR_HELP = (
 )
 
 
+def _as_year(stored: Any) -> int | None:
+    """Coerce a stored year (int, integral float, numeric string) to int, else None."""
+    if isinstance(stored, bool):
+        return None
+    if isinstance(stored, str):
+        try:
+            stored = float(stored.strip())
+        except ValueError:
+            return None
+    if isinstance(stored, int):
+        return stored
+    if isinstance(stored, float) and stored.is_integer():
+        return int(stored)
+    return None
+
+
 def optional_year_input(
     container,
     label: str,
@@ -104,11 +120,12 @@ def optional_year_input(
 
     Same keyed re-seed scheme as :func:`stable_age_input`. A stored value outside
     ``[lo, hi]`` (hand-edited file, import) is clamped for display so Streamlit
-    never raises on it; a non-integer stored value shows as blank.
+    never raises on it; an integral float (``2015.0``) or numeric string is
+    coerced to int, and any other non-integer stored value shows as blank.
     """
     stored = state.get(attr)
-    valid = isinstance(stored, int) and not isinstance(stored, bool)
-    current = _clamp(stored, lo, hi) if valid else None
+    year = _as_year(stored)
+    current = _clamp(year, lo, hi) if year is not None else None
     widget_key = f"_hh_{attr}_input"
     marker = f"_hh_{attr}_synced"
     if widget_key not in state or state.get(marker) != stored:

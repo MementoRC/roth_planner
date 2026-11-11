@@ -42,7 +42,9 @@ Flag meanings, precisely:
 * ``converged == False`` -- the gross-up iteration did not settle (it
   oscillated or hit ``max_iterations``), OR it settled only by pinning
   against the IRA ceiling while leaving the household genuinely short. It
-  does NOT fire merely because the IRAs ran out.
+  does NOT fire merely because the IRAs ran out. A Roth-leg oscillation that
+  resolves on a funding draw stays converged; only an unfundable Roth result
+  reports non-convergence.
 * ``ira_leg_saturated == True`` -- the IRA ceiling bound. INFORMATIONAL:
   routine in any year funded partly from the Roth, and not a failure.
 * ``unfunded > 0`` -- the economic failure signal. See below.
@@ -330,16 +332,29 @@ def solve_waterfall(
         return max(roth_tax_of(draw, ira_draw), 0.0)
 
     roth_draw = _clamp(remaining_after_ira, 0.0, roth_available)
+    # (draw, gross-up needed at that draw) for every iterate, so a step
+    # discontinuity in `roth_tax_of` (e.g. a subsidy cliff) that makes the
+    # iteration oscillate can still be resolved on a draw seen to fund the need.
+    visited: list[tuple[float, float]] = []
+    roth_converged = False
     for _ in range(_MAX_ROTH_PENALTY_PASSES):
-        grossed = _clamp(
-            remaining_after_ira + roth_penalty_of(roth_draw) + roth_tax(roth_draw),
-            0.0,
-            roth_available,
-        )
+        needed = remaining_after_ira + roth_penalty_of(roth_draw) + roth_tax(roth_draw)
+        visited.append((roth_draw, needed))
+        grossed = _clamp(needed, 0.0, roth_available)
         if abs(grossed - roth_draw) < _ROTH_PENALTY_TOLERANCE:
             roth_draw = grossed
+            roth_converged = True
             break
         roth_draw = grossed
+    if not roth_converged:
+        # Smallest visited draw that fully funds the need. A funding draw is a
+        # fully funded year and stays converged; only when no visited draw
+        # funds the need (an unfundable step) is the solve non-converged, and
+        # the whole Roth is drawn.
+        funding = [d for d, needed in visited if needed <= d + _SWEEP_EPSILON]
+        roth_draw = min(funding) if funding else roth_available
+        if not funding:
+            converged = False
     roth_penalty = roth_penalty_of(roth_draw)
     penalty += roth_penalty
     unfunded = max(0.0, remaining_after_ira + roth_penalty + roth_tax(roth_draw) - roth_draw)

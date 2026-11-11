@@ -109,6 +109,16 @@ class TestLedgerEarnings:
         assert not ledger.earnings_qualified(2030, 70.0)
         assert ledger.earnings_qualified(2031, 70.0)
 
+    def test_later_override_keeps_the_earlier_conversion_year(self) -> None:
+        ledger = RothConversionLedger(first_year=2024)
+        ledger.record_conversion(2020, 100.0)
+        assert ledger.earnings_qualified(2025, 70.0)
+
+    def test_earlier_override_beats_a_later_conversion(self) -> None:
+        ledger = RothConversionLedger(first_year=2015)
+        ledger.record_conversion(2026, 100.0)
+        assert ledger.earnings_qualified(2020, 70.0)
+
     def test_copy_keeps_the_first_year(self) -> None:
         ledger = RothConversionLedger()
         ledger.record_conversion(2026, 100.0)
@@ -143,6 +153,48 @@ class TestWaterfallEarningsPenalty:
     def test_principal_only_draw_has_no_penalty(self) -> None:
         result = solve_waterfall(80.0, self._accounts(), _no_tax, your_age=50, spouse_age=0)
         assert result.early_withdrawal_penalty == 0.0
+
+
+class TestWaterfallRothStepDiscontinuity:
+    @staticmethod
+    def _accounts() -> Accounts:
+        return TestWaterfallEarningsPenalty._accounts()
+
+    @staticmethod
+    def _step_tax(roth_draw: float, _ira_draw: float) -> float:
+        # Synthetic cliff: a 30 outflow below a 160 draw, none at or above it.
+        # Plain iteration from a 150 need bounces 150 -> 180 -> 150 forever.
+        return 30.0 if 0.0 < roth_draw < 160.0 else 0.0
+
+    def test_oscillating_tax_still_funds_the_need(self) -> None:
+        accounts = self._accounts()
+        result = solve_waterfall(150.0, accounts, _no_tax, 60, 0, roth_tax_of=self._step_tax)
+        assert result.unfunded == 0.0
+        assert result.roth_draw <= accounts.your_roth + accounts.spouse_roth
+        assert result.roth_draw - self._step_tax(result.roth_draw, 0.0) >= 150.0 - 1e-6
+        assert result.converged
+
+    def test_step_funded_above_cliff_stays_converged(self) -> None:
+        accounts = Accounts(
+            brokerage=0.0,
+            brokerage_basis_fraction=1.0,
+            your_ira=0.0,
+            spouse_ira=0.0,
+            your_roth=170.0,
+            spouse_roth=0.0,
+            your_roth_exposure=RothExposure(free_first=100.0, exposed=0.0, principal=100.0),
+        )
+        result = solve_waterfall(150.0, accounts, _no_tax, 60, 0, roth_tax_of=self._step_tax)
+        # 170 >= 150 + 0 (cliff passed), so it is fundable within the Roth.
+        assert result.unfunded == 0.0
+        assert result.roth_draw <= 170.0
+        assert result.converged
+
+    def test_converging_path_is_not_flagged(self) -> None:
+        result = solve_waterfall(
+            150.0, self._accounts(), _no_tax, 60, 0, roth_tax_of=lambda r, i: 0.0
+        )
+        assert result.converged
 
 
 class TestWaterfallEarningsTax:
