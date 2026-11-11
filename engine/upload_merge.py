@@ -165,6 +165,7 @@ def build_user_defaults_session_updates(
             "your_fra_age": "spouse_fra_age",
             "your_aca": "spouse_aca",
             "your_defer_first_rmd": "spouse_defer_first_rmd",
+            "your_first_roth_year": "spouse_first_roth_year",
             "your_has_workplace_plan": "spouse_has_workplace_plan",
         }
         for file_k, sess_k in spouse_field_map.items():

@@ -64,6 +64,9 @@ EXPECTED_WIDGET_KEYS = frozenset(
         "_hh_filing_status_choice",
         "_hh_your_age_input",
         "_hh_spouse_age_input",
+        # T1 2c: optional first-Roth-year inputs (views/setup/_partials/_household.py)
+        "_hh_your_first_roth_year_input",
+        "_hh_spouse_first_roth_year_input",
         "_survivor_enabled",
         "_sync_ssa_you_btn",
         "_sync_ssa_spouse_btn",

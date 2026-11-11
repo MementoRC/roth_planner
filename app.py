@@ -562,6 +562,8 @@ def get_household() -> Household:
         spouse_defer_first_rmd=st.session_state.get(
             "spouse_defer_first_rmd", scalar_default("spouse_defer_first_rmd")
         ),
+        your_first_roth_year=st.session_state.get("your_first_roth_year"),
+        spouse_first_roth_year=st.session_state.get("spouse_first_roth_year"),
         spouse_is_sole_beneficiary=st.session_state.get(
             "spouse_is_sole_beneficiary", scalar_default("spouse_is_sole_beneficiary")
         ),

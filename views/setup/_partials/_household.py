@@ -78,6 +78,48 @@ def stable_age_input(
     return int(value)
 
 
+# Roth IRAs began in 1998 (Taxpayer Relief Act of 1997); the upper bound is the
+# household's base year (a contribution/conversion cannot be in the future).
+FIRST_ROTH_YEAR_MIN = 1998
+_FIRST_ROTH_YEAR_LABEL = "First Roth IRA contribution/conversion year"
+_FIRST_ROTH_YEAR_HELP = (
+    "Starts the Roth 5-year clock for tax-free earnings. Leave blank if you have never "
+    "had a Roth IRA; a planned conversion then starts the clock. If you have an older "
+    "Roth IRA, enter its first year — otherwise its earnings are treated as not yet "
+    "qualified."
+)
+
+
+def optional_year_input(
+    container,
+    label: str,
+    state: MutableMapping[str, Any],
+    attr: str,
+    *,
+    lo: int,
+    hi: int,
+    **kwargs: Any,
+) -> int | None:
+    """Optional year ``number_input`` (blank == ``None``) with a stable identity.
+
+    Same keyed re-seed scheme as :func:`stable_age_input`. A stored value outside
+    ``[lo, hi]`` (hand-edited file, import) is clamped for display so Streamlit
+    never raises on it; a non-integer stored value shows as blank.
+    """
+    stored = state.get(attr)
+    valid = isinstance(stored, int) and not isinstance(stored, bool)
+    current = _clamp(stored, lo, hi) if valid else None
+    widget_key = f"_hh_{attr}_input"
+    marker = f"_hh_{attr}_synced"
+    if widget_key not in state or state.get(marker) != stored:
+        state[widget_key] = current
+    value = container.number_input(
+        label, min_value=lo, max_value=hi, value=None, step=1, format="%d", key=widget_key, **kwargs
+    )
+    state[marker] = value
+    return None if value is None else int(value)
+
+
 def render_household_partial(hh: Household, container, owner: str) -> bool | None:
     """Render one owner slice of the Household/filing-status widgets.
 
@@ -172,6 +214,15 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
                 "The deferred RMD then stacks on year 2's RMD — may push a tax bracket or IRMAA tier."
             ),
         )
+        st.session_state.your_first_roth_year = optional_year_input(
+            container,
+            _FIRST_ROTH_YEAR_LABEL,
+            st.session_state,
+            "your_first_roth_year",
+            lo=FIRST_ROTH_YEAR_MIN,
+            hi=hh.base_year,
+            help=_FIRST_ROTH_YEAR_HELP,
+        )
         st.session_state.your_fra_age = container.number_input(
             "Your FRA (Full Retirement Age)",
             min_value=65,
@@ -245,6 +296,16 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             ),
             disabled=_is_single,
         )
+        _spouse_first_roth_year = optional_year_input(
+            container,
+            _FIRST_ROTH_YEAR_LABEL,
+            st.session_state,
+            "spouse_first_roth_year",
+            lo=FIRST_ROTH_YEAR_MIN,
+            hi=hh.base_year,
+            help=_FIRST_ROTH_YEAR_HELP,
+            disabled=_is_single,
+        )
         _spouse_is_sole_beneficiary = container.checkbox(
             "Spouse is sole IRA beneficiary and >10 yrs younger (use IRS Joint & "
             "Last Survivor Table for RMDs)",
@@ -284,6 +345,7 @@ def render_household_partial(hh: Household, container, owner: str) -> bool | Non
             st.session_state.spouse_has_workplace_plan = _spouse_has_workplace_plan
             rmd_choice_write_back(st.session_state, "spouse", _spouse_rmd_choice)
             st.session_state.spouse_defer_first_rmd = _spouse_defer_first_rmd
+            st.session_state.spouse_first_roth_year = _spouse_first_roth_year
             st.session_state.spouse_is_sole_beneficiary = _spouse_is_sole_beneficiary
             st.session_state.spouse_fra_age = _spouse_fra_age
             st.session_state.spouse_aca = _spouse_aca
