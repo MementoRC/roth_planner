@@ -141,6 +141,16 @@ SCALAR_REGISTRY: tuple[ScalarSpec, ...] = (
         ),
     ),
     ScalarSpec(
+        "your_first_roth_year",
+        None,
+        "per_person",
+        note=(
+            "First tax year a contribution/conversion went to any Roth IRA for this "
+            "person (starts the 5-year clock); None means unknown/never."
+        ),
+    ),
+    ScalarSpec("spouse_first_roth_year", None, "per_person"),
+    ScalarSpec(
         "_stock_ticker",
         "ACME",
         "joint",

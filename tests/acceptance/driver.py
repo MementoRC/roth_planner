@@ -201,6 +201,18 @@ class RothYear:
     roth_draw: float
     ira_draw: float
     early_withdrawal_penalty: float
+    gross_income: float = 0.0
+    # YearResult.magi (IRMAA basis; also what feeds the 2-year lookback) and
+    # YearResult.aca_magi (IRC 36B(d)(2)(B) basis).
+    magi: float = 0.0
+    aca_magi: float = 0.0
+    # The earnings part of this year's Roth draw, as the engine reports it.
+    # None while the engine does not expose
+    # YearResult.forced_your_roth_earnings_draw.
+    roth_earnings_drawn: float | None = None
+    # Engine requirement 5: Expose YearResult.irmaa_lookback_magi (MAGI from
+    # year-2 used for that year's IRMAA). None while the engine lacks it.
+    irmaa_lookback_magi: float | None = None
 
 
 def roth_conversion_projection(
@@ -249,6 +261,11 @@ def roth_conversion_projection(
             roth_draw=yr.forced_your_roth_draw,
             ira_draw=yr.forced_your_ira_draw,
             early_withdrawal_penalty=yr.forced_early_withdrawal_penalty,
+            gross_income=yr.combined_gross,
+            magi=yr.magi,
+            aca_magi=yr.aca_magi,
+            roth_earnings_drawn=getattr(yr, "forced_your_roth_earnings_draw", None),
+            irmaa_lookback_magi=getattr(yr, "irmaa_lookback_magi", None),
         )
         for yr in result.years
     ]

@@ -213,6 +213,11 @@ class Household:
     spouse_ira: float = _D["spouse_ira"]
     your_roth: float = _D["your_roth"]
     spouse_roth: float = _D["spouse_roth"]
+    # First tax year of each person's first Roth IRA contribution or conversion
+    # (starts the 5-year period for qualified distributions, Pub 590-B).
+    # None = the first conversion year in the projection.
+    your_first_roth_year: int | None = None
+    spouse_first_roth_year: int | None = None
 
     # Social Security (monthly at FRA 67)
     your_ss_fra: float = _D["your_ss_fra"]  # $/month at FRA

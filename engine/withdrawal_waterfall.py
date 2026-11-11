@@ -42,7 +42,9 @@ Flag meanings, precisely:
 * ``converged == False`` -- the gross-up iteration did not settle (it
   oscillated or hit ``max_iterations``), OR it settled only by pinning
   against the IRA ceiling while leaving the household genuinely short. It
-  does NOT fire merely because the IRAs ran out.
+  does NOT fire merely because the IRAs ran out. A Roth-leg oscillation that
+  resolves on a funding draw stays converged; only an unfundable Roth result
+  reports non-convergence.
 * ``ira_leg_saturated == True`` -- the IRA ceiling bound. INFORMATIONAL:
   routine in any year funded partly from the Roth, and not a failure.
 * ``unfunded > 0`` -- the economic failure signal. See below.
@@ -108,8 +110,10 @@ _SWEEP_EPSILON = 0.005
 _MAX_TOPUP_PASSES = 5
 # The Roth penalty gross-up is a contraction (slope = penalty_rate), so a dozen
 # passes settle it far below a cent.
-_MAX_ROTH_PENALTY_PASSES = 12
-_ROTH_PENALTY_TOLERANCE = 1e-9
+# With the earnings income tax in the loop the slope is penalty plus marginal
+# rate (under ~0.6), so allow more passes and a cent-level tolerance.
+_MAX_ROTH_PENALTY_PASSES = 40
+_ROTH_PENALTY_TOLERANCE = 1e-4
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -190,6 +194,7 @@ def solve_waterfall(
     penalty_rate: float = 0.10,
     max_iterations: int = 50,
     tolerance: float = 1.0,
+    roth_tax_of: Callable[[float, float], float] | None = None,
 ) -> WaterfallDraw:
     if need <= 0:
         return WaterfallDraw(
@@ -309,23 +314,50 @@ def solve_waterfall(
         spouse_take = draw - your_take
         base = 0.0
         if not free["your"]:
-            base += accounts.your_roth_exposure.exposed_part(your_take)
+            exposure = accounts.your_roth_exposure
+            base += exposure.exposed_part(your_take) + exposure.earnings_part(your_take)
         if not free["spouse"]:
-            base += accounts.spouse_roth_exposure.exposed_part(spouse_take)
+            exposure = accounts.spouse_roth_exposure
+            base += exposure.exposed_part(spouse_take) + exposure.earnings_part(spouse_take)
         return penalty_rate * base
 
-    # Converted principal drawn inside its 5-year period before 59 1/2 owes the
-    # 10% additional tax, paid out of the draw itself: gross the draw up by it.
+    # Converted principal drawn inside its 5-year period, and earnings, before
+    # 59 1/2 owe the 10% additional tax, paid out of the draw itself: gross the
+    # draw up by it.
+    # Non-qualified earnings are also income: `roth_tax_of(roth_draw, ira_draw)`
+    # (when given) is the marginal tax outflow they cause, grossed up the same way.
+    def roth_tax(draw: float) -> float:
+        if roth_tax_of is None or draw <= 0:
+            return 0.0
+        return max(roth_tax_of(draw, ira_draw), 0.0)
+
     roth_draw = _clamp(remaining_after_ira, 0.0, roth_available)
+    # (draw, gross-up needed at that draw) for every iterate, so a step
+    # discontinuity in `roth_tax_of` (e.g. a subsidy cliff) that makes the
+    # iteration oscillate can still be resolved on a draw seen to fund the need.
+    visited: list[tuple[float, float]] = []
+    roth_converged = False
     for _ in range(_MAX_ROTH_PENALTY_PASSES):
-        grossed = _clamp(remaining_after_ira + roth_penalty_of(roth_draw), 0.0, roth_available)
+        needed = remaining_after_ira + roth_penalty_of(roth_draw) + roth_tax(roth_draw)
+        visited.append((roth_draw, needed))
+        grossed = _clamp(needed, 0.0, roth_available)
         if abs(grossed - roth_draw) < _ROTH_PENALTY_TOLERANCE:
             roth_draw = grossed
+            roth_converged = True
             break
         roth_draw = grossed
+    if not roth_converged:
+        # Smallest visited draw that fully funds the need. A funding draw is a
+        # fully funded year and stays converged; only when no visited draw
+        # funds the need (an unfundable step) is the solve non-converged, and
+        # the whole Roth is drawn.
+        funding = [d for d, needed in visited if needed <= d + _SWEEP_EPSILON]
+        roth_draw = min(funding) if funding else roth_available
+        if not funding:
+            converged = False
     roth_penalty = roth_penalty_of(roth_draw)
     penalty += roth_penalty
-    unfunded = max(0.0, remaining_after_ira + roth_penalty - roth_draw)
+    unfunded = max(0.0, remaining_after_ira + roth_penalty + roth_tax(roth_draw) - roth_draw)
     # `unfunded > 0` must IMPLY every account is exhausted. Sub-cent residue
     # left when balances remain is arithmetic noise from the tolerance, not a
     # funding failure, so it is not reported as one.

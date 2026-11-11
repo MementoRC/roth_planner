@@ -256,6 +256,11 @@ class RothConverter:
       the amounts converted (so only principal, never earnings, has come out).
     - "a $X Roth IRA of regular contributions" is the household's starting
       Roth balance; all of it is contributions (no earnings, no conversions).
+    - "beyond everything they converted" means the Roth draws so far EXCEED
+      the regular contributions plus the amounts converted, so the Roth's own
+      growth (earnings) has started to come out. How much of a draw is
+      earnings is read from the engine, never derived here.
+    - "gross income" is the engine's YearResult.combined_gross for the year.
     """
 
     age: int
@@ -298,3 +303,31 @@ def roth_draws_within_converted(case: RothConverter, year: int) -> bool:
     drawn = sum(r.roth_draw for r in case.rows if r.year <= year)
     converted = sum(r.converted for r in case.rows if r.year <= year)
     return drawn <= case.roth + converted
+
+
+def roth_draws_beyond_converted(case: RothConverter, year: int) -> bool:
+    return not roth_draws_within_converted(case, year)
+
+
+def irmaa_lookback_magi(row: driver.RothYear) -> float:
+    """The engine's year-2 MAGI used for the year's IRMAA.
+
+    Engine requirement 5: Expose YearResult.irmaa_lookback_magi (MAGI from
+    year-2 used for that year's IRMAA).
+    """
+    if row.irmaa_lookback_magi is None:
+        raise AssertionError(
+            "engine must expose YearResult.irmaa_lookback_magi "
+            f"(the MAGI from year-2 used for the {row.year} IRMAA)"
+        )
+    return row.irmaa_lookback_magi
+
+
+def roth_earnings_drawn(row: driver.RothYear) -> float:
+    """The engine's earnings part of the year's Roth draw."""
+    if row.roth_earnings_drawn is None:
+        raise AssertionError(
+            "engine must expose YearResult.forced_your_roth_earnings_draw "
+            f"(the earnings part of the {row.year} Roth draw)"
+        )
+    return row.roth_earnings_drawn

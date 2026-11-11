@@ -163,6 +163,9 @@ _POST_498_SESSION_KEYS = {"net_inv_income", "terminal_ira_tax_rate", "_stock_tic
 # audit-1026 F-18: per-person "user picked the RMD start age" markers.
 _F18_RMD_CHOSEN = ["your_rmd_age_chosen", "spouse_rmd_age_chosen"]
 
+# T1 2c: per-person first-Roth-year (starts the 5-year clock); None == unknown.
+_FIRST_ROTH_YEAR = ["your_first_roth_year", "spouse_first_roth_year"]
+
 _PRE_REFACTOR_JOINT_FIELDS = frozenset(
     {
         "filing_status",
@@ -224,19 +227,29 @@ class TestPreRefactorLiteralPins:
     re-scoped, or re-valued registry entry must fail these."""
 
     def test_scalar_keys_matches_pre_refactor_literal_order(self) -> None:
-        added = [*_POST_498_ADDITIONS, *_F18_RMD_CHOSEN]
+        added = [*_POST_498_ADDITIONS, *_F18_RMD_CHOSEN, *_FIRST_ROTH_YEAR]
         assert [k for k in SCALAR_KEYS if k not in added] == _PRE_REFACTOR_SCALAR_KEYS
         assert set(SCALAR_KEYS) == set(_PRE_REFACTOR_SCALAR_KEYS) | set(added)
 
     def test_joint_fields_matches_pre_refactor_literal(self) -> None:
         assert _PRE_REFACTOR_JOINT_FIELDS | frozenset(_POST_498_ADDITIONS) == JOINT_FIELDS
 
-    def test_registry_has_exactly_37_session_keys(self) -> None:
-        # 32 pre-#498 session keys plus the post-#498 additions plus the F-18 markers.
+    def test_registry_has_exactly_39_session_keys(self) -> None:
+        # 32 pre-#498 session keys plus the post-#498 additions, the F-18 markers
+        # and the T1 2c first-Roth-year pair.
         assert {spec.session_key for spec in SCALAR_REGISTRY} == (
-            set(_PRE_REFACTOR_SCALAR_DEFAULTS) | _POST_498_SESSION_KEYS | set(_F18_RMD_CHOSEN)
+            set(_PRE_REFACTOR_SCALAR_DEFAULTS)
+            | _POST_498_SESSION_KEYS
+            | set(_F18_RMD_CHOSEN)
+            | set(_FIRST_ROTH_YEAR)
         )
-        assert len(SCALAR_REGISTRY) == 37
+        assert len(SCALAR_REGISTRY) == 39
+
+    def test_first_roth_year_defaults_are_none_and_per_person(self) -> None:
+        for key in _FIRST_ROTH_YEAR:
+            assert scalar_default(key) is None
+            assert key in SCALAR_KEYS
+            assert key not in JOINT_FIELDS
 
     def test_every_scalar_default_matches_pre_refactor_literal(self) -> None:
         for session_key, expected in _PRE_REFACTOR_SCALAR_DEFAULTS.items():
