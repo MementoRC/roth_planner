@@ -87,10 +87,12 @@ def line_heights(result: IncomeControlResult, key: str) -> list[float | None]:
 
 
 def _binding_name(row: IncomeControlYear) -> str:
+    """Display name of the binding line, or a dash."""
     return LINE_LABELS[row.binding_line] if row.binding_line else "-"
 
 
 def _ages_text(row: IncomeControlYear) -> str:
+    """Known ages joined by " / " (a deceased person's slot is skipped)."""
     return " / ".join(str(age) for age in row.ages if age is not None)
 
 
@@ -115,11 +117,13 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
 
 
 def _hover_text(row: IncomeControlYear) -> str:
+    """Hover text naming the binding and crossed lines."""
     crossed = ", ".join(LINE_LABELS[k] for k in row.crossed_lines) or "none"
     return f"Binding: {_binding_name(row)}<br>Crossed: {crossed}"
 
 
 def build_figure(result: IncomeControlResult) -> go.Figure:
+    """Stacked income bars per year with a dashed step line per applicable limit."""
     years = [r.year for r in result.years]
     hover = [_hover_text(r) for r in result.years]
     fig = go.Figure()
@@ -167,6 +171,7 @@ def build_figure(result: IncomeControlResult) -> go.Figure:
 
 
 def _income_stack(row: IncomeControlYear) -> list[tuple[str, float]]:
+    """Labelled income components for the detail panel (forced shown only when non-zero)."""
     stack = [("Fixed income (SS, RMD, dividends)", row.fixed_income)]
     if row.forced_exercise:
         stack.append(("Forced exercise (grant expires)", row.forced_exercise))
@@ -176,6 +181,7 @@ def _income_stack(row: IncomeControlYear) -> list[tuple[str, float]]:
 
 
 def _binding_note(row: IncomeControlYear) -> str:
+    """One-line caption naming the tightest line, or why there is none."""
     if row.binding_line:
         return f"Tightest line: {LINE_LABELS[row.binding_line]}."
     if row.crossed_lines:
@@ -183,10 +189,16 @@ def _binding_note(row: IncomeControlYear) -> str:
     return "No line applies this year."
 
 
+def _heading(row: IncomeControlYear) -> str:
+    """Detail heading: bold year plus ages, or a dash when no age is known."""
+    return f"**{row.year}** · {f'age {_ages_text(row)}' if _ages_text(row) else '-'}"
+
+
 def _render_detail(row: IncomeControlYear) -> None:
+    """Two-column detail: income stack on the left, rooms under each line on the right."""
     left, right = st.columns(2)
     with left:
-        st.markdown(f"**{row.year}** · age {_ages_text(row)}")
+        st.markdown(_heading(row))
         for label, value in _income_stack(row):
             st.markdown(md_dollars(f"{label}: {fmt_dollars(value)}"))
         st.markdown(md_dollars(f"**Total: {fmt_dollars(row.total_income)}**"))
@@ -221,7 +233,10 @@ def render(hh: Household) -> None:
     years = [row.year for row in result.years]
     if st.session_state.get(PICKER_KEY) not in years:
         st.session_state[PICKER_KEY] = default_year(result)
-    picked = st.segmented_control("Year", years, key=PICKER_KEY, selection_mode="single")
+    if hasattr(st, "segmented_control"):
+        picked = st.segmented_control("Year", years, key=PICKER_KEY, selection_mode="single")
+    else:  # older Streamlit (e.g. the stlite bundle) has no segmented_control
+        picked = st.radio("Year", years, horizontal=True, key=PICKER_KEY)
     year = picked if picked in years else default_year(result)
     _render_detail(next(row for row in result.years if row.year == year))
 
