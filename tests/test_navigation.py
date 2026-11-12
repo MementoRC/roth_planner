@@ -43,6 +43,7 @@ EXPECTED_IDS = [
     "income",
     "overview",
     "conversions",
+    "control",
     "options",
     "sweet",
     "rmd",
@@ -64,6 +65,7 @@ EXPECTED_LABELS = {
     "income": "💰 This Year's Income",
     "overview": "📊 Overview",
     "conversions": "📋 Conversion Plan",
+    "control": "🎚️ Income Control",
     "options": "📝 Option Exercises",
     "sweet": "🎯 Sweet Spot",
     "rmd": "📉 RMD Squeeze",
@@ -93,7 +95,7 @@ def test_ids_are_the_mockup_ids_in_sidebar_order():
 def test_groups_are_in_workflow_order():
     assert [group for group, _ in NAV_GROUPS] == ["This Year", "Plan", "Analyze", "Profile", "Data"]
     assert dict(NAV_GROUPS)["This Year"] == ("room", "income")
-    assert dict(NAV_GROUPS)["Plan"] == ("overview", "conversions", "options")
+    assert dict(NAV_GROUPS)["Plan"] == ("overview", "conversions", "control", "options")
     assert dict(NAV_GROUPS)["Profile"] == ("household", "assumptions", "holdings")
     assert dict(NAV_GROUPS)["Data"] == ("import", "review", "backup")
 
