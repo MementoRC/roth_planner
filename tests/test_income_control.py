@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from engine.income_control import forced_exercise, window_bounds
+from engine.income_control import (
+    build_income_control,
+    crossed_lines,
+    forced_exercise,
+    tightest_line,
+    window_bounds,
+)
+from engine.room_lines import LINE_KEYS
+from engine.scenario import run_scenario
+from engine.scenario_types import ConversionPlan
 from engine.this_year import first_rmd_year
 from models.exercise_schedule import ExerciseSchedule
 from models.grants import StockGrant
-from models.household import Household
+from models.household import Household, SurvivorScenario
 
 
 def _hh(**kw) -> Household:
@@ -86,3 +95,137 @@ def test_forced_exercise_is_clamped_to_option_income() -> None:
     hh = _schedule_hh()
     assert forced_exercise(hh, 2028, 1_000.0) == 1_000.0  # forced 60k cannot exceed the year's 1k
     assert forced_exercise(hh, 2028, 0.0) == 0.0
+
+
+def _rooms(**kw: float) -> dict[str, float | None]:
+    rooms: dict[str, float | None] = dict.fromkeys(LINE_KEYS)
+    rooms.update(kw)
+    return rooms
+
+
+def test_tightest_line_is_smallest_non_negative_room() -> None:
+    assert (
+        tightest_line(_rooms(top_12=5_000, top_22=5_000, irmaa_t1=2_000, niit=-100)) == "irmaa_t1"
+    )
+
+
+def test_tightest_line_breaks_ties_by_line_key_order() -> None:
+    assert tightest_line(_rooms(top_24=3_000, top_12=3_000)) == "top_12"
+
+
+def test_zero_room_counts_as_binding_and_none_is_ignored() -> None:
+    assert tightest_line(_rooms(top_12=0.0, niit=10.0)) == "top_12"
+
+
+def test_tightest_line_is_none_when_all_crossed_or_not_applicable() -> None:
+    assert tightest_line(_rooms(top_12=-1.0, niit=-2.0)) is None
+    assert tightest_line(_rooms()) is None
+
+
+def test_crossed_lines_most_negative_first_ties_by_key_order() -> None:
+    rooms = _rooms(niit=-100.0, ltcg_zero=-5_000.0, top_12=-100.0, top_22=50.0)
+    assert crossed_lines(rooms) == ("ltcg_zero", "top_12", "niit")
+
+
+def test_one_model_guard_rows_equal_the_single_run_scenario_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import engine.income_control as ic
+
+    hh = _schedule_hh()
+    plan = ConversionPlan(your_conversions={2027: 40_000.0, 2028: 25_000.0})
+    calls: list[int] = []
+    real = ic.run_scenario
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ic, "run_scenario", counting)
+    result = build_income_control(hh, plan, plan_label="Test plan")
+    assert len(calls) == 1
+    assert result.plan_label == "Test plan"
+
+    expected = {yr.year: yr for yr in run_scenario(hh, plan, "Test plan").years}
+    assert [row.year for row in result.years] == list(
+        range(result.window_start, result.window_end + 1)
+    )
+    for row in result.years:
+        assert row.year_result == expected[row.year]
+        assert row.planned_conversion == (
+            expected[row.year].your_conversion + expected[row.year].spouse_conversion
+        )
+
+
+def test_rows_split_option_income_into_forced_and_discretionary() -> None:
+    hh = _schedule_hh()
+    result = build_income_control(hh, ConversionPlan(), plan_label="x")
+    by_year = {row.year: row for row in result.years}
+    assert (by_year[2027].forced_exercise, by_year[2027].discretionary_exercise) == (0.0, 40_000.0)
+    assert (by_year[2028].forced_exercise, by_year[2028].discretionary_exercise) == (
+        60_000.0,
+        10_000.0,
+    )
+    for row in result.years:
+        assert row.forced_exercise + row.discretionary_exercise == pytest.approx(
+            row.year_result.option_income
+        )
+
+
+def test_row_fields_come_from_the_year_result() -> None:
+    hh = _hh()
+    result = build_income_control(hh, ConversionPlan(), plan_label="x")
+    row = result.years[0]
+    yr = row.year_result
+    assert row.social_security == yr.combined_ss
+    assert row.rmd == yr.taxable_rmd + yr.spouse_taxable_rmd
+    assert row.dividends_qualified == yr.brokerage_qual_div
+    assert row.dividends_ordinary == yr.brokerage_ord_div
+    assert row.interest == 0.0
+    assert row.ages == (yr.your_age, yr.spouse_age)
+    assert row.fixed_income == (
+        row.social_security
+        + row.rmd
+        + row.dividends_qualified
+        + row.dividends_ordinary
+        + row.interest
+    )
+    assert set(row.rooms) == set(LINE_KEYS)
+
+
+def test_empty_window_gives_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    import engine.income_control as ic
+
+    monkeypatch.setattr(ic, "first_rmd_year", lambda hh: 2025)
+    result = build_income_control(_hh(), ConversionPlan(), plan_label="x")
+    assert result.years == ()
+    assert (result.window_start, result.window_end) == (2026, 2025)
+
+
+def test_single_household_has_no_spouse_age() -> None:
+    hh = _hh(filing_status="Single", your_age=63)
+    result = build_income_control(hh, ConversionPlan(), plan_label="x")
+    assert result.years
+    assert all(row.ages[1] is None for row in result.years)
+
+
+def test_engine_does_not_zero_ages_in_survivor_years() -> None:
+    """Characterization (plan finding): survivor years flip filing_status only."""
+    hh = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("spouse", 2027))
+    years = {yr.year: yr for yr in run_scenario(hh, ConversionPlan(), "x").years}
+    assert years[2029].filing_status == "Single"
+    assert years[2029].spouse_age == 66 + 3
+    assert years[2029].your_age == 70 + 3
+
+
+def test_survivor_rows_set_the_deceased_slot_to_none() -> None:
+    spouse_dies = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("spouse", 2027))
+    result = build_income_control(spouse_dies, ConversionPlan(), plan_label="x")
+    by_year = {row.year: row for row in result.years}
+    assert by_year[2027].ages == (71, 67)  # death year still files MFJ
+    assert by_year[2029].ages == (73, None)
+
+    you_die = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("you", 2027))
+    result = build_income_control(you_die, ConversionPlan(), plan_label="x")
+    by_year = {row.year: row for row in result.years}
+    assert by_year[2029].ages == (None, 69)  # you died; the spouse keeps slot 1
