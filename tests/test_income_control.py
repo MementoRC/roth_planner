@@ -11,7 +11,7 @@ from engine.income_control import (
     tightest_line,
     window_bounds,
 )
-from engine.room_lines import LINE_KEYS
+from engine.room_lines import LINE_KEYS, room_after, room_lines_for_year
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan
 from engine.this_year import first_rmd_year
@@ -191,6 +191,49 @@ def test_row_fields_come_from_the_year_result() -> None:
         + row.interest
     )
     assert set(row.rooms) == set(LINE_KEYS)
+
+
+def _assert_rows_wired(hh: Household, plan: ConversionPlan) -> list:
+    result = build_income_control(hh, plan, plan_label="x")
+    by_year = {yr.year: yr for yr in run_scenario(hh, plan, "x").years}
+    for row in result.years:
+        yr = by_year[row.year]
+        assert row.rooms == room_after(yr, room_lines_for_year(hh, yr))
+        assert row.binding_line == tightest_line(row.rooms)
+        assert row.crossed_lines == crossed_lines(row.rooms)
+    return list(result.years)
+
+
+def test_row_rooms_binding_and_crossed_are_wired_from_the_matching_year_result() -> None:
+    hh = _schedule_hh()
+    rows = _assert_rows_wired(hh, ConversionPlan(your_conversions={2027: 40_000.0}))
+    assert any(row.binding_line is not None for row in rows)
+
+
+def test_row_wiring_with_crossed_lines() -> None:
+    hh = _schedule_hh()
+    rows = _assert_rows_wired(hh, ConversionPlan(your_conversions={2027: 900_000.0}))
+    by_year = {row.year: row for row in rows}
+    assert by_year[2027].crossed_lines
+    assert by_year[2027].binding_line != by_year[2027].crossed_lines[0]
+
+
+def test_total_income_sums_fixed_exercise_and_conversion() -> None:
+    hh = _schedule_hh()
+    result = build_income_control(
+        hh, ConversionPlan(your_conversions={2028: 25_000.0}), plan_label="x"
+    )
+    row = {r.year: r for r in result.years}[2028]
+    assert row.planned_conversion == 25_000.0
+    assert row.forced_exercise == 60_000.0
+    assert row.total_income == pytest.approx(row.fixed_income + 60_000.0 + 10_000.0 + 25_000.0)
+
+
+def test_forced_exercise_is_clamped_below_at_zero() -> None:
+    # income_for already floors underwater grants at 0, so the lower clamp is
+    # only reachable through a negative option_income argument.
+    hh = _schedule_hh()
+    assert forced_exercise(hh, 2028, -5_000.0) == 0.0
 
 
 def test_empty_window_gives_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -82,24 +82,21 @@ class IncomeControlResult:
     plan_label: str
 
 
+def _applicable(rooms: dict[str, float | None]) -> list[tuple[str, float]]:
+    """(key, room) for every applicable (non-None) line, in LINE_KEYS order."""
+    return [(key, room) for key in LINE_KEYS if (room := rooms.get(key)) is not None]
+
+
 def tightest_line(rooms: dict[str, float | None]) -> str | None:
     """Applicable line with the smallest room >= 0; ties by LINE_KEYS order."""
-    applicable: list[tuple[str, float]] = []
-    for key in LINE_KEYS:
-        room = rooms.get(key)
-        if room is not None:
-            applicable.append((key, room))
+    applicable = _applicable(rooms)
     candidates = [(room, LINE_KEYS.index(key), key) for key, room in applicable if room >= 0]
     return min(candidates)[2] if candidates else None
 
 
 def crossed_lines(rooms: dict[str, float | None]) -> tuple[str, ...]:
     """Lines with negative room, most negative first; ties by LINE_KEYS order."""
-    applicable: list[tuple[str, float]] = []
-    for key in LINE_KEYS:
-        room = rooms.get(key)
-        if room is not None:
-            applicable.append((key, room))
+    applicable = _applicable(rooms)
     crossed = [(room, LINE_KEYS.index(key), key) for key, room in applicable if room < 0]
     return tuple(key for _, _, key in sorted(crossed))
 
