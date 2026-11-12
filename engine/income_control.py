@@ -18,3 +18,14 @@ def window_bounds(hh: Household) -> tuple[int, int]:
     rmd_year = first_rmd_year(hh)
     end = rmd_year if last_expiry is None else max(last_expiry, rmd_year)
     return start, end
+
+
+def forced_exercise(hh: Household, year: int, option_income: float) -> float:
+    """Option income in ``year`` from grants that EXPIRE in ``year`` (exercise is
+    forced by the expiry). Same schedule and price resolver ``hh.option_income``
+    uses, clamped to [0, option_income] so forced + discretionary == option_income."""
+    expiring = [g for g in hh.grants if g.expiry_year == year]
+    if not expiring:
+        return 0.0
+    raw = hh.effective_schedule().income_for(year, expiring, hh.projected_stock_price)
+    return max(0.0, min(raw, option_income))
