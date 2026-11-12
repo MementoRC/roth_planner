@@ -99,3 +99,26 @@ def room_lines_for_year(hh: Household, yr: YearResult) -> RoomLines:
         aca_cliff=aca_cliff,
         niit=float(niit_threshold(status)),
     )
+
+
+def room_after(yr: YearResult, lines: RoomLines) -> dict[str, float | None]:
+    """Room for additional income under each line: line - measure.
+
+    Negative = crossed; ``None`` = line not applicable that year. Slice 1 measures
+    0% LTCG as ordinary taxable income + qualified dividends (realized gains are
+    not on YearResult; slice 3 adds them), so its room may be negative.
+    """
+    pairs: dict[str, tuple[float | None, float]] = {
+        "top_12": (lines.top_12, yr.taxable_income),
+        "top_22": (lines.top_22, yr.taxable_income),
+        "top_24": (lines.top_24, yr.taxable_income),
+        "ltcg_zero": (lines.ltcg_zero, yr.taxable_income + yr.brokerage_qual_div),
+        "irmaa_t1": (lines.irmaa_t1, yr.magi),
+        "aca_cliff": (lines.aca_cliff, yr.aca_magi),
+        "niit": (lines.niit, yr.niit_magi),
+    }
+    rooms: dict[str, float | None] = {}
+    for key in LINE_KEYS:
+        line, measure = pairs[key]
+        rooms[key] = None if line is None else line - measure
+    return rooms

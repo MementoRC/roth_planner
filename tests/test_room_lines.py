@@ -7,7 +7,14 @@ import pytest
 from engine.aca import aca_ceiling_magi
 from engine.irmaa import irmaa_tier1_threshold
 from engine.niit import niit_threshold
-from engine.room_lines import LINE_KEYS, living_flags, living_persons, room_lines_for_year
+from engine.room_lines import (
+    LINE_KEYS,
+    RoomLines,
+    living_flags,
+    living_persons,
+    room_after,
+    room_lines_for_year,
+)
 from engine.scenario_types import YearResult
 from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE, indexed_bracket_ceiling
 from engine.tax_indexing import index_tuple
@@ -149,3 +156,39 @@ def test_living_flags_cover_every_case() -> None:
     assert living_flags(spouse_dies, single) == (True, False)
     assert living_flags(you_die, single) == (False, True)
     assert living_flags(you_die, mfj) == (True, True)
+
+
+def test_room_after_is_line_minus_measure_with_negative_and_none() -> None:
+    lines = RoomLines(
+        year=2030,
+        filing_status="MFJ",
+        top_12=100_000.0,
+        top_22=200_000.0,
+        top_24=300_000.0,
+        ltcg_zero=90_000.0,
+        irmaa_t1=250_000.0,
+        aca_cliff=None,
+        niit=250_000.0,
+    )
+    yr = _yr(
+        taxable_income=120_000.0,
+        brokerage_qual_div=10_000.0,
+        magi=260_000.0,
+        aca_magi=999_999.0,  # must be ignored: the ACA line is not applicable
+        niit_magi=200_000.0,
+    )
+    assert room_after(yr, lines) == {
+        "top_12": -20_000.0,
+        "top_22": 80_000.0,
+        "top_24": 180_000.0,
+        "ltcg_zero": 90_000.0 - (120_000.0 + 10_000.0),
+        "irmaa_t1": -10_000.0,
+        "aca_cliff": None,
+        "niit": 50_000.0,
+    }
+
+
+def test_room_after_uses_aca_magi_for_the_aca_line() -> None:
+    lines = RoomLines(2030, "MFJ", 1.0, 2.0, 3.0, 4.0, None, 80_000.0, 5.0)
+    yr = _yr(aca_magi=75_000.0, magi=1.0)
+    assert room_after(yr, lines)["aca_cliff"] == 5_000.0
