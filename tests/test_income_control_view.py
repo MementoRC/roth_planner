@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+from streamlit.testing.v1 import AppTest
+
+import views.income_control as ic_view
 from engine.income_control import (
     IncomeControlResult,
     IncomeControlYear,
@@ -101,3 +106,70 @@ def test_table_rows_has_one_row_per_year_with_binding_line_name() -> None:
     assert rows[0]["Year"] == 2026
     assert rows[0]["Binding line"] == "NIIT threshold"
     assert rows[0]["Ages"] == "60 / 55"
+
+
+def _render_page() -> None:
+    from models.household import Household
+    from views.income_control import render
+
+    render(Household())
+
+
+def _run_with(result: IncomeControlResult) -> tuple[AppTest, MagicMock]:
+    mock_build = MagicMock(return_value=result)
+    at = AppTest.from_function(_render_page, default_timeout=60)
+    with patch.object(ic_view, "build_income_control", mock_build):
+        at.run()
+    return at, mock_build
+
+
+def test_view_renders_with_title_caption_window_and_collapsed_expander() -> None:
+    at, _ = _run_with(_result(_year(2026, top_12=100.0), _year(2027, top_12=50.0)))
+    assert not at.exception
+    assert "Income Control" in at.title[0].value
+    captions = " ".join(c.value for c in at.caption)
+    assert "Room left under each line after Test plan" in captions
+    assert "2026–2027" in captions
+    expanders = [e for e in at.expander if e.label == "All years (table)"]
+    assert len(expanders) == 1
+
+
+def test_picker_defaults_to_the_first_crossed_year() -> None:
+    at, _ = _run_with(
+        _result(_year(2026, top_12=100.0), _year(2027, top_12=-5.0), _year(2028, niit=-1.0))
+    )
+    assert not at.exception
+    assert at.session_state[ic_view.PICKER_KEY] == 2027
+
+
+def test_picker_defaults_to_the_base_year_when_nothing_is_crossed() -> None:
+    at, _ = _run_with(_result(_year(2026, top_12=100.0), _year(2027, top_12=50.0)))
+    assert not at.exception
+    assert at.session_state[ic_view.PICKER_KEY] == 2026
+
+
+def test_detail_marks_crossed_lines_over_by() -> None:
+    at, _ = _run_with(_result(_year(2026, top_12=-250.0, niit=900.0)))
+    body = " ".join(m.value for m in at.markdown)
+    assert "over by" in body
+    assert "250" in body
+
+
+def test_empty_window_shows_info_and_no_picker() -> None:
+    at, _ = _run_with(IncomeControlResult((), 2026, 2025, "Test plan"))
+    assert not at.exception
+    assert any("No years in the decision window" in i.value for i in at.info)
+    assert ic_view.PICKER_KEY not in at.session_state
+
+
+def test_absent_planner_state_uses_the_fill_12_label() -> None:
+    at, mock_build = _run_with(_result(_year(2026, top_12=100.0)))
+    assert not at.exception
+    assert mock_build.call_args.kwargs["plan_label"] == "Fill 12%"
+
+
+def test_view_renders_end_to_end_with_the_real_engine() -> None:
+    at = AppTest.from_function(_render_page, default_timeout=60)
+    at.run()
+    assert not at.exception
+    assert ic_view.PICKER_KEY in at.session_state
