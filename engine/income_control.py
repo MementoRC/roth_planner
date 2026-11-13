@@ -14,6 +14,8 @@ from engine.this_year import first_rmd_year
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
+_DEFAULT_END_AGE = 95  # run_scenario's default horizon (your age)
+
 
 def window_bounds(hh: Household) -> tuple[int, int]:
     """(window_start, window_end): the base year through the later of the last
@@ -53,12 +55,15 @@ class IncomeControlYear:
     binding_line: str | None
     crossed_lines: tuple[str, ...]
     year_result: YearResult
+    # Forced IRA draws + inherited-IRA distributions (taxable, not RMDs).
+    ira_draws: float = 0.0
 
     @property
     def fixed_income(self) -> float:
         return (
             self.social_security
             + self.rmd
+            + self.ira_draws
             + self.dividends_qualified
             + self.dividends_ordinary
             + self.interest
@@ -121,6 +126,12 @@ def _row(hh: Household, yr: YearResult) -> IncomeControlYear:
         binding_line=tightest_line(rooms),
         crossed_lines=crossed_lines(rooms),
         year_result=yr,
+        ira_draws=(
+            yr.forced_your_ira_draw
+            + yr.forced_spouse_ira_draw
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution
+        ),
     )
 
 
@@ -136,7 +147,10 @@ def build_income_control(
     start, end = window_bounds(hh)
     if end < start:
         return IncomeControlResult((), start, end, plan_label)
-    result = run_scenario(hh, plan, plan_label, ytd=ytd, net_inv_income=net_inv_income)
+    end_age = max(_DEFAULT_END_AGE, hh.your_age + (end - start))
+    result = run_scenario(
+        hh, plan, plan_label, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
+    )
     by_year = {yr.year: yr for yr in result.years}
     rows = tuple(_row(hh, by_year[y]) for y in range(start, end + 1) if y in by_year)
     return IncomeControlResult(rows, start, end, plan_label)

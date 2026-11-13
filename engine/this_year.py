@@ -478,16 +478,25 @@ def first_rmd_year(hh: Household) -> int:
     """Earliest year the scenario books an RMD for either person: the year they
     reach their RMD start age, +1 when that person defers the first RMD to
     April 1 of the next year; the base year when already past it. The spouse
-    counts only for an MFJ household."""
+    counts only for an MFJ household. With a survivor scenario the person who
+    dies counts only if their first RMD falls by the death year (the survivor
+    inherits the IRA and always counts)."""
 
     def _first(age: int, start_age: int, defer: bool) -> int:
         first = hh.base_year + (start_age - age) + (1 if defer else 0)
         return max(first, hh.base_year)
 
-    years = [_first(hh.your_age, hh.your_rmd_start_age, hh.your_defer_first_rmd)]
-    if hh.filing_status == "MFJ":
-        years.append(_first(hh.spouse_age, hh.spouse_rmd_start_age, hh.spouse_defer_first_rmd))
-    return min(years)
+    you_first = _first(hh.your_age, hh.your_rmd_start_age, hh.your_defer_first_rmd)
+    if hh.filing_status != "MFJ":
+        return you_first
+    spouse_first = _first(hh.spouse_age, hh.spouse_rmd_start_age, hh.spouse_defer_first_rmd)
+    surv = hh.survivor
+    if surv is not None:
+        if surv.who_dies == "you" and you_first > surv.death_year:
+            return spouse_first
+        if surv.who_dies == "spouse" and spouse_first > surv.death_year:
+            return you_first
+    return min(you_first, spouse_first)
 
 
 def apply_split_conversions(current: ConversionPlan, split: ThisYearSplit) -> ConversionPlan:

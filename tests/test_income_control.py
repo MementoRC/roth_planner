@@ -66,6 +66,48 @@ def test_window_can_be_empty_when_end_precedes_start(monkeypatch: pytest.MonkeyP
     assert ic.window_bounds(_hh()) == (2026, 2025)
 
 
+def test_window_end_is_survivor_aware_when_you_die_before_your_rmd_age() -> None:
+    hh = _hh(your_age=70, spouse_age=60, survivor=SurvivorScenario("you", 2027))
+    deferral = 1 if hh.spouse_defer_first_rmd else 0
+    survivor_first = hh.base_year + (hh.spouse_rmd_start_age - 60) + deferral
+    assert window_bounds(hh) == (2026, survivor_first)
+
+
+def test_first_rmd_year_keeps_deceased_rmd_when_death_follows_it() -> None:
+    plain = _hh(your_age=70, spouse_age=60)
+    late_death = _hh(your_age=70, spouse_age=60, survivor=SurvivorScenario("you", 2060))
+    assert first_rmd_year(late_death) == first_rmd_year(plain)
+
+
+def test_window_covers_a_grant_expiring_past_the_default_scenario_horizon() -> None:
+    hh = _hh(your_age=90, spouse_age=88, grants=[_grant("g1", 100, 2036)])
+    result = build_income_control(hh, ConversionPlan(), plan_label="x")
+    assert result.window_end == 2036
+    assert [row.year for row in result.years] == list(range(2026, 2037))
+
+
+def test_fixed_income_includes_forced_ira_and_inherited_distributions() -> None:
+    from engine import income_control as ic
+    from engine.scenario_types import YearResult
+
+    hh = _hh()
+    yr = YearResult(
+        year=2026,
+        your_age=61,
+        spouse_age=58,
+        phase="clean",
+        filing_status="MFJ",
+        forced_your_ira_draw=10_000.0,
+        forced_spouse_ira_draw=2_000.0,
+        your_inherited_distribution=3_000.0,
+        spouse_inherited_distribution=500.0,
+    )
+    row = ic._row(hh, yr)
+    assert row.ira_draws == 15_500.0
+    assert row.rmd == 0.0
+    assert row.fixed_income == 15_500.0
+
+
 def _schedule_hh() -> Household:
     """g1 (1000 sh, expires 2028): 400 in 2027, 600 in 2028.
     g2 (500 sh, expires 2031): 100 in 2028. Spread = 200 - 100 = 100/share."""
@@ -186,6 +228,7 @@ def test_row_fields_come_from_the_year_result() -> None:
     assert row.fixed_income == (
         row.social_security
         + row.rmd
+        + row.ira_draws
         + row.dividends_qualified
         + row.dividends_ordinary
         + row.interest

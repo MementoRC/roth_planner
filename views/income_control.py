@@ -172,7 +172,7 @@ def build_figure(result: IncomeControlResult) -> go.Figure:
 
 def _income_stack(row: IncomeControlYear) -> list[tuple[str, float]]:
     """Labelled income components for the detail panel (forced shown only when non-zero)."""
-    stack = [("Fixed income (SS, RMD, dividends)", row.fixed_income)]
+    stack = [("Fixed income (SS, RMD, IRA draws, dividends)", row.fixed_income)]
     if row.forced_exercise:
         stack.append(("Forced exercise (grant expires)", row.forced_exercise))
     stack.append(("Discretionary exercise", row.discretionary_exercise))
