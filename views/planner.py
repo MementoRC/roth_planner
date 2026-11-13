@@ -20,7 +20,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from config.scalar_registry import scalar_default
 from engine.scenario import ConversionPlan, run_scenario
 from engine.scenario_autofill import auto_fill_12
 from engine.scenario_compute import QCD_MIN_AGE
@@ -38,6 +37,7 @@ from views._shared import render_completeness_badge, render_readonly_input
 from views._style import render_page_header
 from views.conversion_state import GRID_KEY, clear_conversion_widgets
 from views.optimizer_panel import render_conversion_half
+from views.plan_source import conversion_plan_from_state, scenario_ytd_and_nii
 
 PHASE_COLORS = {
     "options": "#7c3aed",  # purple
@@ -190,22 +190,6 @@ def apply_conversion_grid_edits(
     return conv_your, conv_sp, qcd_out, sp_qcd_out, warnings
 
 
-def _scenario_ytd_and_nii():
-    """This year's actuals (when the sidebar toggle is on) and the NIIT
-    estimate, as the Conversion Plan page feeds them to run_scenario."""
-    # C26 (audit-0721): thread base-year YTD actuals through, mirroring the
-    # apply_ytd_to_projection gating already used by sweet_spot.py/aca_irmaa.py
-    # -- otherwise the sidebar's "Include this year's actuals" toggle has
-    # no effect on this page. run_scenario itself narrows ytd to the base year.
-    ytd = (
-        st.session_state.get("ytd_snapshot")
-        if st.session_state.get("apply_ytd_to_projection", False)
-        else None
-    )
-    nii = int(st.session_state.get("net_inv_income", scalar_default("net_inv_income")))
-    return ytd, nii
-
-
 def bracket_segments(window: list) -> list[tuple[str, list[float], str]]:
     """Stacked segments for the "Bracket Usage by Year" chart.
 
@@ -265,7 +249,7 @@ def grid_normalized_conversions(
     years outside the window dropped, RMD-era zeroed, IRA-balance clamp), so
     writing the result into conv_plan_* makes the grid's round-trip a no-op.
     """
-    ytd, nii = _scenario_ytd_and_nii()
+    ytd, nii = scenario_ytd_and_nii()
     plan = ConversionPlan(
         your_conversions=dict(your),
         spouse_conversions=dict(spouse),
@@ -315,7 +299,7 @@ def render(hh: Household) -> None:
     with col_btn1:
         if st.button("🎯 Auto-Fill to 12%", use_container_width=True):
             # audit-1018 F-10: size with the same YTD the projection below uses.
-            plan = auto_fill_12(hh, *_scenario_ytd_and_nii())
+            plan = auto_fill_12(hh, *scenario_ytd_and_nii())
             st.session_state.conv_plan_your = plan.your_conversions
             st.session_state.conv_plan_spouse = plan.spouse_conversions
             st.session_state.conv_plan_qcd = plan.qcds
@@ -334,7 +318,7 @@ def render(hh: Household) -> None:
 
     render_conversion_half(hh)
 
-    _ytd, net_inv_income = _scenario_ytd_and_nii()
+    _ytd, net_inv_income = scenario_ytd_and_nii()
     render_readonly_input(
         "Additional net investment income (NIIT estimate)",
         f"${net_inv_income:,.0f}/yr",
@@ -344,12 +328,7 @@ def render(hh: Household) -> None:
     )
 
     # --- Build and run scenario ---
-    plan = ConversionPlan(
-        your_conversions=dict(st.session_state.conv_plan_your),
-        spouse_conversions=dict(st.session_state.conv_plan_spouse),
-        qcds=dict(st.session_state.conv_plan_qcd),
-        spouse_qcds=dict(st.session_state.conv_plan_spouse_qcd),
-    )
+    plan = conversion_plan_from_state()
     result = run_scenario(hh, plan, "Custom", end_age=95, ytd=_ytd, net_inv_income=net_inv_income)
 
     # Filter to the conversion window (WINDOW_YEARS years from the starting age)
