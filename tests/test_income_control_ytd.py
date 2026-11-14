@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from engine import income_control as ic
-from engine.income_control import StackLine
+from engine.income_control import StackLine, build_income_control
 from engine.scenario import run_scenario
 from engine.scenario_compute import compute_conversions, compute_rmds
 from engine.scenario_types import ConversionPlan, YearResult
@@ -361,3 +361,69 @@ def test_conversion_line_without_a_snapshot_is_forecast_only() -> None:
     row = ic._row(_hh(), _yr(your_conversion=25_000.0, spouse_conversion=5_000.0))
     line = _line(row, "conversion")
     assert (line.done, line.remaining, line.plan) == (0.0, 30_000.0, 30_000.0)
+
+
+def test_total_income_is_the_sum_of_line_full_years() -> None:
+    plan = ConversionPlan(your_conversions={2026: 50_000.0})
+    ytd = _ytd(
+        wages_ytd=30_000.0,
+        ordinary_dividends_ytd=800.0,
+        ltcg_ytd=10_000.0,
+        ira_conversions_ytd=20_000.0,
+    )
+    row = build_income_control(_hh(), plan, plan_label="x", ytd=ytd).years[0]
+    assert row.total_income == pytest.approx(sum(line.full_year for line in row.stack_lines))
+    assert row.total_income > row.fixed_income + row.planned_conversion  # actuals add on top
+
+
+def test_magi_only_total_is_long_term_gains_plus_qualified_dividends() -> None:
+    ytd = _ytd(ltcg_ytd=10_000.0, qualified_dividends_ytd=1_200.0, ordinary_dividends_ytd=800.0)
+    row = ic._row(_hh(), _yr(), None, ytd)
+    assert row.magi_only_total == ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
+    assert row.magi_only_total == 11_200.0
+
+
+def test_legacy_interest_and_dividend_fields_agree_with_the_snapshot_lines() -> None:
+    ytd = _ytd(
+        interest_ytd=500.0, ordinary_dividends_ytd=800.0, qualified_dividends_ytd=1_200.0
+    )
+    row = ic._row(_hh(), _yr(), None, ytd)
+    assert row.interest == _line(row, "interest").full_year == 500.0
+    assert row.dividends_ordinary == _line(row, "dividends_ordinary").full_year == 800.0
+    assert row.dividends_qualified == _line(row, "dividends_qualified").full_year == 1_200.0
+
+
+def test_rows_without_a_snapshot_are_forecast_only_with_slice_one_values() -> None:
+    hh = _schedule_hh()
+    plan = ConversionPlan(your_conversions={2027: 40_000.0, 2028: 25_000.0})
+    result = build_income_control(hh, plan, plan_label="x")
+    for row in result.years:
+        assert row.has_actuals is False
+        assert all(line.done == 0.0 for line in row.stack_lines)
+        keys = {line.key for line in row.stack_lines}
+        assert keys.isdisjoint({"wages", "capital_gain_ordinary", "adjustments"})
+        assert row.total_income == pytest.approx(
+            row.fixed_income
+            + row.forced_exercise
+            + row.discretionary_exercise
+            + row.planned_conversion
+        )
+
+
+def test_non_base_years_stay_forecast_only_even_with_a_snapshot() -> None:
+    result = build_income_control(
+        _schedule_hh(), ConversionPlan(), plan_label="x", ytd=_ytd(wages_ytd=30_000.0)
+    )
+    assert result.years[0].has_actuals is True
+    assert _line(result.years[0], "wages").done == 30_000.0
+    assert len(result.years) > 1
+    for row in result.years[1:]:
+        assert row.has_actuals is False
+        assert all(line.done == 0.0 for line in row.stack_lines)
+
+
+def test_hand_built_rows_without_lines_keep_the_slice_one_total() -> None:
+    from tests.test_income_control_view import _year
+
+    row = _year(2026)  # no stack_lines: legacy fields only
+    assert row.total_income == row.fixed_income + 20_000.0

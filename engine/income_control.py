@@ -74,6 +74,10 @@ class StackLine:
         return excess if excess >= _CENT else 0.0
 
 
+def _full_year_of(lines: tuple[StackLine, ...], key: str, default: float) -> float:
+    return next((line.full_year for line in lines if line.key == key), default)
+
+
 @dataclass(frozen=True)
 class IncomeControlYear:
     year: int
@@ -82,7 +86,7 @@ class IncomeControlYear:
     rmd: float  # yr.taxable_rmd + yr.spouse_taxable_rmd
     dividends_qualified: float
     dividends_ordinary: float
-    interest: float  # 0.0 in slice 1 (no forecast field on YearResult)
+    interest: float  # the interest line's full year (0.0 without a snapshot)
     forced_exercise: float
     discretionary_exercise: float
     planned_conversion: float  # your + spouse conversion
@@ -110,12 +114,25 @@ class IncomeControlYear:
 
     @property
     def total_income(self) -> float:
+        """Sum of the line full-years; rows built without lines (hand-built in view
+        tests) fall back to the slice 1 formula."""
+        if self.stack_lines:
+            return sum(line.full_year for line in self.stack_lines)
         return (
             self.fixed_income
             + self.forced_exercise
             + self.discretionary_exercise
             + self.planned_conversion
         )
+
+    @property
+    def magi_only_total(self) -> float:
+        """Of the total, what reaches MAGI but not the ordinary brackets."""
+        return sum(line.full_year for line in self.stack_lines if line.magi_only)
+
+    def full_year_of(self, key: str, default: float) -> float:
+        """Full-year amount of line ``key``, or ``default`` when the row has no such line."""
+        return _full_year_of(self.stack_lines, key, default)
 
 
 @dataclass(frozen=True)
@@ -320,14 +337,20 @@ def _row(
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
     rooms = room_after(yr, room_lines_for_year(hh, yr))
     forced = forced_exercise(hh, yr.year, yr.option_income)
+    lines = _stack_lines(hh, yr, forced, plan, ytd)
+
+    def full(key: str, default: float) -> float:
+        return _full_year_of(lines, key, default)
+
     return IncomeControlYear(
         year=yr.year,
         ages=ages,
         social_security=yr.combined_ss,
         rmd=yr.taxable_rmd + yr.spouse_taxable_rmd,
-        dividends_qualified=yr.brokerage_qual_div,
-        dividends_ordinary=yr.brokerage_ord_div,
-        interest=0.0,
+        # Legacy fields follow the lines so a base-year row never contradicts its snapshot.
+        dividends_qualified=full("dividends_qualified", yr.brokerage_qual_div),
+        dividends_ordinary=full("dividends_ordinary", yr.brokerage_ord_div),
+        interest=full("interest", 0.0),
         forced_exercise=forced,
         discretionary_exercise=yr.option_income - forced,
         planned_conversion=yr.your_conversion + yr.spouse_conversion,
@@ -336,7 +359,7 @@ def _row(
         crossed_lines=crossed_lines(rooms),
         year_result=yr,
         ira_draws=_ira_draws(yr),
-        stack_lines=_stack_lines(hh, yr, forced, plan, ytd),
+        stack_lines=lines,
         has_actuals=ytd is not None,
     )
 
