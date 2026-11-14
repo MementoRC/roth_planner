@@ -385,9 +385,7 @@ def test_magi_only_total_is_long_term_gains_plus_qualified_dividends() -> None:
 
 
 def test_legacy_interest_and_dividend_fields_agree_with_the_snapshot_lines() -> None:
-    ytd = _ytd(
-        interest_ytd=500.0, ordinary_dividends_ytd=800.0, qualified_dividends_ytd=1_200.0
-    )
+    ytd = _ytd(interest_ytd=500.0, ordinary_dividends_ytd=800.0, qualified_dividends_ytd=1_200.0)
     row = ic._row(_hh(), _yr(), None, ytd)
     assert row.interest == _line(row, "interest").full_year == 500.0
     assert row.dividends_ordinary == _line(row, "dividends_ordinary").full_year == 800.0
