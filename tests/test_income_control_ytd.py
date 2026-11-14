@@ -213,3 +213,30 @@ def test_no_capital_gain_lines_without_a_snapshot() -> None:
     row = ic._row(_hh(), _yr())
     keys = {line.key for line in row.stack_lines}
     assert "capital_gain_ordinary" not in keys and "capital_gain_long_term" not in keys
+
+
+def test_actual_only_income_lines_carry_the_snapshot_values() -> None:
+    ytd = _ytd(
+        wages_ytd=30_000.0,
+        nec_income_ytd=2_000.0,
+        interest_ytd=500.0,
+        crypto_income_ytd=700.0,
+        hsa_contribution_ytd=4_000.0,
+        deductible_ira_contribution_ytd=1_000.0,
+    )
+    row = ic._row(_hh(), _yr(), None, ytd)
+    for key, value in (
+        ("wages", 30_000.0),
+        ("nec", 2_000.0),
+        ("interest", 500.0),
+        ("crypto_income", 700.0),
+    ):
+        line = _line(row, key)
+        assert (line.done, line.remaining, line.plan, line.magi_only) == (value, 0.0, None, False)
+    adjustments = _line(row, "adjustments")
+    assert (adjustments.done, adjustments.remaining, adjustments.plan) == (-5_000.0, 0.0, None)
+
+
+def test_actual_only_income_lines_are_absent_without_a_snapshot() -> None:
+    keys = {line.key for line in ic._row(_hh(), _yr()).stack_lines}
+    assert keys.isdisjoint({"wages", "nec", "interest", "crypto_income", "adjustments"})

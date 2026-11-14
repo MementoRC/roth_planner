@@ -200,6 +200,24 @@ def _capital_gain_lines(ytd: YTDSnapshot | None) -> list[StackLine]:
     ]
 
 
+def _actual_income_lines(ytd: YTDSnapshot | None) -> list[StackLine]:
+    """Actual-only ordinary lines (and the negative above-the-line adjustments)."""
+    if ytd is None:
+        return []
+    return [
+        StackLine("wages", "Wages", ytd.wages_ytd, 0.0),
+        StackLine("nec", "1099-NEC", ytd.nec_income_ytd, 0.0),
+        StackLine("interest", "Interest", ytd.interest_ytd, 0.0),
+        StackLine("crypto_income", "Crypto income", ytd.crypto_income_ytd, 0.0),
+        StackLine(
+            "adjustments",
+            "Adjustments (HSA, deductible IRA)",
+            -ytd.above_the_line_adjustments_ytd,
+            0.0,
+        ),
+    ]
+
+
 def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ...]:
     lines = [
         _forecast("social_security", "Social Security", yr.combined_ss),
@@ -218,6 +236,7 @@ def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ..
             yr.extra_withdrawal + yr.spouse_extra_withdrawal,
         ),
         _forecast("roth_earnings", "Roth-earnings income", yr.roth_earnings_income),
+        *_actual_income_lines(ytd),
         *_dividend_lines(yr, ytd),
         *_capital_gain_lines(ytd),
     ]
