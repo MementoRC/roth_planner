@@ -130,6 +130,16 @@ class IncomeControlYear:
         """Of the total, what reaches MAGI but not the ordinary brackets."""
         return sum(line.full_year for line in self.stack_lines if line.magi_only)
 
+    @property
+    def stack_fixed_income(self) -> float:
+        """Everything in the total that is neither exercise nor conversion (chart base layer)."""
+        return (
+            self.total_income
+            - self.full_year_of("forced_exercise", self.forced_exercise)
+            - self.full_year_of("discretionary_exercise", self.discretionary_exercise)
+            - self.full_year_of("conversion", self.planned_conversion)
+        )
+
     def full_year_of(self, key: str, default: float) -> float:
         """Full-year amount of line ``key``, or ``default`` when the row has no such line."""
         return _full_year_of(self.stack_lines, key, default)

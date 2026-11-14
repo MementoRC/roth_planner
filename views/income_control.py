@@ -65,15 +65,19 @@ def tightest_first(row: IncomeControlYear) -> list[tuple[str, float]]:
 
 
 def chart_layers(result: IncomeControlResult) -> list[tuple[str, list[float], str]]:
-    """Stacked-bar layers; the forced layer is dropped when no year has forced exercise."""
+    """Stacked-bar layers at FULL-YEAR values (done + remaining); the forced layer is
+    dropped when no year has forced exercise."""
     rows = result.years
+    forced = [r.full_year_of("forced_exercise", r.forced_exercise) for r in rows]
+    disc = [r.full_year_of("discretionary_exercise", r.discretionary_exercise) for r in rows]
+    conv = [r.full_year_of("conversion", r.planned_conversion) for r in rows]
     layers: list[tuple[str, list[float], str]] = [
-        (_FIXED[0], [r.fixed_income for r in rows], _FIXED[1]),
+        (_FIXED[0], [r.stack_fixed_income for r in rows], _FIXED[1]),
     ]
-    if any(r.forced_exercise for r in rows):
-        layers.append((_FORCED[0], [r.forced_exercise for r in rows], _FORCED[1]))
-    layers.append((_DISC[0], [r.discretionary_exercise for r in rows], _DISC[1]))
-    layers.append((_CONV[0], [r.planned_conversion for r in rows], _CONV[1]))
+    if any(forced):
+        layers.append((_FORCED[0], forced, _FORCED[1]))
+    layers.append((_DISC[0], disc, _DISC[1]))
+    layers.append((_CONV[0], conv, _CONV[1]))
     return layers
 
 
