@@ -170,3 +170,46 @@ def test_rmd_line_remaining_sums_both_people() -> None:
         your_rmd=8_000.0, taxable_rmd=8_000.0, spouse_rmd=5_000.0, spouse_taxable_rmd=5_000.0
     )
     assert _line(ic._row(_hh(), yr), "rmd").remaining == 13_000.0
+
+
+def test_dividend_lines_are_done_only_with_no_plan_and_no_above_plan_note() -> None:
+    ytd = _ytd(qualified_dividends_ytd=1_200.0, ordinary_dividends_ytd=800.0)
+    row = ic._row(_hh(), _yr(), None, ytd)  # base-year forecast dividends are 0 on the YearResult
+    ordinary, qualified = _line(row, "dividends_ordinary"), _line(row, "dividends_qualified")
+    assert (ordinary.done, ordinary.remaining, ordinary.plan) == (800.0, 0.0, None)
+    assert (qualified.done, qualified.remaining, qualified.plan) == (1_200.0, 0.0, None)
+    assert ordinary.magi_only is False
+    assert qualified.magi_only is True
+    assert ordinary.above_plan == qualified.above_plan == 0.0
+
+
+def test_dividend_lines_carry_the_forecast_without_a_snapshot() -> None:
+    yr = _yr(brokerage_ord_div=500.0, brokerage_qual_div=1_000.0)
+    row = ic._row(_hh(), yr)
+    assert (_line(row, "dividends_ordinary").done, _line(row, "dividends_ordinary").remaining) == (
+        0.0,
+        500.0,
+    )
+    assert _line(row, "dividends_qualified").remaining == 1_000.0
+
+
+def test_capital_gain_parts_come_from_the_netted_snapshot_properties() -> None:
+    ytd = _ytd(stcg_ytd=3_000.0, crypto_stcg_ytd=500.0, ltcg_ytd=10_000.0)
+    row = ic._row(_hh(), _yr(), None, ytd)
+    ordinary, long_term = _line(row, "capital_gain_ordinary"), _line(row, "capital_gain_long_term")
+    assert ordinary.done == ytd.ordinary_capital_gain_ytd == 3_500.0
+    assert long_term.done == ytd.preferential_capital_gain_ytd == 10_000.0
+    assert (ordinary.magi_only, long_term.magi_only) == (False, True)
+    assert ordinary.plan is None and long_term.plan is None
+
+
+def test_net_capital_loss_shows_the_capped_negative_ordinary_part() -> None:
+    row = ic._row(_hh(), _yr(), None, _ytd(ltcg_ytd=-8_000.0))
+    assert _line(row, "capital_gain_ordinary").done == -3_000.0
+    assert _line(row, "capital_gain_long_term").done == 0.0
+
+
+def test_no_capital_gain_lines_without_a_snapshot() -> None:
+    row = ic._row(_hh(), _yr())
+    keys = {line.key for line in row.stack_lines}
+    assert "capital_gain_ordinary" not in keys and "capital_gain_long_term" not in keys

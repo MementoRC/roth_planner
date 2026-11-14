@@ -163,6 +163,43 @@ def _rmd_line(yr: YearResult, ytd: YTDSnapshot | None) -> StackLine:
     )
 
 
+def _dividend_lines(yr: YearResult, ytd: YTDSnapshot | None) -> list[StackLine]:
+    """Base-year forecast dividends are 0 with a snapshot, so these are done-only there."""
+    ordinary = 0.0 if ytd is None else ytd.ordinary_dividends_ytd
+    qualified = 0.0 if ytd is None else ytd.qualified_dividends_ytd
+    return [
+        StackLine("dividends_ordinary", "Ordinary dividends", ordinary, yr.brokerage_ord_div),
+        StackLine(
+            "dividends_qualified",
+            "Qualified dividends",
+            qualified,
+            yr.brokerage_qual_div,
+            magi_only=True,
+        ),
+    ]
+
+
+def _capital_gain_lines(ytd: YTDSnapshot | None) -> list[StackLine]:
+    """Actual-only: the engine's own §1211-capped ordinary / preferential split."""
+    if ytd is None:
+        return []
+    return [
+        StackLine(
+            "capital_gain_ordinary",
+            "Capital gains (ordinary part)",
+            ytd.ordinary_capital_gain_ytd,
+            0.0,
+        ),
+        StackLine(
+            "capital_gain_long_term",
+            "Capital gains (long-term part)",
+            ytd.preferential_capital_gain_ytd,
+            0.0,
+            magi_only=True,
+        ),
+    ]
+
+
 def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ...]:
     lines = [
         _forecast("social_security", "Social Security", yr.combined_ss),
@@ -181,6 +218,8 @@ def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ..
             yr.extra_withdrawal + yr.spouse_extra_withdrawal,
         ),
         _forecast("roth_earnings", "Roth-earnings income", yr.roth_earnings_income),
+        *_dividend_lines(yr, ytd),
+        *_capital_gain_lines(ytd),
     ]
     return tuple(lines)
 
