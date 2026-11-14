@@ -372,6 +372,7 @@ def _project_year(
     ) = _roth_earnings_draws(
         year, ya, sa, roth_ledgers, forced_your_roth_draw, forced_spouse_roth_draw
     )
+    yr.roth_earnings_income = roth_earnings_income
 
     # === scenario-core-5: clamp conversions to available IRA balance ===
     # A planned conversion can exceed the IRA balance when the IRA has been

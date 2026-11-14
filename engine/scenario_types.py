@@ -159,6 +159,9 @@ class YearResult:
     # then conversions, then earnings). Non-qualified earnings are gross income.
     forced_your_roth_earnings_draw: float = 0.0
     forced_spouse_roth_earnings_draw: float = 0.0
+    # The NON-QUALIFIED part of those earnings draws: the ordinary income that
+    # enters combined_gross / MAGI (exposure of the run_scenario local).
+    roth_earnings_income: float = 0.0
     # The year-2 MAGI this year's IRMAA was priced on.
     irmaa_lookback_magi: float | None = None
     # False ONLY when the tax gross-up iteration failed to settle (it
