@@ -4,10 +4,11 @@ the active plan (issue #123, slice 1). Changes nothing; levers arrive in later s
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from pandas.io.formats.style import Styler
 
 from engine.income_control import (
     IncomeControlResult,
@@ -20,6 +21,10 @@ from models.household import Household
 from views._format import DOLLAR_TICKFORMAT, DOLLAR_TICKFORMATSTOPS, fmt_dollars, md_dollars
 from views._style import render_page_header
 from views.plan_source import active_plan
+
+if TYPE_CHECKING:
+    # Runtime import would pull in jinja2 at module load; table.style imports it lazily.
+    from pandas.io.formats.style import Styler
 
 PICKER_KEY = "income_control_year"
 
@@ -107,11 +112,10 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for row in result.years:
         # Rows with actuals show full-year figures (stack_lines); the rest keep slice 1 values.
-        fixed = row.stack_fixed_income if row.has_actuals else row.fixed_income
         entry: dict[str, object] = {
             "Year": row.year,
             "Ages": _ages_text(row),
-            "Fixed income": fmt_dollars(fixed),
+            "Fixed income": fmt_dollars(row.display_fixed_income),
             "Forced exercise": fmt_dollars(
                 row.full_year_of("forced_exercise", row.forced_exercise)
             ),
@@ -188,21 +192,23 @@ def build_figure(result: IncomeControlResult) -> go.Figure:
 _COLUMNS_FULL = ["Line", "So far", "Remaining", "Full year", "Note"]
 _COLUMNS_PLAIN = ["Line", "Full year"]  # forecast-only rows: no Note column
 _ALWAYS_SHOWN = frozenset({"social_security", "rmd", "discretionary_exercise", "conversion"})
-_MAGI_ONLY_CSS = "color: #94a3b8"
-_ABOVE_PLAN_CSS = "color: #f59e0b"
+MAGI_ONLY_COLOR = "#94a3b8"
+ABOVE_PLAN_COLOR = "#f59e0b"
+_NOTE_MAGI_ONLY = "MAGI-only"
+_NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above plan"
 TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what's done so far."
 
 
 def _hidden(line: StackLine) -> bool:
-    """Zero lines are hidden unless they are core lines (actual-only lines show once non-zero)."""
+    """Hidden iff done == 0 and full_year == 0 and key not in _ALWAYS_SHOWN."""
     return line.done == 0 and line.full_year == 0 and line.key not in _ALWAYS_SHOWN
 
 
 def _note(line: StackLine) -> str:
     if line.magi_only:
-        return "MAGI-only"
+        return _NOTE_MAGI_ONLY
     if line.above_plan > 0:
-        return f"{fmt_dollars(line.above_plan)} above plan"
+        return f"{fmt_dollars(line.above_plan)} {_NOTE_ABOVE_PLAN}"
     return ""
 
 
@@ -224,11 +230,12 @@ def stack_table(row: IncomeControlYear, *, with_actuals: bool) -> pd.DataFrame:
 
 
 def _note_css(column: pd.Series) -> list[str]:
+    # Keyed on the note-text constants that _note produces.
     return [
-        _MAGI_ONLY_CSS
-        if note == "MAGI-only"
-        else _ABOVE_PLAN_CSS
-        if note.endswith("above plan")
+        f"color: {MAGI_ONLY_COLOR}"
+        if note == _NOTE_MAGI_ONLY
+        else f"color: {ABOVE_PLAN_COLOR}"
+        if note.endswith(_NOTE_ABOVE_PLAN)
         else ""
         for note in column
     ]
@@ -241,11 +248,12 @@ def styled_stack(table: pd.DataFrame) -> Styler | pd.DataFrame:
         return table
     try:
         return table.style.apply(_note_css, subset=["Note"])
-    except ImportError:
+    except (ImportError, AttributeError):
+        # pandas raises AttributeError("The '.style' accessor requires jinja2") when absent.
         return table
 
 
-def _actuals_caption(row: IncomeControlYear, *, is_base: bool, snapshot_date: str) -> str | None:
+def _stack_caption(row: IncomeControlYear, *, is_base: bool, snapshot_date: str) -> str | None:
     if row.has_actuals:
         return (
             f"So far = actuals as of {snapshot_date}."
@@ -279,7 +287,7 @@ def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str)
         st.markdown(md_dollars(f"**Total: {fmt_dollars(row.total_income)}**"))
         if row.has_actuals and row.magi_only_total:
             st.caption(md_dollars(f"Of which MAGI-only: {fmt_dollars(row.magi_only_total)}"))
-        caption = _actuals_caption(row, is_base=is_base, snapshot_date=snapshot_date)
+        caption = _stack_caption(row, is_base=is_base, snapshot_date=snapshot_date)
         if caption:
             st.caption(caption)
     with right:

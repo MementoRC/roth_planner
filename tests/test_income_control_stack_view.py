@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +16,8 @@ from engine.income_control import IncomeControlResult, IncomeControlYear, StackL
 from models.ytd_income import YTDSnapshot
 from tests.test_income_control_view import _render_page, _result, _year
 from views.income_control import (
+    ABOVE_PLAN_COLOR,
+    MAGI_ONLY_COLOR,
     TOGGLE_CAPTION,
     chart_layers,
     line_heights,
@@ -77,8 +81,29 @@ def test_stack_table_without_actuals_has_only_line_and_full_year() -> None:
 def test_styled_stack_colours_the_note_column() -> None:
     table = stack_table(_row_with_lines(has_actuals=True), with_actuals=True)
     html = styled_stack(table).to_html()
-    assert "#94a3b8" in html  # MAGI-only grey
-    assert "#f59e0b" in html  # above-plan amber
+    assert MAGI_ONLY_COLOR in html
+    assert ABOVE_PLAN_COLOR in html
+
+
+def test_view_imports_and_falls_back_without_jinja2(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Importing the view must not need jinja2 (pandas Styler imports it at module level).
+    table = stack_table(_row_with_lines(has_actuals=True), with_actuals=True)
+    monkeypatch.setitem(sys.modules, "jinja2", None)
+    for name in ("pandas.io.formats.style", "pandas.io.formats.style_render"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    spec = importlib.util.spec_from_file_location("_income_control_no_jinja2", ic_view.__file__)
+    assert spec is not None
+    assert spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)  # raises ImportError if the module needs jinja2 at import
+    assert fresh.styled_stack(table) is table
+
+
+def test_display_fixed_income_follows_actuals() -> None:
+    with_actuals = _row_with_lines(has_actuals=True)
+    without = _row_with_lines(has_actuals=False)
+    assert with_actuals.display_fixed_income == with_actuals.stack_fixed_income == 41_200.0
+    assert without.display_fixed_income == without.fixed_income
 
 
 def test_styled_stack_without_a_note_column_returns_the_plain_style() -> None:
@@ -163,7 +188,7 @@ def test_non_base_year_gets_no_toggle_caption() -> None:
     result = _result(
         _year(2026, top_12=100.0), replace(_row_with_lines(has_actuals=False), year=2027)
     )
-    at = _run(result, toggle_on=False)
+    at = AppTest.from_function(_render_page, default_timeout=60)
     at.session_state[ic_view.PICKER_KEY] = 2027
     with patch.object(ic_view, "build_income_control", MagicMock(return_value=result)):
         at.run()
