@@ -7,10 +7,12 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from pandas.io.formats.style import Styler
 
 from engine.income_control import (
     IncomeControlResult,
     IncomeControlYear,
+    StackLine,
     build_income_control,
 )
 from engine.room_lines import LINE_KEYS
@@ -104,13 +106,22 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
     """One display row per year for the all-years table."""
     out: list[dict[str, object]] = []
     for row in result.years:
+        # Rows with actuals show full-year figures (stack_lines); the rest keep slice 1 values.
+        fixed = row.stack_fixed_income if row.has_actuals else row.fixed_income
         entry: dict[str, object] = {
             "Year": row.year,
             "Ages": _ages_text(row),
-            "Fixed income": fmt_dollars(row.fixed_income),
-            "Forced exercise": fmt_dollars(row.forced_exercise),
-            "Discretionary exercise": fmt_dollars(row.discretionary_exercise),
-            "Planned conversion": fmt_dollars(row.planned_conversion),
+            "Fixed income": fmt_dollars(fixed),
+            "Forced exercise": fmt_dollars(
+                row.full_year_of("forced_exercise", row.forced_exercise)
+            ),
+            "Discretionary exercise": fmt_dollars(
+                row.full_year_of("discretionary_exercise", row.discretionary_exercise)
+            ),
+            "Planned conversion": fmt_dollars(
+                row.full_year_of("conversion", row.planned_conversion)
+            ),
+            "Total income": fmt_dollars(row.total_income),
         }
         for key in LINE_KEYS:
             room = row.rooms[key]
@@ -174,14 +185,74 @@ def build_figure(result: IncomeControlResult) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 
-def _income_stack(row: IncomeControlYear) -> list[tuple[str, float]]:
-    """Labelled income components for the detail panel (forced shown only when non-zero)."""
-    stack = [("Fixed income (SS, RMD, IRA draws, dividends)", row.fixed_income)]
-    if row.forced_exercise:
-        stack.append(("Forced exercise (grant expires)", row.forced_exercise))
-    stack.append(("Discretionary exercise", row.discretionary_exercise))
-    stack.append(("Planned conversion", row.planned_conversion))
-    return stack
+_COLUMNS_FULL = ["Line", "So far", "Remaining", "Full year", "Note"]
+_COLUMNS_PLAIN = ["Line", "Full year"]  # forecast-only rows: no Note column
+_ALWAYS_SHOWN = frozenset({"social_security", "rmd", "discretionary_exercise", "conversion"})
+_MAGI_ONLY_CSS = "color: #94a3b8"
+_ABOVE_PLAN_CSS = "color: #f59e0b"
+TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what's done so far."
+
+
+def _hidden(line: StackLine) -> bool:
+    """Zero lines are hidden unless they are core lines (actual-only lines show once non-zero)."""
+    return line.done == 0 and line.full_year == 0 and line.key not in _ALWAYS_SHOWN
+
+
+def _note(line: StackLine) -> str:
+    if line.magi_only:
+        return "MAGI-only"
+    if line.above_plan > 0:
+        return f"{fmt_dollars(line.above_plan)} above plan"
+    return ""
+
+
+def stack_table(row: IncomeControlYear, *, with_actuals: bool) -> pd.DataFrame:
+    """Display rows for the detail panel's stack; formatting only."""
+    records: list[dict[str, str]] = []
+    for line in row.stack_lines:
+        if _hidden(line):
+            continue
+        record = {"Line": line.label}
+        if with_actuals:
+            record["So far"] = fmt_dollars(line.done)
+            record["Remaining"] = fmt_dollars(line.remaining)
+        record["Full year"] = fmt_dollars(line.full_year)
+        if with_actuals:
+            record["Note"] = _note(line)
+        records.append(record)
+    return pd.DataFrame(records, columns=_COLUMNS_FULL if with_actuals else _COLUMNS_PLAIN)
+
+
+def _note_css(column: pd.Series) -> list[str]:
+    return [
+        _MAGI_ONLY_CSS
+        if note == "MAGI-only"
+        else _ABOVE_PLAN_CSS
+        if note.endswith("above plan")
+        else ""
+        for note in column
+    ]
+
+
+def styled_stack(table: pd.DataFrame) -> Styler | pd.DataFrame:
+    """Grey the MAGI-only notes and amber the above-plan notes. Tables without a Note
+    column, or an environment where Styler cannot import jinja2, get the plain table."""
+    if "Note" not in table.columns:
+        return table
+    try:
+        return table.style.apply(_note_css, subset=["Note"])
+    except ImportError:
+        return table
+
+
+def _actuals_caption(row: IncomeControlYear, *, is_base: bool, snapshot_date: str) -> str | None:
+    if row.has_actuals:
+        return (
+            f"So far = actuals as of {snapshot_date}."
+            if snapshot_date
+            else "So far = actuals to date."
+        )
+    return TOGGLE_CAPTION if is_base else None
 
 
 def _binding_note(row: IncomeControlYear) -> str:
@@ -198,14 +269,19 @@ def _heading(row: IncomeControlYear) -> str:
     return f"**{row.year}** · {f'age {_ages_text(row)}' if _ages_text(row) else '-'}"
 
 
-def _render_detail(row: IncomeControlYear) -> None:
+def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str) -> None:
     """Two-column detail: income stack on the left, rooms under each line on the right."""
     left, right = st.columns(2)
     with left:
         st.markdown(_heading(row))
-        for label, value in _income_stack(row):
-            st.markdown(md_dollars(f"{label}: {fmt_dollars(value)}"))
+        table = stack_table(row, with_actuals=row.has_actuals)
+        st.dataframe(styled_stack(table), hide_index=True, width="stretch")
         st.markdown(md_dollars(f"**Total: {fmt_dollars(row.total_income)}**"))
+        if row.has_actuals and row.magi_only_total:
+            st.caption(md_dollars(f"Of which MAGI-only: {fmt_dollars(row.magi_only_total)}"))
+        caption = _actuals_caption(row, is_base=is_base, snapshot_date=snapshot_date)
+        if caption:
+            st.caption(caption)
     with right:
         for key, room in tightest_first(row):
             label = LINE_LABELS[key]
@@ -219,6 +295,7 @@ def _render_detail(row: IncomeControlYear) -> None:
 def render(hh: Household) -> None:
     render_page_header("control")
     plan, ytd, nii, plan_label = active_plan(hh)
+    snapshot_date = ytd.snapshot_date if ytd is not None else ""
     result = build_income_control(
         hh, plan, plan_label=plan_label, ytd=ytd, net_inv_income=float(nii)
     )
@@ -227,10 +304,6 @@ def render(hh: Household) -> None:
         st.info("No years in the decision window for this household.")
         return
     st.caption(f"Decision window {result.window_start}–{result.window_end}")
-    st.caption(
-        "Realized gains and forecast interest are not yet included in these measures "
-        "(later slices of the Income Control work)."
-    )
 
     st.plotly_chart(build_figure(result), width="stretch")
 
@@ -242,7 +315,10 @@ def render(hh: Household) -> None:
     else:  # older Streamlit (e.g. the stlite bundle) has no segmented_control
         picked = st.radio("Year", years, horizontal=True, key=PICKER_KEY)
     year = picked if picked in years else default_year(result)
-    _render_detail(next(row for row in result.years if row.year == year))
+    picked_row = next(row for row in result.years if row.year == year)
+    _render_detail(
+        picked_row, is_base=picked_row.year == result.window_start, snapshot_date=snapshot_date
+    )
 
     with st.expander("All years (table)", expanded=False):
         st.dataframe(pd.DataFrame(table_rows(result)), hide_index=True, width="stretch")
