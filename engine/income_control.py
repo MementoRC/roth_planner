@@ -80,16 +80,25 @@ def _full_year_of(lines: tuple[StackLine, ...], key: str, default: float) -> flo
 
 @dataclass(frozen=True)
 class IncomeControlYear:
+    """One year of the Income Control window.
+
+    Legacy field meanings: ``social_security``, ``rmd``, ``dividends_*``, ``interest`` and
+    ``ira_draws`` are FULL-YEAR (done + remaining; done is 0 without a snapshot, so these
+    equal slice 1 there). ``forced_exercise``, ``discretionary_exercise`` and
+    ``planned_conversion`` are the REMAINING forecast; ``stack_lines`` carries done +
+    remaining per line and ``full_year_of`` reads one back.
+    """
+
     year: int
     ages: tuple[int | None, int | None]  # (you, spouse); the deceased/absent person's slot is None
     social_security: float  # yr.combined_ss
-    rmd: float  # yr.taxable_rmd + yr.spouse_taxable_rmd
+    rmd: float  # RMD line full year: YTD distributions + reduced taxable RMD
     dividends_qualified: float
     dividends_ordinary: float
     interest: float  # the interest line's full year (0.0 without a snapshot)
     forced_exercise: float
     discretionary_exercise: float
-    planned_conversion: float  # your + spouse conversion
+    planned_conversion: float  # your + spouse conversion (remaining)
     rooms: dict[str, float | None]
     binding_line: str | None
     crossed_lines: tuple[str, ...]
@@ -103,6 +112,7 @@ class IncomeControlYear:
 
     @property
     def fixed_income(self) -> float:
+        """Full-year fixed income: Social Security, RMD, IRA draws, dividends, interest."""
         return (
             self.social_security
             + self.rmd
@@ -348,19 +358,15 @@ def _row(
     rooms = room_after(yr, room_lines_for_year(hh, yr))
     forced = forced_exercise(hh, yr.year, yr.option_income)
     lines = _stack_lines(hh, yr, forced, plan, ytd)
-
-    def full(key: str, default: float) -> float:
-        return _full_year_of(lines, key, default)
-
     return IncomeControlYear(
         year=yr.year,
         ages=ages,
         social_security=yr.combined_ss,
-        rmd=yr.taxable_rmd + yr.spouse_taxable_rmd,
-        # Legacy fields follow the lines so a base-year row never contradicts its snapshot.
-        dividends_qualified=full("dividends_qualified", yr.brokerage_qual_div),
-        dividends_ordinary=full("dividends_ordinary", yr.brokerage_ord_div),
-        interest=full("interest", 0.0),
+        # Full-year legacy fields follow the lines so a row never contradicts its snapshot.
+        rmd=_full_year_of(lines, "rmd", yr.taxable_rmd + yr.spouse_taxable_rmd),
+        dividends_qualified=_full_year_of(lines, "dividends_qualified", yr.brokerage_qual_div),
+        dividends_ordinary=_full_year_of(lines, "dividends_ordinary", yr.brokerage_ord_div),
+        interest=_full_year_of(lines, "interest", 0.0),
         forced_exercise=forced,
         discretionary_exercise=yr.option_income - forced,
         planned_conversion=yr.your_conversion + yr.spouse_conversion,

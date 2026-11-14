@@ -27,5 +27,7 @@ def test_chart_layers_use_full_year_values_so_bars_meet_the_limit_lines() -> Non
     layers = {name: vals for name, vals, _c in chart_layers(result)}
     row = result.years[0]
     assert layers["Planned conversion"] == [50_000.0]  # done 20,000 + remaining 30,000
+    # fixed layer = SS 10,000 + wages 30,000 + qualified dividends 1,200
+    assert layers["Fixed income"] == [41_200.0]
     assert sum(vals[0] for vals in layers.values()) == row.total_income
     assert line_heights(result, "top_12") == [row.total_income + 100.0]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from engine import income_control as ic
@@ -392,6 +394,27 @@ def test_legacy_interest_and_dividend_fields_agree_with_the_snapshot_lines() -> 
     assert row.dividends_qualified == _line(row, "dividends_qualified").full_year == 1_200.0
 
 
+def test_fixed_income_is_the_sum_of_the_fixed_lines_full_years_with_a_snapshot() -> None:
+    ytd = _ytd(
+        ira_distributions_ytd=10_000.0,
+        interest_ytd=500.0,
+        ordinary_dividends_ytd=800.0,
+        qualified_dividends_ytd=1_200.0,
+    )
+    hh = _hh(your_age=76, spouse_age=70)
+    row = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[0]
+    fixed_keys = (
+        "social_security",
+        "rmd",
+        "ira_draws",
+        "dividends_qualified",
+        "dividends_ordinary",
+        "interest",
+    )
+    assert _line(row, "rmd").done == 10_000.0
+    assert row.fixed_income == pytest.approx(sum(_line(row, k).full_year for k in fixed_keys))
+
+
 def test_rows_without_a_snapshot_are_forecast_only_with_slice_one_values() -> None:
     hh = _schedule_hh()
     plan = ConversionPlan(your_conversions={2027: 40_000.0, 2028: 25_000.0})
@@ -426,6 +449,8 @@ def test_hand_built_rows_without_lines_keep_the_slice_one_total() -> None:
 
     row = _year(2026)  # no stack_lines: legacy fields only
     assert row.total_income == row.fixed_income + 20_000.0
+    # Without lines the chart's base layer is the legacy fixed income.
+    assert row.stack_fixed_income == row.fixed_income
 
 
 def _ordinary_stack_total(row: ic.IncomeControlYear) -> float:
@@ -446,6 +471,10 @@ def _option_hh(**kw: object) -> Household:
     return _hh(grants=[_grant("g1", 1000, 2028)], exercise_schedule=sched, **kw)
 
 
+def _rmd_age_hh() -> Household:
+    return _hh(your_age=76, spouse_age=70)
+
+
 _FULL_YTD = {
     "wages_ytd": 30_000.0,
     "nec_income_ytd": 2_000.0,
@@ -461,28 +490,28 @@ _FULL_YTD = {
 
 
 @pytest.mark.parametrize(
-    ("hh", "plan", "extra"),
+    ("make_hh", "plan", "extra"),
     [
         pytest.param(
-            _option_hh(),
+            _option_hh,
             ConversionPlan(your_conversions={2026: 50_000.0}),
             {"nqo_exercise_ytd": 40_000.0},  # options above plan
             id="working-year-options-above-plan",
         ),
         pytest.param(
-            _option_hh(),
+            _option_hh,
             ConversionPlan(your_conversions={2026: 50_000.0}),
             {"nqo_exercise_ytd": 10_000.0},  # options below plan
             id="working-year-options-below-plan",
         ),
         pytest.param(
-            _hh(your_age=76, spouse_age=70),
+            _rmd_age_hh,
             ConversionPlan(),
             {"ira_distributions_ytd": 10_000.0},  # RMD year, partly taken
             id="rmd-year",
         ),
         pytest.param(
-            _hh(your_age=76, spouse_age=70),
+            _rmd_age_hh,
             ConversionPlan(),
             {"ira_distributions_ytd": 900_000.0},  # taken more than the RMD
             id="rmd-year-distributions-above-rmd",
@@ -490,8 +519,9 @@ _FULL_YTD = {
     ],
 )
 def test_ordinary_stack_lines_reconcile_with_combined_gross(
-    hh: Household, plan: ConversionPlan, extra: dict[str, float]
+    make_hh: Callable[[], Household], plan: ConversionPlan, extra: dict[str, float]
 ) -> None:
+    hh = make_hh()  # built per test: Household is mutable, so cases must not share one
     ytd = _ytd(**{**_FULL_YTD, **extra})
     row = build_income_control(hh, plan, plan_label="x", ytd=ytd).years[0]
     yr = row.year_result
@@ -507,6 +537,7 @@ def test_guard_holds_for_a_survivor_base_year_and_keeps_the_deceased_actuals() -
     hh = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("spouse", 2025))
     ytd = _ytd(wages_ytd=20_000.0, spouse_ira_conversions_ytd=10_000.0)
     row = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[0]
+    assert row.year_result.year == hh.base_year
     assert row.year_result.filing_status == "Single"
     assert row.ages == (row.year_result.your_age, None)  # ages not zeroed; slot hidden
     assert _line(row, "conversion").done == 10_000.0  # deceased spouse's actual stays in done
