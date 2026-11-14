@@ -9,9 +9,10 @@ from engine.income_control import StackLine, build_income_control
 from engine.scenario import run_scenario
 from engine.scenario_compute import compute_conversions, compute_rmds
 from engine.scenario_types import ConversionPlan, YearResult
-from models.household import GrowthProfile
+from models.exercise_schedule import ExerciseSchedule
+from models.household import GrowthProfile, Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
-from tests.test_income_control import _hh, _schedule_hh
+from tests.test_income_control import _grant, _hh, _schedule_hh
 from tests.test_roth_distribution_earnings import _household
 
 
@@ -427,3 +428,88 @@ def test_hand_built_rows_without_lines_keep_the_slice_one_total() -> None:
 
     row = _year(2026)  # no stack_lines: legacy fields only
     assert row.total_income == row.fixed_income + 20_000.0
+
+
+def _ordinary_stack_total(row: ic.IncomeControlYear) -> float:
+    """Sum of the ordinary lines, with Social Security taken as the taxable amount."""
+    yr = row.year_result
+    return sum(
+        yr.taxable_ss_amt if line.key == "social_security" else line.full_year
+        for line in row.stack_lines
+        if not line.magi_only
+    )
+
+
+def _option_hh(**kw: object) -> Household:
+    sched = ExerciseSchedule(
+        shares_by_grant_year={"g1": {2026: 300}},
+        price_by_year=dict.fromkeys(range(2026, 2033), 200.0),
+    )  # plan: 300 sh x (200 - 100) = 30,000 of option income in 2026
+    return _hh(grants=[_grant("g1", 1000, 2028)], exercise_schedule=sched, **kw)
+
+
+_FULL_YTD = {
+    "wages_ytd": 30_000.0,
+    "nec_income_ytd": 2_000.0,
+    "interest_ytd": 500.0,
+    "ordinary_dividends_ytd": 800.0,
+    "qualified_dividends_ytd": 1_200.0,
+    "stcg_ytd": 3_000.0,
+    "ltcg_ytd": 10_000.0,
+    "crypto_income_ytd": 700.0,
+    "hsa_contribution_ytd": 4_000.0,
+    "ira_conversions_ytd": 25_000.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("hh", "plan", "extra"),
+    [
+        pytest.param(
+            _option_hh(),
+            ConversionPlan(your_conversions={2026: 50_000.0}),
+            {"nqo_exercise_ytd": 40_000.0},  # options above plan
+            id="working-year-options-above-plan",
+        ),
+        pytest.param(
+            _option_hh(),
+            ConversionPlan(your_conversions={2026: 50_000.0}),
+            {"nqo_exercise_ytd": 10_000.0},  # options below plan
+            id="working-year-options-below-plan",
+        ),
+        pytest.param(
+            _hh(your_age=76, spouse_age=70),
+            ConversionPlan(),
+            {"ira_distributions_ytd": 10_000.0},  # RMD year, partly taken
+            id="rmd-year",
+        ),
+        pytest.param(
+            _hh(your_age=76, spouse_age=70),
+            ConversionPlan(),
+            {"ira_distributions_ytd": 900_000.0},  # taken more than the RMD
+            id="rmd-year-distributions-above-rmd",
+        ),
+    ],
+)
+def test_ordinary_stack_lines_reconcile_with_combined_gross(
+    hh: Household, plan: ConversionPlan, extra: dict[str, float]
+) -> None:
+    ytd = _ytd(**{**_FULL_YTD, **extra})
+    row = build_income_control(hh, plan, plan_label="x", ytd=ytd).years[0]
+    yr = row.year_result
+    assert yr.year == hh.base_year
+    assert _ordinary_stack_total(row) == pytest.approx(yr.combined_gross)
+    # forecast ordinary dividends are 0 in the base year with a snapshot
+    assert _line(row, "dividends_ordinary").remaining == yr.brokerage_ord_div == 0.0
+    # the MAGI-only lines are exactly the ones outside combined_gross
+    assert row.magi_only_total == ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
+
+
+def test_guard_holds_for_a_survivor_base_year_and_keeps_the_deceased_actuals() -> None:
+    hh = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("spouse", 2025))
+    ytd = _ytd(wages_ytd=20_000.0, spouse_ira_conversions_ytd=10_000.0)
+    row = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[0]
+    assert row.year_result.filing_status == "Single"
+    assert row.ages == (row.year_result.your_age, None)  # ages not zeroed; slot hidden
+    assert _line(row, "conversion").done == 10_000.0  # deceased spouse's actual stays in done
+    assert _ordinary_stack_total(row) == pytest.approx(row.year_result.combined_gross)
