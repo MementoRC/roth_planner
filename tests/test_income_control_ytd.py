@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from engine.income_control import StackLine
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
 from models.household import GrowthProfile
@@ -45,3 +46,37 @@ def test_qualified_roth_earnings_are_not_exposed_as_income() -> None:
     yr = _roth_year(first_roth_year=2015)
     assert yr.forced_your_roth_earnings_draw > 0
     assert yr.roth_earnings_income == 0.0
+
+
+def test_stack_line_full_year_is_done_plus_remaining() -> None:
+    line = StackLine(
+        "conversion", "Planned conversion", done=20_000.0, remaining=30_000.0, plan=50_000.0
+    )
+    assert line.full_year == 50_000.0
+    assert line.above_plan == 0.0
+
+
+def test_stack_line_above_plan_when_full_year_exceeds_plan() -> None:
+    line = StackLine(
+        "conversion", "Planned conversion", done=70_000.0, remaining=0.0, plan=50_000.0
+    )
+    assert line.above_plan == 20_000.0
+
+
+def test_stack_line_never_reports_below_plan() -> None:
+    line = StackLine(
+        "conversion", "Planned conversion", done=0.0, remaining=10_000.0, plan=50_000.0
+    )
+    assert line.above_plan == 0.0
+
+
+def test_stack_line_without_plan_has_no_above_plan_and_defaults() -> None:
+    line = StackLine("wages", "Wages", done=30_000.0, remaining=0.0)
+    assert line.plan is None
+    assert line.magi_only is False
+    assert line.above_plan == 0.0
+
+
+def test_stack_line_ignores_float_noise_above_plan() -> None:
+    line = StackLine("rmd", "RMD", done=0.1 + 0.2, remaining=0.0, plan=0.3)
+    assert line.above_plan == 0.0

@@ -15,6 +15,7 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 
 _DEFAULT_END_AGE = 95  # run_scenario's default horizon (your age)
+_CENT = 0.005
 
 
 def window_bounds(hh: Household) -> tuple[int, int]:
@@ -37,6 +38,30 @@ def forced_exercise(hh: Household, year: int, option_income: float) -> float:
         return 0.0
     raw = hh.effective_schedule().income_for(year, expiring, hh.projected_stock_price)
     return max(0.0, min(raw, option_income))
+
+
+@dataclass(frozen=True)
+class StackLine:
+    """One line of the income stack: ``done`` (actual so far) + ``remaining`` (forecast)."""
+
+    key: str
+    label: str
+    done: float
+    remaining: float
+    plan: float | None = None  # plan's full-year amount; None for actual-only lines
+    magi_only: bool = False  # long-term capital gains / qualified dividends
+
+    @property
+    def full_year(self) -> float:
+        return self.done + self.remaining
+
+    @property
+    def above_plan(self) -> float:
+        """How far the full year exceeds plan; never negative, 0 without a plan."""
+        if self.plan is None:
+            return 0.0
+        excess = self.full_year - self.plan
+        return excess if excess >= _CENT else 0.0
 
 
 @dataclass(frozen=True)
