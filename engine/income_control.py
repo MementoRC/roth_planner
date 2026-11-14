@@ -90,6 +90,10 @@ class IncomeControlYear:
     year_result: YearResult
     # Forced IRA draws + inherited-IRA distributions (taxable, not RMDs).
     ira_draws: float = 0.0
+    # Slice 2: the labelled stack (done + remaining per line) and whether this
+    # row carries this-year actuals (base year with the toggle on and a snapshot).
+    stack_lines: tuple[StackLine, ...] = ()
+    has_actuals: bool = False
 
     @property
     def fixed_income(self) -> float:
@@ -139,7 +143,54 @@ def crossed_lines(rooms: dict[str, float | None]) -> tuple[str, ...]:
     return tuple(key for _, _, key in sorted(crossed))
 
 
-def _row(hh: Household, yr: YearResult) -> IncomeControlYear:
+def _forecast(key: str, label: str, value: float, *, magi_only: bool = False) -> StackLine:
+    """A pure-forecast line: nothing done yet, plan == the forecast."""
+    return StackLine(key, label, 0.0, value, value, magi_only)
+
+
+def _clamped_rmd(rmd: float, qcd: float) -> float:
+    """scenario_compute.compute_rmds' taxable form: max(rmd - min(qcd, rmd), 0)."""
+    return max(rmd - min(qcd, rmd), 0.0)
+
+
+def _rmd_line(yr: YearResult, ytd: YTDSnapshot | None) -> StackLine:
+    remaining = yr.taxable_rmd + yr.spouse_taxable_rmd
+    if ytd is None:
+        return _forecast("rmd", "Required minimum distributions", remaining)
+    plan = _clamped_rmd(yr.your_rmd, yr.qcd) + _clamped_rmd(yr.spouse_rmd, yr.spouse_qcd)
+    return StackLine(
+        "rmd", "Required minimum distributions", ytd.ira_distributions_ytd, remaining, plan
+    )
+
+
+def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ...]:
+    lines = [
+        _forecast("social_security", "Social Security", yr.combined_ss),
+        _rmd_line(yr, ytd),
+        _forecast(
+            "ira_draws",
+            "Forced / inherited IRA draws",
+            yr.forced_your_ira_draw
+            + yr.forced_spouse_ira_draw
+            + yr.your_inherited_distribution
+            + yr.spouse_inherited_distribution,
+        ),
+        _forecast(
+            "extra_withdrawals",
+            "Extra IRA withdrawals",
+            yr.extra_withdrawal + yr.spouse_extra_withdrawal,
+        ),
+        _forecast("roth_earnings", "Roth-earnings income", yr.roth_earnings_income),
+    ]
+    return tuple(lines)
+
+
+def _row(
+    hh: Household,
+    yr: YearResult,
+    plan: ConversionPlan | None = None,
+    ytd: YTDSnapshot | None = None,
+) -> IncomeControlYear:
     you_alive, spouse_alive = living_flags(hh, yr)
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
     rooms = room_after(yr, room_lines_for_year(hh, yr))
@@ -165,6 +216,8 @@ def _row(hh: Household, yr: YearResult) -> IncomeControlYear:
             + yr.your_inherited_distribution
             + yr.spouse_inherited_distribution
         ),
+        stack_lines=_stack_lines(yr, ytd),
+        has_actuals=ytd is not None,
     )
 
 
@@ -185,5 +238,9 @@ def build_income_control(
         hh, plan, plan_label, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
     )
     by_year = {yr.year: yr for yr in result.years}
-    rows = tuple(_row(hh, by_year[y]) for y in range(start, end + 1) if y in by_year)
+    rows = tuple(
+        _row(hh, by_year[y], plan, ytd if y == start else None)
+        for y in range(start, end + 1)
+        if y in by_year
+    )
     return IncomeControlResult(rows, start, end, plan_label)
