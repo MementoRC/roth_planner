@@ -10,7 +10,7 @@ from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
 from models.household import GrowthProfile
 from models.ytd_income import YTDSnapshot
-from tests.test_income_control import _hh
+from tests.test_income_control import _hh, _schedule_hh
 from tests.test_roth_distribution_earnings import _household
 
 
@@ -166,9 +166,7 @@ def test_rmd_plan_uses_the_clamped_per_person_form_including_qcd_above_rmd() -> 
 
 
 def test_rmd_line_remaining_sums_both_people() -> None:
-    yr = _yr(
-        your_rmd=8_000.0, taxable_rmd=8_000.0, spouse_rmd=5_000.0, spouse_taxable_rmd=5_000.0
-    )
+    yr = _yr(your_rmd=8_000.0, taxable_rmd=8_000.0, spouse_rmd=5_000.0, spouse_taxable_rmd=5_000.0)
     assert _line(ic._row(_hh(), yr), "rmd").remaining == 13_000.0
 
 
@@ -200,7 +198,8 @@ def test_capital_gain_parts_come_from_the_netted_snapshot_properties() -> None:
     assert ordinary.done == ytd.ordinary_capital_gain_ytd == 3_500.0
     assert long_term.done == ytd.preferential_capital_gain_ytd == 10_000.0
     assert (ordinary.magi_only, long_term.magi_only) == (False, True)
-    assert ordinary.plan is None and long_term.plan is None
+    assert ordinary.plan is None
+    assert long_term.plan is None
 
 
 def test_net_capital_loss_shows_the_capped_negative_ordinary_part() -> None:
@@ -212,7 +211,8 @@ def test_net_capital_loss_shows_the_capped_negative_ordinary_part() -> None:
 def test_no_capital_gain_lines_without_a_snapshot() -> None:
     row = ic._row(_hh(), _yr())
     keys = {line.key for line in row.stack_lines}
-    assert "capital_gain_ordinary" not in keys and "capital_gain_long_term" not in keys
+    assert "capital_gain_ordinary" not in keys
+    assert "capital_gain_long_term" not in keys
 
 
 def test_actual_only_income_lines_carry_the_snapshot_values() -> None:
@@ -240,3 +240,88 @@ def test_actual_only_income_lines_carry_the_snapshot_values() -> None:
 def test_actual_only_income_lines_are_absent_without_a_snapshot() -> None:
     keys = {line.key for line in ic._row(_hh(), _yr()).stack_lines}
     assert keys.isdisjoint({"wages", "nec", "interest", "crypto_income", "adjustments"})
+
+
+def _opt_row(nqo: float) -> ic.IncomeControlYear:
+    # _schedule_hh: g1 forced 60,000 in 2028; total 2028 option income 70,000.
+    yr = _yr(year=2028, option_income=70_000.0)
+    return ic._row(_schedule_hh(), yr, None, _ytd(nqo_exercise_ytd=nqo))
+
+
+def test_options_below_the_forced_amount_fill_forced_first() -> None:
+    row = _opt_row(50_000.0)
+    forced, disc = _line(row, "forced_exercise"), _line(row, "discretionary_exercise")
+    assert (forced.done, forced.remaining, forced.plan) == (50_000.0, 10_000.0, 60_000.0)
+    assert (disc.done, disc.remaining, disc.plan) == (0.0, 10_000.0, 10_000.0)
+    assert forced.full_year + disc.full_year == 70_000.0  # max(plan, done)
+
+
+def test_options_past_the_forced_amount_spill_into_discretionary() -> None:
+    row = _opt_row(65_000.0)
+    forced, disc = _line(row, "forced_exercise"), _line(row, "discretionary_exercise")
+    assert (forced.done, forced.remaining) == (60_000.0, 0.0)
+    assert (disc.done, disc.remaining) == (5_000.0, 5_000.0)
+    assert forced.above_plan == disc.above_plan == 0.0
+    assert forced.full_year + disc.full_year == 70_000.0
+
+
+def test_options_above_plan_show_the_excess_on_discretionary() -> None:
+    row = _opt_row(90_000.0)
+    forced, disc = _line(row, "forced_exercise"), _line(row, "discretionary_exercise")
+    assert (forced.remaining, disc.done, disc.remaining) == (0.0, 30_000.0, 0.0)
+    assert (forced.above_plan, disc.above_plan) == (0.0, 20_000.0)
+    assert forced.full_year + disc.full_year == 90_000.0  # == max(70,000, 90,000)
+
+
+def test_option_lines_without_a_snapshot_match_slice_one_values() -> None:
+    row = ic._row(_schedule_hh(), _yr(year=2028, option_income=70_000.0))
+    assert (row.forced_exercise, row.discretionary_exercise) == (60_000.0, 10_000.0)
+    assert _line(row, "forced_exercise").remaining == 60_000.0
+    assert _line(row, "discretionary_exercise").remaining == 10_000.0
+
+
+def test_conversion_line_sums_both_people_and_sets_the_plan_from_the_plan_dict() -> None:
+    hh = _hh()
+    plan = ConversionPlan(your_conversions={2026: 100_000.0}, spouse_conversions={2026: 20_000.0})
+    # engine: your 100,000 - 40,000 done = 60,000 remaining; spouse 20,000 - 20,000 = 0
+    yr = _yr(your_conversion=60_000.0, spouse_conversion=0.0)
+    ytd = _ytd(ira_conversions_ytd=40_000.0, spouse_ira_conversions_ytd=20_000.0)
+    row = ic._row(hh, yr, plan, ytd)
+    line = _line(row, "conversion")
+    assert (line.done, line.remaining, line.plan) == (60_000.0, 60_000.0, 120_000.0)
+    assert line.above_plan == 0.0
+    assert row.planned_conversion == 60_000.0  # slice 1 field stays the remaining value
+
+
+def test_conversion_above_plan_is_flagged() -> None:
+    plan = ConversionPlan(your_conversions={2026: 100_000.0})
+    row = ic._row(_hh(), _yr(your_conversion=0.0), plan, _ytd(ira_conversions_ytd=130_000.0))
+    assert _line(row, "conversion").above_plan == 30_000.0
+
+
+def test_conversion_below_plan_has_no_note() -> None:
+    # remaining can fall short of plan for non-YTD reasons (balance clamp, cap scaling)
+    plan = ConversionPlan(your_conversions={2026: 100_000.0})
+    row = ic._row(_hh(), _yr(your_conversion=40_000.0), plan, _ytd(ira_conversions_ytd=10_000.0))
+    assert _line(row, "conversion").full_year == 50_000.0
+    assert _line(row, "conversion").above_plan == 0.0
+
+
+def test_conversion_plan_is_zeroed_at_each_persons_rmd_start_age() -> None:
+    hh = _hh()
+    plan = ConversionPlan(your_conversions={2026: 50_000.0}, spouse_conversions={2026: 10_000.0})
+    yr = _yr(
+        your_age=hh.your_rmd_start_age,
+        spouse_age=58,
+        your_conversion=0.0,
+        spouse_conversion=10_000.0,
+    )
+    line = _line(ic._row(hh, yr, plan, _ytd()), "conversion")
+    assert line.plan == 10_000.0  # your 50,000 is zeroed at the RMD start age
+    assert line.above_plan == 0.0
+
+
+def test_conversion_line_without_a_snapshot_is_forecast_only() -> None:
+    row = ic._row(_hh(), _yr(your_conversion=25_000.0, spouse_conversion=5_000.0))
+    line = _line(row, "conversion")
+    assert (line.done, line.remaining, line.plan) == (0.0, 30_000.0, 30_000.0)

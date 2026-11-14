@@ -218,7 +218,61 @@ def _actual_income_lines(ytd: YTDSnapshot | None) -> list[StackLine]:
     ]
 
 
-def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ...]:
+def _option_lines(yr: YearResult, forced_plan: float, ytd: YTDSnapshot | None) -> list[StackLine]:
+    """Forced (grant-expiry) exercises fill first; the rest is discretionary.
+
+    DISPLAY rule only: just the total nqo_exercise_ytd is persisted, not the per-grant
+    split. done + max(plan - done, 0) == max(plan, done), the engine's bounded option income.
+    """
+    disc_plan = yr.option_income - forced_plan
+    nqo = 0.0 if ytd is None else max(ytd.nqo_exercise_ytd, 0.0)
+    forced_done = min(nqo, forced_plan)
+    disc_done = nqo - forced_done
+    return [
+        StackLine(
+            "forced_exercise",
+            "Forced exercise (grant expires)",
+            forced_done,
+            max(forced_plan - forced_done, 0.0),
+            forced_plan,
+        ),
+        StackLine(
+            "discretionary_exercise",
+            "Discretionary exercise",
+            disc_done,
+            max(disc_plan - disc_done, 0.0),
+            disc_plan,
+        ),
+    ]
+
+
+def _planned_conversion(hh: Household, yr: YearResult, plan: ConversionPlan) -> float:
+    """The plan's conversion for the year, zeroed at each person's RMD start age
+    (mirrors scenario_compute.compute_conversions)."""
+    yours = 0.0 if yr.your_age >= hh.your_rmd_start_age else plan.your_conversions.get(yr.year, 0.0)
+    spouse = (
+        0.0
+        if yr.spouse_age >= hh.spouse_rmd_start_age
+        else plan.spouse_conversions.get(yr.year, 0.0)
+    )
+    return yours + spouse
+
+
+def _conversion_line(
+    hh: Household, yr: YearResult, plan: ConversionPlan | None, ytd: YTDSnapshot | None
+) -> StackLine:
+    remaining = yr.your_conversion + yr.spouse_conversion  # already net of YTD conversions
+    if ytd is None:
+        return _forecast("conversion", "Planned conversion", remaining)
+    done = ytd.ira_conversions_ytd + ytd.spouse_ira_conversions_ytd
+    planned = None if plan is None else _planned_conversion(hh, yr, plan)
+    return StackLine("conversion", "Planned conversion", done, remaining, planned)
+
+
+def _stack_lines(
+    hh: Household, yr: YearResult, plan: ConversionPlan | None, ytd: YTDSnapshot | None
+) -> tuple[StackLine, ...]:
+    forced_plan = forced_exercise(hh, yr.year, yr.option_income)
     lines = [
         _forecast("social_security", "Social Security", yr.combined_ss),
         _rmd_line(yr, ytd),
@@ -239,6 +293,8 @@ def _stack_lines(yr: YearResult, ytd: YTDSnapshot | None) -> tuple[StackLine, ..
         *_actual_income_lines(ytd),
         *_dividend_lines(yr, ytd),
         *_capital_gain_lines(ytd),
+        *_option_lines(yr, forced_plan, ytd),
+        _conversion_line(hh, yr, plan, ytd),
     ]
     return tuple(lines)
 
@@ -274,7 +330,7 @@ def _row(
             + yr.your_inherited_distribution
             + yr.spouse_inherited_distribution
         ),
-        stack_lines=_stack_lines(yr, ytd),
+        stack_lines=_stack_lines(hh, yr, plan, ytd),
         has_actuals=ytd is not None,
     )
 
