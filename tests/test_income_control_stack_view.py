@@ -8,6 +8,7 @@ from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pandas.io.formats
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -91,6 +92,7 @@ def test_view_imports_and_falls_back_without_jinja2(monkeypatch: pytest.MonkeyPa
     monkeypatch.setitem(sys.modules, "jinja2", None)
     for name in ("pandas.io.formats.style", "pandas.io.formats.style_render"):
         monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.delattr(pandas.io.formats, "style", raising=False)
     spec = importlib.util.spec_from_file_location("_income_control_no_jinja2", ic_view.__file__)
     assert spec is not None
     assert spec.loader is not None
@@ -104,6 +106,7 @@ def test_display_fixed_income_follows_actuals() -> None:
     without = _row_with_lines(has_actuals=False)
     assert with_actuals.display_fixed_income == with_actuals.stack_fixed_income == 41_200.0
     assert without.display_fixed_income == without.fixed_income
+    assert without.stack_fixed_income != without.fixed_income
 
 
 def test_styled_stack_without_a_note_column_returns_the_plain_style() -> None:
@@ -111,14 +114,15 @@ def test_styled_stack_without_a_note_column_returns_the_plain_style() -> None:
     assert styled_stack(table) is table
 
 
+@pytest.mark.parametrize("exc", [ImportError, AttributeError])
 def test_styled_stack_falls_back_to_the_plain_table_when_styling_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, exc: type[Exception]
 ) -> None:
-    # pandas Styler needs jinja2; if it is missing (ImportError) show the plain table.
+    # pandas Styler needs jinja2; if it is missing show the plain table.
     table = stack_table(_row_with_lines(has_actuals=True), with_actuals=True)
 
     def boom(self: pd.DataFrame) -> None:
-        raise ImportError("jinja2")
+        raise exc("jinja2")
 
     monkeypatch.setattr(pd.DataFrame, "style", property(boom))
     assert styled_stack(table) is table

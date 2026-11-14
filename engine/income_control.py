@@ -152,9 +152,11 @@ class IncomeControlYear:
 
     @property
     def display_fixed_income(self) -> float:
-        """Fixed-income figure for the all-years table: the stack's non-exercise,
-        non-conversion total on rows with actuals, the slice 1 fixed income otherwise.
-        Never the total (see ``total_income``)."""
+        """Fixed-income figure for the all-years table.
+
+        Uses the stack's non-exercise, non-conversion total on rows with actuals and the
+        slice 1 fixed income otherwise. Never the total (see ``total_income``).
+        """
         return self.stack_fixed_income if self.has_actuals else self.fixed_income
 
     def full_year_of(self, key: str, default: float) -> float:

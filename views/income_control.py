@@ -111,7 +111,7 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
     """One display row per year for the all-years table."""
     out: list[dict[str, object]] = []
     for row in result.years:
-        # Rows with actuals show full-year figures (stack_lines); the rest keep slice 1 values.
+        # Fixed income: see IncomeControlYear.display_fixed_income.
         entry: dict[str, object] = {
             "Year": row.year,
             "Ages": _ages_text(row),
