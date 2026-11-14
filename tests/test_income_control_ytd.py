@@ -7,6 +7,7 @@ import pytest
 from engine import income_control as ic
 from engine.income_control import StackLine
 from engine.scenario import run_scenario
+from engine.scenario_compute import compute_conversions, compute_rmds
 from engine.scenario_types import ConversionPlan, YearResult
 from models.household import GrowthProfile
 from models.ytd_income import YTDSnapshot
@@ -208,11 +209,51 @@ def test_net_capital_loss_shows_the_capped_negative_ordinary_part() -> None:
     assert _line(row, "capital_gain_long_term").done == 0.0
 
 
-def test_no_capital_gain_lines_without_a_snapshot() -> None:
-    row = ic._row(_hh(), _yr())
-    keys = {line.key for line in row.stack_lines}
-    assert "capital_gain_ordinary" not in keys
-    assert "capital_gain_long_term" not in keys
+def test_without_a_snapshot_only_the_forecast_lines_exist() -> None:
+    keys = {line.key for line in ic._row(_hh(), _yr()).stack_lines}
+    assert keys == {
+        "social_security",
+        "rmd",
+        "ira_draws",
+        "extra_withdrawals",
+        "roth_earnings",
+        "dividends_ordinary",
+        "dividends_qualified",
+        "forced_exercise",
+        "discretionary_exercise",
+        "conversion",
+    }
+
+
+@pytest.mark.parametrize("qcd_planned", [5_000.0, 500_000.0])  # qcd < rmd, qcd > rmd
+def test_clamped_rmd_matches_compute_rmds(qcd_planned: float) -> None:
+    your_rmd, qcd, taxable, spouse_rmd, spouse_qcd, spouse_taxable = compute_rmds(
+        400_000.0, 300_000.0, 75, 75, 73, 73, qcd_planned, qcd_planned, 1_000_000.0
+    )
+    assert your_rmd > 0
+    assert ic._clamped_rmd(your_rmd, qcd) == taxable
+    assert ic._clamped_rmd(spouse_rmd, spouse_qcd) == spouse_taxable
+
+
+@pytest.mark.parametrize(
+    ("your_age", "spouse_age"),
+    [(61, 58), (_hh().your_rmd_start_age, _hh().spouse_rmd_start_age)],
+)  # before and at the RMD start age
+def test_planned_conversion_matches_compute_conversions(your_age: int, spouse_age: int) -> None:
+    hh = _hh()
+    plan = ConversionPlan(your_conversions={2026: 50_000.0}, spouse_conversions={2026: 10_000.0})
+    yr = _yr(your_age=your_age, spouse_age=spouse_age)
+    engine = compute_conversions(
+        2026,
+        your_age,
+        spouse_age,
+        50_000.0,
+        10_000.0,
+        None,
+        hh.your_rmd_start_age,
+        hh.spouse_rmd_start_age,
+    )
+    assert ic._planned_conversion(hh, yr, plan) == sum(engine)
 
 
 def test_actual_only_income_lines_carry_the_snapshot_values() -> None:
@@ -235,11 +276,6 @@ def test_actual_only_income_lines_carry_the_snapshot_values() -> None:
         assert (line.done, line.remaining, line.plan, line.magi_only) == (value, 0.0, None, False)
     adjustments = _line(row, "adjustments")
     assert (adjustments.done, adjustments.remaining, adjustments.plan) == (-5_000.0, 0.0, None)
-
-
-def test_actual_only_income_lines_are_absent_without_a_snapshot() -> None:
-    keys = {line.key for line in ic._row(_hh(), _yr()).stack_lines}
-    assert keys.isdisjoint({"wages", "nec", "interest", "crypto_income", "adjustments"})
 
 
 def _opt_row(nqo: float) -> ic.IncomeControlYear:

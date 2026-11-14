@@ -48,7 +48,9 @@ class StackLine:
     """One line of the income stack: ``done`` (actual so far) + ``remaining`` (forecast).
 
     ``key`` is the stable identifier, ``label`` the display text. ``plan`` is the
-    plan's FULL-YEAR amount (not the remainder); None for actual-only lines.
+    plan's FULL-YEAR amount, used only for the above-plan note; None means there is
+    nothing to compare against (actual-only lines, no ConversionPlan). On forecast-only
+    lines plan equals ``remaining``, so ``above_plan`` is 0.
     """
 
     key: str
@@ -154,6 +156,7 @@ def _clamped_rmd(rmd: float, qcd: float) -> float:
 
 
 def _rmd_line(yr: YearResult, ytd: YTDSnapshot | None) -> StackLine:
+    """RMD line: pooled YTD IRA distributions done, reduced taxable RMD remaining."""
     remaining = yr.taxable_rmd + yr.spouse_taxable_rmd
     if ytd is None:
         return _forecast("rmd", "Required minimum distributions", remaining)
@@ -261,6 +264,7 @@ def _planned_conversion(hh: Household, yr: YearResult, plan: ConversionPlan) -> 
 def _conversion_line(
     hh: Household, yr: YearResult, plan: ConversionPlan | None, ytd: YTDSnapshot | None
 ) -> StackLine:
+    """Conversion line: YTD conversions done, engine remainder, and the plan's amount."""
     remaining = yr.your_conversion + yr.spouse_conversion  # already net of YTD conversions
     if ytd is None:
         return _forecast("conversion", "Planned conversion", remaining)
@@ -269,21 +273,28 @@ def _conversion_line(
     return StackLine("conversion", "Planned conversion", done, remaining, planned)
 
 
+def _ira_draws(yr: YearResult) -> float:
+    """Forced IRA draws plus inherited-IRA distributions (taxable, not RMDs)."""
+    return (
+        yr.forced_your_ira_draw
+        + yr.forced_spouse_ira_draw
+        + yr.your_inherited_distribution
+        + yr.spouse_inherited_distribution
+    )
+
+
 def _stack_lines(
-    hh: Household, yr: YearResult, plan: ConversionPlan | None, ytd: YTDSnapshot | None
+    hh: Household,
+    yr: YearResult,
+    forced_plan: float,
+    plan: ConversionPlan | None,
+    ytd: YTDSnapshot | None,
 ) -> tuple[StackLine, ...]:
-    forced_plan = forced_exercise(hh, yr.year, yr.option_income)
+    """The labelled income stack for one row; ``forced_plan`` is the grant-expiry option income."""
     lines = [
         _forecast("social_security", "Social Security", yr.combined_ss),
         _rmd_line(yr, ytd),
-        _forecast(
-            "ira_draws",
-            "Forced / inherited IRA draws",
-            yr.forced_your_ira_draw
-            + yr.forced_spouse_ira_draw
-            + yr.your_inherited_distribution
-            + yr.spouse_inherited_distribution,
-        ),
+        _forecast("ira_draws", "Forced / inherited IRA draws", _ira_draws(yr)),
         _forecast(
             "extra_withdrawals",
             "Extra IRA withdrawals",
@@ -324,13 +335,8 @@ def _row(
         binding_line=tightest_line(rooms),
         crossed_lines=crossed_lines(rooms),
         year_result=yr,
-        ira_draws=(
-            yr.forced_your_ira_draw
-            + yr.forced_spouse_ira_draw
-            + yr.your_inherited_distribution
-            + yr.spouse_inherited_distribution
-        ),
-        stack_lines=_stack_lines(hh, yr, plan, ytd),
+        ira_draws=_ira_draws(yr),
+        stack_lines=_stack_lines(hh, yr, forced, plan, ytd),
         has_actuals=ytd is not None,
     )
 
