@@ -1,5 +1,6 @@
-"""Income Control (issue #123, slice 1): post-process ONE run_scenario run into
-per-year room under each line. NO tax math here -- numbers come from YearResult;
+"""Income Control (issue #123, slices 1-2): post-process ONE run_scenario run into
+per-year room under each line, plus the labelled income stack (done + remaining
+per line, slice 2). NO tax math here -- numbers come from YearResult;
 thresholds from engine.room_lines. NO Streamlit imports (engine purity).
 """
 
@@ -15,6 +16,8 @@ from models.household import Household
 from models.ytd_income import YTDSnapshot
 
 _DEFAULT_END_AGE = 95  # run_scenario's default horizon (your age)
+# Half-cent tolerance: a float difference below it is noise. Mirrors
+# tests/acceptance/dsl.py (the engine can't import test code).
 _CENT = 0.005
 
 
@@ -42,7 +45,11 @@ def forced_exercise(hh: Household, year: int, option_income: float) -> float:
 
 @dataclass(frozen=True)
 class StackLine:
-    """One line of the income stack: ``done`` (actual so far) + ``remaining`` (forecast)."""
+    """One line of the income stack: ``done`` (actual so far) + ``remaining`` (forecast).
+
+    ``key`` is the stable identifier, ``label`` the display text. ``plan`` is the
+    plan's FULL-YEAR amount (not the remainder); None for actual-only lines.
+    """
 
     key: str
     label: str
@@ -53,6 +60,7 @@ class StackLine:
 
     @property
     def full_year(self) -> float:
+        """Done so far plus the remaining forecast."""
         return self.done + self.remaining
 
     @property

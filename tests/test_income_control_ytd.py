@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from engine.income_control import StackLine
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
@@ -36,7 +38,7 @@ def test_roth_earnings_income_is_the_non_qualified_earnings_in_combined_gross() 
     yr = _roth_year(first_roth_year=2026)
     assert yr.forced_your_roth_earnings_draw > 100_000.0  # known from the proven fixture
     assert yr.roth_earnings_income > 0
-    assert yr.roth_earnings_income == (
+    assert yr.roth_earnings_income == pytest.approx(
         yr.forced_your_roth_earnings_draw + yr.forced_spouse_roth_earnings_draw
     )
     assert yr.combined_gross >= yr.roth_earnings_income
@@ -80,3 +82,8 @@ def test_stack_line_without_plan_has_no_above_plan_and_defaults() -> None:
 def test_stack_line_ignores_float_noise_above_plan() -> None:
     line = StackLine("rmd", "RMD", done=0.1 + 0.2, remaining=0.0, plan=0.3)
     assert line.above_plan == 0.0
+
+
+def test_stack_line_reports_excess_just_above_the_tolerance() -> None:
+    line = StackLine("rmd", "RMD", done=0.31, remaining=0.0, plan=0.30)
+    assert line.above_plan > 0.0
