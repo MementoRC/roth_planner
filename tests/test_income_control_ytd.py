@@ -604,6 +604,42 @@ def test_stack_reconciles_with_combined_gross_end_to_end(
     assert _ordinary_stack_total(row) == pytest.approx(yr.combined_gross)
 
 
+def test_table_columns_sum_to_total_income_for_a_forecast_row_with_extra_withdrawals() -> None:
+    yr = _yr(
+        combined_ss=24_000.0,
+        extra_withdrawal=7_000.0,
+        spouse_extra_withdrawal=3_000.0,
+        roth_earnings_income=4_000.0,
+        option_income=5_000.0,
+        your_conversion=20_000.0,
+    )
+    row = ic._row(_hh(), yr)
+    assert row.has_actuals is False
+    assert row.display_fixed_income == 24_000.0 + 10_000.0 + 4_000.0
+    assert (
+        row.display_fixed_income
+        + row.forced_exercise
+        + row.discretionary_exercise
+        + row.planned_conversion
+    ) == pytest.approx(row.total_income)
+
+
+def test_tax_exempt_interest_is_an_actual_only_magi_only_line_outside_the_guard() -> None:
+    ytd = _ytd(**{**_FULL_YTD, "tax_exempt_interest_ytd": 1_500.0})
+    row = build_income_control(_joint_hh(), ConversionPlan(), plan_label="x", ytd=ytd).years[0]
+    line = _line(row, "tax_exempt_interest")
+    assert (line.done, line.remaining, line.magi_only) == (1_500.0, 0.0, True)
+    assert row.magi_only_total == (
+        ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd + 1_500.0
+    )
+    assert _ordinary_stack_total(row) == pytest.approx(row.year_result.combined_gross)
+
+
+def test_rmd_line_is_labelled_for_other_ira_distributions_too() -> None:
+    row = ic._row(_hh(), _yr())
+    assert _line(row, "rmd").label == "RMDs and other IRA distributions"
+
+
 def test_guard_holds_for_a_survivor_base_year_and_keeps_the_deceased_actuals() -> None:
     hh = _hh(your_age=70, spouse_age=66, survivor=SurvivorScenario("spouse", 2025))
     ytd = _ytd(wages_ytd=20_000.0, spouse_ira_conversions_ytd=10_000.0)

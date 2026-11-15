@@ -19,6 +19,7 @@ _DEFAULT_END_AGE = 95  # run_scenario's default horizon (your age)
 # Half-cent tolerance: a float difference below it is noise. Mirrors
 # tests/acceptance/dsl.py (the engine can't import test code).
 _CENT = 0.005
+_RMD_LABEL = "RMDs and other IRA distributions"
 
 
 def window_bounds(hh: Household) -> tuple[int, int]:
@@ -82,9 +83,10 @@ def _full_year_of(lines: tuple[StackLine, ...], key: str, default: float) -> flo
 class IncomeControlYear:
     """One year of the Income Control window.
 
-    Legacy field meanings: ``social_security``, ``rmd``, ``dividends_*``, ``interest`` and
-    ``ira_draws`` are FULL-YEAR (done + remaining; done is 0 without a snapshot, so these
-    equal slice 1 there). ``forced_exercise``, ``discretionary_exercise`` and
+    Legacy field meanings: ``social_security``, ``rmd``, ``dividends_*`` and ``interest``
+    are FULL-YEAR (done + remaining; done is 0 without a snapshot, so these equal slice 1
+    there). ``ira_draws`` is forecast-only (forced / inherited draws); YTD IRA
+    distributions are on the RMD / IRA-distributions line (``rmd``). ``forced_exercise``, ``discretionary_exercise`` and
     ``planned_conversion`` are the REMAINING forecast; ``stack_lines`` carries done +
     remaining per line and ``full_year_of`` reads one back.
     """
@@ -154,10 +156,11 @@ class IncomeControlYear:
     def display_fixed_income(self) -> float:
         """Fixed-income figure for the all-years table.
 
-        Uses the stack's non-exercise, non-conversion total on rows with actuals and the
-        slice 1 fixed income otherwise. Never the total (see ``total_income``).
+        Always the stack's non-exercise, non-conversion total, so Fixed income + exercise
+        + conversion == Total income on every row (``stack_fixed_income`` falls back to
+        ``fixed_income`` for rows without stack lines).
         """
-        return self.stack_fixed_income if self.has_actuals else self.fixed_income
+        return self.stack_fixed_income
 
     def full_year_of(self, key: str, default: float) -> float:
         """Full-year amount of line ``key``, or ``default`` when the row has no such line."""
@@ -205,11 +208,9 @@ def _rmd_line(yr: YearResult, ytd: YTDSnapshot | None) -> StackLine:
     """RMD line: pooled YTD IRA distributions done, reduced taxable RMD remaining."""
     remaining = yr.taxable_rmd + yr.spouse_taxable_rmd
     if ytd is None:
-        return _forecast("rmd", "Required minimum distributions", remaining)
+        return _forecast("rmd", _RMD_LABEL, remaining)
     plan = _clamped_rmd(yr.your_rmd, yr.qcd) + _clamped_rmd(yr.spouse_rmd, yr.spouse_qcd)
-    return StackLine(
-        "rmd", "Required minimum distributions", ytd.ira_distributions_ytd, remaining, plan
-    )
+    return StackLine("rmd", _RMD_LABEL, ytd.ira_distributions_ytd, remaining, plan)
 
 
 def _dividend_lines(yr: YearResult, ytd: YTDSnapshot | None) -> list[StackLine]:
@@ -263,6 +264,13 @@ def _actual_income_lines(ytd: YTDSnapshot | None) -> list[StackLine]:
             "Adjustments (HSA, deductible IRA)",
             -ytd.above_the_line_adjustments_ytd,
             0.0,
+        ),
+        StackLine(
+            "tax_exempt_interest",
+            "Tax-exempt interest",
+            ytd.tax_exempt_interest_ytd,
+            0.0,
+            magi_only=True,
         ),
     ]
 

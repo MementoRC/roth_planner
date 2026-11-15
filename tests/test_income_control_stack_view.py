@@ -106,8 +106,15 @@ def test_display_fixed_income_follows_actuals() -> None:
     with_actuals = _row_with_lines(has_actuals=True)
     without = _row_with_lines(has_actuals=False)
     assert with_actuals.display_fixed_income == with_actuals.stack_fixed_income == 41_200.0
-    assert without.display_fixed_income == without.fixed_income
+    # Always the stack figure: the table's columns must add up to Total income.
+    assert without.display_fixed_income == without.stack_fixed_income == 41_200.0
     assert without.stack_fixed_income != without.fixed_income
+
+
+def test_social_security_gross_note_is_shown_under_the_stack() -> None:
+    at = _run(_result(_row_with_lines(has_actuals=False)), toggle_on=False)
+    assert ic_view.SOCIAL_SECURITY_NOTE in _captions(at)
+    assert "gross benefit; only part is taxable." in ic_view.SOCIAL_SECURITY_NOTE
 
 
 def test_styled_stack_without_a_note_column_returns_the_plain_style() -> None:

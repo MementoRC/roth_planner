@@ -197,6 +197,7 @@ ABOVE_PLAN_COLOR = "#f59e0b"
 _HALF_CENT = 0.005  # amounts below this display as $0
 _NOTE_MAGI_ONLY = "MAGI-only"
 _NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above plan"
+SOCIAL_SECURITY_NOTE = "Social Security: gross benefit; only part is taxable."
 TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what's done so far."
 
 
@@ -302,6 +303,7 @@ def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str)
         st.markdown(md_dollars(f"**Total: {fmt_dollars(row.total_income)}**"))
         if row.has_actuals and row.magi_only_total:
             st.caption(md_dollars(f"Of which MAGI-only: {fmt_dollars(row.magi_only_total)}"))
+        st.caption(SOCIAL_SECURITY_NOTE)
         caption = _stack_caption(
             row,
             is_base=is_base,
