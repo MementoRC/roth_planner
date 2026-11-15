@@ -194,6 +194,7 @@ _COLUMNS_PLAIN = ["Line", "Full year"]  # forecast-only rows: no Note column
 _ALWAYS_SHOWN = frozenset({"social_security", "rmd", "discretionary_exercise", "conversion"})
 MAGI_ONLY_COLOR = "#94a3b8"
 ABOVE_PLAN_COLOR = "#f59e0b"
+_HALF_CENT = 0.005  # amounts below this display as $0
 _NOTE_MAGI_ONLY = "MAGI-only"
 _NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above plan"
 TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what's done so far."
@@ -201,7 +202,11 @@ TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what
 
 def _hidden(line: StackLine) -> bool:
     """Hidden iff done == 0 and full_year == 0 and key not in _ALWAYS_SHOWN."""
-    return line.done == 0 and line.full_year == 0 and line.key not in _ALWAYS_SHOWN
+    return (
+        abs(line.done) < _HALF_CENT
+        and abs(line.full_year) < _HALF_CENT
+        and line.key not in _ALWAYS_SHOWN
+    )
 
 
 def _note(line: StackLine) -> str:

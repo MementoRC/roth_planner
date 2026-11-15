@@ -72,6 +72,13 @@ def test_stack_line_above_plan_when_full_year_exceeds_plan() -> None:
     assert line.above_plan == 20_000.0
 
 
+def test_view_hides_a_float_dust_line_but_not_a_cent() -> None:
+    from views.income_control import _hidden
+
+    assert _hidden(StackLine("wages", "Wages", done=1e-12, remaining=0.0, plan=0.0))
+    assert not _hidden(StackLine("wages", "Wages", done=0.0, remaining=0.01, plan=0.0))
+
+
 def test_stack_line_never_reports_below_plan() -> None:
     line = StackLine(
         "conversion", "Planned conversion", done=0.0, remaining=10_000.0, plan=50_000.0
@@ -531,6 +538,70 @@ def test_ordinary_stack_lines_reconcile_with_combined_gross(
     assert _line(row, "dividends_ordinary").remaining == yr.brokerage_ord_div == 0.0
     # the MAGI-only lines are exactly the ones outside combined_gross
     assert row.magi_only_total == ytd.preferential_capital_gain_ytd + ytd.qualified_dividends_ytd
+
+
+def _roth_earnings_hh() -> Household:
+    return _household(
+        your_age=65,
+        spouse_age=65,
+        your_roth=1_000_000.0,
+        spouse_roth=0.0,
+        living_expenses=600_000.0,
+        your_roth_growth=GrowthProfile(default_rate=1.0, yield_rate=0.0),
+        your_first_roth_year=2026,
+    )
+
+
+def _joint_hh() -> Household:
+    return _hh(your_age=61, spouse_age=58)
+
+
+@pytest.mark.parametrize(
+    ("make_hh", "plan", "extra", "nonzero_field"),
+    [
+        pytest.param(
+            _joint_hh,
+            ConversionPlan(
+                extra_withdrawals={2026: 20_000.0}, spouse_extra_withdrawals={2026: 10_000.0}
+            ),
+            {},
+            "extra_withdrawal",
+            id="extra-ira-withdrawals",
+        ),
+        pytest.param(
+            _roth_earnings_hh,
+            ConversionPlan(),
+            {},
+            "roth_earnings_income",
+            id="non-qualified-roth-earnings",
+        ),
+        pytest.param(
+            _joint_hh,
+            ConversionPlan(your_conversions={2026: 50_000.0}, spouse_conversions={2026: 40_000.0}),
+            {"ira_conversions_ytd": 25_000.0, "spouse_ira_conversions_ytd": 15_000.0},
+            "",
+            id="joint-both-spouses-have-actuals",
+        ),
+    ],
+)
+def test_stack_reconciles_with_combined_gross_end_to_end(
+    make_hh: Callable[[], Household],
+    plan: ConversionPlan,
+    extra: dict[str, float],
+    nonzero_field: str,
+) -> None:
+    hh = make_hh()
+    ytd = _ytd(**{**_FULL_YTD, **extra})
+    # Roth earnings only appear once the balance has grown past principal, so that
+    # case reads the second projected year (still with base-year actuals on).
+    index = 1 if nonzero_field == "roth_earnings_income" else 0
+    row = build_income_control(hh, plan, plan_label="x", ytd=ytd).years[index]
+    yr = row.year_result
+    if nonzero_field:
+        assert getattr(yr, nonzero_field) > 0
+    else:
+        assert _line(row, "conversion").done == 40_000.0
+    assert _ordinary_stack_total(row) == pytest.approx(yr.combined_gross)
 
 
 def test_guard_holds_for_a_survivor_base_year_and_keeps_the_deceased_actuals() -> None:
