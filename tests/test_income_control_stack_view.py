@@ -82,9 +82,15 @@ def test_stack_table_without_actuals_has_only_line_and_full_year() -> None:
 
 def test_styled_stack_colours_the_note_column() -> None:
     table = stack_table(_row_with_lines(has_actuals=True), with_actuals=True)
-    html = styled_stack(table).to_html()
-    assert MAGI_ONLY_COLOR in html
-    assert ABOVE_PLAN_COLOR in html
+    pytest.importorskip("jinja2")
+    ctx = styled_stack(table)._compute().ctx  # type: ignore[union-attr]
+    note_col = list(table.columns).index("Note")
+    colour_by_line = {
+        line: ctx[(i, note_col)] for i, line in enumerate(table["Line"]) if (i, note_col) in ctx
+    }
+    assert colour_by_line["Qualified dividends"] == [("color", MAGI_ONLY_COLOR)]
+    assert colour_by_line["Planned conversion"] == [("color", ABOVE_PLAN_COLOR)]
+    assert "Social Security" not in colour_by_line  # blank note: no colour
 
 
 def test_view_imports_and_falls_back_without_jinja2(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,6 +148,7 @@ def _run(
     toggle_on: bool,
     snapshot_date: str = "2026-06-30",
     with_snapshot: bool = True,
+    engine: MagicMock | None = None,
 ) -> AppTest:
     at = AppTest.from_function(_render_page, default_timeout=60)
     if toggle_on:
@@ -150,7 +157,8 @@ def _run(
             at.session_state["ytd_snapshot"] = YTDSnapshot(
                 tax_year=2026, snapshot_date=snapshot_date
             )
-    with patch.object(ic_view, "build_income_control", MagicMock(return_value=result)):
+    engine = engine if engine is not None else MagicMock(return_value=result)
+    with patch.object(ic_view, "build_income_control", engine):
         at.run()
     return at
 
@@ -189,7 +197,18 @@ def test_toggle_off_renders_full_year_only_and_points_to_the_toggle() -> None:
     assert "Of which MAGI-only" not in _captions(at)  # shown only with actuals
 
 
-def test_toggle_on_without_a_snapshot_behaves_like_toggle_off() -> None:
+def test_render_passes_the_snapshot_to_the_engine_only_when_the_toggle_is_on() -> None:
+    result = _result(_row_with_lines(has_actuals=True))
+    on, off = MagicMock(return_value=result), MagicMock(return_value=result)
+    _run(result, toggle_on=True, snapshot_date="2026-06-30", engine=on)
+    _run(result, toggle_on=False, engine=off)
+    passed = on.call_args.kwargs["ytd"]
+    assert isinstance(passed, YTDSnapshot)
+    assert passed.snapshot_date == "2026-06-30"
+    assert off.call_args.kwargs["ytd"] is None
+
+
+def test_toggle_on_without_a_snapshot_shows_the_no_actuals_caption() -> None:
     at = _run(_result(_row_with_lines(has_actuals=False)), toggle_on=True, with_snapshot=False)
     assert not at.exception
     assert list(_stack_frame(at).columns) == _PLAIN
