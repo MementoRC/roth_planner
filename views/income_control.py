@@ -200,6 +200,12 @@ _NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above pla
 TOGGLE_CAPTION = "Turn on Include this year's actuals in the sidebar to see what's done so far."
 
 
+NO_ACTUALS_CAPTION = (
+    "No actuals recorded for this year yet. "
+    "Add them on This Year's Income to see what's done so far."
+)
+
+
 def _hidden(line: StackLine) -> bool:
     """Hidden iff done == 0 and full_year == 0 and key not in _ALWAYS_SHOWN."""
     return (
@@ -258,14 +264,18 @@ def styled_stack(table: pd.DataFrame) -> Styler | pd.DataFrame:
         return table
 
 
-def _stack_caption(row: IncomeControlYear, *, is_base: bool, snapshot_date: str) -> str | None:
+def _stack_caption(
+    row: IncomeControlYear, *, is_base: bool, snapshot_date: str, toggle_on: bool
+) -> str | None:
     if row.has_actuals:
         return (
             f"So far = actuals as of {snapshot_date}."
             if snapshot_date
             else "So far = actuals to date."
         )
-    return TOGGLE_CAPTION if is_base else None
+    if not is_base:
+        return None
+    return NO_ACTUALS_CAPTION if toggle_on else TOGGLE_CAPTION
 
 
 def _binding_note(row: IncomeControlYear) -> str:
@@ -292,7 +302,12 @@ def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str)
         st.markdown(md_dollars(f"**Total: {fmt_dollars(row.total_income)}**"))
         if row.has_actuals and row.magi_only_total:
             st.caption(md_dollars(f"Of which MAGI-only: {fmt_dollars(row.magi_only_total)}"))
-        caption = _stack_caption(row, is_base=is_base, snapshot_date=snapshot_date)
+        caption = _stack_caption(
+            row,
+            is_base=is_base,
+            snapshot_date=snapshot_date,
+            toggle_on=bool(st.session_state.get("apply_ytd_to_projection", False)),
+        )
         if caption:
             st.caption(caption)
     with right:

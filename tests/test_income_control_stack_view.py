@@ -19,6 +19,7 @@ from tests.test_income_control_view import _render_page, _result, _year
 from views.income_control import (
     ABOVE_PLAN_COLOR,
     MAGI_ONLY_COLOR,
+    NO_ACTUALS_CAPTION,
     TOGGLE_CAPTION,
     chart_layers,
     line_heights,
@@ -185,7 +186,20 @@ def test_toggle_on_without_a_snapshot_behaves_like_toggle_off() -> None:
     at = _run(_result(_row_with_lines(has_actuals=False)), toggle_on=True, with_snapshot=False)
     assert not at.exception
     assert list(_stack_frame(at).columns) == _PLAIN
+    assert NO_ACTUALS_CAPTION in _captions(at)
+    assert TOGGLE_CAPTION not in _captions(at)
+
+
+def test_toggle_off_shows_the_toggle_caption_not_the_no_actuals_caption() -> None:
+    at = _run(_result(_row_with_lines(has_actuals=False)), toggle_on=False)
     assert TOGGLE_CAPTION in _captions(at)
+    assert NO_ACTUALS_CAPTION not in _captions(at)
+
+
+def test_toggle_on_with_actuals_shows_neither_prompt_caption() -> None:
+    at = _run(_result(_row_with_lines(has_actuals=True)), toggle_on=True)
+    assert TOGGLE_CAPTION not in _captions(at)
+    assert NO_ACTUALS_CAPTION not in _captions(at)
 
 
 def test_non_base_year_gets_no_toggle_caption() -> None:
