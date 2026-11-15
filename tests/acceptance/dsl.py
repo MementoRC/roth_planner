@@ -331,3 +331,28 @@ def roth_earnings_drawn(row: driver.RothYear) -> float:
             f"(the earnings part of the {row.year} Roth draw)"
         )
     return row.roth_earnings_drawn
+
+
+@dataclass
+class IncomeControlCase:
+    age: int
+    ira: float
+    wages_ytd: float = 0.0
+    converted_ytd: float = 0.0
+    planned_conversion: float = 0.0
+    result: driver.StackOutcome | None = None
+
+
+def an_income_control_filer(age: int, ira: float) -> IncomeControlCase:
+    return IncomeControlCase(age=age, ira=ira)
+
+
+def build_income_control_stack(case: IncomeControlCase, year: int) -> None:
+    case.result = driver.income_control_stack(
+        age=case.age,
+        base_year=year,
+        ira_balance=case.ira,
+        wages_ytd=case.wages_ytd,
+        converted_ytd=case.converted_ytd,
+        planned_conversion=case.planned_conversion,
+    )
