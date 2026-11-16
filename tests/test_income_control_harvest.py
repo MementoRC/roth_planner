@@ -13,6 +13,8 @@ from tests.test_income_control import _hh
 
 _GROWTH = GrowthProfile(default_rate=0.10, yield_rate=0.0)  # 10% appreciation, no dividends
 _START, _BASIS, _TURNOVER = 200_000.0, 120_000.0, 0.5
+# Exceeds the turnover gain (200,000 x 10% x 50% = 10,000), so it forces a brokerage draw.
+_DRAW_EXPENSES = 150_000.0
 
 
 def _brok_hh(**kw: object) -> Household:
@@ -47,12 +49,13 @@ def test_realized_gains_is_the_turnover_gain_in_a_non_base_year() -> None:
     yr = _years(_brok_hh())[1]
     assert yr.forced_brokerage_draw == 0.0  # precondition: turnover only
     assert yr.realized_gains > 0
-    assert yr.realized_gains == pytest.approx(yr.brokerage_balance * 0.10 * _TURNOVER)
+    expected = yr.brokerage_balance * _GROWTH.default_rate * _TURNOVER
+    assert yr.realized_gains == pytest.approx(expected)
 
 
 def test_realized_gains_is_the_turnover_gain_in_a_base_year_without_actuals() -> None:
     yr = _years(_brok_hh())[0]
-    assert yr.realized_gains == pytest.approx(_START * 0.10 * _TURNOVER)
+    assert yr.realized_gains == pytest.approx(_START * _GROWTH.default_rate * _TURNOVER)
 
 
 def test_realized_gains_is_zero_in_the_base_year_with_actuals_and_no_forced_draw() -> None:
@@ -63,13 +66,14 @@ def test_realized_gains_is_zero_in_the_base_year_with_actuals_and_no_forced_draw
 
 
 def test_realized_gains_adds_the_forced_draw_gain_to_the_turnover_gain() -> None:
-    yr = _years(_brok_hh(living_expenses=150_000.0))[0]
+    yr = _years(_brok_hh(living_expenses=_DRAW_EXPENSES))[0]
     assert yr.forced_brokerage_draw > 0  # precondition: brokerage funds expenses first
     draw_gain = yr.forced_brokerage_draw * (1 - _BASIS / _START)
-    assert yr.realized_gains == pytest.approx(_START * 0.10 * _TURNOVER + draw_gain)
+    turnover_gain = _START * _GROWTH.default_rate * _TURNOVER
+    assert yr.realized_gains == pytest.approx(turnover_gain + draw_gain)
 
 
 def test_realized_gains_keeps_the_forced_draw_gain_in_the_base_year_with_actuals() -> None:
-    yr = _years(_brok_hh(living_expenses=150_000.0), _snapshot())[0]
+    yr = _years(_brok_hh(living_expenses=_DRAW_EXPENSES), _snapshot())[0]
     assert yr.forced_brokerage_draw > 0
     assert yr.realized_gains == pytest.approx(yr.forced_brokerage_draw * (1 - _BASIS / _START))
