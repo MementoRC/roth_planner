@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import pytest
 
+from engine.income_control import build_income_control
+from engine.room_lines import room_after, room_lines_for_year
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
 from models.household import GrowthProfile, Household
@@ -77,3 +79,26 @@ def test_realized_gains_keeps_the_forced_draw_gain_in_the_base_year_with_actuals
     yr = _years(_brok_hh(living_expenses=_DRAW_EXPENSES), _snapshot())[0]
     assert yr.forced_brokerage_draw > 0
     assert yr.realized_gains == pytest.approx(yr.forced_brokerage_draw * (1 - _BASIS / _START))
+
+
+def test_ltcg_room_base_row_gets_the_snapshot_and_later_rows_do_not() -> None:
+    hh = _brok_hh()
+    ytd = _snapshot(qualified_dividends_ytd=2_000.0, ltcg_ytd=5_000.0)
+    first, second = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[:2]
+    lines = room_lines_for_year(hh, first.year_result)
+    assert first.rooms == room_after(first.year_result, lines, ytd)
+    assert first.rooms["ltcg_zero"] == pytest.approx(
+        room_after(first.year_result, lines)["ltcg_zero"] - 7_000.0
+    )
+    yr2 = second.year_result
+    assert second.rooms == room_after(yr2, room_lines_for_year(hh, yr2))
+
+
+def test_ltcg_room_drops_by_the_realized_gains_in_a_turnover_year() -> None:
+    hh = _brok_hh()
+    row = build_income_control(hh, ConversionPlan(), plan_label="x").years[1]
+    yr = row.year_result
+    unused = max(yr.total_deductions - yr.combined_gross, 0.0)
+    measure = yr.taxable_income + yr.brokerage_qual_div + yr.realized_gains - unused
+    assert yr.realized_gains > 0
+    assert row.rooms["ltcg_zero"] == pytest.approx(room_lines_for_year(hh, yr).ltcg_zero - measure)

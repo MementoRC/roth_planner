@@ -17,6 +17,7 @@ from engine.scenario_types import YearResult
 from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE, indexed_bracket_ceiling
 from engine.tax_indexing import index_tuple
 from models.household import Household
+from models.ytd_income import YTDSnapshot
 
 # Income at this age is the first the 2-year IRMAA lookback can price into Medicare.
 IRMAA_FIRST_INCOME_AGE = 63
@@ -101,18 +102,39 @@ def room_lines_for_year(hh: Household, yr: YearResult) -> RoomLines:
     )
 
 
-def room_after(yr: YearResult, lines: RoomLines) -> dict[str, float | None]:
+def _preferential_existing(yr: YearResult, ytd: YTDSnapshot | None) -> float:
+    """Preferential income already in the year, before any harvest."""
+    actual = 0.0 if ytd is None else ytd.qualified_dividends_ytd + ytd.preferential_capital_gain_ytd
+    return yr.brokerage_qual_div + yr.realized_gains + actual
+
+
+def _unused_deduction(yr: YearResult) -> float:
+    """Deduction left over by ordinary income (nonzero only when taxable_income is 0)."""
+    return max(yr.total_deductions - yr.combined_gross, 0.0)
+
+
+def room_after(
+    yr: YearResult, lines: RoomLines, ytd: YTDSnapshot | None = None
+) -> dict[str, float | None]:
     """Room for additional income under each line: line - measure.
 
-    Negative = crossed; ``None`` = line not applicable that year. Slice 1 measures
-    0% LTCG as ordinary taxable income + qualified dividends (realized gains are
-    not on YearResult; slice 3 adds them), so its room may be negative.
+    Negative = crossed; ``None`` = line not applicable that year. The 0% LTCG
+    measure is ordinary taxable income + preferential income - deduction left
+    unused by ordinary income, with NO floor (#130). Preferential income is the
+    forecast qualified dividends, this year's realized gains ``yr.realized_gains``
+    (forecast turnover and the forced brokerage draw's gain) and, with ``ytd``
+    (passed only for the base year with actuals), the YTD qualified dividends and
+    the §1211-capped net long-term gain. The unused deduction shelters
+    preferential income first (scenario._pref_stack_tax), so when it exceeds that
+    income the room exceeds the threshold. Excluded: short-term gains, which are
+    ordinary and already in ``taxable_income``.
     """
+    ltcg_measure = yr.taxable_income + _preferential_existing(yr, ytd) - _unused_deduction(yr)
     pairs: dict[str, tuple[float | None, float]] = {
         "top_12": (lines.top_12, yr.taxable_income),
         "top_22": (lines.top_22, yr.taxable_income),
         "top_24": (lines.top_24, yr.taxable_income),
-        "ltcg_zero": (lines.ltcg_zero, yr.taxable_income + yr.brokerage_qual_div),
+        "ltcg_zero": (lines.ltcg_zero, ltcg_measure),
         "irmaa_t1": (lines.irmaa_t1, yr.magi),
         "aca_cliff": (lines.aca_cliff, yr.aca_magi),
         "niit": (lines.niit, yr.niit_magi),

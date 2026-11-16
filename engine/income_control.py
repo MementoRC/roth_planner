@@ -372,7 +372,7 @@ def _row(
 ) -> IncomeControlYear:
     you_alive, spouse_alive = living_flags(hh, yr)
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
-    rooms = room_after(yr, room_lines_for_year(hh, yr))
+    rooms = room_after(yr, room_lines_for_year(hh, yr), ytd)
     forced = forced_exercise(hh, yr.year, yr.option_income)
     lines = _stack_lines(hh, yr, forced, plan, ytd)
     return IncomeControlYear(
