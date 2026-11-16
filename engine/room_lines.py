@@ -1,9 +1,12 @@
-"""Income Control room lines (issue #123, slice 1): where each tax/cost line sits
-in a year, and how much room a year's income leaves under it.
+"""Income Control room lines (issue #123): where each tax/cost line sits in a
+year, how much room a year's income leaves under it (#130 measure), and the
+advisory 0% LTCG harvest sized into that room (slice 3).
 
-Pure lookup + subtraction -- NO tax math. Thresholds come from the same helpers
-the scenario uses; measures come from run_scenario's YearResult. NO Streamlit
-imports (engine purity). Must not import engine.this_year.
+Thresholds come from the same helpers the scenario uses; measures come from
+run_scenario's YearResult. The harvest search adds NO tax model of its own: it
+reuses engine.yr_reprice.reprice, scenario._pref_stack_tax and the federal
+bracket functions. NO Streamlit imports (engine purity). Must not import
+engine.this_year.
 """
 
 from __future__ import annotations
@@ -144,3 +147,67 @@ def room_after(
         line, measure = pairs[key]
         rooms[key] = None if line is None else line - measure
     return rooms
+
+
+HARVEST_BINDINGS: tuple[str, ...] = (
+    "0% LTCG",
+    "Social Security tax",
+    "ACA cliff",
+    "IRMAA tier 1",
+    "NIIT",
+    "embedded gain",
+)
+_EMBEDDED_GAIN = "embedded gain"
+# Room lines that bound a harvest 1:1, with their binding label.
+_HARVEST_ROOMS: dict[str, str] = {
+    "ltcg_zero": "0% LTCG",
+    "aca_cliff": "ACA cliff",
+    "irmaa_t1": "IRMAA tier 1",
+    "niit": "NIIT",
+}
+
+
+@dataclass(frozen=True)
+class HarvestSizing:
+    """Advisory 0% LTCG harvest for one year, sized alone (not additive across years)."""
+
+    amount: float  # >= 0; largest H at $0 extra federal tax and no cliff crossed
+    binding: str  # one of HARVEST_BINDINGS
+    room_uncapped: float  # same search WITHOUT the embedded-gain cap (>= 0)
+    basis_known: bool  # False when brokerage_start_basis is None (amount == room_uncapped)
+
+
+def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) -> tuple[float, str]:
+    """1:1 upper bound on the harvest and the term that set it.
+
+    A harvested dollar adds at least $1 to every measure (taxable SS and a
+    shrinking senior bonus only add), so H never exceeds the smallest applicable
+    room or the embedded gain. Ties follow HARVEST_BINDINGS; a crossed line
+    (negative room) floors the bound at 0 and is named.
+    """
+    terms: list[tuple[float, str]] = []
+    for key, label in _HARVEST_ROOMS.items():
+        room = rooms.get(key)
+        if room is not None:
+            terms.append((room, label))
+    if embedded_gain is not None:
+        terms.append((embedded_gain, _EMBEDDED_GAIN))
+    value, label = min(terms, key=lambda term: (term[0], HARVEST_BINDINGS.index(term[1])))
+    return max(0.0, value), label
+
+
+def harvest_sizing(
+    yr: YearResult,
+    lines: RoomLines,
+    rooms: dict[str, float | None],
+    embedded_gain: float | None,
+    cpi: float,
+    ytd: YTDSnapshot | None = None,
+) -> HarvestSizing:
+    """Interim (Task 4): the 1:1 upper bound. Task 5 replaces the body with the
+    exact search; ``yr``, ``lines``, ``cpi`` and ``ytd`` are used from then on."""
+    amount, binding = _upper_bound(rooms, embedded_gain)
+    if embedded_gain is None:
+        return HarvestSizing(amount, binding, amount, basis_known=False)
+    uncapped = _upper_bound(rooms, None)[0] if binding == _EMBEDDED_GAIN else amount
+    return HarvestSizing(amount, binding, uncapped, basis_known=True)

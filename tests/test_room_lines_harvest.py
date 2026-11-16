@@ -3,7 +3,9 @@ advisory harvest sizing. Synthetic data only."""
 
 from __future__ import annotations
 
-from engine.room_lines import RoomLines, room_after
+import pytest
+
+from engine.room_lines import HARVEST_BINDINGS, HarvestSizing, RoomLines, harvest_sizing, room_after
 from engine.scenario_types import YearResult
 from models.ytd_income import YTDSnapshot
 
@@ -103,3 +105,132 @@ def test_room_after_room_exceeds_the_threshold_when_pref_is_below_the_unused_ded
     )
     # measure = 0 + 5,000 - 20,000 = -15,000 (no floor)
     assert room_after(yr, _lines())["ltcg_zero"] == LTCG_ZERO_MFJ + 15_000.0
+
+
+def _size(
+    yr: YearResult,
+    lines: RoomLines,
+    embedded: float | None = None,
+    ytd: YTDSnapshot | None = None,
+) -> HarvestSizing:
+    return harvest_sizing(yr, lines, room_after(yr, lines, ytd), embedded, CPI, ytd)
+
+
+def test_harvest_bindings_are_the_six_owner_labels_in_tie_order() -> None:
+    assert HARVEST_BINDINGS == (
+        "0% LTCG",
+        "Social Security tax",
+        "ACA cliff",
+        "IRMAA tier 1",
+        "NIIT",
+        "embedded gain",
+    )
+
+
+def test_harvest_sizing_binds_on_the_0pct_ltcg_room_and_basis_unknown_is_uncapped() -> None:
+    # room = 98,900 - 30,000; no SS, so the 1:1 bound is exact
+    assert _size(_plain_yr(), _lines()) == HarvestSizing(68_900.0, "0% LTCG", 68_900.0, False)
+
+
+def test_harvest_sizing_binds_on_the_embedded_gain() -> None:
+    sizing = _size(_plain_yr(), _lines(), embedded=20_000.0)
+    assert sizing == HarvestSizing(20_000.0, "embedded gain", 68_900.0, True)
+
+
+def test_harvest_sizing_embedded_gain_above_the_room_does_not_bind() -> None:
+    sizing = _size(_plain_yr(), _lines(), embedded=100_000.0)
+    assert sizing == HarvestSizing(68_900.0, "0% LTCG", 68_900.0, True)
+
+
+def test_harvest_sizing_zero_embedded_gain_binds_and_reports_the_uncapped_room() -> None:
+    sizing = _size(_plain_yr(), _lines(), embedded=0.0)
+    assert sizing == HarvestSizing(0.0, "embedded gain", 68_900.0, True)
+
+
+@pytest.mark.parametrize(
+    ("lines", "amount", "binding"),
+    [
+        pytest.param(_lines(aca_cliff=90_000.0), 30_000.0, "ACA cliff", id="aca"),
+        pytest.param(_lines(irmaa_t1=85_000.0), 25_000.0, "IRMAA tier 1", id="irmaa"),
+        pytest.param(_lines(niit=80_000.0), 20_000.0, "NIIT", id="niit"),
+    ],
+)
+def test_harvest_sizing_binds_on_each_cliff(lines: RoomLines, amount: float, binding: str) -> None:
+    sizing = _size(_plain_yr(), lines)
+    assert (sizing.amount, sizing.binding) == (amount, binding)
+
+
+@pytest.mark.parametrize(
+    ("lines", "embedded", "amount", "binding"),
+    [
+        pytest.param(_lines(niit=128_900.0), None, 68_900.0, "0% LTCG", id="ltcg-niit"),
+        pytest.param(
+            _lines(aca_cliff=85_000.0, irmaa_t1=85_000.0),
+            None,
+            25_000.0,
+            "ACA cliff",
+            id="aca-irmaa",
+        ),
+        pytest.param(
+            _lines(irmaa_t1=80_000.0, niit=80_000.0),
+            None,
+            20_000.0,
+            "IRMAA tier 1",
+            id="irmaa-niit",
+        ),
+        pytest.param(_lines(niit=80_000.0), 20_000.0, 20_000.0, "NIIT", id="niit-embedded"),
+        pytest.param(_lines(), 68_900.0, 68_900.0, "0% LTCG", id="ltcg-embedded"),
+    ],
+)
+def test_harvest_sizing_ties_follow_harvest_bindings_order(
+    lines: RoomLines, embedded: float | None, amount: float, binding: str
+) -> None:
+    sizing = _size(_plain_yr(), lines, embedded=embedded)
+    assert (sizing.amount, sizing.binding) == (amount, binding)
+
+
+@pytest.mark.parametrize(
+    ("lines", "binding"),
+    [
+        pytest.param(_lines(niit=50_000.0), "NIIT", id="niit-crossed"),
+        pytest.param(
+            _lines(niit=50_000.0, aca_cliff=40_000.0), "ACA cliff", id="aca-most-negative"
+        ),
+    ],
+)
+def test_harvest_sizing_crossed_line_gives_zero_and_the_most_negative_room(
+    lines: RoomLines, binding: str
+) -> None:
+    sizing = _size(_plain_yr(), lines)
+    assert (sizing.amount, sizing.binding, sizing.room_uncapped) == (0.0, binding, 0.0)
+
+
+def test_harvest_sizing_skips_inapplicable_lines() -> None:
+    yr = _plain_yr(aca_magi=999_999.0, magi=999_999.0)  # ACA / IRMAA lines are None
+    sizing = _size(yr, _lines())
+    assert (sizing.amount, sizing.binding) == (68_900.0, "0% LTCG")
+
+
+def test_harvest_sizing_counts_base_year_actuals() -> None:
+    ytd = _ytd(qualified_dividends_ytd=2_000.0, ltcg_ytd=5_000.0)
+    assert _size(_plain_yr(), _lines(), ytd=ytd).amount == 61_900.0
+
+
+def _pref_below_unused_yr() -> YearResult:
+    """Ordinary 10,000 under deductions 30,000; dividends 5,000 (below the unused 20,000)."""
+    return _yr(
+        combined_gross=10_000.0,
+        total_deductions=30_000.0,
+        deductions_before_senior_bonus=30_000.0,
+        taxable_income=0.0,
+        brokerage_qual_div=5_000.0,
+        magi=15_000.0,
+        magi_phaseout_basis=15_000.0,
+        niit_magi=15_000.0,
+        aca_magi=15_000.0,
+    )
+
+
+def test_harvest_sizing_pref_below_unused_deduction_goes_past_the_threshold() -> None:
+    sizing = _size(_pref_below_unused_yr(), _lines())
+    assert (sizing.amount, sizing.binding) == (LTCG_ZERO_MFJ + 15_000.0, "0% LTCG")
