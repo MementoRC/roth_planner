@@ -5,12 +5,21 @@ from __future__ import annotations
 
 import pytest
 
-from engine.room_lines import HARVEST_BINDINGS, HarvestSizing, RoomLines, harvest_sizing, room_after
+from engine.room_lines import (
+    _HARVEST_ROOMS,
+    HARVEST_BINDINGS,
+    HarvestSizing,
+    RoomLines,
+    harvest_sizing,
+    room_after,
+)
 from engine.scenario_types import YearResult
 from models.ytd_income import YTDSnapshot
 
 CPI = 0.0  # no indexing: every threshold below is the 2026 statutory value
 LTCG_ZERO_MFJ = 98_900.0
+# 0% LTCG room of _plain_yr: MFJ threshold less its 30,000 deductions (no SS, no actuals)
+PLAIN_ROOM = LTCG_ZERO_MFJ - 30_000.0
 
 
 def _yr(**kw: float | int | str) -> YearResult:
@@ -127,24 +136,28 @@ def test_harvest_bindings_are_the_six_owner_labels_in_tie_order() -> None:
     )
 
 
+def test_every_harvest_room_key_maps_to_a_harvest_binding_label() -> None:
+    assert set(_HARVEST_ROOMS.values()) <= set(HARVEST_BINDINGS)
+
+
 def test_harvest_sizing_binds_on_the_0pct_ltcg_room_and_basis_unknown_is_uncapped() -> None:
-    # room = 98,900 - 30,000; no SS, so the 1:1 bound is exact
-    assert _size(_plain_yr(), _lines()) == HarvestSizing(68_900.0, "0% LTCG", 68_900.0, False)
+    # room = PLAIN_ROOM (98,900 - 30,000); no SS, so the 1:1 bound is exact
+    assert _size(_plain_yr(), _lines()) == HarvestSizing(PLAIN_ROOM, "0% LTCG", PLAIN_ROOM, False)
 
 
 def test_harvest_sizing_binds_on_the_embedded_gain() -> None:
     sizing = _size(_plain_yr(), _lines(), embedded=20_000.0)
-    assert sizing == HarvestSizing(20_000.0, "embedded gain", 68_900.0, True)
+    assert sizing == HarvestSizing(20_000.0, "embedded gain", PLAIN_ROOM, True)
 
 
 def test_harvest_sizing_embedded_gain_above_the_room_does_not_bind() -> None:
     sizing = _size(_plain_yr(), _lines(), embedded=100_000.0)
-    assert sizing == HarvestSizing(68_900.0, "0% LTCG", 68_900.0, True)
+    assert sizing == HarvestSizing(PLAIN_ROOM, "0% LTCG", PLAIN_ROOM, True)
 
 
 def test_harvest_sizing_zero_embedded_gain_binds_and_reports_the_uncapped_room() -> None:
     sizing = _size(_plain_yr(), _lines(), embedded=0.0)
-    assert sizing == HarvestSizing(0.0, "embedded gain", 68_900.0, True)
+    assert sizing == HarvestSizing(0.0, "embedded gain", PLAIN_ROOM, True)
 
 
 @pytest.mark.parametrize(
@@ -163,7 +176,10 @@ def test_harvest_sizing_binds_on_each_cliff(lines: RoomLines, amount: float, bin
 @pytest.mark.parametrize(
     ("lines", "embedded", "amount", "binding"),
     [
-        pytest.param(_lines(niit=128_900.0), None, 68_900.0, "0% LTCG", id="ltcg-niit"),
+        # NIIT room = 128,900 - 60,000 MAGI = 68,900, tying the 0% LTCG room
+        pytest.param(
+            _lines(niit=LTCG_ZERO_MFJ + 30_000.0), None, PLAIN_ROOM, "0% LTCG", id="ltcg-niit"
+        ),
         pytest.param(
             _lines(aca_cliff=85_000.0, irmaa_t1=85_000.0),
             None,
@@ -179,7 +195,7 @@ def test_harvest_sizing_binds_on_each_cliff(lines: RoomLines, amount: float, bin
             id="irmaa-niit",
         ),
         pytest.param(_lines(niit=80_000.0), 20_000.0, 20_000.0, "NIIT", id="niit-embedded"),
-        pytest.param(_lines(), 68_900.0, 68_900.0, "0% LTCG", id="ltcg-embedded"),
+        pytest.param(_lines(), PLAIN_ROOM, PLAIN_ROOM, "0% LTCG", id="ltcg-embedded"),
     ],
 )
 def test_harvest_sizing_ties_follow_harvest_bindings_order(
@@ -191,6 +207,8 @@ def test_harvest_sizing_ties_follow_harvest_bindings_order(
 
 @pytest.mark.parametrize(
     ("lines", "binding"),
+    # MAGI 60,000 for both NIIT and ACA: niit line 50,000 gives room -10,000;
+    # aca line 40,000 gives -20,000, the most negative, so it names the binding
     [
         pytest.param(_lines(niit=50_000.0), "NIIT", id="niit-crossed"),
         pytest.param(
@@ -208,12 +226,15 @@ def test_harvest_sizing_crossed_line_gives_zero_and_the_most_negative_room(
 def test_harvest_sizing_skips_inapplicable_lines() -> None:
     yr = _plain_yr(aca_magi=999_999.0, magi=999_999.0)  # ACA / IRMAA lines are None
     sizing = _size(yr, _lines())
-    assert (sizing.amount, sizing.binding) == (68_900.0, "0% LTCG")
+    assert (sizing.amount, sizing.binding) == (PLAIN_ROOM, "0% LTCG")
 
 
 def test_harvest_sizing_counts_base_year_actuals() -> None:
     ytd = _ytd(qualified_dividends_ytd=2_000.0, ltcg_ytd=5_000.0)
-    assert _size(_plain_yr(), _lines(), ytd=ytd).amount == 61_900.0
+    # 98,900 less 30,000 deductions, 2,000 YTD dividends and 5,000 YTD LTCG
+    assert (
+        _size(_plain_yr(), _lines(), ytd=ytd).amount == LTCG_ZERO_MFJ - 30_000.0 - 2_000.0 - 5_000.0
+    )
 
 
 def _pref_below_unused_yr() -> YearResult:

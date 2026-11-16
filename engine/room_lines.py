@@ -173,7 +173,7 @@ class HarvestSizing:
 
     amount: float  # >= 0; largest H at $0 extra federal tax and no cliff crossed
     binding: str  # one of HARVEST_BINDINGS
-    room_uncapped: float  # same search WITHOUT the embedded-gain cap (>= 0)
+    room_uncapped: float  # same search WITHOUT the embedded-gain cap (>= 0); == amount unless binding is 'embedded gain'
     basis_known: bool  # False when brokerage_start_basis is None (amount == room_uncapped)
 
 
@@ -183,7 +183,8 @@ def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) ->
     A harvested dollar adds at least $1 to every measure (taxable SS and a
     shrinking senior bonus only add), so H never exceeds the smallest applicable
     room or the embedded gain. Ties follow HARVEST_BINDINGS; a crossed line
-    (negative room) floors the bound at 0 and is named.
+    (negative room) floors the bound at 0 and is named. If a line is already
+    crossed, amount is 0 and binding names the most-crossed line.
     """
     terms: list[tuple[float, str]] = []
     for key, label in _HARVEST_ROOMS.items():
@@ -192,6 +193,9 @@ def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) ->
             terms.append((room, label))
     if embedded_gain is not None:
         terms.append((embedded_gain, _EMBEDDED_GAIN))
+    if not terms:
+        # ltcg_zero and niit are always set by room_lines, so this is unreachable in practice.
+        raise ValueError("no harvest constraints")
     value, label = min(terms, key=lambda term: (term[0], HARVEST_BINDINGS.index(term[1])))
     return max(0.0, value), label
 
