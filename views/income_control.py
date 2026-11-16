@@ -108,27 +108,46 @@ def _ages_text(row: IncomeControlYear) -> str:
     return " / ".join(str(age) for age in row.ages if age is not None)
 
 
+_HALF_CENT = 0.005  # amounts below this display as $0
 HARVEST_COLUMN = "0% LTCG harvest"
-HARVEST_USED_BY_CONVERSION = "$0 because this year's conversion already used the 0% LTCG room."
+HARVEST_USED_BY_CONVERSION = "This year's planned conversion already uses the 0% LTCG room."
 HARVEST_ENTER_BASIS = (
     "Enter your brokerage cost basis in Profile to cap this at your embedded gain."
 )
-HARVEST_NOT_ADDITIVE = "Years are sized independently; harvest amounts are not additive."
-_ROOM_USED_UP = 1.0  # a 0% LTCG room under $1 counts as used up (the search tolerance)
+HARVEST_NOT_ADDITIVE = "Years are sized on their own; don't add harvests across years."
+_ROOM_USED_UP = 1.0  # $1 matches the engine's search tolerance for "no room left"
+HARVEST_PHRASES = {
+    "0% LTCG": "the top of the 0% LTCG bracket",
+    "Social Security tax": "the point where more Social Security becomes taxable",
+    "ACA cliff": "the ACA subsidy cliff",
+    "IRMAA tier 1": "IRMAA tier 1 (Medicare surcharge)",
+    "NIIT": "the 3.8% NIIT threshold",
+    "embedded gain": "your unrealized gain in the brokerage account",
+}
 
 
 def harvest_text(harvest: HarvestSizing) -> str:
-    """Detail line: amount and the constraint that limited it."""
-    return f"0% LTCG harvest: up to {fmt_dollars(harvest.amount)} (limited by {harvest.binding})"
+    """Detail line: amount and the plain-language constraint that limited it."""
+    phrase = HARVEST_PHRASES.get(harvest.binding, harvest.binding)
+    return f"0% LTCG harvest: up to {fmt_dollars(harvest.amount)} — stops at {phrase}"
 
 
 def _room_used_by_conversion(row: IncomeControlYear, harvest: HarvestSizing) -> bool:
+    """True iff the planned conversion itself consumed positive 0% LTCG room.
+
+    The conversion is ordinary income and moves the 0% LTCG measure at least 1:1, so
+    room + conversion is a lower bound on the room before it. If that bound is still
+    positive, the conversion used up room that existed; if not, fixed income had
+    already filled the bracket and the conversion is not the cause.
+    """
     room = row.rooms.get("ltcg_zero")
+    conv = row.full_year_of("conversion", row.planned_conversion)
     return (
         harvest.amount < _HALF_CENT
         and room is not None
-        and abs(room) < _ROOM_USED_UP
-        and row.full_year_of("conversion", row.planned_conversion) > 0
+        and room <= _ROOM_USED_UP
+        and conv > 0
+        and room + conv > _ROOM_USED_UP
     )
 
 
@@ -142,7 +161,6 @@ def harvest_notes(row: IncomeControlYear) -> list[str]:
         notes.append(HARVEST_USED_BY_CONVERSION)
     if not harvest.basis_known:
         notes.append(HARVEST_ENTER_BASIS)
-    notes.append(HARVEST_NOT_ADDITIVE)
     return notes
 
 
@@ -234,7 +252,6 @@ _COLUMNS_PLAIN = ["Line", "Full year"]  # forecast-only rows: no Note column
 _ALWAYS_SHOWN = frozenset({"social_security", "rmd", "discretionary_exercise", "conversion"})
 MAGI_ONLY_COLOR = "#94a3b8"
 ABOVE_PLAN_COLOR = "#f59e0b"
-_HALF_CENT = 0.005  # amounts below this display as $0
 _NOTE_MAGI_ONLY = "MAGI-only"
 _NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above plan"
 SOCIAL_SECURITY_NOTE = "Social Security: gross benefit; only part is taxable."
@@ -396,3 +413,5 @@ def render(hh: Household) -> None:
 
     with st.expander("All years (table)", expanded=False):
         st.dataframe(pd.DataFrame(table_rows(result)), hide_index=True, width="stretch")
+        if any(row.harvest is not None for row in result.years):
+            st.caption(md_dollars(HARVEST_NOT_ADDITIVE))
