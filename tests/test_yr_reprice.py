@@ -11,6 +11,8 @@ from engine.tax import senior_bonus_deduction, taxable_ss
 from engine.yr_reprice import Repriced, reprice
 from tests.test_audit_0823_af1_af2_conversion_sizing import _post_rmd_household
 
+_SS_UPPER_TIER_RATE = 0.85  # IRC §86 upper tier
+
 
 def _old_closure(yr: YearResult, draw: float, cpi: float) -> float:
     """Verbatim copy of the pre-extraction `_taxable_income_at` closure in
@@ -53,7 +55,7 @@ def _hand_year(**kw: float | int | str) -> YearResult:
 
 def test_reprice_band_year_fixture_is_in_the_partial_band_and_bonus_eligible() -> None:
     yr, _cpi = _band_year()
-    assert 0.0 < yr.taxable_ss_amt < 0.85 * yr.combined_ss
+    assert 0.0 < yr.taxable_ss_amt < _SS_UPPER_TIER_RATE * yr.combined_ss
     assert yr.senior_bonus_ya_eff >= 65
     assert yr.senior_bonus_sa_eff >= 65
 

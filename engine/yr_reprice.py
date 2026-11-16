@@ -16,17 +16,21 @@ from engine.tax import senior_bonus_deduction, taxable_ss
 
 @dataclass(frozen=True)
 class Repriced:
+    """Year figures re-priced after an income change; taxable_income is ORDINARY taxable income only."""
+
     taxable_ss: float
     taxable_income: float  # max(gross_at - deductions_at, 0); ordinary only
-    total_deductions: float
+    total_deductions: float  # deductions after the senior bonus
     magi_phaseout_basis: float
 
 
 def reprice(yr: YearResult, ordinary_delta: float, other_agi_delta: float, cpi: float) -> Repriced:
     """``yr`` re-priced with ``ordinary_delta`` more ordinary income (it enters
     provisional income, gross and AGI -- the bracket fill's withdrawal) and
-    ``other_agi_delta`` more preferential income (provisional income and AGI but
-    NOT ``combined_gross`` -- a gain harvest). ``cpi`` is ``hh.cpi_assumption``.
+    ``other_agi_delta`` more any non-ordinary AGI (e.g. long-term capital gain). It
+    raises provisional income and MAGI but is not ordinary income; callers must price
+    any preferential-rate tax separately (e.g. _pref_stack_tax). ``cpi`` is
+    ``hh.cpi_assumption``.
 
     Uses the inputs the year was priced from (``ss_provisional_base``,
     ``deductions_before_senior_bonus``, ``senior_bonus_*_eff``,
