@@ -11,7 +11,7 @@ engine.this_year.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from engine.aca import aca_applies, aca_ceiling_magi
 from engine.irmaa import irmaa_tier1_threshold
@@ -159,9 +159,11 @@ def room_after(
     return rooms
 
 
+_BIND_LTCG_ZERO = "0% LTCG"
+_BIND_SS_TAX = "Social Security tax"
 HARVEST_BINDINGS: tuple[str, ...] = (
-    "0% LTCG",
-    "Social Security tax",
+    _BIND_LTCG_ZERO,
+    _BIND_SS_TAX,
     "ACA cliff",
     "IRMAA tier 1",
     "NIIT",
@@ -170,7 +172,7 @@ HARVEST_BINDINGS: tuple[str, ...] = (
 _EMBEDDED_GAIN = "embedded gain"
 # Room lines that bound a harvest 1:1, with their binding label.
 _HARVEST_ROOMS: dict[str, str] = {
-    "ltcg_zero": "0% LTCG",
+    "ltcg_zero": _BIND_LTCG_ZERO,
     "aca_cliff": "ACA cliff",
     "irmaa_t1": "IRMAA tier 1",
     "niit": "NIIT",
@@ -240,6 +242,8 @@ def _harvest_case(
 ) -> _HarvestCase:
     """Thresholds and rates as scenario.py:1136-1141 (Single for survivor years)."""
     single = lines.filing_status == "Single"
+    if yr.filing_status != lines.filing_status:
+        yr = replace(yr, filing_status=lines.filing_status)  # reprice reads yr.filing_status
     base = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
     thresholds = index_tuple(base, yr.year, cpi, round50=True)
     taxable_at_zero = reprice(yr, 0.0, 0.0, cpi).taxable_income
@@ -256,6 +260,8 @@ def _harvest_case(
 
 def _tax_violation(case: _HarvestCase, h: float) -> tuple[str | None, float]:
     """(tax label or None, extra taxable SS) at harvest ``h``.
+
+    The float is the change in taxable Social Security, reused for the MAGI checks.
 
     tax(h) - tax(0) = extra ordinary tax + preferential tax on h stacked above the
     existing preferential income. "0% LTCG" when the preferential stack is taxed,
@@ -276,7 +282,7 @@ def _tax_violation(case: _HarvestCase, h: float) -> tuple[str | None, float]:
     dtss = rp.taxable_ss - yr.taxable_ss_amt
     if pref_tax + ordinary_extra <= _TAX_TOLERANCE:
         return None, dtss
-    return ("0% LTCG" if pref_tax > 0.0 else "Social Security tax"), dtss
+    return (_BIND_LTCG_ZERO if pref_tax > 0.0 else _BIND_SS_TAX), dtss
 
 
 def _violations(case: _HarvestCase, h: float) -> list[str]:

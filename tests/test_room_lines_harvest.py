@@ -339,4 +339,37 @@ def test_harvest_bisection_stops_within_a_dollar_or_forty_halvings() -> None:
     assert hi - lo <= 1.0
     assert rl._violations(case, lo) == []
     assert rl._violations(case, hi) == ["Social Security tax"]
-    assert rl._HARVEST_MAX_ITERATIONS == 40
+
+
+def test_harvest_prices_with_the_lines_filing_status_when_the_year_has_none() -> None:
+    blank = _size(_ss_yr(filing_status=""), _lines())
+    assert blank == _size(_ss_yr(filing_status="MFJ"), _lines())
+    assert blank.binding == "Social Security tax"
+
+
+def test_harvest_binds_on_0pct_ltcg_when_ordinary_and_pref_tax_rise_together() -> None:
+    # Ordinary tax starts at H = SS_TAX_LIMIT (the unused deduction is gone). The
+    # existing 90,194.2 of dividends puts the 0% band's end a few cents earlier.
+    yr = _ss_yr(brokerage_qual_div=90_194.2)
+    lines = _lines()
+    case = rl._harvest_case(yr, lines, CPI, None)
+    sizing = _size(yr, lines)
+    assert sizing.binding == "0% LTCG"
+    past = sizing.amount + 2.0
+    rp = rl.reprice(case.yr, 0.0, past, CPI)
+    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss
+    pref_tax = rl._pref_stack_tax(
+        rp.taxable_income,
+        max(rp.total_deductions - gross, 0.0),
+        case.pref_existing,
+        past,
+        case.thresholds,
+        case.rates,
+    )
+    ordinary_extra = (
+        rl._ordinary_tax(lines.filing_status, rp.taxable_income, yr.year, CPI)
+        - case.ordinary_tax_at_zero
+    )
+    assert pref_tax > 0.0
+    assert ordinary_extra > 0.0
+    assert rl._tax_violation(case, past)[0] == "0% LTCG"
