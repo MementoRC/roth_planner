@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from engine import room_lines as rl
 from engine.room_lines import (
     _HARVEST_ROOMS,
     HARVEST_BINDINGS,
@@ -255,3 +256,87 @@ def _pref_below_unused_yr() -> YearResult:
 def test_harvest_sizing_pref_below_unused_deduction_goes_past_the_threshold() -> None:
     sizing = _size(_pref_below_unused_yr(), _lines())
     assert (sizing.amount, sizing.binding) == (LTCG_ZERO_MFJ + 15_000.0, "0% LTCG")
+
+
+def _ss_yr(**kw: float | int | str) -> YearResult:
+    """MFJ 2030, Social Security 40,000 with 20,000 of other ordinary income:
+    provisional income 40,000 (50% band), taxable SS 4,000; ordinary 24,000
+    under deductions 30,000 (taxable 0, unused deduction 6,000)."""
+    base: dict[str, float | int | str] = {
+        "combined_ss": 40_000.0,
+        "taxable_ss_amt": 4_000.0,
+        "ss_provisional_base": 20_000.0,
+        "combined_gross": 24_000.0,
+        "total_deductions": 30_000.0,
+        "deductions_before_senior_bonus": 30_000.0,
+        "taxable_income": 0.0,
+        "magi": 24_000.0,
+        "magi_phaseout_basis": 24_000.0,
+        "niit_magi": 24_000.0,
+        "aca_magi": 60_000.0,
+    }
+    base.update(kw)
+    return _yr(**base)
+
+
+# Past 4,000 of harvest, taxable SS rises 0.85 per dollar; it uses up the unused
+# 6,000 of deduction (taxable SS 4,000 -> 10,000) at H = 4,000 + 4,000 / 0.85,
+# where ordinary tax starts.
+SS_TAX_LIMIT = 4_000.0 + 4_000.0 / 0.85
+# With 80,000 of deductions, taxable SS caps at 34,000 and ordinary income
+# (20,000 + 34,000) never exceeds them: no ordinary tax. The 26,000 still unused
+# shelters harvest first, so the 0% band ends at H = 98,900 + 26,000.
+SS_LTCG_LIMIT = LTCG_ZERO_MFJ + 26_000.0
+
+
+def test_harvest_sizing_binds_on_social_security_tax() -> None:
+    sizing = _size(_ss_yr(), _lines())
+    assert sizing.binding == "Social Security tax"
+    assert SS_TAX_LIMIT - 1.0 <= sizing.amount <= SS_TAX_LIMIT + 0.1
+    assert room_after(_ss_yr(), _lines())["ltcg_zero"] == LTCG_ZERO_MFJ + 6_000.0  # 1:1 bound
+
+
+def test_harvest_sizing_finds_the_0pct_limit_when_social_security_eats_the_deduction() -> None:
+    yr = _ss_yr(total_deductions=80_000.0, deductions_before_senior_bonus=80_000.0)
+    sizing = _size(yr, _lines())
+    assert sizing.binding == "0% LTCG"
+    assert SS_LTCG_LIMIT - 1.0 <= sizing.amount <= SS_LTCG_LIMIT + 0.05
+    assert room_after(yr, _lines())["ltcg_zero"] == LTCG_ZERO_MFJ + 56_000.0  # 1:1 bound
+
+
+def test_harvest_violations_report_each_constraint_in_binding_order() -> None:
+    lines = _lines(aca_cliff=90_000.0, irmaa_t1=85_000.0, niit=80_000.0)
+    case = rl._harvest_case(_plain_yr(), lines, CPI, None)
+    assert rl._violations(case, 0.0) == []
+    assert rl._violations(case, 21_000.0) == ["NIIT"]
+    assert rl._violations(case, 26_000.0) == ["IRMAA tier 1", "NIIT"]
+    assert rl._violations(case, 31_000.0) == ["ACA cliff", "IRMAA tier 1", "NIIT"]
+    assert rl._violations(case, 70_000.0) == ["0% LTCG", "ACA cliff", "IRMAA tier 1", "NIIT"]
+    ss_case = rl._harvest_case(_ss_yr(), _lines(), CPI, None)
+    assert rl._violations(ss_case, 9_000.0) == ["Social Security tax"]
+
+
+def test_harvest_sizing_returns_a_feasible_upper_bound_without_bisecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[float] = []
+    real = rl._bisect
+
+    def counting(case: object, upper: float) -> tuple[float, float]:
+        calls.append(upper)
+        return real(case, upper)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(rl, "_bisect", counting)
+    _size(_plain_yr(), _lines())
+    assert calls == []
+    _size(_ss_yr(), _lines())
+    assert calls == [LTCG_ZERO_MFJ + 6_000.0]
+
+
+def test_harvest_bisection_stops_within_a_dollar_or_forty_halvings() -> None:
+    case = rl._harvest_case(_ss_yr(), _lines(), CPI, None)
+    lo, hi = rl._bisect(case, LTCG_ZERO_MFJ + 6_000.0)
+    assert hi - lo <= 1.0
+    assert rl._violations(case, lo) == []
+    assert rl._violations(case, hi) == ["Social Security tax"]
+    assert rl._HARVEST_MAX_ITERATIONS == 40

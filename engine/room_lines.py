@@ -16,9 +16,19 @@ from dataclasses import dataclass
 from engine.aca import aca_applies, aca_ceiling_magi
 from engine.irmaa import irmaa_tier1_threshold
 from engine.niit import niit_threshold
+from engine.scenario import _pref_stack_tax
 from engine.scenario_types import YearResult
-from engine.tax import LTCG_THRESHOLDS_MFJ, LTCG_THRESHOLDS_SINGLE, indexed_bracket_ceiling
+from engine.tax import (
+    LTCG_RATES_MFJ,
+    LTCG_RATES_SINGLE,
+    LTCG_THRESHOLDS_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
+    federal_tax,
+    federal_tax_single,
+    indexed_bracket_ceiling,
+)
 from engine.tax_indexing import index_tuple
+from engine.yr_reprice import reprice
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -200,6 +210,124 @@ def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) ->
     return max(0.0, value), label
 
 
+_TAX_TOLERANCE = 0.005  # extra federal tax at or below half a cent is $0
+_HARVEST_TOLERANCE = 1.0  # stop bisecting when hi - lo <= $1
+_HARVEST_MAX_ITERATIONS = 40  # closes any upper bound under ~$1T
+
+
+@dataclass(frozen=True)
+class _HarvestCase:
+    """One year's inputs to the feasibility test, priced once."""
+
+    yr: YearResult
+    lines: RoomLines
+    cpi: float
+    pref_existing: float
+    thresholds: tuple[float, float]
+    rates: tuple[float, float, float]
+    ordinary_tax_at_zero: float
+
+
+def _ordinary_tax(status: str, taxable: float, year: int, cpi: float) -> float:
+    """Federal ordinary tax, dispatched like scenario_compute.compute_federal_tax."""
+    if status == "Single":
+        return federal_tax_single(taxable, year=year, cpi=cpi)
+    return federal_tax(taxable, year=year, cpi=cpi)
+
+
+def _harvest_case(
+    yr: YearResult, lines: RoomLines, cpi: float, ytd: YTDSnapshot | None
+) -> _HarvestCase:
+    """Thresholds and rates as scenario.py:1136-1141 (Single for survivor years)."""
+    single = lines.filing_status == "Single"
+    base = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
+    thresholds = index_tuple(base, yr.year, cpi, round50=True)
+    taxable_at_zero = reprice(yr, 0.0, 0.0, cpi).taxable_income
+    return _HarvestCase(
+        yr=yr,
+        lines=lines,
+        cpi=cpi,
+        pref_existing=_preferential_existing(yr, ytd),
+        thresholds=(float(thresholds[0]), float(thresholds[1])),
+        rates=LTCG_RATES_SINGLE if single else LTCG_RATES_MFJ,
+        ordinary_tax_at_zero=_ordinary_tax(lines.filing_status, taxable_at_zero, yr.year, cpi),
+    )
+
+
+def _tax_violation(case: _HarvestCase, h: float) -> tuple[str | None, float]:
+    """(tax label or None, extra taxable SS) at harvest ``h``.
+
+    tax(h) - tax(0) = extra ordinary tax + preferential tax on h stacked above the
+    existing preferential income. "0% LTCG" when the preferential stack is taxed,
+    else "Social Security tax" (extra ORDINARY tax from newly taxable benefits or
+    a shrunken senior bonus).
+    """
+    yr = case.yr
+    rp = reprice(yr, 0.0, h, case.cpi)
+    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss
+    unused = max(rp.total_deductions - gross, 0.0)
+    pref_tax = _pref_stack_tax(
+        rp.taxable_income, unused, case.pref_existing, h, case.thresholds, case.rates
+    )
+    ordinary_extra = (
+        _ordinary_tax(case.lines.filing_status, rp.taxable_income, yr.year, case.cpi)
+        - case.ordinary_tax_at_zero
+    )
+    dtss = rp.taxable_ss - yr.taxable_ss_amt
+    if pref_tax + ordinary_extra <= _TAX_TOLERANCE:
+        return None, dtss
+    return ("0% LTCG" if pref_tax > 0.0 else "Social Security tax"), dtss
+
+
+def _violations(case: _HarvestCase, h: float) -> list[str]:
+    """Constraints violated at harvest ``h``, in HARVEST_BINDINGS order.
+
+    ACA MAGI adds non-taxable SS back, so the taxable-SS change cancels there
+    (scenario_compute.py:715); IRMAA and NIIT MAGI move by dtss + h.
+    """
+    tax_label, dtss = _tax_violation(case, h)
+    yr, lines = case.yr, case.lines
+    out = [] if tax_label is None else [tax_label]
+    if lines.aca_cliff is not None and yr.aca_magi + h > lines.aca_cliff:
+        out.append("ACA cliff")
+    if lines.irmaa_t1 is not None and yr.magi + dtss + h > lines.irmaa_t1:
+        out.append("IRMAA tier 1")
+    if yr.niit_magi + dtss + h > lines.niit:
+        out.append("NIIT")
+    return out
+
+
+def _bisect(case: _HarvestCase, upper: float) -> tuple[float, float]:
+    """(last feasible H, smallest infeasible H probed); ``upper`` is infeasible.
+
+    Every constraint is monotone in H (taxable SS non-decreasing, senior bonus
+    non-increasing, taxes and MAGI non-decreasing), so the feasible set is a
+    prefix of [0, upper] -- the same argument as scenario_autofill's bracket fill.
+    """
+    lo, hi = 0.0, upper
+    for _ in range(_HARVEST_MAX_ITERATIONS):
+        if hi - lo <= _HARVEST_TOLERANCE:
+            break
+        mid = (lo + hi) / 2
+        if _violations(case, mid):
+            hi = mid
+        else:
+            lo = mid
+    return lo, hi
+
+
+def _search(
+    case: _HarvestCase, rooms: dict[str, float | None], embedded_gain: float | None
+) -> tuple[float, str]:
+    """(amount, binding): the upper bound if feasible, else the bisection result
+    labelled by the first constraint violated at the smallest infeasible probe."""
+    upper, label = _upper_bound(rooms, embedded_gain)
+    if upper <= 0.0 or not _violations(case, upper):
+        return upper, label
+    lo, hi = _bisect(case, upper)
+    return lo, _violations(case, hi)[0]
+
+
 def harvest_sizing(
     yr: YearResult,
     lines: RoomLines,
@@ -208,10 +336,20 @@ def harvest_sizing(
     cpi: float,
     ytd: YTDSnapshot | None = None,
 ) -> HarvestSizing:
-    """Interim (Task 4): the 1:1 upper bound. Task 5 replaces the body with the
-    exact search; ``yr``, ``lines``, ``cpi`` and ``ytd`` are used from then on."""
-    amount, binding = _upper_bound(rooms, embedded_gain)
+    """Largest harvest H of unrealized long-term gain that costs $0 extra federal
+    tax and crosses no applicable cliff, measured after the year's planned
+    conversion and exercises. ADVISORY: nothing here feeds the projection.
+
+    Starts from the 1:1 upper bound (``_upper_bound``). If that is feasible it is
+    the answer; otherwise bisects [0, upper] re-pricing taxable SS and the OBBBA
+    senior bonus (``reprice``), ordinary and preferential tax, and the IRMAA/NIIT
+    MAGI at each candidate, and returns the last feasible H, so it never
+    over-states. ``rooms`` is ``room_after(yr, lines, ytd)``. ``embedded_gain``
+    None = basis unknown: no cap, ``basis_known`` False.
+    """
+    case = _harvest_case(yr, lines, cpi, ytd)
+    amount, binding = _search(case, rooms, embedded_gain)
     if embedded_gain is None:
         return HarvestSizing(amount, binding, amount, basis_known=False)
-    uncapped = _upper_bound(rooms, None)[0] if binding == _EMBEDDED_GAIN else amount
+    uncapped = _search(case, rooms, None)[0] if binding == _EMBEDDED_GAIN else amount
     return HarvestSizing(amount, binding, uncapped, basis_known=True)
