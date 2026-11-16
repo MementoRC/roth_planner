@@ -376,7 +376,6 @@ def _stack_lines(
 
 
 def _embedded_gain(
-    hh: Household,
     yr: YearResult,
     opening_basis: float | None,
     ytd: YTDSnapshot | None,
@@ -412,7 +411,7 @@ def _row(
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
     limits = room_lines_for_year(hh, yr)
     rooms = room_after(yr, limits, ytd)
-    embedded = _embedded_gain(hh, yr, opening_basis, ytd)
+    embedded = _embedded_gain(yr, opening_basis, ytd)
     harvest = harvest_sizing(
         yr, limits, rooms, embedded_gain=embedded, cpi=hh.cpi_assumption, ytd=ytd
     )

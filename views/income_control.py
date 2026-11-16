@@ -1,5 +1,6 @@
 """Income Control — read-only: room left under each tax/cost line, per year, after
-the active plan (issue #123, slice 1). Changes nothing; levers arrive in later slices.
+the active plan (issue #123), plus an advisory 0% LTCG harvest per year (slice 3).
+Changes nothing in the plan or the projection.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from engine.income_control import (
     StackLine,
     build_income_control,
 )
-from engine.room_lines import LINE_KEYS
+from engine.room_lines import LINE_KEYS, HarvestSizing
 from models.household import Household
 from views._format import DOLLAR_TICKFORMAT, DOLLAR_TICKFORMATSTOPS, fmt_dollars, md_dollars
 from views._style import render_page_header
@@ -107,6 +108,44 @@ def _ages_text(row: IncomeControlYear) -> str:
     return " / ".join(str(age) for age in row.ages if age is not None)
 
 
+HARVEST_COLUMN = "0% LTCG harvest"
+HARVEST_USED_BY_CONVERSION = "$0 because this year's conversion already used the 0% LTCG room."
+HARVEST_ENTER_BASIS = (
+    "Enter your brokerage cost basis in Profile to cap this at your embedded gain."
+)
+HARVEST_NOT_ADDITIVE = "Years are sized independently; harvest amounts are not additive."
+_ROOM_USED_UP = 1.0  # a 0% LTCG room under $1 counts as used up (the search tolerance)
+
+
+def harvest_text(harvest: HarvestSizing) -> str:
+    """Detail line: amount and the constraint that limited it."""
+    return f"0% LTCG harvest: up to {fmt_dollars(harvest.amount)} (limited by {harvest.binding})"
+
+
+def _room_used_by_conversion(row: IncomeControlYear, harvest: HarvestSizing) -> bool:
+    room = row.rooms.get("ltcg_zero")
+    return (
+        harvest.amount < _HALF_CENT
+        and room is not None
+        and abs(room) < _ROOM_USED_UP
+        and row.full_year_of("conversion", row.planned_conversion) > 0
+    )
+
+
+def harvest_notes(row: IncomeControlYear) -> list[str]:
+    """Captions under the harvest line, only those that apply; none without a harvest."""
+    harvest = row.harvest
+    if harvest is None:
+        return []
+    notes: list[str] = []
+    if _room_used_by_conversion(row, harvest):
+        notes.append(HARVEST_USED_BY_CONVERSION)
+    if not harvest.basis_known:
+        notes.append(HARVEST_ENTER_BASIS)
+    notes.append(HARVEST_NOT_ADDITIVE)
+    return notes
+
+
 def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
     """One display row per year for the all-years table."""
     out: list[dict[str, object]] = []
@@ -130,6 +169,7 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
         for key in LINE_KEYS:
             room = row.rooms[key]
             entry[LINE_LABELS[key]] = "n/a" if room is None else fmt_dollars(room)
+        entry[HARVEST_COLUMN] = "-" if row.harvest is None else fmt_dollars(row.harvest.amount)
         entry["Binding line"] = _binding_name(row)
         out.append(entry)
     return out
@@ -319,7 +359,11 @@ def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str)
                 st.markdown(md_dollars(f":red[{label}: over by {fmt_dollars(-room)}]"))
             else:
                 st.markdown(md_dollars(f"{label}: {fmt_dollars(room)} left"))
+        if row.harvest is not None:
+            st.markdown(md_dollars(harvest_text(row.harvest)))
         st.caption(_binding_note(row))
+        for note in harvest_notes(row):
+            st.caption(md_dollars(note))
 
 
 def render(hh: Household) -> None:
