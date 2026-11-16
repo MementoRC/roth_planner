@@ -472,6 +472,8 @@ def _project_year(
         realized_gains += forced_brokerage_draw * (1 - _fbd_basis_fraction)
         brokerage_basis = max(0.0, brokerage_basis - forced_brokerage_draw * _fbd_basis_fraction)
         brokerage = max(0.0, brokerage - forced_brokerage_draw)
+    # Exposure only (#123 slice 3): the FINAL realized gains, turnover + forced draw.
+    yr.realized_gains = realized_gains
 
     # === Social Security + taxable SS ===
     # SS survivor step-up: survivor keeps max(your_ss, spouse_ss); implemented in compute_social_security.

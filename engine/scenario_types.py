@@ -162,6 +162,10 @@ class YearResult:
     # The NON-QUALIFIED part of those earnings draws: the ordinary income that
     # enters combined_gross / MAGI (exposure of the run_scenario local).
     roth_earnings_income: float = 0.0
+    # This year's FINAL realized brokerage gains: forecast turnover gain plus the
+    # forced brokerage draw's gain (exposure of the _project_year local). The
+    # turnover leg is 0 in the base year with YTD actuals (they replace it).
+    realized_gains: float = 0.0
     # The year-2 MAGI this year's IRMAA was priced on.
     irmaa_lookback_magi: float | None = None
     # False ONLY when the tax gross-up iteration failed to settle (it
