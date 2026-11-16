@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from engine.income_control import build_income_control
 from engine.ira import calc_rmd, rmd_divisor
 from engine.irmaa import (
     BASE_PART_B,
@@ -307,3 +308,48 @@ def retiree_return(
         ordinary_tax=est.ordinary_tax,
         total_tax=est.total,
     )
+
+
+@dataclass(frozen=True)
+class StackOutcome:
+    ordinary_stack_total: float  # ordinary lines, Social Security taken as taxable_ss_amt
+    combined_gross: float
+    conversion_done: float
+    conversion_remaining: float
+
+
+def income_control_stack(
+    *,
+    age: int,
+    base_year: int,
+    ira_balance: float,
+    wages_ytd: float,
+    converted_ytd: float,
+    planned_conversion: float,
+) -> StackOutcome:
+    """engine.income_control.build_income_control for a single filer with this year's actuals."""
+    hh = Household(
+        your_age=age,
+        spouse_age=0,
+        filing_status="Single",
+        base_year=base_year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=ira_balance,
+        spouse_ira=0.0,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=0.0,
+        living_expenses=0.0,
+    )
+    plan = ConversionPlan(your_conversions={base_year: planned_conversion}, bracket_cap=False)
+    ytd = YTDSnapshot(tax_year=base_year, wages_ytd=wages_ytd, ira_conversions_ytd=converted_ytd)
+    row = build_income_control(hh, plan, plan_label="acceptance", ytd=ytd).years[0]
+    yr = row.year_result
+    conversion = next(line for line in row.stack_lines if line.key == "conversion")
+    ordinary = sum(
+        yr.taxable_ss_amt if line.key == "social_security" else line.full_year
+        for line in row.stack_lines
+        if not line.magi_only
+    )
+    return StackOutcome(ordinary, yr.combined_gross, conversion.done, conversion.remaining)
