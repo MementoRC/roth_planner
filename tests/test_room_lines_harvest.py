@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from engine import room_lines as rl
+from engine.income_control import build_income_control
 from engine.room_lines import (
     _HARVEST_ROOMS,
     HARVEST_BINDINGS,
@@ -13,9 +14,23 @@ from engine.room_lines import (
     RoomLines,
     harvest_sizing,
     room_after,
+    room_lines_for_year,
 )
-from engine.scenario_types import YearResult
+from engine.scenario import _pref_stack_tax
+from engine.scenario_types import ConversionPlan, YearResult
+from engine.tax import (
+    LTCG_RATES_MFJ,
+    LTCG_RATES_SINGLE,
+    LTCG_THRESHOLDS_MFJ,
+    LTCG_THRESHOLDS_SINGLE,
+    federal_tax,
+    federal_tax_single,
+)
+from engine.tax_indexing import index_tuple
+from engine.yr_reprice import reprice
+from models.household import Household, SurvivorScenario
 from models.ytd_income import YTDSnapshot
+from tests.test_income_control_harvest import _brok_hh
 
 CPI = 0.0  # no indexing: every threshold below is the 2026 statutory value
 LTCG_ZERO_MFJ = 98_900.0
@@ -373,3 +388,214 @@ def test_harvest_binds_on_0pct_ltcg_when_ordinary_and_pref_tax_rise_together() -
     assert pref_tax > 0.0
     assert ordinary_extra > 0.0
     assert rl._tax_violation(case, past)[0] == "0% LTCG"
+
+
+def _senior_yr() -> YearResult:
+    """MFJ 2027, both 66, no Social Security: ordinary 148,000 just under the
+    150,000 OBBBA phase-out start; 60,000 other deductions + 12,000 senior bonus
+    -> ordinary taxable income 76,000 (12% bracket)."""
+    return _yr(
+        year=2027,
+        your_age=66,
+        spouse_age=66,
+        senior_bonus_ya_eff=66,
+        senior_bonus_sa_eff=66,
+        combined_gross=148_000.0,
+        deductions_before_senior_bonus=60_000.0,
+        total_deductions=72_000.0,
+        taxable_income=76_000.0,
+        magi=148_000.0,
+        magi_phaseout_basis=148_000.0,
+        niit_magi=148_000.0,
+        aca_magi=148_000.0,
+    )
+
+
+def _survivor_case() -> tuple[YearResult, RoomLines]:
+    """Single survivor year 2030 (spouse died 2028), survivor 62: SS 30,000 with
+    10,000 other income (provisional 25,000, taxable SS 0), deductions 60,000."""
+    hh = Household(
+        base_year=2026,
+        your_age=58,
+        spouse_age=56,
+        filing_status="MFJ",
+        cpi_assumption=CPI,
+        survivor=SurvivorScenario("spouse", 2028),
+        your_aca_enrolled=False,
+        spouse_aca_enrolled=False,
+    )
+    yr = _yr(
+        your_age=62,
+        spouse_age=60,
+        filing_status="Single",
+        combined_ss=30_000.0,
+        taxable_ss_amt=0.0,
+        ss_provisional_base=10_000.0,
+        combined_gross=10_000.0,
+        total_deductions=60_000.0,
+        deductions_before_senior_bonus=60_000.0,
+        taxable_income=0.0,
+        magi=10_000.0,
+        magi_phaseout_basis=10_000.0,
+        niit_magi=10_000.0,
+        aca_magi=40_000.0,
+    )
+    return yr, room_lines_for_year(hh, yr)
+
+
+# Senior bonus: MAGI hits 150,000 at H = 2,000; past it each dollar removes 0.12
+# of deduction (0.06 per person), so ordinary tax starts there.
+SENIOR_LIMIT = 2_000.0
+# Survivor: taxable SS caps at 25,500 (85%); ordinary 35,500 stays under 60,000,
+# leaving 24,500 unused, so the Single 0% band (49,450) ends at H = 73,950.
+SURVIVOR_LIMIT = 49_450.0 + 24_500.0
+
+
+def _pref(yr: YearResult, ytd: YTDSnapshot | None) -> float:
+    actual = 0.0 if ytd is None else ytd.qualified_dividends_ytd + ytd.preferential_capital_gain_ytd
+    return yr.brokerage_qual_div + yr.realized_gains + actual
+
+
+def _tax_at(yr: YearResult, lines: RoomLines, pref: float, h: float, cpi: float = CPI) -> float:
+    rp = reprice(yr, 0.0, h, cpi)
+    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss
+    unused = max(rp.total_deductions - gross, 0.0)
+    single = lines.filing_status == "Single"
+    base = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
+    thresholds = index_tuple(base, yr.year, cpi, round50=True)
+    rates = LTCG_RATES_SINGLE if single else LTCG_RATES_MFJ
+    bracket_tax = federal_tax_single if single else federal_tax
+    ordinary = bracket_tax(rp.taxable_income, year=yr.year, cpi=cpi)
+    return ordinary + _pref_stack_tax(rp.taxable_income, unused, pref, h, thresholds, rates)
+
+
+def _cliff_rooms_at(yr: YearResult, lines: RoomLines, h: float, cpi: float = CPI) -> list[float]:
+    dtss = reprice(yr, 0.0, h, cpi).taxable_ss - yr.taxable_ss_amt
+    rooms = [lines.niit - (yr.niit_magi + dtss + h)]
+    if lines.aca_cliff is not None:
+        rooms.append(lines.aca_cliff - (yr.aca_magi + h))
+    if lines.irmaa_t1 is not None:
+        rooms.append(lines.irmaa_t1 - (yr.magi + dtss + h))
+    return rooms
+
+
+def _feasible(yr: YearResult, lines: RoomLines, pref: float, h: float, cpi: float = CPI) -> bool:
+    extra = _tax_at(yr, lines, pref, h, cpi) - _tax_at(yr, lines, pref, 0.0, cpi)
+    return extra <= 0.005 and min(_cliff_rooms_at(yr, lines, h, cpi)) >= 0.0
+
+
+_CROSS_CHECK = [
+    pytest.param(_plain_yr(), _lines(), None, None, False, id="plain-mfj"),
+    pytest.param(_plain_yr(), _lines(), 20_000.0, None, False, id="plain-mfj-embedded-cap"),
+    pytest.param(
+        _plain_yr(),
+        _lines(aca_cliff=90_000.0, irmaa_t1=85_000.0),
+        None,
+        None,
+        False,
+        id="plain-mfj-irmaa",
+    ),
+    pytest.param(
+        _plain_yr(),
+        _lines(),
+        None,
+        _ytd(qualified_dividends_ytd=2_000.0, ltcg_ytd=5_000.0),
+        False,
+        id="base-year-actuals",
+    ),
+    pytest.param(_pref_below_unused_yr(), _lines(), None, None, False, id="pref-below-unused"),
+    pytest.param(_ss_yr(), _lines(), None, None, True, id="taxable-ss-partial-band"),
+    pytest.param(
+        _ss_yr(total_deductions=80_000.0, deductions_before_senior_bonus=80_000.0),
+        _lines(),
+        None,
+        None,
+        True,
+        id="taxable-ss-eats-unused-deduction",
+    ),
+    pytest.param(_senior_yr(), _lines(year=2027), None, None, True, id="senior-bonus-phase-out"),
+    pytest.param(*_survivor_case(), None, None, True, id="single-survivor"),
+]
+
+
+@pytest.mark.parametrize(("yr", "lines", "embedded", "ytd", "below_upper"), _CROSS_CHECK)
+def test_harvest_cross_check_amount_is_exact(
+    yr: YearResult,
+    lines: RoomLines,
+    embedded: float | None,
+    ytd: YTDSnapshot | None,
+    below_upper: bool,
+) -> None:
+    rooms = room_after(yr, lines, ytd)
+    sizing = harvest_sizing(yr, lines, rooms, embedded, CPI, ytd)
+    pref = _pref(yr, ytd)
+    assert _feasible(yr, lines, pref, sizing.amount), sizing
+    if sizing.binding == "embedded gain":
+        assert sizing.amount == embedded
+    else:
+        assert not _feasible(yr, lines, pref, sizing.amount + 1.0 + 1.0), sizing
+    if below_upper:
+        keys = ("ltcg_zero", "aca_cliff", "irmaa_t1", "niit")
+        upper = min(room for key in keys if (room := rooms[key]) is not None)
+        assert sizing.amount < upper - 1.0, (sizing, upper)
+
+
+def test_harvest_senior_bonus_phase_out_binds_as_social_security_tax() -> None:
+    sizing = _size(_senior_yr(), _lines(year=2027))
+    assert sizing.binding == "Social Security tax"
+    assert SENIOR_LIMIT - 1.0 <= sizing.amount <= SENIOR_LIMIT + 0.5
+    assert room_after(_senior_yr(), _lines(year=2027))["ltcg_zero"] == 22_900.0  # 1:1 bound
+
+
+def test_harvest_single_survivor_uses_the_single_thresholds() -> None:
+    yr, lines = _survivor_case()
+    assert (lines.filing_status, lines.ltcg_zero, lines.irmaa_t1, lines.aca_cliff) == (
+        "Single",
+        49_450.0,
+        None,
+        None,
+    )
+    sizing = _size(yr, lines)
+    assert sizing.binding == "0% LTCG"
+    # MFJ thresholds would give 98,900 + 24,500
+    assert SURVIVOR_LIMIT - 1.0 <= sizing.amount <= SURVIVOR_LIMIT + 0.05
+
+
+def _assert_rows_exact(hh: Household, ytd: YTDSnapshot | None) -> int:
+    """Run the real scenario and prove every row's harvest against the oracle."""
+    checked = 0
+    result = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd)
+    for index, row in enumerate(result.years):
+        sizing = row.harvest
+        assert sizing is not None
+        yr = row.year_result
+        lines = room_lines_for_year(hh, yr)
+        pref = _pref(yr, ytd if index == 0 else None)
+        cpi = hh.cpi_assumption
+        crossed = min(_cliff_rooms_at(yr, lines, 0.0, cpi)) < 0.0
+        if crossed:
+            # a cliff is already behind the plan: the harvest is 0 by design
+            assert sizing.amount == 0.0, (yr.year, sizing)
+        else:
+            assert _feasible(yr, lines, pref, sizing.amount, cpi), (yr.year, sizing)
+        if sizing.binding != "embedded gain":
+            assert not _feasible(yr, lines, pref, sizing.amount + 2.0, cpi), (yr.year, sizing)
+        checked += 1
+    return checked
+
+
+def test_harvest_cross_check_real_scenario_base_year_with_ytd_actuals() -> None:
+    ytd = YTDSnapshot(
+        tax_year=2026,
+        snapshot_date="2026-06-30",
+        qualified_dividends_ytd=2_000.0,
+        ltcg_ytd=5_000.0,
+    )
+    assert _assert_rows_exact(_brok_hh(), ytd) > 1
+
+
+def test_harvest_cross_check_real_scenario_single_survivor_years() -> None:
+    hh = _brok_hh(survivor=SurvivorScenario("spouse", 2028))
+    result = build_income_control(hh, ConversionPlan(), plan_label="x")
+    assert any(row.year_result.filing_status == "Single" for row in result.years)
+    assert _assert_rows_exact(hh, None) > 1
