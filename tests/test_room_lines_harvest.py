@@ -94,7 +94,7 @@ def _except_ltcg(rooms: dict[str, float | None]) -> dict[str, float | None]:
 
 
 def test_room_after_ltcg_zero_counts_this_years_realized_gains() -> None:
-    # realized_gains carries turnover AND forced-draw gains (Task 2)
+    # realized_gains carries turnover AND forced-draw gains
     rooms = room_after(_plain_yr(realized_gains=8_000.0), _lines())
     assert rooms["ltcg_zero"] == LTCG_ZERO_MFJ - (30_000.0 + 8_000.0)
 
