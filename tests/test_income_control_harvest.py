@@ -3,6 +3,8 @@ embedded gain and harvest wiring. Synthetic data only."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from engine import income_control as ic
@@ -119,54 +121,82 @@ def _yr(**kw: float | int | str) -> YearResult:
 
 def test_embedded_gain_first_row_uses_the_household_start_basis() -> None:
     yr = _yr(brokerage_balance=200_000.0, realized_gains=10_000.0)
-    assert ic._embedded_gain(_brok_hh(), yr, None, _BASIS, None) == 70_000.0
+    assert ic._embedded_gain(_brok_hh(), yr, _BASIS, None) == 70_000.0
 
 
 def test_embedded_gain_later_rows_use_the_previous_closing_basis() -> None:
-    prev = _yr(brokerage_basis=150_000.0)
     yr = _yr(year=2027, brokerage_balance=210_000.0, realized_gains=5_000.0)
-    assert ic._embedded_gain(_brok_hh(), yr, prev, None, None) == 55_000.0
+    assert ic._embedded_gain(_brok_hh(), yr, 150_000.0, None) == 55_000.0
 
 
 def test_embedded_gain_base_year_subtracts_the_ytd_long_term_gain() -> None:
     yr = _yr(brokerage_balance=200_000.0)
     ytd = _snapshot(ltcg_ytd=4_000.0)
-    assert ic._embedded_gain(_brok_hh(), yr, None, _BASIS, ytd) == 76_000.0
+    assert ic._embedded_gain(_brok_hh(), yr, _BASIS, ytd) == 76_000.0
 
 
 def test_embedded_gain_ignores_a_net_capital_loss() -> None:
     yr = _yr(brokerage_balance=200_000.0)
-    assert ic._embedded_gain(_brok_hh(), yr, None, _BASIS, _snapshot(ltcg_ytd=-8_000.0)) == 80_000.0
+    assert ic._embedded_gain(_brok_hh(), yr, _BASIS, _snapshot(ltcg_ytd=-8_000.0)) == 80_000.0
 
 
 def test_embedded_gain_is_none_when_the_basis_is_unknown() -> None:
     hh = _brok_hh(brokerage_start_basis=None)
     yr = _yr(brokerage_balance=200_000.0)
     # the scenario resolves None to full basis; the harvest must not read it
-    assert ic._embedded_gain(hh, yr, None, None, None) is None
-    assert ic._embedded_gain(hh, yr, _yr(brokerage_basis=200_000.0), None, None) is None
+    assert ic._embedded_gain(hh, yr, None, None) is None
 
 
 def test_embedded_gain_never_goes_negative() -> None:
     yr = _yr(brokerage_balance=100_000.0, realized_gains=50_000.0)
-    assert ic._embedded_gain(_brok_hh(), yr, None, _BASIS, None) == 0.0
+    assert ic._embedded_gain(_brok_hh(), yr, _BASIS, None) == 0.0
 
 
 def test_harvest_rows_are_wired_with_the_previous_rows_closing_basis() -> None:
     hh = _brok_hh()
     rows = build_income_control(hh, ConversionPlan(), plan_label="x").years
-    prev: YearResult | None = None
+    opening = hh.brokerage_start_basis
     for row in rows:
         yr = row.year_result
-        opening = hh.brokerage_start_basis if prev is None else None
-        embedded = ic._embedded_gain(hh, yr, prev, opening, None)
+        embedded = ic._embedded_gain(hh, yr, opening, None)
         expected = harvest_sizing(
             yr, room_lines_for_year(hh, yr), row.rooms, embedded, hh.cpi_assumption, None
         )
         assert row.harvest == expected
-        prev = yr
+        opening = yr.brokerage_basis
     assert rows[0].harvest is not None
     assert rows[0].harvest.basis_known is True
+
+
+def test_harvest_basis_carries_across_a_year_missing_from_the_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hh = _brok_hh()
+    full = build_income_control(hh, ConversionPlan(), plan_label="x").years
+    assert len(full) >= 4  # precondition: a middle year exists to drop
+    gap_year = full[1].year
+    real_run = ic.run_scenario
+
+    def gapped(*args: object, **kw: object) -> SimpleNamespace:
+        res = real_run(*args, **kw)  # type: ignore[arg-type]
+        return SimpleNamespace(years=[y for y in res.years if y.year != gap_year])
+
+    monkeypatch.setattr(ic, "run_scenario", gapped)
+    rows = build_income_control(hh, ConversionPlan(), plan_label="x").years
+    assert gap_year not in [r.year for r in rows]
+    after = next(r for r in rows if r.year == gap_year + 1)
+    assert after.harvest is not None
+    assert after.harvest.basis_known is True
+    prev_closing = next(r for r in rows if r.year == gap_year - 1).year_result.brokerage_basis
+    expected = ic._embedded_gain(hh, after.year_result, prev_closing, None)
+    assert after.harvest == harvest_sizing(
+        after.year_result,
+        room_lines_for_year(hh, after.year_result),
+        after.rooms,
+        expected,
+        hh.cpi_assumption,
+        None,
+    )
 
 
 def test_harvest_base_row_uses_the_snapshot() -> None:
@@ -174,7 +204,7 @@ def test_harvest_base_row_uses_the_snapshot() -> None:
     ytd = _snapshot(qualified_dividends_ytd=2_000.0, ltcg_ytd=5_000.0)
     row = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[0]
     yr = row.year_result
-    embedded = ic._embedded_gain(hh, yr, None, _BASIS, ytd)
+    embedded = ic._embedded_gain(hh, yr, _BASIS, ytd)
     expected = harvest_sizing(
         yr, room_lines_for_year(hh, yr), row.rooms, embedded, hh.cpi_assumption, ytd
     )

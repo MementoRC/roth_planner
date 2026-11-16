@@ -378,27 +378,25 @@ def _stack_lines(
 def _embedded_gain(
     hh: Household,
     yr: YearResult,
-    prev_yr: YearResult | None,
     opening_basis: float | None,
     ytd: YTDSnapshot | None,
 ) -> float | None:
     """Unrealized brokerage gain left to harvest in ``yr``; None if the basis is unknown.
 
     The scenario resolves an unknown start basis to full basis (zero gain), so with
-    ``hh.brokerage_start_basis is None`` this returns None rather than reading
-    ``yr.brokerage_basis``. Opening basis = the previous row's CLOSING basis, or
-    ``opening_basis`` (the household's start basis) on the first row; the opening
-    balance is ``yr.brokerage_balance``. This year's realized gains (turnover and
-    forced draw) are already out of the pool. YTD sales are not reflected in
+    ``opening_basis is None`` this returns None rather than reading
+    ``yr.brokerage_basis``. ``opening_basis`` is the basis at the start of ``yr``
+    (the household start basis on the first row, else the previous emitted year's
+    closing basis); the opening balance is ``yr.brokerage_balance``. This year's
+    realized gains (turnover and forced draw) are already out of the pool. YTD sales are not reflected in
     ``brokerage_start_basis``, so the base year also subtracts the YTD net
     long-term gain: this treats it as drawn from the same embedded pool, which is
     conservative if those sales were in another account.
     """
-    basis = prev_yr.brokerage_basis if prev_yr is not None else opening_basis
-    if hh.brokerage_start_basis is None or basis is None:
+    if opening_basis is None:
         return None
     ytd_sold = 0.0 if ytd is None else max(ytd.preferential_capital_gain_ytd, 0.0)
-    return max(yr.brokerage_balance - basis - yr.realized_gains - ytd_sold, 0.0)
+    return max(yr.brokerage_balance - opening_basis - yr.realized_gains - ytd_sold, 0.0)
 
 
 def _row(
@@ -406,18 +404,18 @@ def _row(
     yr: YearResult,
     plan: ConversionPlan | None = None,
     ytd: YTDSnapshot | None = None,
-    prev_yr: YearResult | None = None,
     opening_basis: float | None = None,
 ) -> IncomeControlYear:
-    """One window row. ``ytd`` only for the base year; ``prev_yr`` is the year
-    before (its closing brokerage basis); ``opening_basis`` the start basis on the
-    first row."""
+    """One window row. ``ytd`` only for the base year; ``opening_basis`` is the
+    brokerage basis at the start of the year (None when unknown)."""
     you_alive, spouse_alive = living_flags(hh, yr)
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
     limits = room_lines_for_year(hh, yr)
     rooms = room_after(yr, limits, ytd)
-    embedded = _embedded_gain(hh, yr, prev_yr, opening_basis, ytd)
-    harvest = harvest_sizing(yr, limits, rooms, embedded, hh.cpi_assumption, ytd)
+    embedded = _embedded_gain(hh, yr, opening_basis, ytd)
+    harvest = harvest_sizing(
+        yr, limits, rooms, embedded_gain=embedded, cpi=hh.cpi_assumption, ytd=ytd
+    )
     forced = forced_exercise(hh, yr.year, yr.option_income)
     lines = _stack_lines(hh, yr, forced, plan, ytd)
     return IncomeControlYear(
@@ -460,16 +458,15 @@ def build_income_control(
         hh, plan, plan_label, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
     )
     by_year = {yr.year: yr for yr in result.years}
-    rows = tuple(
-        _row(
-            hh,
-            by_year[y],
-            plan,
-            ytd if y == start else None,
-            prev_yr=by_year.get(y - 1),
-            opening_basis=hh.brokerage_start_basis if y == start else None,
-        )
-        for y in range(start, end + 1)
-        if y in by_year
-    )
-    return IncomeControlResult(rows, start, end, plan_label)
+    # Opening basis: the household start basis, then the closing basis of the
+    # previous EMITTED year. None (unknown) stays None for the whole window.
+    opening_basis = hh.brokerage_start_basis
+    rows: list[IncomeControlYear] = []
+    for y in range(start, end + 1):
+        yr = by_year.get(y)
+        if yr is None:
+            continue
+        rows.append(_row(hh, yr, plan, ytd if y == start else None, opening_basis))
+        if opening_basis is not None:
+            opening_basis = yr.brokerage_basis
+    return IncomeControlResult(tuple(rows), start, end, plan_label)
