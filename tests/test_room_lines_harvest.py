@@ -3,6 +3,8 @@ advisory harvest sizing. Synthetic data only."""
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from engine import room_lines as rl
@@ -16,7 +18,7 @@ from engine.room_lines import (
     room_after,
     room_lines_for_year,
 )
-from engine.scenario import _pref_stack_tax
+from engine.scenario import _pref_stack_tax, run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.tax import (
     LTCG_RATES_MFJ,
@@ -457,6 +459,8 @@ def _pref(yr: YearResult, ytd: YTDSnapshot | None) -> float:
 
 
 def _tax_at(yr: YearResult, lines: RoomLines, pref: float, h: float, cpi: float = CPI) -> float:
+    if yr.filing_status != lines.filing_status:
+        yr = dataclasses.replace(yr, filing_status=lines.filing_status)
     rp = reprice(yr, 0.0, h, cpi)
     gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss
     unused = max(rp.total_deductions - gross, 0.0)
@@ -569,6 +573,8 @@ def _assert_rows_exact(hh: Household, ytd: YTDSnapshot | None) -> int:
         sizing = row.harvest
         assert sizing is not None
         yr = row.year_result
+        if index == 0:
+            assert yr.year == hh.base_year  # the snapshot belongs to the base year
         lines = room_lines_for_year(hh, yr)
         pref = _pref(yr, ytd if index == 0 else None)
         cpi = hh.cpi_assumption
@@ -599,3 +605,50 @@ def test_harvest_cross_check_real_scenario_single_survivor_years() -> None:
     result = build_income_control(hh, ConversionPlan(), plan_label="x")
     assert any(row.year_result.filing_status == "Single" for row in result.years)
     assert _assert_rows_exact(hh, None) > 1
+
+
+def _base_year_federal_tax(hh: Household, ltcg_ytd: float) -> float:
+    """Base-year federal income tax (ordinary + preferential, NIIT excluded) when
+    ``ltcg_ytd`` of long-term gain is already realized: the scenario's own pricing."""
+    ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-30", ltcg_ytd=ltcg_ytd)
+    yr = run_scenario(hh, ConversionPlan(), "x", end_age=hh.your_age + 2, ytd=ytd).years[0]
+    assert yr.year == hh.base_year
+    return yr.federal_tax_amt + yr.brokerage_gain_tax
+
+
+def _e2e_sizing(hh: Household) -> HarvestSizing:
+    ytd = YTDSnapshot(tax_year=hh.base_year, snapshot_date="2026-06-30")
+    sizing = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=ytd).years[0].harvest
+    assert sizing is not None
+    return sizing
+
+
+def _assert_harvest_is_tax_free_end_to_end(hh: Household, binding: str) -> None:
+    sizing = _e2e_sizing(hh)
+    assert sizing.binding == binding, sizing
+    assert sizing.amount > 1_000.0, sizing
+    baseline = _base_year_federal_tax(hh, 0.0)
+    assert _base_year_federal_tax(hh, sizing.amount) - baseline <= 0.01, sizing
+    assert _base_year_federal_tax(hh, sizing.amount + 2.0) - baseline > 0.01, sizing
+
+
+def test_harvest_amount_is_tax_free_end_to_end_through_the_scenario_0pct_ltcg() -> None:
+    """The realized gain enters run_scenario as the base-year ``ltcg_ytd`` actual."""
+    hh = _brok_hh(brokerage_start_basis=None)
+    assert hh.cpi_assumption > 0.0  # thresholds are indexed
+    _assert_harvest_is_tax_free_end_to_end(hh, "0% LTCG")
+
+
+def test_harvest_amount_is_tax_free_end_to_end_through_the_scenario_social_security() -> None:
+    hh = _brok_hh(
+        brokerage_start_basis=None,
+        your_age=70,
+        spouse_age=68,
+        your_ira=0.0,
+        spouse_ira=0.0,
+        your_ss_start_age=70,
+        spouse_ss_start_age=68,
+        your_ss_fra=3_000.0,
+        spouse_ss_fra=2_500.0,
+    )
+    _assert_harvest_is_tax_free_end_to_end(hh, "Social Security tax")
