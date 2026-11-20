@@ -1049,6 +1049,12 @@ def _project_year(
     after_tax_rmd = (yr.taxable_rmd + _rmd_ytd_reduction) + (
         yr.spouse_taxable_rmd + _spouse_rmd_ytd_reduction
     )  # taxable RMDs (net of QCDs), full pre-YTD-clamp amount
+    # The conversion's own tax is paid from cash outside the accounts when the
+    # household says so: it stays in federal_tax_amt/all_in_cost but is not a
+    # draw on the modelled accounts.
+    _conversion_tax_paid_outside = (
+        yr.conversion_tax if hh.income_tax_paid_from_outside_cash else 0.0
+    )
     available_income = (
         after_tax_rmd
         + yr.extra_withdrawal
@@ -1069,7 +1075,7 @@ def _project_year(
         # (audit: unmasked when the hold-to-expiry default removed early option income).
         + yr.your_inherited_distribution
         + yr.spouse_inherited_distribution
-        - yr.federal_tax_amt
+        - (yr.federal_tax_amt - _conversion_tax_paid_outside)
         # audit-1008 F-15 (decision D1): NIIT is a federal tax paid in cash with
         # the return, so it is paid like ordinary income tax. Kept OUT of
         # federal_tax_amt because every lifetime total (cum_niit, all_in_cost,
