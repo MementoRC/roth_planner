@@ -33,6 +33,7 @@ from engine.tax import (
 )
 from engine.tax_indexing import index_value as _iv
 from engine.withdrawal_waterfall import WaterfallDraw, solve_waterfall
+from engine.yr_reprice import reprice
 from models.household import Household
 from models.ytd_income import YTDSnapshot
 
@@ -1116,26 +1117,12 @@ def add_bracket_fill_withdrawals(
             return False
 
         def _taxable_income_at(draw: float, _yr: YearResult = yr) -> float:
-            # leg 2: swap the stale taxable-SS figure for one re-priced at the
-            # post-withdrawal provisional base.
-            tss_at = taxable_ss(
-                _yr.combined_ss,
-                _yr.ss_provisional_base + draw,
-                filing_status=_yr.filing_status,
-            )
-            gross_at = _yr.combined_gross - _yr.taxable_ss_amt + tss_at + draw
-            # leg 1: the senior bonus falls as MAGI rises. MAGI moves with the
-            # withdrawal AND with the extra taxable SS it dragged in.
-            magi_at = _yr.magi_phaseout_basis - _yr.taxable_ss_amt + tss_at + draw
-            ded_at = _yr.deductions_before_senior_bonus + senior_bonus_deduction(
-                _yr.senior_bonus_ya_eff,
-                _yr.senior_bonus_sa_eff,
-                magi_at,
-                year=_yr.year,
-                cpi=_cpi_fill,
-                filing_status=_yr.filing_status,
-            )
-            return gross_at - ded_at
+            # Both legs re-priced at the post-withdrawal income by the shared
+            # helper: leg 2 = taxable SS at the new provisional base, leg 1 = the
+            # senior bonus at the new MAGI (engine.yr_reprice.reprice). Its 0
+            # floor on taxable income is inert here: bisect_conversion_for_ceiling
+            # only tests measure_at(mid) <= ceiling, and the ceiling is >= 0.
+            return reprice(_yr, draw, 0.0, _cpi_fill).taxable_income
 
         # naive_room is a valid upper bound: taxable SS is non-decreasing in
         # provisional income and the senior bonus is non-increasing in MAGI, so

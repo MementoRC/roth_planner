@@ -20,12 +20,18 @@ Interpretation choices (also reported to the owner):
   from an engine projection of that year (a single filer aged 66 whose only
   income is wages equal to that MAGI, lookback MAGI filed): the projected MAGI
   must match the stated one, proving it was ignored, not just never read.
+- Income Control harvest: a couple "both 70" claims Social Security at full retirement
+  age, so the engine is given the monthly benefit. "If it were untaxed" is the engine's own
+  harvest for the same couple with no Social Security (at these incomes the senior bonus
+  and the MAGI lines are unaffected). Harvest dollars match within $1, the engine's search
+  tolerance. The brokerage balance is $1,000,000; "well below" is a $500,000 basis, and a
+  stated unrealized gain is the balance less that gain as basis.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from tests.acceptance import driver
 
@@ -356,3 +362,77 @@ def build_income_control_stack(case: IncomeControlCase, year: int) -> None:
         converted_ytd=case.converted_ytd,
         planned_conversion=case.planned_conversion,
     )
+
+
+_HARVEST_IRA = 1_000_000.0
+_BROKERAGE_BALANCE = 1_000_000.0
+_WELL_BELOW_BASIS = 500_000.0
+_DOLLAR = 1.0
+_STOPS_AT = {
+    "the top of the 0% LTCG bracket": "0% LTCG",
+    "the unrealized gain in the brokerage account": "embedded gain",
+    "the point where more Social Security becomes taxable": "Social Security tax",
+}
+
+
+@dataclass
+class HarvestCase:
+    status: str = "MFJ"
+    age: int = _UNDER_65
+    year: int = 2026
+    conversion: float = 0.0
+    ira_distribution: float = 0.0
+    social_security: float = 0.0
+    brokerage_basis: float | None = None
+    tax_paid_from_cash: bool = False
+
+
+def a_couple_under_65() -> HarvestCase:
+    return HarvestCase()
+
+
+def a_couple_receiving_social_security(age: int, benefits: float) -> HarvestCase:
+    return HarvestCase(age=age, social_security=benefits)
+
+
+def with_unrealized_gain(case: HarvestCase, gain: float) -> None:
+    case.brokerage_basis = _BROKERAGE_BALANCE - gain
+
+
+def with_basis_well_below_balance(case: HarvestCase) -> None:
+    case.brokerage_basis = _WELL_BELOW_BASIS
+
+
+def with_no_cost_basis(case: HarvestCase) -> None:
+    case.brokerage_basis = None
+
+
+def with_tax_paid_from_cash(case: HarvestCase) -> None:
+    case.tax_paid_from_cash = True
+
+
+def view_harvest(case: HarvestCase) -> driver.HarvestView:
+    return driver.income_control_harvest(
+        status=case.status,
+        age=case.age,
+        year=case.year,
+        ira_balance=_HARVEST_IRA,
+        conversion=case.conversion,
+        ira_distribution=case.ira_distribution,
+        social_security=case.social_security,
+        brokerage_balance=_BROKERAGE_BALANCE,
+        brokerage_basis=case.brokerage_basis,
+        tax_paid_from_cash=case.tax_paid_from_cash,
+    )
+
+
+def harvest_without_social_security(case: HarvestCase) -> driver.HarvestView:
+    return view_harvest(replace(case, social_security=0.0))
+
+
+def within_a_dollar(actual: float, expected: float) -> bool:
+    return abs(actual - expected) <= _DOLLAR
+
+
+def stops_at(view: driver.HarvestView, phrase: str) -> bool:
+    return view.binding == _STOPS_AT[phrase.strip()]
