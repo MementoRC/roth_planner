@@ -22,13 +22,22 @@ from engine.niit import niit
 from engine.scenario import run_no_conversion, run_scenario
 from engine.scenario_types import ConversionPlan
 from engine.tax import estimate_ytd_federal_tax, senior_bonus_deduction, taxable_ss
-from models.household import Household
+from engine.yr_reprice import reprice
+from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
+from views.income_control import (
+    HARVEST_ENTER_BASIS,
+    HARVEST_USED_BY_CONVERSION,
+    harvest_notes,
+    harvest_text,
+)
 
 _MONTHS = 12
 _MEDICARE_AGE = 66
 _MAGI_TOLERANCE = 1.0
 _NO_INFLATION = 0.0
+_FRA_AGE = 67
+_BENEFIT_TOLERANCE = 1.0
 
 
 def distribution_period(
@@ -353,3 +362,79 @@ def income_control_stack(
         if not line.magi_only
     )
     return StackOutcome(ordinary, yr.combined_gross, conversion.done, conversion.remaining)
+
+
+@dataclass(frozen=True)
+class HarvestView:
+    amount: float
+    binding: str
+    detail: str
+    taxable_ss_at_harvest: float
+    conversion_uses_room_note: bool
+    enter_basis_note: bool
+
+
+def income_control_harvest(
+    *,
+    status: str,
+    age: int,
+    year: int,
+    ira_balance: float,
+    conversion: float,
+    ira_distribution: float,
+    social_security: float,
+    brokerage_balance: float,
+    brokerage_basis: float | None,
+    tax_paid_from_cash: bool = False,
+) -> HarvestView:
+    """The ``year`` row's 0% LTCG harvest from engine.income_control.build_income_control.
+
+    Two spouses of ``age`` filing as ``status`` with a traditional IRA, no ACA coverage and no
+    living expenses; the brokerage account has no growth, dividends or turnover.
+    ``social_security`` is the annual benefit, entered as the monthly benefit at full retirement
+    age; the engine's own combined_ss is checked against it. An IRA distribution is a
+    year-to-date actual and a conversion is planned. The detail line and notes are the Income
+    Control view's own text; no tax figure is computed here.
+    """
+    hh = Household(
+        your_age=age,
+        spouse_age=age,
+        filing_status=status,
+        base_year=year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=ira_balance,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=social_security / _MONTHS,
+        your_ss_start_age=_FRA_AGE,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=brokerage_balance,
+        brokerage_start_basis=brokerage_basis,
+        brokerage_growth=GrowthProfile(default_rate=0.0, yield_rate=0.0),
+        brok_turnover=0.0,
+        living_expenses=0.0,
+        your_aca_enrolled=False,
+        spouse_aca_enrolled=False,
+        income_tax_paid_from_outside_cash=tax_paid_from_cash,
+    )
+    plan = ConversionPlan(your_conversions={year: conversion}, bracket_cap=False)
+    ytd: YTDSnapshot | None = None
+    if ira_distribution:
+        ytd = YTDSnapshot(tax_year=year, ira_distributions_ytd=ira_distribution)
+    rows = build_income_control(hh, plan, plan_label="acceptance", ytd=ytd).years
+    row = next(r for r in rows if r.year == year)
+    harvest = row.harvest
+    assert harvest is not None
+    yr = row.year_result
+    assert abs(yr.combined_ss - social_security) <= _BENEFIT_TOLERANCE, yr.combined_ss
+    notes = harvest_notes(row)
+    return HarvestView(
+        amount=harvest.amount,
+        binding=harvest.binding,
+        detail=harvest_text(harvest),
+        taxable_ss_at_harvest=reprice(yr, 0.0, harvest.amount, hh.cpi_assumption).taxable_ss,
+        conversion_uses_room_note=HARVEST_USED_BY_CONVERSION in notes,
+        enter_basis_note=HARVEST_ENTER_BASIS in notes,
+    )
