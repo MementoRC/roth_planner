@@ -1,14 +1,23 @@
-"""Income Control (issue #123, slices 1-2): post-process ONE run_scenario run into
+"""Income Control (issue #123, slices 1-3): post-process ONE run_scenario run into
 per-year room under each line, plus the labelled income stack (done + remaining
 per line, slice 2). NO tax math here -- numbers come from YearResult;
 thresholds from engine.room_lines. NO Streamlit imports (engine purity).
+Slice 3 adds the advisory 0% LTCG harvest per row (engine.room_lines.harvest_sizing).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.room_lines import LINE_KEYS, living_flags, room_after, room_lines_for_year
+from engine.room_lines import (
+    LINE_KEYS,
+    HarvestSizing,
+    harvest_sizing,
+    living_flags,
+    ltcg_room_without,
+    room_after,
+    room_lines_for_year,
+)
 from engine.scenario import run_scenario
 from engine.scenario_types import ConversionPlan, YearResult
 from engine.this_year import first_rmd_year
@@ -111,6 +120,13 @@ class IncomeControlYear:
     # row carries this-year actuals (base year with the toggle on and a snapshot).
     stack_lines: tuple[StackLine, ...] = ()
     has_actuals: bool = False
+    # Slice 3: advisory 0% LTCG harvest sized into this year's room (None on
+    # hand-built rows).
+    harvest: HarvestSizing | None = None
+    # The 0% LTCG room with this year's full planned conversion removed and the
+    # year re-priced (room_lines.ltcg_room_without); None without a conversion or
+    # on hand-built rows. The view compares it with rooms["ltcg_zero"].
+    ltcg_room_without_conversion: float | None = None
 
     @property
     def fixed_income(self) -> float:
@@ -364,17 +380,58 @@ def _stack_lines(
     return tuple(lines)
 
 
+def _embedded_gain(
+    yr: YearResult,
+    opening_basis: float | None,
+    ytd: YTDSnapshot | None,
+) -> float | None:
+    """Unrealized brokerage gain left to harvest in ``yr``; None if the basis is unknown.
+
+    Owner decision (2026-11-20): the cap is the YEAR-END unrealized gain, the
+    year's closing balance less its closing basis (``yr.brokerage_balance_end -
+    yr.brokerage_basis``). That already nets this year's realized gains (turnover
+    steps basis up; a forced draw or sale removes its share of basis) and adds
+    this year's appreciation.
+
+    The scenario resolves an unknown start basis to full basis (zero gain), so
+    with ``opening_basis is None`` (the household start basis, carried as the
+    previous emitted year's closing basis) this returns None rather than reading
+    ``yr.brokerage_basis``. YTD sales are not reflected in the closing basis
+    (``brokerage_start_basis`` is pre-YTD), so the base year also subtracts the
+    YTD net long-term gain: this treats it as drawn from the same embedded pool,
+    which is conservative if those sales were in another account.
+    """
+    if opening_basis is None:
+        return None
+    ytd_sold = 0.0 if ytd is None else max(ytd.preferential_capital_gain_ytd, 0.0)
+    return max(yr.brokerage_balance_end - yr.brokerage_basis - ytd_sold, 0.0)
+
+
 def _row(
     hh: Household,
     yr: YearResult,
     plan: ConversionPlan | None = None,
     ytd: YTDSnapshot | None = None,
+    opening_basis: float | None = None,
 ) -> IncomeControlYear:
+    """One window row. ``ytd`` only for the base year; ``opening_basis`` is the
+    brokerage basis at the start of the year (None when unknown)."""
     you_alive, spouse_alive = living_flags(hh, yr)
     ages = (yr.your_age if you_alive else None, yr.spouse_age if spouse_alive else None)
-    rooms = room_after(yr, room_lines_for_year(hh, yr))
+    limits = room_lines_for_year(hh, yr)
+    rooms = room_after(yr, limits, ytd)
+    embedded = _embedded_gain(yr, opening_basis, ytd)
+    harvest = harvest_sizing(
+        yr, limits, rooms, embedded_gain=embedded, cpi=hh.cpi_assumption, ytd=ytd
+    )
     forced = forced_exercise(hh, yr.year, yr.option_income)
     lines = _stack_lines(hh, yr, forced, plan, ytd)
+    conversion = _full_year_of(lines, "conversion", yr.your_conversion + yr.spouse_conversion)
+    room_without_conversion = (
+        ltcg_room_without(yr, limits, conversion, hh.cpi_assumption, ytd)
+        if conversion > 0.0
+        else None
+    )
     return IncomeControlYear(
         year=yr.year,
         ages=ages,
@@ -394,6 +451,8 @@ def _row(
         ira_draws=_ira_draws(yr),
         stack_lines=lines,
         has_actuals=ytd is not None,
+        harvest=harvest,
+        ltcg_room_without_conversion=room_without_conversion,
     )
 
 
@@ -414,9 +473,15 @@ def build_income_control(
         hh, plan, plan_label, end_age=end_age, ytd=ytd, net_inv_income=net_inv_income
     )
     by_year = {yr.year: yr for yr in result.years}
-    rows = tuple(
-        _row(hh, by_year[y], plan, ytd if y == start else None)
-        for y in range(start, end + 1)
-        if y in by_year
-    )
-    return IncomeControlResult(rows, start, end, plan_label)
+    # Opening basis: the household start basis, then the closing basis of the
+    # previous EMITTED year. None (unknown) stays None for the whole window.
+    opening_basis = hh.brokerage_start_basis
+    rows: list[IncomeControlYear] = []
+    for y in range(start, end + 1):
+        yr = by_year.get(y)
+        if yr is None:
+            continue
+        rows.append(_row(hh, yr, plan, ytd if y == start else None, opening_basis))
+        if opening_basis is not None:
+            opening_basis = yr.brokerage_basis
+    return IncomeControlResult(tuple(rows), start, end, plan_label)

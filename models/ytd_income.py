@@ -205,8 +205,76 @@ def sum_income_events(
     )
 
 
-def _net_capital_gain_split(short_term: float, long_term: float) -> tuple[float, float]:
-    """audit-0805 C2: IRC §1222 short/long netting + IRC §1211(b) $3,000 loss cap.
+def capital_loss_limit(filing_status: str) -> float:
+    """IRC §1211(b): the net capital loss allowed against ordinary income in a year.
+
+    $3,000, or $1,500 for a married individual filing separately ("MFS").
+    """
+    return 1_500.0 if filing_status == "MFS" else 3_000.0
+
+
+def net_year_capital(
+    short_term: float, long_term: float, carry_in: float, filing_status: str
+) -> tuple[float, float, float]:
+    """(ordinary part, preferential part, net capital loss) of ONE tax year.
+
+    The year's capital items net into a single figure (IRC §1222), the loss
+    carried in joins it (§1212(b)(1): the carryover is treated as a long-term
+    loss of this year), and the §1211(b) limit applies once, through
+    ``_net_capital_gain_split``. The ordinary part is the net short-term-character
+    gain, or minus the §1211(b)-allowed part of a net loss; the preferential part
+    is the net long-term-character gain (never negative); the net capital loss
+    (>= 0) is the whole loss, allowed or not.
+    """
+    long_net = long_term - carry_in
+    ordinary, preferential = _net_capital_gain_split(short_term, long_net, filing_status)
+    return ordinary, preferential, max(-(short_term + long_net), 0.0)
+
+
+def net_forecast_capital(
+    realized: float, carry_in: float, filing_status: str
+) -> tuple[float, float]:
+    """(capital in AGI, net capital loss) of a forecast year.
+
+    The engine tracks one net realized-gain number per forecast year (brokerage
+    turnover and forced sales, all long-term). Capital in AGI is the net gain, or
+    minus the §1211(b)-allowed part of a net loss; the net capital loss (>= 0) is
+    the whole loss, allowed or not. See ``net_year_capital``.
+    """
+    ordinary, preferential, net_loss = net_year_capital(0.0, realized, carry_in, filing_status)
+    return ordinary + preferential, net_loss
+
+
+def capital_loss_carryover(net_loss: float, ati: float, filing_status: str) -> float:
+    """IRC §1212(b): the part of a net capital loss that carries to the next year.
+
+    The loss treated as used is the lesser of the §1211(b) amount allowed and
+    adjusted taxable income (ATI, negative when deductions exceed gross income);
+    the rest carries over. ATI = taxable income + the §1211(b) amount allowed +
+    the §151 deduction. The owner decided the §151 term is $0 here, so the caller
+    passes taxable income + the allowed amount.
+    """
+    allowed = min(net_loss, capital_loss_limit(filing_status))
+    return max(net_loss - min(allowed, max(ati, 0.0)), 0.0)
+
+
+def adjusted_taxable_income(
+    taxable_income: float, net_capital_loss: float, filing_status: str
+) -> float:
+    """IRC §1212(b)(2) ATI, the one place it is computed.
+
+    ``taxable_income`` is the REAL figure after the allowed loss: all income
+    including qualified dividends and other preferential income, minus
+    deductions, not floored at zero. ATI adds back the §1211(b) amount allowed
+    and the §151 deduction (the owner decided that term is $0).
+    """
+    return taxable_income + min(net_capital_loss, capital_loss_limit(filing_status))
+
+
+def _net_capital_gain_split(
+    short_term: float, long_term: float, filing_status: str = "MFJ"
+) -> tuple[float, float]:
+    """audit-0805 C2: IRC §1222 short/long netting + IRC §1211(b) loss cap.
 
     Nets the short-term and long-term capital positions against each other
     (§1222(11) defines "net capital gain" as the excess of net long-term
@@ -214,9 +282,9 @@ def _net_capital_gain_split(short_term: float, long_term: float) -> tuple[float,
     gain surviving a net long-term loss -- follows the same Schedule D
     cross-netting mechanics). If the netted result is an overall capital
     LOSS, only $3,000 of it may offset ordinary income for the year
-    (§1211(b)); the disallowed excess is simply DROPPED here -- there is no
-    carryforward field on YTDSnapshot (a single-tax-year object), so this
-    intentionally does NOT persist the excess to a future year.
+    (§1211(b)). The disallowed excess is not returned here; the engine
+    carries it to the next year (``net_capital_loss_ytd`` feeds
+    ``capital_loss_carryover`` in engine/scenario.py).
 
     Returns (ordinary_portion, preferential_portion):
       - Both legs are gains (short_term >= 0 and long_term >= 0): no
@@ -229,7 +297,7 @@ def _net_capital_gain_split(short_term: float, long_term: float) -> tuple[float,
     """
     total = short_term + long_term
     if total < 0:
-        return max(total, -3_000.0), 0.0
+        return max(total, -capital_loss_limit(filing_status)), 0.0
     if short_term >= 0 and long_term >= 0:
         return short_term, long_term
     if short_term < 0:
@@ -535,11 +603,18 @@ class YTDSnapshot:
         return self.ltcg_ytd + self.crypto_ltcg_ytd
 
     @property
+    def net_capital_loss_ytd(self) -> float:
+        """The whole net capital loss after §1222 netting (>= 0), allowed or not."""
+        return max(-(self.net_short_term_capital_ytd + self.net_long_term_capital_ytd), 0.0)
+
+    @property
     def ordinary_capital_gain_ytd(self) -> float:
         """audit-0805 C2: short-term-character portion of YTD realized
         capital gain/loss after IRC §1222 netting and the IRC §1211(b)
         $3,000 loss cap -- this is what stacks into ORDINARY tax brackets
-        (see ``_net_capital_gain_split``)."""
+        (see ``_net_capital_gain_split``). The YTD actuals ALONE, at the MFJ
+        limit; the base-year projection nets them with the year's forecast
+        gains through ``net_year_capital`` instead."""
         return _net_capital_gain_split(
             self.net_short_term_capital_ytd, self.net_long_term_capital_ytd
         )[0]

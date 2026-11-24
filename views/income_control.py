@@ -1,9 +1,11 @@
 """Income Control — read-only: room left under each tax/cost line, per year, after
-the active plan (issue #123, slice 1). Changes nothing; levers arrive in later slices.
+the active plan (issue #123), plus an advisory 0% LTCG harvest per year (slice 3).
+Changes nothing in the plan or the projection.
 """
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -16,7 +18,7 @@ from engine.income_control import (
     StackLine,
     build_income_control,
 )
-from engine.room_lines import LINE_KEYS
+from engine.room_lines import LINE_KEYS, HarvestSizing
 from models.household import Household
 from views._format import DOLLAR_TICKFORMAT, DOLLAR_TICKFORMATSTOPS, fmt_dollars, md_dollars
 from views._style import render_page_header
@@ -107,6 +109,69 @@ def _ages_text(row: IncomeControlYear) -> str:
     return " / ".join(str(age) for age in row.ages if age is not None)
 
 
+_HALF_CENT = 0.005  # amounts below this display as $0
+HARVEST_COLUMN = "0% LTCG harvest"
+HARVEST_USED_BY_CONVERSION = "This year's planned conversion already uses the 0% LTCG room."
+HARVEST_ENTER_BASIS = (
+    "Enter your brokerage cost basis in Profile to cap this at your embedded gain."
+)
+HARVEST_NOT_ADDITIVE = "Years are sized on their own; don't add harvests across years."
+_ROOM_USED_UP = 1.0  # $1 matches the engine's search tolerance for "no room left"
+HARVEST_PHRASES = {
+    "0% LTCG": "the top of the 0% LTCG bracket",
+    "Social Security tax": "the point where more Social Security becomes taxable",
+    "Senior deduction phase-out": "the point where the senior deduction starts phasing out",
+    "capital loss offset": "the point where gains start using up this year's capital-loss deduction",
+    "ACA cliff": "the ACA subsidy cliff",
+    "IRMAA tier 1": "IRMAA tier 1 (Medicare surcharge)",
+    "NIIT": "the 3.8% NIIT threshold",
+    "embedded gain": "your unrealized gain in the brokerage account",
+}
+
+
+def harvest_dollars(amount: float) -> str:
+    """A harvest amount floored to whole dollars, so the display never exceeds the engine's."""
+    return fmt_dollars(math.floor(amount))
+
+
+def harvest_text(harvest: HarvestSizing) -> str:
+    """Detail line: amount and the plain-language constraint that limited it."""
+    phrase = HARVEST_PHRASES.get(harvest.binding, harvest.binding)
+    return f"0% LTCG harvest: up to {harvest_dollars(harvest.amount)} — stops at {phrase}"
+
+
+def _room_used_by_conversion(row: IncomeControlYear, harvest: HarvestSizing) -> bool:
+    """True iff the planned conversion itself consumed positive 0% LTCG room.
+
+    Reads the engine's room with the conversion removed and the year re-priced
+    (``row.ltcg_room_without_conversion``): if that room is positive, the
+    conversion used up room that existed; if not, fixed income had already
+    filled the bracket and the conversion is not the cause.
+    """
+    room = row.rooms.get("ltcg_zero")
+    before = row.ltcg_room_without_conversion
+    return (
+        harvest.amount < _HALF_CENT
+        and room is not None
+        and room <= _ROOM_USED_UP
+        and before is not None
+        and before > _ROOM_USED_UP
+    )
+
+
+def harvest_notes(row: IncomeControlYear) -> list[str]:
+    """Captions under the harvest line, only those that apply; none without a harvest."""
+    harvest = row.harvest
+    if harvest is None:
+        return []
+    notes: list[str] = []
+    if _room_used_by_conversion(row, harvest):
+        notes.append(HARVEST_USED_BY_CONVERSION)
+    if not harvest.basis_known:
+        notes.append(HARVEST_ENTER_BASIS)
+    return notes
+
+
 def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
     """One display row per year for the all-years table."""
     out: list[dict[str, object]] = []
@@ -130,6 +195,7 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
         for key in LINE_KEYS:
             room = row.rooms[key]
             entry[LINE_LABELS[key]] = "n/a" if room is None else fmt_dollars(room)
+        entry[HARVEST_COLUMN] = "-" if row.harvest is None else harvest_dollars(row.harvest.amount)
         entry["Binding line"] = _binding_name(row)
         out.append(entry)
     return out
@@ -194,7 +260,6 @@ _COLUMNS_PLAIN = ["Line", "Full year"]  # forecast-only rows: no Note column
 _ALWAYS_SHOWN = frozenset({"social_security", "rmd", "discretionary_exercise", "conversion"})
 MAGI_ONLY_COLOR = "#94a3b8"
 ABOVE_PLAN_COLOR = "#f59e0b"
-_HALF_CENT = 0.005  # amounts below this display as $0
 _NOTE_MAGI_ONLY = "MAGI-only"
 _NOTE_ABOVE_PLAN = "above plan"  # follows the dollar amount: "$10,000 above plan"
 SOCIAL_SECURITY_NOTE = "Social Security: gross benefit; only part is taxable."
@@ -319,7 +384,11 @@ def _render_detail(row: IncomeControlYear, *, is_base: bool, snapshot_date: str)
                 st.markdown(md_dollars(f":red[{label}: over by {fmt_dollars(-room)}]"))
             else:
                 st.markdown(md_dollars(f"{label}: {fmt_dollars(room)} left"))
+        if row.harvest is not None:
+            st.markdown(md_dollars(harvest_text(row.harvest)))
         st.caption(_binding_note(row))
+        for note in harvest_notes(row):
+            st.caption(md_dollars(note))
 
 
 def render(hh: Household) -> None:
@@ -352,3 +421,5 @@ def render(hh: Household) -> None:
 
     with st.expander("All years (table)", expanded=False):
         st.dataframe(pd.DataFrame(table_rows(result)), hide_index=True, width="stretch")
+        if any(row.harvest is not None for row in result.years):
+            st.caption(md_dollars(HARVEST_NOT_ADDITIVE))

@@ -19,16 +19,31 @@ from engine.irmaa import (
     irmaa_tier,
 )
 from engine.niit import niit
-from engine.scenario import run_no_conversion, run_scenario
+from engine.scenario import (
+    ProjectionState,
+    project_year_with_draw,
+    run_no_conversion,
+    run_scenario,
+)
 from engine.scenario_types import ConversionPlan
 from engine.tax import estimate_ytd_federal_tax, senior_bonus_deduction, taxable_ss
-from models.household import Household
+from engine.withdrawal_waterfall import WaterfallDraw
+from engine.yr_reprice import reprice
+from models.household import GrowthProfile, Household
 from models.ytd_income import YTDSnapshot
+from views.income_control import (
+    HARVEST_ENTER_BASIS,
+    HARVEST_USED_BY_CONVERSION,
+    harvest_notes,
+    harvest_text,
+)
 
 _MONTHS = 12
 _MEDICARE_AGE = 66
 _MAGI_TOLERANCE = 1.0
 _NO_INFLATION = 0.0
+_FRA_AGE = 67
+_BENEFIT_TOLERANCE = 1.0
 
 
 def distribution_period(
@@ -353,3 +368,263 @@ def income_control_stack(
         if not line.magi_only
     )
     return StackOutcome(ordinary, yr.combined_gross, conversion.done, conversion.remaining)
+
+
+@dataclass(frozen=True)
+class HarvestView:
+    amount: float
+    binding: str
+    detail: str
+    taxable_ss_at_harvest: float
+    conversion_uses_room_note: bool
+    enter_basis_note: bool
+    federal_tax: float = 0.0  # YearResult.federal_tax_amt + YearResult.brokerage_gain_tax
+    magi_phaseout_basis: float = 0.0  # YearResult.magi_phaseout_basis, before any harvest
+    year_end_unrealized_gain: float = 0.0  # YearResult.brokerage_balance_end - brokerage_basis
+    ltcg_zero_room: float = 0.0  # the year's 0% LTCG room (room_after, key ltcg_zero)
+    ltcg_room_without_conversion: float | None = None  # the IncomeControlYear field of that name
+
+
+def income_control_harvest(
+    *,
+    status: str,
+    age: int,
+    year: int,
+    ira_balance: float,
+    conversion: float,
+    ira_distribution: float,
+    social_security: float,
+    brokerage_balance: float,
+    brokerage_basis: float | None,
+    tax_paid_from_cash: bool = False,
+    brokerage_return: float = 0.0,
+    turnover: float = 0.0,
+    standard_deduction: float | None = None,
+    ytd_net_long_term: float = 0.0,
+    living_expenses: float = 0.0,
+) -> HarvestView:
+    """The ``year`` row's 0% LTCG harvest from engine.income_control.build_income_control.
+
+    Two spouses of ``age`` filing as ``status`` with a traditional IRA and no ACA coverage; the
+    brokerage account has no dividends. ``living_expenses``, its ``brokerage_return`` (total
+    annual return, all appreciation) and ``turnover`` default to none; ``standard_deduction``
+    overrides the standard deduction (a stand-in for large itemized deductions) and
+    ``ytd_net_long_term`` is the year-to-date net long-term gain (negative: a loss).
+    ``social_security`` is the annual benefit, entered as the monthly benefit at full retirement
+    age; the engine's own combined_ss is checked against it. An IRA distribution is a
+    year-to-date actual and a conversion is planned. The detail line and notes are the Income
+    Control view's own text; no tax figure is computed here.
+    """
+    hh = Household(
+        your_age=age,
+        spouse_age=age,
+        filing_status=status,
+        base_year=year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=ira_balance,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=social_security / _MONTHS,
+        your_ss_start_age=_FRA_AGE,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=brokerage_balance,
+        brokerage_start_basis=brokerage_basis,
+        brokerage_growth=GrowthProfile(default_rate=brokerage_return, yield_rate=0.0),
+        brok_turnover=turnover,
+        living_expenses=living_expenses,
+        your_aca_enrolled=False,
+        spouse_aca_enrolled=False,
+        income_tax_paid_from_outside_cash=tax_paid_from_cash,
+    )
+    if standard_deduction is not None:
+        hh.std_deduction = standard_deduction
+    plan = ConversionPlan(your_conversions={year: conversion}, bracket_cap=False)
+    ytd: YTDSnapshot | None = None
+    if ira_distribution or ytd_net_long_term:
+        ytd = YTDSnapshot(
+            tax_year=year, ira_distributions_ytd=ira_distribution, ltcg_ytd=ytd_net_long_term
+        )
+    rows = build_income_control(hh, plan, plan_label="acceptance", ytd=ytd).years
+    row = next(r for r in rows if r.year == year)
+    harvest = row.harvest
+    assert harvest is not None
+    yr = row.year_result
+    assert abs(yr.combined_ss - social_security) <= _BENEFIT_TOLERANCE, yr.combined_ss
+    notes = harvest_notes(row)
+    return HarvestView(
+        amount=harvest.amount,
+        binding=harvest.binding,
+        detail=harvest_text(harvest),
+        taxable_ss_at_harvest=reprice(yr, 0.0, harvest.amount, hh.cpi_assumption).taxable_ss,
+        conversion_uses_room_note=HARVEST_USED_BY_CONVERSION in notes,
+        enter_basis_note=HARVEST_ENTER_BASIS in notes,
+        federal_tax=yr.federal_tax_amt + yr.brokerage_gain_tax,
+        magi_phaseout_basis=yr.magi_phaseout_basis,
+        year_end_unrealized_gain=yr.brokerage_balance_end - yr.brokerage_basis,
+        ltcg_zero_room=row.rooms["ltcg_zero"] or 0.0,
+        ltcg_room_without_conversion=row.ltcg_room_without_conversion,
+    )
+
+
+@dataclass(frozen=True)
+class FundedYear:
+    realized_gains: float  # YearResult.realized_gains
+    federal_tax: float  # YearResult.federal_tax_amt + YearResult.brokerage_gain_tax
+    magi: float  # YearResult.magi
+    shortfall: float  # YearResult.income_needed
+
+
+def _project_funded(hh: Household, plan: ConversionPlan, draw: WaterfallDraw | None) -> FundedYear:
+    state = ProjectionState.initial(hh)
+    yr = project_year_with_draw(0, hh, plan, None, 0.0, state, draw).yr
+    return FundedYear(
+        realized_gains=yr.realized_gains,
+        federal_tax=yr.federal_tax_amt + yr.brokerage_gain_tax,
+        magi=yr.magi,
+        shortfall=yr.income_needed,
+    )
+
+
+def brokerage_funded_year(
+    *,
+    age: int,
+    year: int,
+    living_expenses: float,
+    brokerage_balance: float,
+    brokerage_basis: float,
+    explicit_sale: bool,
+) -> FundedYear:
+    """Two spouses of ``age`` with no income, living off a brokerage account, in ``year``.
+
+    Entry point: engine.scenario.project_year_with_draw, which engine/scenario_autofill.py
+    calls. With ``explicit_sale`` False (draw=None) the shortfall is funded by the engine's
+    expense debit. With it True, the same shortfall (the engine's own yr.income_needed from
+    that first projection) is funded as a forced brokerage draw, which realizes gain and
+    prices it in the engine; the WaterfallDraw's own realized_gain slot is not read there.
+    """
+    hh = Household(
+        your_age=age,
+        spouse_age=age,
+        filing_status="MFJ",
+        base_year=year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=0.0,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=brokerage_balance,
+        brokerage_start_basis=brokerage_basis,
+        brokerage_growth=GrowthProfile(default_rate=0.0, yield_rate=0.0),
+        brok_turnover=0.0,
+        living_expenses=living_expenses,
+        your_aca_enrolled=False,
+        spouse_aca_enrolled=False,
+    )
+    plan = ConversionPlan(your_conversions={}, bracket_cap=False)
+    debit = _project_funded(hh, plan, None)
+    if not explicit_sale:
+        return debit
+    sale = WaterfallDraw(
+        brokerage_draw=debit.shortfall,
+        realized_gain=0.0,
+        your_ira_draw=0.0,
+        spouse_ira_draw=0.0,
+        early_withdrawal_penalty=0.0,
+        roth_draw=0.0,
+        unfunded=0.0,
+        iterations=0,
+        converged=True,
+    )
+    return _project_funded(hh, plan, sale)
+
+
+_CAPITAL_BALANCE = 1_000_000.0
+_CAPITAL_YEARS = 2
+
+
+@dataclass(frozen=True)
+class CapitalYear:
+    year: int
+    realized_gains: float  # YearResult.realized_gains (negative: a net capital loss)
+    magi: float  # YearResult.magi
+    ordinary_gross: float  # YearResult.combined_gross
+    taxable_income: float  # YearResult.taxable_income (ordinary income only)
+    federal_tax: float  # YearResult.federal_tax_amt + YearResult.brokerage_gain_tax
+
+
+def capital_gain_years(
+    *,
+    age: int,
+    year: int,
+    conversion: float,
+    turnover: float,
+    returns: Mapping[int, float],
+    qualified_dividends: Mapping[int, float] | None = None,
+    ytd_wages: float = 0.0,
+    ytd_net_long_term: float = 0.0,
+    living_expenses: float = 0.0,
+    brokerage_basis: float | None = None,
+) -> list[CapitalYear]:
+    """Forecast years of an MFJ couple of ``age`` whose brokerage account gains or loses.
+
+    engine.scenario.run_scenario for a traditional IRA with ``conversion`` planned in ``year``
+    (its tax paid from cash), no other income and no ACA coverage. The $1,000,000 brokerage
+    account pays no dividends but ``qualified_dividends`` (year -> dollars); ``turnover`` of it
+    is sold each year and ``returns`` (year -> appreciation) sets the gain or loss; a year's
+    dividend yield is added to its total return so the appreciation is exactly ``returns``.
+    Every figure is a YearResult field. ``ytd_wages`` and ``ytd_net_long_term`` (a loss is
+    negative) are the base year's YTD actuals, wages and net long-term gain.
+    ``living_expenses`` is the yearly cash need (a shortfall is funded by selling brokerage
+    shares, which realizes gain); ``brokerage_basis`` is the account's cost basis (None: engine default).
+    """
+    yields = {y: amount / _CAPITAL_BALANCE for y, amount in (qualified_dividends or {}).items()}
+    totals = dict(returns)
+    for yield_year, dividend_yield in yields.items():
+        totals[yield_year] = totals.get(yield_year, 0.0) + dividend_yield
+    hh = Household(
+        your_age=age,
+        spouse_age=age,
+        filing_status="MFJ",
+        base_year=year,
+        cpi_assumption=_NO_INFLATION,
+        your_ira=_CAPITAL_BALANCE,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+        your_ss_fra=0.0,
+        spouse_ss_fra=0.0,
+        grants=[],
+        brokerage_start=_CAPITAL_BALANCE,
+        brokerage_start_basis=brokerage_basis,
+        brokerage_growth=GrowthProfile(
+            default_rate=0.0, yearly_overrides=totals, yield_overrides=yields, yield_rate=0.0
+        ),
+        brok_turnover=turnover,
+        living_expenses=living_expenses,
+        your_aca_enrolled=False,
+        spouse_aca_enrolled=False,
+        income_tax_paid_from_outside_cash=True,
+    )
+    plan = ConversionPlan(your_conversions={year: conversion}, bracket_cap=False)
+    ytd = (
+        YTDSnapshot(tax_year=year, wages_ytd=ytd_wages, ltcg_ytd=ytd_net_long_term)
+        if ytd_wages or ytd_net_long_term
+        else None
+    )
+    result = run_scenario(hh, plan, "acceptance", end_age=age + _CAPITAL_YEARS, ytd=ytd)
+    return [
+        CapitalYear(
+            year=yr.year,
+            realized_gains=yr.realized_gains,
+            magi=yr.magi,
+            ordinary_gross=yr.combined_gross,
+            taxable_income=yr.taxable_income,
+            federal_tax=yr.federal_tax_amt + yr.brokerage_gain_tax,
+        )
+        for yr in result.years
+    ]

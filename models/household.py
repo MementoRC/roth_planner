@@ -347,6 +347,13 @@ class Household:
 
     Default None = baseline MFJ projection where both spouses survive to end_age."""
 
+    income_tax_paid_from_outside_cash: bool = False
+    """True = the Roth conversion's own income tax (yr.conversion_tax) is paid from
+    cash outside the modelled accounts, so it adds nothing to the year's cash need and
+    triggers no brokerage sale (and no realized gain). Default False = the tax is
+    funded from the accounts through the withdrawal waterfall. NIIT and the tax on
+    other income or draws are unaffected."""
+
     inherited_iras: list[InheritedIRA] = field(default_factory=list)
     """List of non-spousal inherited IRAs subject to the 10-year rule.
 
