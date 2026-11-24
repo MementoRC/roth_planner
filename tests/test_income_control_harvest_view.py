@@ -74,38 +74,44 @@ def test_harvest_view_detail_line_is_rendered() -> None:
     assert md_dollars(harvest_text(_KNOWN)) in _body(at)
 
 
-def _conv_row(room: float, conv: float, harvest: HarvestSizing = _ZERO) -> IncomeControlYear:
-    return replace(_with_harvest(harvest, ltcg_zero=room), planned_conversion=conv)
+def _conv_row(
+    room: float, before: float | None, harvest: HarvestSizing = _ZERO
+) -> IncomeControlYear:
+    """``before``: the engine's 0% LTCG room with the conversion removed (None: no conversion)."""
+    return replace(_with_harvest(harvest, ltcg_zero=room), ltcg_room_without_conversion=before)
 
 
 def test_harvest_view_conversion_used_the_room_note() -> None:
-    row = _with_harvest(_ZERO, ltcg_zero=0.0, niit=90_000.0)  # _year: conversion 20,000
+    row = replace(
+        _with_harvest(_ZERO, ltcg_zero=0.0, niit=90_000.0), ltcg_room_without_conversion=20_000.0
+    )
     assert harvest_notes(row) == [HARVEST_USED_BY_CONVERSION]
     assert md_dollars(HARVEST_USED_BY_CONVERSION) in _captions((row,))
 
 
 @pytest.mark.parametrize(
-    ("room", "conv", "fires"),
+    ("room", "before", "fires"),
     [
         (0.0, 10_000.0, True),
-        (-500.0, 10_000.0, True),  # overshoot, but the conversion still used real room
-        (-20_000.0, 10_000.0, False),  # fixed income had already filled the bracket
-        (0.0, 0.0, False),
-        (5_000.0, 10_000.0, False),  # room left: $0 for another reason
-        (0.99, 10_000.0, True),
-        (1.01, 10_000.0, False),
+        (-500.0, 9_500.0, True),  # overshoot, but the conversion still used real room
+        (-20_000.0, -10_000.0, False),  # fixed income had already filled the bracket
+        (0.0, None, False),  # no conversion
+        (5_000.0, 15_000.0, False),  # room left: $0 for another reason
+        (0.99, 10_000.99, True),
+        (1.01, 10_001.01, False),
+        (-320.0, 400.0, True),  # the conversion cost more room than its face amount
     ],
 )
 def test_harvest_view_conversion_note_only_when_the_conversion_used_room(
-    room: float, conv: float, fires: bool
+    room: float, before: float | None, fires: bool
 ) -> None:
-    notes = harvest_notes(_conv_row(room, conv))
+    notes = harvest_notes(_conv_row(room, before))
     assert (HARVEST_USED_BY_CONVERSION in notes) is fires
 
 
-def test_harvest_view_conversion_note_boundary_of_room_plus_conversion() -> None:
-    assert HARVEST_USED_BY_CONVERSION in harvest_notes(_conv_row(-9_998.99, 10_000.0))
-    assert HARVEST_USED_BY_CONVERSION not in harvest_notes(_conv_row(-9_999.0, 10_000.0))
+def test_harvest_view_conversion_note_boundary_of_room_without_conversion() -> None:
+    assert HARVEST_USED_BY_CONVERSION in harvest_notes(_conv_row(-9_998.99, 1.01))
+    assert HARVEST_USED_BY_CONVERSION not in harvest_notes(_conv_row(-9_999.0, 1.0))
 
 
 def test_harvest_view_no_conversion_note_when_a_harvest_is_possible() -> None:

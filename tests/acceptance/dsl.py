@@ -385,6 +385,11 @@ class HarvestCase:
     social_security: float = 0.0
     brokerage_basis: float | None = None
     tax_paid_from_cash: bool = False
+    brokerage_return: float = 0.0
+    turnover: float = 0.0
+    standard_deduction: float | None = None
+    ytd_net_long_term: float = 0.0
+    living_expenses: float = 0.0
 
 
 def a_couple_under_65() -> HarvestCase:
@@ -411,6 +416,10 @@ def with_tax_paid_from_cash(case: HarvestCase) -> None:
     case.tax_paid_from_cash = True
 
 
+def with_tax_paid_from_brokerage(case: HarvestCase) -> None:
+    case.tax_paid_from_cash = False
+
+
 def view_harvest(case: HarvestCase) -> driver.HarvestView:
     return driver.income_control_harvest(
         status=case.status,
@@ -423,6 +432,11 @@ def view_harvest(case: HarvestCase) -> driver.HarvestView:
         brokerage_balance=_BROKERAGE_BALANCE,
         brokerage_basis=case.brokerage_basis,
         tax_paid_from_cash=case.tax_paid_from_cash,
+        brokerage_return=case.brokerage_return,
+        turnover=case.turnover,
+        standard_deduction=case.standard_deduction,
+        ytd_net_long_term=case.ytd_net_long_term,
+        living_expenses=case.living_expenses,
     )
 
 
@@ -434,5 +448,157 @@ def within_a_dollar(actual: float, expected: float) -> bool:
     return abs(actual - expected) <= _DOLLAR
 
 
+def has_room(room: float) -> bool:
+    """True iff ``room`` is a positive amount, past the $1 search tolerance."""
+    return room > _DOLLAR
+
+
 def stops_at(view: driver.HarvestView, phrase: str) -> bool:
     return view.binding == _STOPS_AT[phrase.strip()]
+
+
+_AMOUNT_IN_HARVEST_LINE = re.compile(r"up to (\$[\d,]+(?:\.\d+)?)")
+_TAX_TOLERANCE = 0.01  # "no extra tax" means at most a cent, as in tests/test_room_lines_harvest.py
+_NON_TAX_BINDINGS = ("embedded gain", "ACA cliff", "IRMAA tier 1", "NIIT")
+
+
+def percent(text: str) -> float:
+    """'5%' -> 0.05."""
+    return float(text.strip().rstrip("%")) / 100
+
+
+def shown_harvest(view: driver.HarvestView) -> float:
+    """The dollar amount the Income Control detail line shows."""
+    found = _AMOUNT_IN_HARVEST_LINE.search(view.detail)
+    assert found, view.detail
+    return money(found.group(1))
+
+
+def with_a_year_to_date_net_capital_loss(case: HarvestCase, loss: float) -> None:
+    """A net long-term loss realized so far this year, entered as the snapshot's net LTCG."""
+    case.ytd_net_long_term = -loss
+
+
+def with_growth_and_turnover(case: HarvestCase, growth: float, turnover: float) -> None:
+    case.brokerage_return = growth
+    case.turnover = turnover
+
+
+def with_itemized_deductions(case: HarvestCase, amount: float) -> None:
+    """Large itemized deductions, entered as the engine's standard-deduction input."""
+    case.standard_deduction = amount
+
+
+def harvest_without_conversion(case: HarvestCase) -> driver.HarvestView:
+    return view_harvest(replace(case, conversion=0.0))
+
+
+def extra_tax_from_realizing(case: HarvestCase, view: driver.HarvestView, gain: float) -> float:
+    """Federal tax added for the year by realizing ``gain`` more long-term gain.
+
+    The gain enters as the base-year ``ltcg_ytd`` actual, as tests/test_room_lines_harvest.py
+    does: the scenario has no one-off realized-gain input.
+    """
+    realized = replace(case, ytd_net_long_term=case.ytd_net_long_term + gain)
+    return view_harvest(realized).federal_tax - view.federal_tax
+
+
+def adds_no_tax(extra: float) -> bool:
+    return extra <= _TAX_TOLERANCE
+
+
+def binds_on_a_non_tax_limit(view: driver.HarvestView) -> bool:
+    return view.binding in _NON_TAX_BINDINGS
+
+
+def stops_where_magi_reaches(view: driver.HarvestView, threshold: float) -> bool:
+    """True iff the engine's pre-harvest phase-out MAGI plus the harvest lands on ``threshold``."""
+    return within_a_dollar(view.magi_phaseout_basis + view.amount, threshold)
+
+
+def is_described_as_stopping_at(view: driver.HarvestView, phrase: str) -> bool:
+    """True iff the harvest's binding label or its detail line names ``phrase``."""
+    return stops_at(view, phrase) or phrase.strip() in view.detail
+
+
+@dataclass
+class ShortfallCase:
+    age: int
+    year: int = _BASE_YEAR
+    living_expenses: float = 0.0
+    brokerage_balance: float = 0.0
+    brokerage_basis: float = 0.0
+
+
+def a_couple_with_no_income(age: int) -> ShortfallCase:
+    return ShortfallCase(age=age)
+
+
+def _funded(case: ShortfallCase, *, explicit_sale: bool) -> driver.FundedYear:
+    return driver.brokerage_funded_year(
+        age=case.age,
+        year=case.year,
+        living_expenses=case.living_expenses,
+        brokerage_balance=case.brokerage_balance,
+        brokerage_basis=case.brokerage_basis,
+        explicit_sale=explicit_sale,
+    )
+
+
+def funded_by_expense_debit(case: ShortfallCase) -> driver.FundedYear:
+    return _funded(case, explicit_sale=False)
+
+
+def funded_by_explicit_sale(case: ShortfallCase) -> driver.FundedYear:
+    return _funded(case, explicit_sale=True)
+
+
+@dataclass
+class CapitalCase:
+    turnover: float
+    year: int = _BASE_YEAR
+    conversion: float = 0.0
+    returns: dict[int, float] = field(default_factory=dict)
+    qualified_dividends: dict[int, float] = field(default_factory=dict)
+    ytd_wages: float = 0.0
+    living_expenses: float = 0.0
+    brokerage_basis: float | None = None
+    ytd_net_long_term: float = 0.0
+
+
+def a_couple_under_65_with_turnover(turnover: float) -> CapitalCase:
+    return CapitalCase(turnover=turnover)
+
+
+def with_return_in(case: CapitalCase, year: int, rate: float) -> None:
+    case.returns[year] = rate
+
+
+def with_qualified_dividends_in(case: CapitalCase, year: int, amount: float) -> None:
+    case.qualified_dividends[year] = amount
+
+
+def with_year_to_date_actuals(case: CapitalCase, wages: float, net_loss: float) -> None:
+    """Base-year actuals as the snapshot's wages and net long-term gain (a loss is negative)."""
+    case.ytd_wages = wages
+    case.ytd_net_long_term = -net_loss
+
+
+def capital_years(case: CapitalCase) -> dict[int, driver.CapitalYear]:
+    years = driver.capital_gain_years(
+        age=_UNDER_65,
+        year=case.year,
+        conversion=case.conversion,
+        turnover=case.turnover,
+        returns=case.returns,
+        qualified_dividends=case.qualified_dividends,
+        ytd_wages=case.ytd_wages,
+        ytd_net_long_term=case.ytd_net_long_term,
+        living_expenses=case.living_expenses,
+        brokerage_basis=case.brokerage_basis,
+    )
+    return {yr.year: yr for yr in years}
+
+
+def capital_years_without_the_loss(case: CapitalCase, year: int) -> dict[int, driver.CapitalYear]:
+    return capital_years(replace(case, returns={**case.returns, year: 0.0}))

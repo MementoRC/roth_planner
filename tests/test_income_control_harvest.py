@@ -119,24 +119,30 @@ def _yr(**kw: float | int | str) -> YearResult:
     return YearResult(**base)  # type: ignore[arg-type]
 
 
-def test_embedded_gain_first_row_uses_the_household_start_basis() -> None:
-    yr = _yr(brokerage_balance=200_000.0, realized_gains=10_000.0)
+def test_embedded_gain_is_the_year_end_gain() -> None:
+    # #123 C5 (owner decision): closing balance less closing basis, not opening figures.
+    yr = _yr(
+        brokerage_balance=180_000.0,
+        realized_gains=10_000.0,
+        brokerage_balance_end=200_000.0,
+        brokerage_basis=130_000.0,
+    )
     assert ic._embedded_gain(yr, _BASIS, None) == 70_000.0
 
 
-def test_embedded_gain_later_rows_use_the_previous_closing_basis() -> None:
-    yr = _yr(year=2027, brokerage_balance=210_000.0, realized_gains=5_000.0)
+def test_embedded_gain_later_rows_read_their_own_closing_figures() -> None:
+    yr = _yr(year=2027, brokerage_balance_end=210_000.0, brokerage_basis=155_000.0)
     assert ic._embedded_gain(yr, 150_000.0, None) == 55_000.0
 
 
 def test_embedded_gain_base_year_subtracts_the_ytd_long_term_gain() -> None:
-    yr = _yr(brokerage_balance=200_000.0)
+    yr = _yr(brokerage_balance_end=200_000.0, brokerage_basis=_BASIS)
     ytd = _snapshot(ltcg_ytd=4_000.0)
     assert ic._embedded_gain(yr, _BASIS, ytd) == 76_000.0
 
 
 def test_embedded_gain_ignores_a_net_capital_loss() -> None:
-    yr = _yr(brokerage_balance=200_000.0)
+    yr = _yr(brokerage_balance_end=200_000.0, brokerage_basis=_BASIS)
     assert ic._embedded_gain(yr, _BASIS, _snapshot(ltcg_ytd=-8_000.0)) == 80_000.0
 
 
@@ -147,7 +153,7 @@ def test_embedded_gain_is_none_when_the_basis_is_unknown() -> None:
 
 
 def test_embedded_gain_never_goes_negative() -> None:
-    yr = _yr(brokerage_balance=100_000.0, realized_gains=50_000.0)
+    yr = _yr(brokerage_balance_end=100_000.0, brokerage_basis=_BASIS)
     assert ic._embedded_gain(yr, _BASIS, None) == 0.0
 
 

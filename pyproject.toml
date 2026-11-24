@@ -36,6 +36,7 @@ python_functions = "test_*"
 bdd_features_base_dir = "tests/acceptance/features"
 markers = [
     "acceptance: human-owned acceptance specs (pytest-bdd)",
+    "decision: owner-decided behaviour the code does not implement yet",
 ]
 
 [tool.mutmut]

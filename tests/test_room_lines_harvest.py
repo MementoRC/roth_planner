@@ -143,10 +143,12 @@ def _size(
     return harvest_sizing(yr, lines, room_after(yr, lines, ytd), embedded, CPI, ytd)
 
 
-def test_harvest_bindings_are_the_six_owner_labels_in_tie_order() -> None:
+def test_harvest_bindings_are_the_owner_labels_in_tie_order() -> None:
     assert HARVEST_BINDINGS == (
         "0% LTCG",
         "Social Security tax",
+        "Senior deduction phase-out",  # #123 C7
+        "capital loss offset",  # #123 C4
         "ACA cliff",
         "IRMAA tier 1",
         "NIIT",
@@ -544,9 +546,10 @@ def test_harvest_cross_check_amount_is_exact(
         assert sizing.amount < upper - 1.0, (sizing, upper)
 
 
-def test_harvest_senior_bonus_phase_out_binds_as_social_security_tax() -> None:
+def test_harvest_senior_bonus_phase_out_binds_as_its_own_label() -> None:
+    # #123 C7: a shrinking senior deduction is not taxable Social Security.
     sizing = _size(_senior_yr(), _lines(year=2027))
-    assert sizing.binding == "Social Security tax"
+    assert sizing.binding == "Senior deduction phase-out"
     assert SENIOR_LIMIT - 1.0 <= sizing.amount <= SENIOR_LIMIT + 0.5
     assert room_after(_senior_yr(), _lines(year=2027))["ltcg_zero"] == 22_900.0  # 1:1 bound
 
@@ -652,3 +655,48 @@ def test_harvest_amount_is_tax_free_end_to_end_through_the_scenario_social_secur
         spouse_ss_fra=2_500.0,
     )
     _assert_harvest_is_tax_free_end_to_end(hh, "Social Security tax")
+
+
+@pytest.mark.parametrize(
+    ("qual_div", "ltcg", "ss_fra"),
+    [(8_000.0, 0.0, 1_500.0), (15_000.0, 10_000.0, 2_000.0), (25_000.0, 5_000.0, 3_000.0)],
+)
+def test_t1_existing_preferential_income_pushed_by_repricing_stays_tax_free(
+    qual_div: float, ltcg: float, ss_fra: float
+) -> None:
+    """Sourcery T1 on #134: the harvest's ordinary-income knock-on never taxes it."""
+    hh = _brok_hh(
+        brokerage_start_basis=None,
+        your_age=70,
+        spouse_age=70,
+        your_ira=0.0,
+        spouse_ira=0.0,
+        your_ss_start_age=70,
+        spouse_ss_start_age=70,
+        your_ss_fra=ss_fra,
+        spouse_ss_fra=ss_fra,
+    )
+
+    def _ytd(harvest: float) -> YTDSnapshot:
+        return YTDSnapshot(
+            tax_year=hh.base_year,
+            snapshot_date="2026-06-30",
+            ltcg_ytd=ltcg + harvest,
+            qualified_dividends_ytd=qual_div,
+        )
+
+    def _year(harvest: float) -> YearResult:
+        end_age = hh.your_age + 2
+        return run_scenario(hh, ConversionPlan(), "x", end_age=end_age, ytd=_ytd(harvest)).years[0]
+
+    ic = build_income_control(hh, ConversionPlan(), plan_label="x", ytd=_ytd(0.0))
+    sizing = ic.years[0].harvest
+    assert sizing is not None
+    assert sizing.amount > 0.0, sizing
+    before, after = _year(0.0), _year(sizing.amount)
+    assert after.taxable_ss_amt > before.taxable_ss_amt or (
+        after.total_deductions < before.total_deductions
+    ), (before.taxable_ss_amt, after.taxable_ss_amt)
+    tax_before = before.federal_tax_amt + before.brokerage_gain_tax
+    tax_after = after.federal_tax_amt + after.brokerage_gain_tax
+    assert tax_after - tax_before <= 0.01, (sizing, before.taxable_ss_amt, after.taxable_ss_amt)

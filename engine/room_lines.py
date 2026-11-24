@@ -28,9 +28,9 @@ from engine.tax import (
     indexed_bracket_ceiling,
 )
 from engine.tax_indexing import index_tuple
-from engine.yr_reprice import reprice
+from engine.yr_reprice import Repriced, reprice
 from models.household import Household
-from models.ytd_income import YTDSnapshot
+from models.ytd_income import YTDSnapshot, _net_capital_gain_split
 
 # Income at this age is the first the 2-year IRMAA lookback can price into Medicare.
 IRMAA_FIRST_INCOME_AGE = 63
@@ -115,10 +115,32 @@ def room_lines_for_year(hh: Household, yr: YearResult) -> RoomLines:
     )
 
 
-def _preferential_existing(yr: YearResult, ytd: YTDSnapshot | None) -> float:
-    """Preferential income already in the year, before any harvest."""
-    actual = 0.0 if ytd is None else ytd.qualified_dividends_ytd + ytd.preferential_capital_gain_ytd
-    return yr.brokerage_qual_div + yr.realized_gains + actual
+def _year_long_term(yr: YearResult, ytd: YTDSnapshot | None, gain_removed: float = 0.0) -> float:
+    """The year's net long-term position: YTD actuals + this year's realized gains.
+
+    ``yr.realized_gains`` is the forecast remainder (turnover, and the forced sale's
+    gain) -- the base year's YTD actuals replace the turnover, so the two never
+    overlap. The scenario nets exactly this sum (C8g), so the harvest does too.
+    """
+    ytd_long = 0.0 if ytd is None else ytd.net_long_term_capital_ytd
+    return ytd_long + yr.realized_gains - gain_removed
+
+
+def _preferential_existing(
+    yr: YearResult,
+    ytd: YTDSnapshot | None,
+    filing_status: str = "MFJ",
+    gain_removed: float = 0.0,
+) -> float:
+    """Preferential income already in the year, before any harvest.
+
+    The netted long-term-character gain of the year's capital position (the same
+    ``_net_capital_gain_split`` the scenario applies, C8g), plus qualified dividends.
+    """
+    short = 0.0 if ytd is None else ytd.net_short_term_capital_ytd
+    _, pref = _net_capital_gain_split(short, _year_long_term(yr, ytd, gain_removed), filing_status)
+    qual = yr.brokerage_qual_div + (0.0 if ytd is None else ytd.qualified_dividends_ytd)
+    return qual + pref
 
 
 def _unused_deduction(yr: YearResult) -> float:
@@ -142,7 +164,8 @@ def room_after(
     income the room exceeds the threshold. Excluded: short-term gains, which are
     ordinary and already in ``taxable_income``.
     """
-    ltcg_measure = yr.taxable_income + _preferential_existing(yr, ytd) - _unused_deduction(yr)
+    preferential = _preferential_existing(yr, ytd, lines.filing_status)
+    ltcg_measure = yr.taxable_income + preferential - _unused_deduction(yr)
     pairs: dict[str, tuple[float | None, float]] = {
         "top_12": (lines.top_12, yr.taxable_income),
         "top_22": (lines.top_22, yr.taxable_income),
@@ -159,11 +182,51 @@ def room_after(
     return rooms
 
 
+def _with_line_status(yr: YearResult, lines: RoomLines) -> YearResult:
+    """``yr`` carrying the lines' filing status (reprice reads yr.filing_status)."""
+    if yr.filing_status == lines.filing_status:
+        return yr
+    return replace(yr, filing_status=lines.filing_status)
+
+
+def ltcg_room_without(
+    yr: YearResult,
+    lines: RoomLines,
+    ordinary_removed: float,
+    cpi: float,
+    ytd: YTDSnapshot | None = None,
+) -> float:
+    """The 0% LTCG room ``room_after`` reports, with ``ordinary_removed`` less ordinary income.
+
+    Re-prices taxable Social Security and the OBBBA senior bonus (``reprice``), so
+    removing a conversion restores every dollar of room it actually used, which
+    can exceed its face amount. It also drops the gain of the brokerage sale the
+    conversion's tax forced (``yr.conversion_funding_gain``): without the
+    conversion that sale would not happen.
+    """
+    yr = _with_line_status(yr, lines)
+    rp = reprice(yr, -ordinary_removed, 0.0, cpi)
+    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss - ordinary_removed
+    unused = max(rp.total_deductions - gross, 0.0)
+    preferential = _preferential_existing(
+        yr, ytd, lines.filing_status, gain_removed=yr.conversion_funding_gain
+    )
+    return lines.ltcg_zero - (rp.taxable_income + preferential - unused)
+
+
 _BIND_LTCG_ZERO = "0% LTCG"
 _BIND_SS_TAX = "Social Security tax"
+_BIND_SENIOR = "Senior deduction phase-out"
+_BIND_LOSS_OFFSET = "capital loss offset"
+# Order breaks ties (equal room, or equal shares of an ordinary-tax rise). The
+# ordinary-tax causes follow 0% LTCG in this order: taxable SS first (the
+# long-standing label), then the OBBBA senior-deduction phase-out, then the
+# forfeited capital-loss offset.
 HARVEST_BINDINGS: tuple[str, ...] = (
     _BIND_LTCG_ZERO,
     _BIND_SS_TAX,
+    _BIND_SENIOR,
+    _BIND_LOSS_OFFSET,
     "ACA cliff",
     "IRMAA tier 1",
     "NIIT",
@@ -192,9 +255,11 @@ class HarvestSizing:
 def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) -> tuple[float, str]:
     """1:1 upper bound on the harvest and the term that set it.
 
-    A harvested dollar adds at least $1 to every measure (taxable SS and a
-    shrinking senior bonus only add), so H never exceeds the smallest applicable
-    room or the embedded gain. Ties follow HARVEST_BINDINGS; a crossed line
+    A harvested dollar adds at most $1 of AGI and at least $1 to every measure
+    once any net capital loss is absorbed (taxable SS and a shrinking senior bonus
+    only add), so H never exceeds the smallest applicable room or the embedded
+    gain. In a net-loss year the first dollars net against the loss and move the
+    measures by less, so the bound is conservative there. Ties follow HARVEST_BINDINGS; a crossed line
     (negative room) floors the bound at 0 and is named. If a line is already
     crossed, amount is 0 and binding names the most-crossed line.
     """
@@ -228,6 +293,11 @@ class _HarvestCase:
     thresholds: tuple[float, float]
     rates: tuple[float, float, float]
     ordinary_tax_at_zero: float
+    deductions_at_zero: float
+    # Net short- and long-term capital positions the harvest nets against (IRC
+    # §1222): the YTD actuals plus the year's realized gains (C8g, as the scenario).
+    short_term: float = 0.0
+    long_term: float = 0.0
 
 
 def _ordinary_tax(status: str, taxable: float, year: int, cpi: float) -> float:
@@ -242,63 +312,102 @@ def _harvest_case(
 ) -> _HarvestCase:
     """Thresholds and rates as scenario.py:1136-1141 (Single for survivor years)."""
     single = lines.filing_status == "Single"
-    if yr.filing_status != lines.filing_status:
-        yr = replace(yr, filing_status=lines.filing_status)  # reprice reads yr.filing_status
+    yr = _with_line_status(yr, lines)
     base = LTCG_THRESHOLDS_SINGLE if single else LTCG_THRESHOLDS_MFJ
     thresholds = index_tuple(base, yr.year, cpi, round50=True)
-    taxable_at_zero = reprice(yr, 0.0, 0.0, cpi).taxable_income
+    at_zero = reprice(yr, 0.0, 0.0, cpi)
     return _HarvestCase(
         yr=yr,
         lines=lines,
         cpi=cpi,
-        pref_existing=_preferential_existing(yr, ytd),
+        pref_existing=_preferential_existing(yr, ytd, lines.filing_status),
         thresholds=(float(thresholds[0]), float(thresholds[1])),
         rates=LTCG_RATES_SINGLE if single else LTCG_RATES_MFJ,
-        ordinary_tax_at_zero=_ordinary_tax(lines.filing_status, taxable_at_zero, yr.year, cpi),
+        ordinary_tax_at_zero=_ordinary_tax(
+            lines.filing_status, at_zero.taxable_income, yr.year, cpi
+        ),
+        deductions_at_zero=at_zero.total_deductions,
+        short_term=0.0 if ytd is None else ytd.net_short_term_capital_ytd,
+        long_term=_year_long_term(yr, ytd),
     )
 
 
-def _tax_violation(case: _HarvestCase, h: float) -> tuple[str | None, float]:
-    """(tax label or None, extra taxable SS) at harvest ``h``.
+def _harvest_capital(case: _HarvestCase, h: float) -> tuple[float, float]:
+    """(ordinary, preferential) income added by realizing ``h`` more long-term gain.
 
-    The float is the change in taxable Social Security, reused for the MAGI checks.
+    The ONE place the harvest nets against the year's capital position: IRC §1222
+    netting and the §1211(b) loss cap come from the same helper the scenario's tax
+    reads (models.ytd_income._net_capital_gain_split). Against a net loss the
+    first dollars only shrink the disallowed loss, then forfeit the capped
+    ordinary offset, then become preferential gain. Without a loss this is (0, h).
+    """
+    status = case.lines.filing_status
+    ord_0, pref_0 = _net_capital_gain_split(case.short_term, case.long_term, status)
+    ord_h, pref_h = _net_capital_gain_split(case.short_term, case.long_term + h, status)
+    return ord_h - ord_0, pref_h - pref_0
 
-    tax(h) - tax(0) = extra ordinary tax + preferential tax on h stacked above the
-    existing preferential income. "0% LTCG" when the preferential stack is taxed,
-    else "Social Security tax" (extra ORDINARY tax from newly taxable benefits or
-    a shrunken senior bonus).
+
+def _ordinary_cause(case: _HarvestCase, rp: Repriced, ordinary_capital: float) -> str:
+    """Label of an ordinary-only tax rise: the largest of its three causes.
+
+    Ordinary taxable income rises 1:1 with newly taxable Social Security, with
+    the OBBBA senior bonus lost to the phase-out, and with a forfeited capital-
+    loss offset. Equal shares follow HARVEST_BINDINGS.
+    """
+    causes = (
+        (rp.taxable_ss - case.yr.taxable_ss_amt, _BIND_SS_TAX),
+        (case.deductions_at_zero - rp.total_deductions, _BIND_SENIOR),
+        (ordinary_capital, _BIND_LOSS_OFFSET),
+    )
+    return max(causes, key=lambda c: (c[0], -HARVEST_BINDINGS.index(c[1])))[1]
+
+
+def _tax_violation(case: _HarvestCase, h: float) -> tuple[str | None, float, float]:
+    """(tax label or None, extra taxable SS, extra AGI) at harvest ``h``.
+
+    The floats are reused for the MAGI checks.
+
+    tax(h) - tax(0) = extra ordinary tax + preferential tax on the harvest's
+    preferential part stacked above the existing preferential income, both
+    after netting against the year's capital position (_harvest_capital).
+    "0% LTCG" when the preferential stack is taxed, else the ordinary cause
+    (_ordinary_cause).
     """
     yr = case.yr
-    rp = reprice(yr, 0.0, h, case.cpi)
-    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss
+    ordinary_capital, pref = _harvest_capital(case, h)
+    rp = reprice(yr, ordinary_capital, pref, case.cpi)
+    gross = yr.combined_gross - yr.taxable_ss_amt + rp.taxable_ss + ordinary_capital
     unused = max(rp.total_deductions - gross, 0.0)
     pref_tax = _pref_stack_tax(
-        rp.taxable_income, unused, case.pref_existing, h, case.thresholds, case.rates
+        rp.taxable_income, unused, case.pref_existing, pref, case.thresholds, case.rates
     )
     ordinary_extra = (
         _ordinary_tax(case.lines.filing_status, rp.taxable_income, yr.year, case.cpi)
         - case.ordinary_tax_at_zero
     )
     dtss = rp.taxable_ss - yr.taxable_ss_amt
+    agi = ordinary_capital + pref
     if pref_tax + ordinary_extra <= _TAX_TOLERANCE:
-        return None, dtss
-    return (_BIND_LTCG_ZERO if pref_tax > 0.0 else _BIND_SS_TAX), dtss
+        return None, dtss, agi
+    if pref_tax > 0.0:
+        return _BIND_LTCG_ZERO, dtss, agi
+    return _ordinary_cause(case, rp, ordinary_capital), dtss, agi
 
 
 def _violations(case: _HarvestCase, h: float) -> list[str]:
     """Constraints violated at harvest ``h``, in HARVEST_BINDINGS order.
 
     ACA MAGI adds non-taxable SS back, so the taxable-SS change cancels there
-    (scenario_compute.py:715); IRMAA and NIIT MAGI move by dtss + h.
+    (scenario_compute.py:715); IRMAA and NIIT MAGI move by dtss + the AGI added.
     """
-    tax_label, dtss = _tax_violation(case, h)
+    tax_label, dtss, agi = _tax_violation(case, h)
     yr, lines = case.yr, case.lines
     out = [] if tax_label is None else [tax_label]
-    if lines.aca_cliff is not None and yr.aca_magi + h > lines.aca_cliff:
+    if lines.aca_cliff is not None and yr.aca_magi + agi > lines.aca_cliff:
         out.append("ACA cliff")
-    if lines.irmaa_t1 is not None and yr.magi + dtss + h > lines.irmaa_t1:
+    if lines.irmaa_t1 is not None and yr.magi + dtss + agi > lines.irmaa_t1:
         out.append("IRMAA tier 1")
-    if yr.niit_magi + dtss + h > lines.niit:
+    if yr.niit_magi + dtss + agi > lines.niit:
         out.append("NIIT")
     return out
 

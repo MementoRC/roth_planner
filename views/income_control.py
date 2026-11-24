@@ -5,6 +5,7 @@ Changes nothing in the plan or the projection.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -119,6 +120,8 @@ _ROOM_USED_UP = 1.0  # $1 matches the engine's search tolerance for "no room lef
 HARVEST_PHRASES = {
     "0% LTCG": "the top of the 0% LTCG bracket",
     "Social Security tax": "the point where more Social Security becomes taxable",
+    "Senior deduction phase-out": "the point where the senior deduction starts phasing out",
+    "capital loss offset": "the point where gains start using up this year's capital-loss deduction",
     "ACA cliff": "the ACA subsidy cliff",
     "IRMAA tier 1": "IRMAA tier 1 (Medicare surcharge)",
     "NIIT": "the 3.8% NIIT threshold",
@@ -126,28 +129,33 @@ HARVEST_PHRASES = {
 }
 
 
+def harvest_dollars(amount: float) -> str:
+    """A harvest amount floored to whole dollars, so the display never exceeds the engine's."""
+    return fmt_dollars(math.floor(amount))
+
+
 def harvest_text(harvest: HarvestSizing) -> str:
     """Detail line: amount and the plain-language constraint that limited it."""
     phrase = HARVEST_PHRASES.get(harvest.binding, harvest.binding)
-    return f"0% LTCG harvest: up to {fmt_dollars(harvest.amount)} — stops at {phrase}"
+    return f"0% LTCG harvest: up to {harvest_dollars(harvest.amount)} — stops at {phrase}"
 
 
 def _room_used_by_conversion(row: IncomeControlYear, harvest: HarvestSizing) -> bool:
     """True iff the planned conversion itself consumed positive 0% LTCG room.
 
-    The conversion is ordinary income and moves the 0% LTCG measure at least 1:1, so
-    room + conversion is a lower bound on the room before it. If that bound is still
-    positive, the conversion used up room that existed; if not, fixed income had
-    already filled the bracket and the conversion is not the cause.
+    Reads the engine's room with the conversion removed and the year re-priced
+    (``row.ltcg_room_without_conversion``): if that room is positive, the
+    conversion used up room that existed; if not, fixed income had already
+    filled the bracket and the conversion is not the cause.
     """
     room = row.rooms.get("ltcg_zero")
-    conv = row.full_year_of("conversion", row.planned_conversion)
+    before = row.ltcg_room_without_conversion
     return (
         harvest.amount < _HALF_CENT
         and room is not None
         and room <= _ROOM_USED_UP
-        and conv > 0
-        and room + conv > _ROOM_USED_UP
+        and before is not None
+        and before > _ROOM_USED_UP
     )
 
 
@@ -187,7 +195,7 @@ def table_rows(result: IncomeControlResult) -> list[dict[str, object]]:
         for key in LINE_KEYS:
             room = row.rooms[key]
             entry[LINE_LABELS[key]] = "n/a" if room is None else fmt_dollars(room)
-        entry[HARVEST_COLUMN] = "-" if row.harvest is None else fmt_dollars(row.harvest.amount)
+        entry[HARVEST_COLUMN] = "-" if row.harvest is None else harvest_dollars(row.harvest.amount)
         entry["Binding line"] = _binding_name(row)
         out.append(entry)
     return out

@@ -181,6 +181,10 @@ class YearResult:
     # separate from `waterfall_converged`, which previously conflated the two
     # and made 17 fully-funded years report solver failure.
     waterfall_ira_leg_saturated: bool = False
+    # Realized gain of the brokerage sale this year's conversion forced (the
+    # sale's gain minus the same year's gain at zero conversion). 0 when the
+    # conversion's tax is paid from outside cash or no conversion is planned.
+    conversion_funding_gain: float = 0.0
     # True (default, and always true for non-magi-governed plans) unless a
     # magi_strategy-governed plan (irmaa_safe/aca_safe) breached its MAGI
     # ceiling in THIS year, by either of two independent checks in

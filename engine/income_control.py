@@ -14,6 +14,7 @@ from engine.room_lines import (
     HarvestSizing,
     harvest_sizing,
     living_flags,
+    ltcg_room_without,
     room_after,
     room_lines_for_year,
 )
@@ -122,6 +123,10 @@ class IncomeControlYear:
     # Slice 3: advisory 0% LTCG harvest sized into this year's room (None on
     # hand-built rows).
     harvest: HarvestSizing | None = None
+    # The 0% LTCG room with this year's full planned conversion removed and the
+    # year re-priced (room_lines.ltcg_room_without); None without a conversion or
+    # on hand-built rows. The view compares it with rooms["ltcg_zero"].
+    ltcg_room_without_conversion: float | None = None
 
     @property
     def fixed_income(self) -> float:
@@ -382,20 +387,24 @@ def _embedded_gain(
 ) -> float | None:
     """Unrealized brokerage gain left to harvest in ``yr``; None if the basis is unknown.
 
-    The scenario resolves an unknown start basis to full basis (zero gain), so with
-    ``opening_basis is None`` this returns None rather than reading
-    ``yr.brokerage_basis``. ``opening_basis`` is the basis at the start of ``yr``
-    (the household start basis on the first row, else the previous emitted year's
-    closing basis); the opening balance is ``yr.brokerage_balance``. This year's
-    realized gains (turnover and forced draw) are already out of the pool. YTD sales are not reflected in
-    ``brokerage_start_basis``, so the base year also subtracts the YTD net
-    long-term gain: this treats it as drawn from the same embedded pool, which is
-    conservative if those sales were in another account.
+    Owner decision (2026-11-20): the cap is the YEAR-END unrealized gain, the
+    year's closing balance less its closing basis (``yr.brokerage_balance_end -
+    yr.brokerage_basis``). That already nets this year's realized gains (turnover
+    steps basis up; a forced draw or sale removes its share of basis) and adds
+    this year's appreciation.
+
+    The scenario resolves an unknown start basis to full basis (zero gain), so
+    with ``opening_basis is None`` (the household start basis, carried as the
+    previous emitted year's closing basis) this returns None rather than reading
+    ``yr.brokerage_basis``. YTD sales are not reflected in the closing basis
+    (``brokerage_start_basis`` is pre-YTD), so the base year also subtracts the
+    YTD net long-term gain: this treats it as drawn from the same embedded pool,
+    which is conservative if those sales were in another account.
     """
     if opening_basis is None:
         return None
     ytd_sold = 0.0 if ytd is None else max(ytd.preferential_capital_gain_ytd, 0.0)
-    return max(yr.brokerage_balance - opening_basis - yr.realized_gains - ytd_sold, 0.0)
+    return max(yr.brokerage_balance_end - yr.brokerage_basis - ytd_sold, 0.0)
 
 
 def _row(
@@ -417,6 +426,12 @@ def _row(
     )
     forced = forced_exercise(hh, yr.year, yr.option_income)
     lines = _stack_lines(hh, yr, forced, plan, ytd)
+    conversion = _full_year_of(lines, "conversion", yr.your_conversion + yr.spouse_conversion)
+    room_without_conversion = (
+        ltcg_room_without(yr, limits, conversion, hh.cpi_assumption, ytd)
+        if conversion > 0.0
+        else None
+    )
     return IncomeControlYear(
         year=yr.year,
         ages=ages,
@@ -437,6 +452,7 @@ def _row(
         stack_lines=lines,
         has_actuals=ytd is not None,
         harvest=harvest,
+        ltcg_room_without_conversion=room_without_conversion,
     )
 
 

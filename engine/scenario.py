@@ -7,6 +7,7 @@ IRA balances, brokerage tracking, and net benefit analysis.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from engine.aca import aca_ceiling_magi, is_pre_medicare_age, present_household_ages
@@ -45,7 +46,12 @@ from engine.withdrawal_waterfall import (
     solve_waterfall,
 )
 from models.household import Household, SurvivorScenario
-from models.ytd_income import YTDSnapshot
+from models.ytd_income import (
+    YTDSnapshot,
+    adjusted_taxable_income,
+    capital_loss_carryover,
+    net_year_capital,
+)
 
 # audit-1008 F-20: bounds for re-sizing a waterfall draw whose brokerage gain
 # moves the year's own outflows. A dollar matches solve_waterfall's tolerance.
@@ -69,6 +75,8 @@ class _YearOutcome:
     rollover_done: bool
     ya: float
     sa: float
+    # IRC §1212(b): net capital loss carried into the NEXT year (long-term).
+    capital_loss_carryover: float = 0.0
 
 
 def _pref_stack_tax(
@@ -131,8 +139,13 @@ def _project_year(
     waterfall_baseline_taxable: float | None = None,
     irmaa_fallback_magi: float | None = None,
     roth_ledgers: tuple[RothConversionLedger, RothConversionLedger] | None = None,
+    capital_loss_carryin: float = 0.0,
 ) -> _YearOutcome:
     """Compute a single projection year — verbatim extraction of the run_scenario loop body.
+
+    `capital_loss_carryin` (IRC §1212(b)): net capital loss carried in from prior
+    years; it nets against this year's realized gains (net_forecast_capital) and
+    the unused remainder leaves as `_YearOutcome.capital_loss_carryover`.
 
     `roth_ledgers` (your, spouse): the owners' Roth principal at the start of the
     year. With the forced Roth draws they give the earnings part of the draw;
@@ -474,6 +487,29 @@ def _project_year(
         brokerage = max(0.0, brokerage - forced_brokerage_draw)
     # Exposure only (#123 slice 3): the FINAL realized gains, turnover + forced draw.
     yr.realized_gains = realized_gains
+    # C8: the ONE forecast netting -- IRC §1212(b) carryover against this year's
+    # gains, then the §1211(b) cap. `capital_in_agi` is what reaches AGI/MAGI/NII
+    # (a net gain, or minus the allowed part of a net loss); `capital_net_loss`
+    # feeds the carryover computed once taxable income is known.
+    # C8g: in the base year the YTD actuals and the forecast remainder (the forced
+    # sale's gain) are ONE year's capital items, so they net together here --
+    # YTD short/long + realized_gains - carry-in, one §1211(b) limit, one carryover.
+    # The YTD aggregates the helpers below read (magi_ytd, total_investment_income,
+    # the SS provisional base, combined_gross) already hold the YTD-ALONE netted
+    # figure, so only the DIFFERENCE reaches them: `_cap_ord_extra` (ordinary
+    # character) and `_cap_pref_extra` (preferential) are the netted year minus that
+    # YTD-alone figure, and `capital_in_agi` is their sum. Outside the base year the
+    # YTD-alone figure is zero and they are the whole forecast net.
+    _ytd_st = ytd_year.net_short_term_capital_ytd if ytd_year is not None else 0.0
+    _ytd_lt = ytd_year.net_long_term_capital_ytd if ytd_year is not None else 0.0
+    _ytd_cap_ord = ytd_year.ordinary_capital_gain_ytd if ytd_year is not None else 0.0
+    _ytd_cap_pref = ytd_year.preferential_capital_gain_ytd if ytd_year is not None else 0.0
+    _net_ord, _net_pref, capital_net_loss = net_year_capital(
+        _ytd_st, _ytd_lt + realized_gains, capital_loss_carryin, current_filing_status
+    )
+    _cap_ord_extra = _net_ord - _ytd_cap_ord
+    _cap_pref_extra = _net_pref - _ytd_cap_pref
+    capital_in_agi = _cap_ord_extra + _cap_pref_extra
 
     # === Social Security + taxable SS ===
     # SS survivor step-up: survivor keeps max(your_ss, spouse_ss); implemented in compute_social_security.
@@ -514,7 +550,7 @@ def _project_year(
         ord_div_this_year,
         ytd_year,
         qual_div_this_year,
-        realized_gains,
+        capital_in_agi,
         death_year=surv.death_year if surv is not None else None,
         # Waterfall: the forced IRA draws are ordinary distributions (IRC §408(d)(1)) and
         # belong in the §86(b)(2) provisional-income base exactly like the sibling
@@ -567,7 +603,7 @@ def _project_year(
     # === Brokerage realized gains added to MAGI ===
     # brok_rate, brok_appreciation_rate, and realized_gains were computed above (hoisted
     # for SS provisional income). Add realized_gains to MAGI here for the ordering block.
-    yr.magi += realized_gains
+    yr.magi += capital_in_agi
     magi_history[year] = yr.magi
 
     # === Combined gross (for tax) ===
@@ -588,6 +624,9 @@ def _project_year(
         + forced_your_ira_draw
         + forced_spouse_ira_draw
         + roth_earnings_income
+        # IRC §1211(b): the allowed part of a net capital loss reduces ordinary income
+        # (netted with the base year's YTD actuals -- see C8g above).
+        + _cap_ord_extra
     )
     # YTD: add all ordinary income components to gross.
     # LTCG and qualified dividends are excluded (taxed at preferential rate).
@@ -703,7 +742,7 @@ def _project_year(
         ord_div_this_year,
         ytd_year,
         qual_div_this_year,
-        realized_gains,
+        capital_in_agi,
         death_year=surv.death_year if surv is not None else None,
         # Waterfall: this baseline call must pass the same forced IRA draws as the
         # actual call above (which computed yr.taxable_ss_amt). Omitting them made
@@ -770,6 +809,24 @@ def _project_year(
 
     # === Taxable income ===
     yr.taxable_income = max(yr.combined_gross - yr.total_deductions, 0)
+    # IRC §1212(b)(2): ATI = taxable income (negative when deductions exceed gross
+    # income) + the §1211(b) amount allowed + the §151 deduction. The owner decided
+    # the §151 term is $0 (no personal-exemption deduction is modeled).
+    # `capital_net_loss` is already the base year's ONE netted loss (YTD + forecast,
+    # C8g); the allowed part is in combined_gross. Preferential income (qualified
+    # dividends, net gain) is part of the real, unfloored taxable income.
+    _preferential = qual_div_this_year + _net_pref
+    if ytd_year is not None:
+        _preferential += ytd_year.qualified_dividends_ytd
+    capital_loss_out = capital_loss_carryover(
+        capital_net_loss,
+        adjusted_taxable_income(
+            yr.combined_gross + _preferential - yr.total_deductions,
+            capital_net_loss,
+            current_filing_status,
+        ),
+        current_filing_status,
+    )
 
     yr.federal_tax_amt, yr.marginal_bracket, yr.conversion_tax, base_taxable = compute_federal_tax(
         yr.taxable_income,
@@ -924,8 +981,15 @@ def _project_year(
     # models/ytd_income.py::_net_capital_gain_split). qualified_dividends_ytd is
     # NOT part of that netting (dividends are never capital gain/loss) and MUST
     # stay a separate addend here.
+    # C8g: the YTD-placed preferential income is the NETTED figure -- a carry-in loss
+    # that eats into the YTD gain lowers it (`min(_cap_pref_extra, 0)`); a forecast
+    # gain on top is stacked later as ltcg_eligible.
     _ytd_ltcg_total = (
-        (ytd_year.preferential_capital_gain_ytd + ytd_year.qualified_dividends_ytd)
+        (
+            ytd_year.preferential_capital_gain_ytd
+            + min(_cap_pref_extra, 0.0)
+            + ytd_year.qualified_dividends_ytd
+        )
         if ytd_year is not None
         else 0.0
     )
@@ -1005,7 +1069,7 @@ def _project_year(
     # also zeroes the forecast NII term; ytd_year.total_investment_income below is then
     # the sole base-year source. Non-base years are unchanged (realized_gains is the
     # same brokerage * brok_appreciation_rate * hh.brok_turnover product).
-    net_investment_income = realized_gains + qual_div_this_year + ord_div_this_year
+    net_investment_income = capital_in_agi + qual_div_this_year + ord_div_this_year
     # YTD: add realized gains, dividends, interest to investment income
     if ytd_year is not None:
         net_investment_income += ytd_year.total_investment_income
@@ -1145,7 +1209,7 @@ def _project_year(
         LTCG_THRESHOLDS_SINGLE if current_filing_status == "Single" else LTCG_THRESHOLDS_MFJ
     )
     ltcg_thresholds = _index_tuple(_base_ltcg_thresholds, year, cpi, round50=True)
-    ltcg_eligible = realized_gains + qual_div_this_year
+    ltcg_eligible = max(_cap_pref_extra, 0.0) + qual_div_this_year
     _ltcg_rates = LTCG_RATES_SINGLE if current_filing_status == "Single" else LTCG_RATES_MFJ
     # audit-1008 F-18: the stack ends at TOTAL taxable income, so deduction left
     # unused by ordinary income absorbs preferential income first (the
@@ -1321,6 +1385,7 @@ def _project_year(
         rollover_done=_rollover_done,
         ya=ya,
         sa=sa,
+        capital_loss_carryover=capital_loss_out,
     )
 
 
@@ -1462,6 +1527,35 @@ def waterfall_accounts(
     )
 
 
+def _resize_to_need(
+    draw: WaterfallDraw,
+    need: float,
+    solve: Callable[[float], WaterfallDraw],
+    residual: Callable[[WaterfallDraw], float],
+) -> WaterfallDraw:
+    """audit-1008 F-20: re-size a draw whose brokerage gain moves its own need.
+
+    Selling realizes a gain that moves MAGI, so the year's ACA premium, NIIT and
+    ordinary tax (SS provisional income, OBBBA phase-out) can change -- and with
+    them the need itself. ``residual(d)`` projects the year with ``d`` and
+    returns what is still unfunded (negative: over-drawn); ``solve(n)`` sizes a
+    draw for need ``n``. Re-solve against the corrected need until the cash
+    raised matches the outcome's own income_needed. An ACA-cliff oscillation is
+    bounded and resolved on the conservative (larger-need) side.
+    """
+    max_need = need
+    for _ in range(_RESIZE_MAX_PASSES):
+        gap = residual(draw)
+        if abs(gap) < _RESIZE_TOLERANCE:
+            return draw
+        need = max(0.0, need + gap)
+        max_need = max(max_need, need)
+        draw = solve(need)
+    if abs(residual(draw)) < _RESIZE_TOLERANCE:
+        return draw
+    return dataclasses.replace(solve(max_need), converged=False)
+
+
 def _solve_waterfall_year(
     yr_idx: int,
     hh: Household,
@@ -1484,6 +1578,7 @@ def _solve_waterfall_year(
     baseline: _YearOutcome,
     irmaa_fallback_magi: float | None = None,
     roth_ledgers: tuple[RothConversionLedger, RothConversionLedger] | None = None,
+    capital_loss_carryin: float = 0.0,
 ) -> _YearOutcome:
     """Solve the IRA-withdrawal waterfall for a shortfall year and re-run
     `_project_year` once more with the solved draws (stage 3b activation).
@@ -1540,6 +1635,7 @@ def _solve_waterfall_year(
             brokerage_basis=brokerage_basis,
             conversion_cap=conversion_cap,
             irmaa_fallback_magi=irmaa_fallback_magi,
+            capital_loss_carryin=capital_loss_carryin,
         )
 
     def _solve_draw(nd: _YearOutcome, conversion_cap: float | None) -> WaterfallDraw:
@@ -1603,6 +1699,7 @@ def _solve_waterfall_year(
                 forced_spouse_ira_draw=spouse_probe,
                 conversion_cap=conversion_cap,
                 irmaa_fallback_magi=irmaa_fallback_magi,
+                capital_loss_carryin=capital_loss_carryin,
             )
             # audit-1008 F-15: NIIT is now a cash outflow too, so a draw that
             # raises MAGI past the §1411 threshold is grossed up for it.
@@ -1658,6 +1755,7 @@ def _solve_waterfall_year(
                     conversion_cap=conversion_cap,
                     irmaa_fallback_magi=irmaa_fallback_magi,
                     roth_ledgers=roth_ledgers,
+                    capital_loss_carryin=capital_loss_carryin,
                 ).yr
                 return probe.federal_tax_amt + probe.aca_premium_cost + probe.niit_cost
 
@@ -1667,15 +1765,8 @@ def _solve_waterfall_year(
         if draw.brokerage_draw <= 0.0:
             return draw
 
-        # audit-1008 F-20: the brokerage leg is sized as exactly `need`, but
-        # selling realizes a gain that moves MAGI, so the year's ACA premium,
-        # NIIT and ordinary tax (SS provisional income, OBBBA phase-out) can
-        # change -- and with them the need itself. Project the year with the
-        # solved draws, measure what is still unfunded (or over-drawn), and
-        # re-solve against the corrected need until the cash raised matches the
-        # outcome's own income_needed. The gap shrinks by the marginal outflow
-        # rate each pass; an ACA-cliff oscillation is bounded and resolved on
-        # the conservative (larger-need) side, like solve_waterfall itself.
+        # audit-1008 F-20: the brokerage leg is sized as exactly `need`, but its
+        # gain moves the need itself -- see _resize_to_need.
         def _residual(d: WaterfallDraw) -> float:
             your_roth_draw = min(d.roth_draw, nd.yr.your_roth_begin)
             check = _project_year(
@@ -1706,22 +1797,15 @@ def _solve_waterfall_year(
                 conversion_cap=conversion_cap,
                 irmaa_fallback_magi=irmaa_fallback_magi,
                 roth_ledgers=roth_ledgers,
+                capital_loss_carryin=capital_loss_carryin,
             )
             raised = d.brokerage_draw + d.your_ira_draw + d.spouse_ira_draw + d.roth_draw
             return check.yr.income_needed - raised - d.unfunded
 
-        max_need = need
-        for _ in range(_RESIZE_MAX_PASSES):
-            gap = _residual(draw)
-            if abs(gap) < _RESIZE_TOLERANCE:
-                return draw
-            need = max(0.0, need + gap)
-            max_need = max(max_need, need)
-            draw = solve_waterfall(need, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
-        if abs(_residual(draw)) < _RESIZE_TOLERANCE:
-            return draw
-        draw = solve_waterfall(max_need, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
-        return dataclasses.replace(draw, converged=False)
+        def _solve(n: float) -> WaterfallDraw:
+            return solve_waterfall(n, accounts, tax_of, nd.ya, nd.sa, roth_tax_of=roth_tax_of)
+
+        return _resize_to_need(draw, need, _solve, _residual)
 
     def _base_headroom(zero_conv_nd: _YearOutcome) -> float:
         """Ordinary-income room for a conversion, measured against BASE income only.
@@ -1827,6 +1911,7 @@ def _solve_waterfall_year(
             conversion_cap=conversion_cap,
             irmaa_fallback_magi=irmaa_fallback_magi,
             roth_ledgers=roth_ledgers,
+            capital_loss_carryin=capital_loss_carryin,
         )
         return _magi_for_strategy(strategy, _probe)
 
@@ -1910,6 +1995,7 @@ def _solve_waterfall_year(
             conversion_cap=0.0,
             irmaa_fallback_magi=irmaa_fallback_magi,
             roth_ledgers=roth_ledgers,
+            capital_loss_carryin=capital_loss_carryin,
         )
         waterfall_baseline_tax = zero_conv_outcome.yr.federal_tax_amt
         waterfall_baseline_magi = zero_conv_outcome.yr.magi
@@ -2030,6 +2116,7 @@ def _solve_waterfall_year(
         waterfall_baseline_taxable=waterfall_baseline_taxable,
         irmaa_fallback_magi=irmaa_fallback_magi,
         roth_ledgers=roth_ledgers,
+        capital_loss_carryin=capital_loss_carryin,
     )
     # The solver's own residual/convergence flag is authoritative -- it
     # accounts for the brokerage + IRA + Roth allocation as a whole, which
@@ -2037,6 +2124,10 @@ def _solve_waterfall_year(
     outcome.yr.unfunded_need = draw.unfunded
     outcome.yr.waterfall_converged = draw.converged
     outcome.yr.waterfall_ira_leg_saturated = draw.ira_leg_saturated
+    if planned_conversion > 0.0:
+        outcome.yr.conversion_funding_gain = max(
+            outcome.yr.realized_gains - zero_conv_outcome.yr.realized_gains, 0.0
+        )
     # audit-0809 #20 (HIGH): the MAGI-ceiling block above lives entirely in
     # the `else` of `planned_conversion <= 0.0`, so a zero-planned year
     # verified nothing and reported the guarantee honoured by default. The
@@ -2212,6 +2303,8 @@ class ProjectionState:
     # Converted Roth principal by conversion year, for the 5-year additional tax.
     your_roth_ledger: RothConversionLedger = field(default_factory=RothConversionLedger)
     spouse_roth_ledger: RothConversionLedger = field(default_factory=RothConversionLedger)
+    # IRC §1212(b): net capital loss carried into the next year (long-term).
+    capital_loss_carryover: float = 0.0
 
     @classmethod
     def initial(cls, hh: Household) -> ProjectionState:
@@ -2270,6 +2363,7 @@ class ProjectionState:
         self.prev_your_ira_begin = outcome.prev_your_ira_begin
         self.prev_spouse_ira_begin = outcome.prev_spouse_ira_begin
         self.rollover_done = outcome.rollover_done
+        self.capital_loss_carryover = outcome.capital_loss_carryover
 
 
 def project_year_step(
@@ -2318,6 +2412,7 @@ def project_year_step(
         _inherited_baseline,
         brokerage_basis=state.brokerage_basis,
         irmaa_fallback_magi=irmaa_fallback,
+        capital_loss_carryin=state.capital_loss_carryover,
     )
     if outcome.yr.income_needed > 0:
         outcome = _solve_waterfall_year(
@@ -2342,6 +2437,7 @@ def project_year_step(
             outcome,
             irmaa_fallback,
             roth_ledgers=(state.your_roth_ledger, state.spouse_roth_ledger),
+            capital_loss_carryin=state.capital_loss_carryover,
         )
     else:
         inherited_balances[:] = _inherited_baseline
@@ -2399,11 +2495,89 @@ def project_year_with_draw(
     with the conversion it sizes and needs only these single evaluations.
     Mutates ``state.magi_history`` / ``state.inherited_balances`` like
     project_year_step -- pass ``state.copy()`` for a speculative probe.
+
+    With no draw, a shortfall is funded from the brokerage account as a SALE
+    (#123 C2): the gain it realizes, draw x (1 - basis / balance), is priced
+    into the same year's tax, NIIT and MAGI exactly as a forced brokerage draw
+    is, sized by _resize_to_need against the need its own gain moves. The
+    legacy expense debit realized no gain and ran after tax was computed.
+    Only the brokerage is sold; a need it cannot cover stays unfunded.
     """
-    if draw is None:
-        draw = WaterfallDraw(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, True)
-    your_roth_draw = min(draw.roth_draw, state.your_roth)
     irmaa_fallback = _irmaa_fallback_magi(yr_idx, hh, plan, ytd, net_inv_income, state)
+    if draw is not None:
+        return _project_given_draw(
+            yr_idx, hh, plan, ytd, net_inv_income, state, draw, irmaa_fallback
+        )
+    sale = _expense_sale(yr_idx, hh, plan, ytd, net_inv_income, state, irmaa_fallback)
+    outcome = _project_given_draw(
+        yr_idx, hh, plan, ytd, net_inv_income, state, sale, irmaa_fallback
+    )
+    if sale.brokerage_draw > 0.0:
+        outcome.yr.unfunded_need = sale.unfunded
+        outcome.yr.waterfall_converged = sale.converged
+    return outcome
+
+
+_NO_DRAW = WaterfallDraw(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, True)
+
+
+def _no_marginal_tax(_draw: float) -> float:
+    """A brokerage-only sale has no IRA leg, so solve_waterfall never prices one."""
+    return 0.0
+
+
+def _expense_sale(
+    yr_idx: int,
+    hh: Household,
+    plan: ConversionPlan,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    state: ProjectionState,
+    irmaa_fallback: float | None,
+) -> WaterfallDraw:
+    """The brokerage sale that funds this year's shortfall when no draw is given.
+
+    Zero when there is no shortfall or no opening brokerage balance. Probes run
+    on isolated copies of ``state``.
+    """
+    nd = _project_given_draw(
+        yr_idx, hh, plan, ytd, net_inv_income, state.copy(), _NO_DRAW, irmaa_fallback
+    )
+    need = nd.yr.income_needed
+    if need <= 0.0 or nd.yr.brokerage_balance <= 0.0:
+        return _NO_DRAW
+    accounts = dataclasses.replace(
+        waterfall_accounts(nd.yr, state.brokerage_basis),
+        your_ira=0.0,
+        spouse_ira=0.0,
+        your_roth=0.0,
+        spouse_roth=0.0,
+    )
+
+    def _solve(n: float) -> WaterfallDraw:
+        return solve_waterfall(n, accounts, _no_marginal_tax, nd.ya, nd.sa)
+
+    def _residual(d: WaterfallDraw) -> float:
+        check = _project_given_draw(
+            yr_idx, hh, plan, ytd, net_inv_income, state.copy(), d, irmaa_fallback
+        )
+        return check.yr.income_needed - d.brokerage_draw - d.unfunded
+
+    return _resize_to_need(_solve(need), need, _solve, _residual)
+
+
+def _project_given_draw(
+    yr_idx: int,
+    hh: Household,
+    plan: ConversionPlan,
+    ytd: YTDSnapshot | None,
+    net_inv_income: float,
+    state: ProjectionState,
+    draw: WaterfallDraw,
+    irmaa_fallback: float | None,
+) -> _YearOutcome:
+    """One _project_year call with ``draw`` split as project_year_step's final call splits it."""
+    your_roth_draw = min(draw.roth_draw, state.your_roth)
     return _project_year(
         yr_idx,
         hh,
@@ -2431,6 +2605,7 @@ def project_year_with_draw(
         forced_early_withdrawal_penalty=draw.early_withdrawal_penalty,
         irmaa_fallback_magi=irmaa_fallback,
         roth_ledgers=(state.your_roth_ledger, state.spouse_roth_ledger),
+        capital_loss_carryin=state.capital_loss_carryover,
     )
 
 
