@@ -30,7 +30,7 @@ from engine.tax import (
 from engine.tax_indexing import index_tuple
 from engine.yr_reprice import Repriced, reprice
 from models.household import Household
-from models.ytd_income import YTDSnapshot, _net_capital_gain_split
+from models.ytd_income import YTDSnapshot, net_year_capital
 
 # Income at this age is the first the 2-year IRMAA lookback can price into Medicare.
 IRMAA_FIRST_INCOME_AGE = 63
@@ -134,11 +134,15 @@ def _preferential_existing(
 ) -> float:
     """Preferential income already in the year, before any harvest.
 
-    The netted long-term-character gain of the year's capital position (the same
-    ``_net_capital_gain_split`` the scenario applies, C8g), plus qualified dividends.
+    The netted long-term-character gain of the year's capital position, with the
+    §1212(b) carry-in (``yr.capital_loss_carryin``) joined through
+    ``net_year_capital`` -- the helper the scenario applies (C8g, #135) -- plus
+    qualified dividends.
     """
     short = 0.0 if ytd is None else ytd.net_short_term_capital_ytd
-    _, pref = _net_capital_gain_split(short, _year_long_term(yr, ytd, gain_removed), filing_status)
+    _, pref, _ = net_year_capital(
+        short, _year_long_term(yr, ytd, gain_removed), yr.capital_loss_carryin, filing_status
+    )
     qual = yr.brokerage_qual_div + (0.0 if ytd is None else ytd.qualified_dividends_ytd)
     return qual + pref
 
@@ -252,14 +256,16 @@ class HarvestSizing:
     basis_known: bool  # False when brokerage_start_basis is None (amount == room_uncapped)
 
 
-def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) -> tuple[float, str]:
+def _upper_bound(
+    rooms: dict[str, float | None], embedded_gain: float | None, absorbed_loss: float = 0.0
+) -> tuple[float, str]:
     """1:1 upper bound on the harvest and the term that set it.
 
     A harvested dollar adds at most $1 of AGI and at least $1 to every measure
     once any net capital loss is absorbed (taxable SS and a shrinking senior bonus
-    only add), so H never exceeds the smallest applicable room or the embedded
-    gain. In a net-loss year the first dollars net against the loss and move the
-    measures by less, so the bound is conservative there. Ties follow HARVEST_BINDINGS; a crossed line
+    only add), so H never exceeds the smallest applicable room plus the net loss
+    the first dollars absorb (``absorbed_loss``), or the embedded gain. Ties follow
+    HARVEST_BINDINGS; a crossed line
     (negative room) floors the bound at 0 and is named. If a line is already
     crossed, amount is 0 and binding names the most-crossed line.
     """
@@ -267,7 +273,7 @@ def _upper_bound(rooms: dict[str, float | None], embedded_gain: float | None) ->
     for key, label in _HARVEST_ROOMS.items():
         room = rooms.get(key)
         if room is not None:
-            terms.append((room, label))
+            terms.append((room + absorbed_loss, label))
     if embedded_gain is not None:
         terms.append((embedded_gain, _EMBEDDED_GAIN))
     if not terms:
@@ -298,6 +304,8 @@ class _HarvestCase:
     # §1222): the YTD actuals plus the year's realized gains (C8g, as the scenario).
     short_term: float = 0.0
     long_term: float = 0.0
+    # §1212(b) loss carried in; joins the long-term side through net_year_capital.
+    carry_in: float = 0.0
 
 
 def _ordinary_tax(status: str, taxable: float, year: int, cpi: float) -> float:
@@ -329,6 +337,7 @@ def _harvest_case(
         deductions_at_zero=at_zero.total_deductions,
         short_term=0.0 if ytd is None else ytd.net_short_term_capital_ytd,
         long_term=_year_long_term(yr, ytd),
+        carry_in=yr.capital_loss_carryin,
     )
 
 
@@ -337,13 +346,13 @@ def _harvest_capital(case: _HarvestCase, h: float) -> tuple[float, float]:
 
     The ONE place the harvest nets against the year's capital position: IRC §1222
     netting and the §1211(b) loss cap come from the same helper the scenario's tax
-    reads (models.ytd_income._net_capital_gain_split). Against a net loss the
+    reads (models.ytd_income.net_year_capital). Against a net loss the
     first dollars only shrink the disallowed loss, then forfeit the capped
     ordinary offset, then become preferential gain. Without a loss this is (0, h).
     """
     status = case.lines.filing_status
-    ord_0, pref_0 = _net_capital_gain_split(case.short_term, case.long_term, status)
-    ord_h, pref_h = _net_capital_gain_split(case.short_term, case.long_term + h, status)
+    ord_0, pref_0, _ = net_year_capital(case.short_term, case.long_term, case.carry_in, status)
+    ord_h, pref_h, _ = net_year_capital(case.short_term, case.long_term + h, case.carry_in, status)
     return ord_h - ord_0, pref_h - pref_0
 
 
@@ -431,12 +440,19 @@ def _bisect(case: _HarvestCase, upper: float) -> tuple[float, float]:
     return lo, hi
 
 
+def _absorbed_loss(case: _HarvestCase) -> float:
+    """Net capital loss of the year before any harvest: the first harvested dollars
+    only absorb it, so they move the room measures by nothing."""
+    status = case.lines.filing_status
+    return net_year_capital(case.short_term, case.long_term, case.carry_in, status)[2]
+
+
 def _search(
     case: _HarvestCase, rooms: dict[str, float | None], embedded_gain: float | None
 ) -> tuple[float, str]:
     """(amount, binding): the upper bound if feasible, else the bisection result
     labelled by the first constraint violated at the smallest infeasible probe."""
-    upper, label = _upper_bound(rooms, embedded_gain)
+    upper, label = _upper_bound(rooms, embedded_gain, _absorbed_loss(case))
     if upper <= 0.0 or not _violations(case, upper):
         return upper, label
     lo, hi = _bisect(case, upper)

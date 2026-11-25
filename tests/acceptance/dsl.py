@@ -390,6 +390,8 @@ class HarvestCase:
     standard_deduction: float | None = None
     ytd_net_long_term: float = 0.0
     living_expenses: float = 0.0
+    returns: dict[int, float] = field(default_factory=dict)
+    view_year: int | None = None  # a later forecast year to view (None: the base year)
 
 
 def a_couple_under_65() -> HarvestCase:
@@ -420,6 +422,10 @@ def with_tax_paid_from_brokerage(case: HarvestCase) -> None:
     case.tax_paid_from_cash = False
 
 
+def with_basis_share(case: HarvestCase | CapitalCase, share: float) -> None:
+    case.brokerage_basis = share * _BROKERAGE_BALANCE
+
+
 def view_harvest(case: HarvestCase) -> driver.HarvestView:
     return driver.income_control_harvest(
         status=case.status,
@@ -437,6 +443,8 @@ def view_harvest(case: HarvestCase) -> driver.HarvestView:
         standard_deduction=case.standard_deduction,
         ytd_net_long_term=case.ytd_net_long_term,
         living_expenses=case.living_expenses,
+        returns=case.returns,
+        view_year=case.view_year,
     )
 
 
@@ -496,10 +504,17 @@ def harvest_without_conversion(case: HarvestCase) -> driver.HarvestView:
 def extra_tax_from_realizing(case: HarvestCase, view: driver.HarvestView, gain: float) -> float:
     """Federal tax added for the year by realizing ``gain`` more long-term gain.
 
-    The gain enters as the base-year ``ltcg_ytd`` actual, as tests/test_room_lines_harvest.py
-    does: the scenario has no one-off realized-gain input.
+    In the base year the gain enters as the ``ltcg_ytd`` actual, as
+    tests/test_room_lines_harvest.py does: the scenario has no one-off realized-gain input.
+    In a later viewed year there are no actuals, so the gain is realized through that year's
+    turnover: its return is raised until opening balance x return x turnover is ``gain`` more.
     """
-    realized = replace(case, ytd_net_long_term=case.ytd_net_long_term + gain)
+    if case.view_year is None or case.view_year == case.year:
+        realized = replace(case, ytd_net_long_term=case.ytd_net_long_term + gain)
+    else:
+        rate = case.returns.get(case.view_year, case.brokerage_return)
+        extra_rate = gain / (view.opening_balance * case.turnover)
+        realized = replace(case, returns={**case.returns, case.view_year: rate + extra_rate})
     return view_harvest(realized).federal_tax - view.federal_tax
 
 
@@ -564,13 +579,14 @@ class CapitalCase:
     living_expenses: float = 0.0
     brokerage_basis: float | None = None
     ytd_net_long_term: float = 0.0
+    autofill: bool = False
 
 
 def a_couple_under_65_with_turnover(turnover: float) -> CapitalCase:
     return CapitalCase(turnover=turnover)
 
 
-def with_return_in(case: CapitalCase, year: int, rate: float) -> None:
+def with_return_in(case: CapitalCase | HarvestCase, year: int, rate: float) -> None:
     case.returns[year] = rate
 
 
@@ -582,6 +598,10 @@ def with_year_to_date_actuals(case: CapitalCase, wages: float, net_loss: float) 
     """Base-year actuals as the snapshot's wages and net long-term gain (a loss is negative)."""
     case.ytd_wages = wages
     case.ytd_net_long_term = -net_loss
+
+
+def with_autofill_irmaa_safe(case: CapitalCase) -> CapitalCase:
+    return replace(case, autofill=True)
 
 
 def capital_years(case: CapitalCase) -> dict[int, driver.CapitalYear]:
@@ -596,6 +616,7 @@ def capital_years(case: CapitalCase) -> dict[int, driver.CapitalYear]:
         ytd_net_long_term=case.ytd_net_long_term,
         living_expenses=case.living_expenses,
         brokerage_basis=case.brokerage_basis,
+        autofill=case.autofill,
     )
     return {yr.year: yr for yr in years}
 

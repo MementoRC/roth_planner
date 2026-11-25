@@ -161,6 +161,60 @@ Feature: Income Harvest bugs, red until fixed
     And the 2026 MAGI from capital gains is minus the actuals loss netted with the sale's gain, up to $3,000
     And the 2027 MAGI from capital gains is the gain less the 2026 netted loss in excess of $3,000
 
+  # I135a (issue #135): the harvest of a year after a loss year never subtracts the carried-in capital loss, which the
+  # scenario nets (IRC §1212(b)(1), §1222). Synthetic MFJ, both 60: a $100,000 conversion is the only 2026 income and
+  # the $1,000,000 brokerage (20% turnover) falls 5% in 2026, so the forecast 2026 net loss is 1,000,000 x -5% x 20% =
+  # -10,000; ATI is far above 3,000, so 3,000 offsets income and 7,000 carries into 2027. 2027 has no wages and no
+  # conversion, so its 0% room is well defined: threshold 98,900 + unused standard deduction 32,200 = 131,100 of room
+  # for preferential income. The brokerage opens 2027 at 950,000 and rises 10%, so 2027 turnover realizes
+  # 950,000 x 10% x 20% = 19,000. Correct harvest = 131,100 - (19,000 - 7,000) = 119,100. The engine sizes against the
+  # 19,000 alone, so it shows 131,100 - 19,000 = 112,100, about 7,000 too small. The oracle is the end-to-end 2027 tax:
+  # at 112,102 the 2027 net gain is 19,000 + 112,102 - 7,000 = 124,102, still under 131,100, so $2 more adds no tax and
+  # the tightness step fails (red). At 119,100 the stack is exactly full and $2 more adds tax.
+  Scenario: I135a: The harvest in the year after a loss year is tight against the carried-in loss
+    Given a married-filing-jointly household, both under 65, with no Social Security
+    And a 2026 conversion of $100,000 is the only income
+    And the conversion tax is paid from cash, not the brokerage account
+    And the brokerage turns over 20% a year
+    And the brokerage falls 5% in 2026
+    And the brokerage rises 10% in 2027
+    When I view Income Control for 2027 in the forecast starting 2026
+    Then realizing the harvest adds no federal tax for the year
+    And realizing $2 more than the harvest adds federal tax, unless a non-tax limit binds
+
+  # I135b (issue #135): carry-in exceeds the year's gains, so the year nets to a loss. IRC §1222, §1211(b), §1212(b)(1), §1(h).
+  Scenario: I135b: The harvest in a net-loss carry-in year also absorbs the unused loss
+    Given a married-filing-jointly household, both under 65, with no Social Security
+    And a 2026 conversion of $100,000 is the only income
+    And the conversion tax is paid from cash, not the brokerage account
+    And the brokerage turns over 20% a year
+    And the brokerage falls 5% in 2026
+    And the brokerage rises 1% in 2027
+    When I view Income Control for 2027 in the forecast starting 2026
+    Then the 0% LTCG harvest is $136,200
+    And realizing the harvest adds no federal tax for the year
+    And realizing $2 more than the harvest adds federal tax, unless a non-tax limit binds
+
+  # I135c (issue #135): auto-fill sizes a forecast year with a carry-in against the raw gain; the scenario nets it. IRC §1212(b)(1), §1222.
+  Scenario: I135c: Auto-fill to the first IRMAA tier agrees with the scenario's netted capital figure
+    Given a married-filing-jointly household, both under 65, whose brokerage account turns over 20% a year
+    And actuals so far in 2026 of $100,000 of wages and a $10,000 net long-term capital loss
+    And the brokerage rises 10% in 2027
+    When the conversion plan is auto-filled to stay under the first IRMAA tier
+    And the forecast years 2026 and 2027 are projected
+    Then the 2027 MAGI is $218,000, the first IRMAA tier
+
+  # I135d (issue #135): in the base year auto-fill adds a forced sale's gain raw on top of the YTD-alone capital figure; the scenario nets them. IRC §1222, §1211(b), §1(h).
+  Scenario: I135d: Auto-fill nets a forced brokerage sale with the actuals loss in the base year
+    Given a married-filing-jointly household, both under 65, whose brokerage account turns over 20% a year
+    And actuals so far in 2026 of $0 of wages and a $10,000 net long-term capital loss
+    And the household spends $12,000 a year from the brokerage account
+    And the brokerage cost basis is 50% of its balance
+    When the conversion plan is auto-filled to stay under the first IRMAA tier
+    And the forecast years 2026 and 2027 are projected
+    Then the 2026 brokerage sale realizes a gain between $5,990 and $6,010
+    And the 2026 MAGI is $218,000, the first IRMAA tier
+
   # C8h: guard: consequence of C8g; room_lines netting; not red-first. The 0% LTCG harvest sizes against ONE base-year
   # net: YTD short-term + (YTD long-term + this year's realized sale gain), the same single figure the scenario nets
   # (IRC §1222, §1211(b)). Synthetic MFJ, both under 65: a $60,000 conversion is the only ordinary income, a $10,000 net

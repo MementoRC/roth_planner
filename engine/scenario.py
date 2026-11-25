@@ -487,6 +487,7 @@ def _project_year(
         brokerage = max(0.0, brokerage - forced_brokerage_draw)
     # Exposure only (#123 slice 3): the FINAL realized gains, turnover + forced draw.
     yr.realized_gains = realized_gains
+    yr.capital_loss_carryin = capital_loss_carryin
     # C8: the ONE forecast netting -- IRC §1212(b) carryover against this year's
     # gains, then the §1211(b) cap. `capital_in_agi` is what reaches AGI/MAGI/NII
     # (a net gain, or minus the allowed part of a net loss); `capital_net_loss`
