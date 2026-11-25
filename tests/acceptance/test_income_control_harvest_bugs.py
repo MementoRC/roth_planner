@@ -132,6 +132,18 @@ def _harvest_is_tight(ctx: dict[str, Any]) -> None:
     assert dsl.binds_on_a_non_tax_limit(view) or not dsl.adds_no_tax(extra), (extra, view)
 
 
+@given(parsers.parse("the brokerage turns over {turnover} a year"))
+def _turns_over(ctx: dict[str, Any], turnover: str) -> None:
+    ctx["case"].turnover = dsl.percent(turnover)
+
+
+@when(parsers.parse("I view Income Control for {year:d} in the forecast starting {base:d}"))
+def _view_later_year(ctx: dict[str, Any], year: int, base: int) -> None:
+    ctx["case"].year = base
+    ctx["case"].view_year = year
+    ctx["view"] = dsl.view_harvest(ctx["case"])
+
+
 @then("the harvest equals the year-end unrealized gain in the brokerage account")
 def _harvest_is_year_end_gain(ctx: dict[str, Any]) -> None:
     view = ctx["view"]
@@ -187,6 +199,11 @@ def _spends_from_brokerage(ctx: dict[str, Any], amount: str) -> None:
 @given("the brokerage cost basis is well below its balance")
 def _basis_well_below(ctx: dict[str, Any]) -> None:
     dsl.with_basis_well_below_balance(ctx["case"])
+
+
+@given(parsers.parse("the brokerage cost basis is {pct} of its balance"))
+def _basis_share(ctx: dict[str, Any], pct: str) -> None:
+    dsl.with_basis_share(ctx["case"], dsl.percent(pct))
 
 
 @given("the conversion tax is paid from the brokerage account, not cash")
@@ -258,6 +275,16 @@ def _actuals_loss_carries(ctx: dict[str, Any], later: int, carried: str) -> None
     assert second.realized_gains > dsl.money(carried), second
     capital = second.magi - second.ordinary_gross
     assert dsl.within_a_dollar(capital, second.realized_gains - dsl.money(carried)), second
+
+
+@when("the conversion plan is auto-filled to stay under the first IRMAA tier")
+def _autofill_irmaa(ctx):
+    ctx["case"] = dsl.with_autofill_irmaa_safe(ctx["case"])
+
+
+@then(parsers.parse("the {year:d} MAGI is {amount}, the first IRMAA tier"))
+def _magi_first_tier(ctx, year, amount):
+    assert dsl.within_a_dollar(ctx["years"][year].magi, dsl.money(amount))
 
 
 @when(parsers.parse("the forecast years {first:d} and {second:d} are projected"))

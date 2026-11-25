@@ -25,6 +25,7 @@ from engine.scenario import (
     run_no_conversion,
     run_scenario,
 )
+from engine.scenario_autofill import auto_fill_irmaa_safe
 from engine.scenario_types import ConversionPlan
 from engine.tax import estimate_ytd_federal_tax, senior_bonus_deduction, taxable_ss
 from engine.withdrawal_waterfall import WaterfallDraw
@@ -383,6 +384,7 @@ class HarvestView:
     year_end_unrealized_gain: float = 0.0  # YearResult.brokerage_balance_end - brokerage_basis
     ltcg_zero_room: float = 0.0  # the year's 0% LTCG room (room_after, key ltcg_zero)
     ltcg_room_without_conversion: float | None = None  # the IncomeControlYear field of that name
+    opening_balance: float = 0.0  # YearResult.brokerage_balance, at the start of the year
 
 
 def income_control_harvest(
@@ -402,6 +404,8 @@ def income_control_harvest(
     standard_deduction: float | None = None,
     ytd_net_long_term: float = 0.0,
     living_expenses: float = 0.0,
+    returns: Mapping[int, float] | None = None,
+    view_year: int | None = None,
 ) -> HarvestView:
     """The ``year`` row's 0% LTCG harvest from engine.income_control.build_income_control.
 
@@ -414,6 +418,8 @@ def income_control_harvest(
     age; the engine's own combined_ss is checked against it. An IRA distribution is a
     year-to-date actual and a conversion is planned. The detail line and notes are the Income
     Control view's own text; no tax figure is computed here.
+    ``returns`` (year -> total return) override ``brokerage_return`` in those years; ``view_year``
+    (default ``year``, the base year) names a later forecast year whose row is read instead.
     """
     hh = Household(
         your_age=age,
@@ -431,7 +437,9 @@ def income_control_harvest(
         grants=[],
         brokerage_start=brokerage_balance,
         brokerage_start_basis=brokerage_basis,
-        brokerage_growth=GrowthProfile(default_rate=brokerage_return, yield_rate=0.0),
+        brokerage_growth=GrowthProfile(
+            default_rate=brokerage_return, yearly_overrides=dict(returns or {}), yield_rate=0.0
+        ),
         brok_turnover=turnover,
         living_expenses=living_expenses,
         your_aca_enrolled=False,
@@ -447,7 +455,7 @@ def income_control_harvest(
             tax_year=year, ira_distributions_ytd=ira_distribution, ltcg_ytd=ytd_net_long_term
         )
     rows = build_income_control(hh, plan, plan_label="acceptance", ytd=ytd).years
-    row = next(r for r in rows if r.year == year)
+    row = next(r for r in rows if r.year == (view_year or year))
     harvest = row.harvest
     assert harvest is not None
     yr = row.year_result
@@ -465,6 +473,7 @@ def income_control_harvest(
         year_end_unrealized_gain=yr.brokerage_balance_end - yr.brokerage_basis,
         ltcg_zero_room=row.rooms["ltcg_zero"] or 0.0,
         ltcg_room_without_conversion=row.ltcg_room_without_conversion,
+        opening_balance=yr.brokerage_balance,
     )
 
 
@@ -569,6 +578,7 @@ def capital_gain_years(
     ytd_net_long_term: float = 0.0,
     living_expenses: float = 0.0,
     brokerage_basis: float | None = None,
+    autofill: bool = False,
 ) -> list[CapitalYear]:
     """Forecast years of an MFJ couple of ``age`` whose brokerage account gains or loses.
 
@@ -615,6 +625,11 @@ def capital_gain_years(
         YTDSnapshot(tax_year=year, wages_ytd=ytd_wages, ltcg_ytd=ytd_net_long_term)
         if ytd_wages or ytd_net_long_term
         else None
+    )
+    plan = (
+        auto_fill_irmaa_safe(hh, ytd)
+        if autofill
+        else ConversionPlan(your_conversions={year: conversion}, bracket_cap=False)
     )
     result = run_scenario(hh, plan, "acceptance", end_age=age + _CAPITAL_YEARS, ytd=ytd)
     return [
