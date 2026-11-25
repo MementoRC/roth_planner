@@ -168,6 +168,8 @@ class YearResult:
     # gains (ytd_ltcg), which already sit in the YTD stack. For a full-year
     # base-year figure, add ytd_ltcg.
     realized_gains: float = 0.0
+    # §1212(b) loss carried into this year, already netted in the scenario's capital figure.
+    capital_loss_carryin: float = 0.0
     # The year-2 MAGI this year's IRMAA was priced on.
     irmaa_lookback_magi: float | None = None
     # False ONLY when the tax gross-up iteration failed to settle (it

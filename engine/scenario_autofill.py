@@ -35,7 +35,7 @@ from engine.tax_indexing import index_value as _iv
 from engine.withdrawal_waterfall import WaterfallDraw, solve_waterfall
 from engine.yr_reprice import reprice
 from models.household import Household
-from models.ytd_income import YTDSnapshot
+from models.ytd_income import YTDSnapshot, net_forecast_capital, net_year_capital
 
 RoomFn = Callable[[float, float, float, float, float, int, float, str], float]
 # One projection year at a given waterfall draw (None = no draw), the year's
@@ -69,6 +69,27 @@ class _RoomInputs:
     year: int
     cpi: float
     filing_status: str
+    # The year's capital items before the waterfall's forced sale (#135): the
+    # short/long net, the §1212(b) carry-in, and the (ordinary, preferential)
+    # capital figure other_fixed / ytd_ordinary already count for them.
+    cap_short: float = 0.0
+    cap_long: float = 0.0
+    carry_in: float = 0.0
+    counted_ord: float = 0.0
+    counted_pref: float = 0.0
+
+
+def _gain_netting_delta(inp: _RoomInputs, extra_gain: float) -> tuple[float, float]:
+    """(ordinary, preferential) change in the year's capital figure when the
+    forced sale's ``extra_gain`` nets with the year's other capital items and
+    carry-in (one §1211(b) limit), over what ``inp`` already counts. Zero at no
+    gain."""
+    if extra_gain == 0.0:
+        return 0.0, 0.0
+    net_ord, net_pref, _ = net_year_capital(
+        inp.cap_short, inp.cap_long + extra_gain, inp.carry_in, inp.filing_status
+    )
+    return net_ord - inp.counted_ord, net_pref - inp.counted_pref
 
 
 def _room_at(
@@ -87,14 +108,15 @@ def _room_at(
     0.0/0.0 this is the historical draw-blind room, to the bit.
     """
     fs = inp.filing_status
-    other_fixed = inp.other_fixed + extra_ordinary + extra_gain
+    gain_ord, gain_pref = _gain_netting_delta(inp, extra_gain)
+    other_fixed = inp.other_fixed + extra_ordinary + gain_ord + gain_pref
     # Taxable SS — computed first so base_magi uses only the includable
     # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
     tss = taxable_ss(inp.combined_ss, other_fixed, filing_status=fs)
     # MAGI without conversion (full MAGI — includes LTCG for IRMAA).
     # Uses taxable SS (tss) not gross combined_ss per IRC §86 + §1395r(i)(4).
     base_magi = other_fixed + tss
-    fixed_gross = inp.ordinary_gross + extra_ordinary + tss
+    fixed_gross = inp.ordinary_gross + extra_ordinary + gain_ord + tss
     if inp.ytd_ordinary is not None:
         fixed_gross += inp.ytd_ordinary
     ded = inp.ded_no_senior + senior_bonus_deduction(
@@ -508,6 +530,12 @@ def _auto_fill_core(
         brokerage = proj.brokerage
         brok_ordinary = 0.0
         brok_magi_extra = 0.0
+        # Capital items already counted in other_fixed (#135): base year = the YTD
+        # actuals netted alone; forecast year = the turnover gain netted with carry-in.
+        cap_short = ytd_year.net_short_term_capital_ytd if ytd_year is not None else 0.0
+        cap_long = ytd_year.net_long_term_capital_ytd if ytd_year is not None else 0.0
+        counted_ord = ytd_year.ordinary_capital_gain_ytd if ytd_year is not None else 0.0
+        counted_pref = ytd_year.preferential_capital_gain_ytd if ytd_year is not None else 0.0
         if ytd_year is None:
             brok_rate = hh.brokerage_rate(year)
             brok_appreciation_rate = (
@@ -520,7 +548,16 @@ def _auto_fill_core(
             )
             _realized_gains = brokerage * brok_appreciation_rate * hh.brok_turnover
             brok_ordinary = _ord_div
-            brok_magi_extra = _ord_div + _qual_div + _realized_gains
+            # The year's gain nets against the §1212(b) carry-in and the §1211(b)
+            # cap exactly as the scenario does (#135); `proj` is advanced in step.
+            _capital_in_agi, _ = net_forecast_capital(
+                _realized_gains, proj.capital_loss_carryover, current_filing_status
+            )
+            brok_magi_extra = _ord_div + _qual_div + _capital_in_agi
+            cap_long = _realized_gains
+            counted_ord, counted_pref, _ = net_year_capital(
+                0.0, _realized_gains, proj.capital_loss_carryover, current_filing_status
+            )
 
         # Taxable SS — computed first so base_magi uses only the includable
         # fraction (IRC §86: max 85% of SS enters AGI/MAGI, not gross SS).
@@ -591,6 +628,11 @@ def _auto_fill_core(
             year=year,
             cpi=_cpi,
             filing_status=current_filing_status,
+            cap_short=cap_short,
+            cap_long=cap_long,
+            carry_in=proj.capital_loss_carryover,
+            counted_ord=counted_ord,
+            counted_pref=counted_pref,
         )
 
         # Issue #598: size against the waterfall's forced draw too. Each probe
