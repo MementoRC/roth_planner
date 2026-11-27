@@ -26,6 +26,17 @@ def test_negative_carryover_is_clamped_to_zero() -> None:
     assert ProjectionState.initial(hh).capital_loss_carryover == 0.0
 
 
+def test_sanitize_loss_carryover_handles_untrusted_values() -> None:
+    from engine.upload_merge import sanitize_loss_carryover
+
+    assert sanitize_loss_carryover(None) == 0.0
+    assert sanitize_loss_carryover("12") == 0.0
+    assert sanitize_loss_carryover(float("nan")) == 0.0
+    assert sanitize_loss_carryover(float("inf")) == 0.0
+    assert sanitize_loss_carryover(-5.0) == 0.0
+    assert sanitize_loss_carryover(250_000_000) == 250_000_000.0
+
+
 def _render() -> None:
     import streamlit as st
 

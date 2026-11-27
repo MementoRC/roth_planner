@@ -36,7 +36,11 @@ from engine.store import (  # noqa: E402
     set_demo_store_provider,
 )
 from engine.tax_return_pdf import compute_irmaa_magi, load_pdf_tax_records  # noqa: E402
-from engine.upload_merge import SCALAR_KEYS, sanitize_living_expenses  # noqa: E402
+from engine.upload_merge import (  # noqa: E402
+    SCALAR_KEYS,
+    sanitize_living_expenses,
+    sanitize_loss_carryover,
+)
 from models.sourced import Source  # noqa: E402
 from views.setup._state import (  # noqa: E402
     _drain_pending_defaults,
@@ -546,13 +550,10 @@ def get_household() -> Household:
         medicare_part_b_base_monthly=st.session_state.get(
             "medicare_part_b_base_monthly", scalar_default("medicare_part_b_base_monthly")
         ),
-        prior_year_lt_loss_carryover=max(
-            0.0,
-            float(
-                st.session_state.get(
-                    "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
-                )
-            ),
+        prior_year_lt_loss_carryover=sanitize_loss_carryover(
+            st.session_state.get(
+                "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
+            )
         ),
         your_ss_start_age=st.session_state.get(
             "your_ss_start_age",

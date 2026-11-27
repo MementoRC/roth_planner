@@ -33,7 +33,7 @@ import streamlit as st
 from config.scalar_registry import TERMINAL_IRA_TAX_RATE_BOUNDS, scalar_default
 from engine.aca import derive_couple_benchmark_annual
 from engine.data_sources.orchestrator import MAGI_CLEARED_KEY
-from engine.upload_merge import sanitize_living_expenses
+from engine.upload_merge import sanitize_living_expenses, sanitize_loss_carryover
 from models.household import Household
 from views.optimizer_panel import terminal_rate_pct
 
@@ -42,7 +42,8 @@ from ._clamp import clamp as _clamp
 # Ceiling for the annual ACA benchmark (SLCSP) and advance APTC inputs; both the
 # widget max and the render-time clamp use it so a stored value is never cut.
 _ACA_PREMIUM_MAX = 250_000
-_LOSS_CARRYOVER_MAX = 100_000_000
+# Far above any plausible carryover, so a valid stored value is never cut.
+_LOSS_CARRYOVER_MAX = 1_000_000_000_000
 
 
 def _render_prior_year_magi_anchor(container, base_year: int) -> None:
@@ -120,19 +121,19 @@ def _render_prior_year_magi_anchor(container, base_year: int) -> None:
 
 def _render_loss_carryover_input(container) -> None:
     """Render the prior-year long-term capital loss carryover input."""
-    st.session_state["prior_year_lt_loss_carryover"] = container.number_input(
+    raw = st.session_state.get(
+        "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
+    )
+    stored = sanitize_loss_carryover(raw)
+    if raw != stored:
+        # Invalid or negative saved value: normalize it so the household and
+        # the widget agree.
+        st.session_state["prior_year_lt_loss_carryover"] = stored
+    new_value = container.number_input(
         "Capital loss carryover from last year's return (long-term)",
         min_value=0,
         max_value=_LOSS_CARRYOVER_MAX,
-        value=_clamp(
-            int(
-                st.session_state.get(
-                    "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
-                )
-            ),
-            0,
-            _LOSS_CARRYOVER_MAX,
-        ),
+        value=_clamp(int(stored), 0, _LOSS_CARRYOVER_MAX),
         step=1_000,
         format="%d",
         help=(
@@ -141,6 +142,12 @@ def _render_loss_carryover_input(container) -> None:
             "against this year's gains (IRC §1212(b))."
         ),
     )
+    # Only a real edit overwrites the stored value (an untouched widget must
+    # not truncate a fractional or above-cap import), and the household for
+    # this run was built before the widget ran, so rerun to apply it.
+    if new_value != _clamp(int(stored), 0, _LOSS_CARRYOVER_MAX):
+        st.session_state["prior_year_lt_loss_carryover"] = float(new_value)
+        st.rerun()
 
 
 def _render_survivor_scenario(container, base_year: int) -> None:
