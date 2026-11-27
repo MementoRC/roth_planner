@@ -546,6 +546,14 @@ def get_household() -> Household:
         medicare_part_b_base_monthly=st.session_state.get(
             "medicare_part_b_base_monthly", scalar_default("medicare_part_b_base_monthly")
         ),
+        prior_year_lt_loss_carryover=max(
+            0.0,
+            float(
+                st.session_state.get(
+                    "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
+                )
+            ),
+        ),
         your_ss_start_age=st.session_state.get(
             "your_ss_start_age",
             st.session_state.get("ss_start_age", scalar_default("your_ss_start_age")),

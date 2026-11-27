@@ -42,6 +42,7 @@ from ._clamp import clamp as _clamp
 # Ceiling for the annual ACA benchmark (SLCSP) and advance APTC inputs; both the
 # widget max and the render-time clamp use it so a stored value is never cut.
 _ACA_PREMIUM_MAX = 250_000
+_LOSS_CARRYOVER_MAX = 100_000_000
 
 
 def _render_prior_year_magi_anchor(container, base_year: int) -> None:
@@ -115,6 +116,31 @@ def _render_prior_year_magi_anchor(container, base_year: int) -> None:
             # The household for this run was resolved before this widget ran;
             # rerun so the cleared anchor stops driving IRMAA right away.
             st.rerun()
+
+
+def _render_loss_carryover_input(container) -> None:
+    """Render the prior-year long-term capital loss carryover input."""
+    st.session_state["prior_year_lt_loss_carryover"] = container.number_input(
+        "Capital loss carryover from last year's return (long-term)",
+        min_value=0,
+        max_value=_LOSS_CARRYOVER_MAX,
+        value=_clamp(
+            int(
+                st.session_state.get(
+                    "prior_year_lt_loss_carryover", scalar_default("prior_year_lt_loss_carryover")
+                )
+            ),
+            0,
+            _LOSS_CARRYOVER_MAX,
+        ),
+        step=1_000,
+        format="%d",
+        help=(
+            "The capital loss carried out of last year's return: see the Schedule D "
+            "Capital Loss Carryover Worksheet. Treated as long-term and netted "
+            "against this year's gains (IRC §1212(b))."
+        ),
+    )
 
 
 def _render_survivor_scenario(container, base_year: int) -> None:
@@ -503,5 +529,6 @@ def render_assumptions_partial(hh: Household, container) -> None:
     )
 
     _render_prior_year_magi_anchor(container, hh.base_year)
+    _render_loss_carryover_input(container)
     _render_survivor_scenario(container, hh.base_year)
     _render_inherited_iras(container, hh.base_year)

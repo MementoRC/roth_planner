@@ -334,6 +334,10 @@ class Household:
     map fall through to magi_history (projection-year accumulated) or
     to a same-year approximation."""
 
+    # The prior year's capital loss carryover out (Schedule D Capital Loss Carryover
+    # Worksheet), treated as long-term; carried into base_year (IRC §1212(b)).
+    prior_year_lt_loss_carryover: float = 0.0
+
     # QCD
     qcd_limit: float = 111_000  # 2026 annual limit per person (inflation-indexed)
 
@@ -458,6 +462,7 @@ class Household:
         # A user-chosen 73/75 (``*_rmd_age_chosen``) is kept. Otherwise a bare 73 is still
         # honoured for direct constructors (it is the 1951-1959 cohort value); the Setup
         # path never passes an unchosen 73 (see rmd_age_kwargs), so a derived 73 can't freeze.
+        self.prior_year_lt_loss_carryover = max(0.0, self.prior_year_lt_loss_carryover)
         if not (self.your_rmd_age_chosen and self.your_rmd_start_age in (73, 75)) and (
             self.your_rmd_start_age != 73
         ):

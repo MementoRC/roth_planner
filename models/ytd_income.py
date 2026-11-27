@@ -283,8 +283,9 @@ def _net_capital_gain_split(
     cross-netting mechanics). If the netted result is an overall capital
     LOSS, only $3,000 of it may offset ordinary income for the year
     (§1211(b)). The disallowed excess is not returned here; the engine
-    carries it to the next year (``net_capital_loss_ytd`` feeds
-    ``capital_loss_carryover`` in engine/scenario.py).
+    carries it to the next year. The base year's carry-in is seeded from
+    ``Household.prior_year_lt_loss_carryover`` (the prior return's carryover,
+    entered by hand), via ``ProjectionState.initial`` in engine/scenario.py.
 
     Returns (ordinary_portion, preferential_portion):
       - Both legs are gains (short_term >= 0 and long_term >= 0): no

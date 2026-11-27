@@ -67,10 +67,11 @@ class TestDefaultsSourcedFromRegistry:
 
     def test_ten_joint_fields_not_in_defaults(self) -> None:
         """The 10 JOINT_FIELDS scalars not already in DEFAULTS (8 pre-#498 plus
-        post-#498 net_inv_income and terminal_ira_tax_rate) must stay
+        post-#498 net_inv_income, terminal_ira_tax_rate and
+        prior_year_lt_loss_carryover) must stay
         registry-only -- adding them to DEFAULTS was explicitly out of scope."""
         not_in_defaults = JOINT_FIELDS - set(self._OVERLAPPING)
-        assert len(not_in_defaults) == 10
+        assert len(not_in_defaults) == 11
         assert not_in_defaults.isdisjoint(DEFAULTS)
 
 
@@ -157,9 +158,19 @@ _PRE_REFACTOR_SCALAR_KEYS = [
 
 # Scalars added AFTER #498 (joint scope, session key == config key). Recorded
 # explicitly so the pre-refactor literals below stay untouched.
-_POST_498_ADDITIONS = ["net_inv_income", "terminal_ira_tax_rate", "stock_ticker"]
+_POST_498_ADDITIONS = [
+    "net_inv_income",
+    "terminal_ira_tax_rate",
+    "stock_ticker",
+    "prior_year_lt_loss_carryover",
+]
 # Their session keys (stock_ticker is held under "_stock_ticker").
-_POST_498_SESSION_KEYS = {"net_inv_income", "terminal_ira_tax_rate", "_stock_ticker"}
+_POST_498_SESSION_KEYS = {
+    "net_inv_income",
+    "terminal_ira_tax_rate",
+    "_stock_ticker",
+    "prior_year_lt_loss_carryover",
+}
 # audit-1026 F-18: per-person "user picked the RMD start age" markers.
 _F18_RMD_CHOSEN = ["your_rmd_age_chosen", "spouse_rmd_age_chosen"]
 
@@ -234,7 +245,7 @@ class TestPreRefactorLiteralPins:
     def test_joint_fields_matches_pre_refactor_literal(self) -> None:
         assert _PRE_REFACTOR_JOINT_FIELDS | frozenset(_POST_498_ADDITIONS) == JOINT_FIELDS
 
-    def test_registry_has_exactly_39_session_keys(self) -> None:
+    def test_registry_has_exactly_40_session_keys(self) -> None:
         # 32 pre-#498 session keys plus the post-#498 additions, the F-18 markers
         # and the T1 2c first-Roth-year pair.
         assert {spec.session_key for spec in SCALAR_REGISTRY} == (
@@ -243,7 +254,14 @@ class TestPreRefactorLiteralPins:
             | set(_F18_RMD_CHOSEN)
             | set(_FIRST_ROTH_YEAR)
         )
-        assert len(SCALAR_REGISTRY) == 39
+        assert len(SCALAR_REGISTRY) == 40
+
+    def test_prior_year_lt_loss_carryover_is_a_joint_zero_scalar(self) -> None:
+        key = "prior_year_lt_loss_carryover"
+        assert scalar_default(key) == 0
+        assert key in SCALAR_KEYS
+        assert key in JOINT_FIELDS
+        assert scalar_default_by_config_key(key) == 0
 
     def test_first_roth_year_defaults_are_none_and_per_person(self) -> None:
         for key in _FIRST_ROTH_YEAR:

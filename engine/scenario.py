@@ -2334,6 +2334,7 @@ class ProjectionState:
             inherited_balances=[iira.balance for iira in hh.inherited_iras],
             your_roth_ledger=RothConversionLedger(hh.your_roth, hh.your_first_roth_year),
             spouse_roth_ledger=RothConversionLedger(hh.spouse_roth, hh.spouse_first_roth_year),
+            capital_loss_carryover=max(0.0, hh.prior_year_lt_loss_carryover),
         )
 
     def copy(self) -> ProjectionState:

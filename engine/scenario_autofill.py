@@ -83,9 +83,8 @@ def _gain_netting_delta(inp: _RoomInputs, extra_gain: float) -> tuple[float, flo
     """(ordinary, preferential) change in the year's capital figure when the
     forced sale's ``extra_gain`` nets with the year's other capital items and
     carry-in (one §1211(b) limit), over what ``inp`` already counts. Zero at no
-    gain."""
-    if extra_gain == 0.0:
-        return 0.0, 0.0
+    gain except in a base year with YTD actuals, whose counted figure omits the
+    carry-in (#137)."""
     net_ord, net_pref, _ = net_year_capital(
         inp.cap_short, inp.cap_long + extra_gain, inp.carry_in, inp.filing_status
     )
