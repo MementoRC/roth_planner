@@ -579,6 +579,7 @@ def capital_gain_years(
     living_expenses: float = 0.0,
     brokerage_basis: float | None = None,
     autofill: bool = False,
+    prior_lt_carryover: float = 0.0,
 ) -> list[CapitalYear]:
     """Forecast years of an MFJ couple of ``age`` whose brokerage account gains or loses.
 
@@ -620,6 +621,9 @@ def capital_gain_years(
         spouse_aca_enrolled=False,
         income_tax_paid_from_outside_cash=True,
     )
+    if prior_lt_carryover:
+        # Household.prior_year_lt_loss_carryover (#137); plain attribute until the field exists.
+        hh.prior_year_lt_loss_carryover = prior_lt_carryover
     plan = ConversionPlan(your_conversions={year: conversion}, bracket_cap=False)
     ytd = (
         YTDSnapshot(tax_year=year, wages_ytd=ytd_wages, ltcg_ytd=ytd_net_long_term)

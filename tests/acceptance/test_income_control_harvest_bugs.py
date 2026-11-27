@@ -399,3 +399,20 @@ def _netted_loss_carries(ctx: dict[str, Any], later: int, earlier: int, limit: s
     assert second.realized_gains > carried, second
     capital = second.magi - second.ordinary_gross
     assert dsl.within_a_dollar(capital, second.realized_gains - carried), (first, second)
+
+
+@given(parsers.parse("a {carry} long-term capital loss carryover from the {year:d} return"))
+def _prior_lt_carryover(ctx: dict[str, Any], carry: str) -> None:
+    dsl.with_prior_year_carryover(ctx["case"], dsl.money(carry))
+
+
+@then(parsers.parse("the {year:d} MAGI comes to {amount}"))
+def _magi_comes_to(ctx: dict[str, Any], year: int, amount: str) -> None:
+    assert dsl.within_a_dollar(ctx["years"][year].magi, dsl.money(amount)), ctx["years"][year]
+
+
+@then(parsers.parse("the {year:d} taxable income comes to {amount}"))
+def _taxable_comes_to(ctx: dict[str, Any], year: int, amount: str) -> None:
+    assert dsl.within_a_dollar(ctx["years"][year].taxable_income, dsl.money(amount)), ctx["years"][
+        year
+    ]
