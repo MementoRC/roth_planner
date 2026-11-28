@@ -84,6 +84,16 @@ SCALAR_REGISTRY: tuple[ScalarSpec, ...] = (
         note="Manual NII add-on ($/yr) on top of modeled dividends/gains; edited only in Setup › Assumptions.",
     ),
     ScalarSpec(
+        "prior_year_lt_loss_carryover",
+        0,
+        "joint",
+        note=(
+            "Prior year's capital loss carryover out (Schedule D Capital Loss Carryover "
+            "Worksheet), treated as long-term; seeds the base year's IRC 1212(b) carry-in. "
+            "Edited only in Setup › Assumptions."
+        ),
+    ),
+    ScalarSpec(
         "stock_price",
         100,
         "joint",

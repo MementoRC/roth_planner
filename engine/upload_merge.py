@@ -68,6 +68,18 @@ def sanitize_living_expenses(value: Any) -> Any:
     return max(value, 0)
 
 
+def sanitize_loss_carryover(value: Any) -> float:
+    """A usable prior-year capital-loss carryover from an untrusted source.
+
+    Null, non-numeric, NaN and infinite values fall back to the registry
+    default; negatives clamp to 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        default = _scalar_default("prior_year_lt_loss_carryover")
+        return float(default) if isinstance(default, int | float) else 0.0
+    return max(0.0, float(value))
+
+
 def sanitize_session_updates(updates: dict) -> dict:
     """Run the numeric sanitizers over a session-updates dict (in place).
 

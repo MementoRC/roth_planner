@@ -426,6 +426,10 @@ def with_basis_share(case: HarvestCase | CapitalCase, share: float) -> None:
     case.brokerage_basis = share * _BROKERAGE_BALANCE
 
 
+def with_prior_year_carryover(case: CapitalCase, amount: float) -> None:
+    case.prior_lt_carryover = amount
+
+
 def view_harvest(case: HarvestCase) -> driver.HarvestView:
     return driver.income_control_harvest(
         status=case.status,
@@ -580,6 +584,7 @@ class CapitalCase:
     brokerage_basis: float | None = None
     ytd_net_long_term: float = 0.0
     autofill: bool = False
+    prior_lt_carryover: float = 0.0
 
 
 def a_couple_under_65_with_turnover(turnover: float) -> CapitalCase:
@@ -617,6 +622,7 @@ def capital_years(case: CapitalCase) -> dict[int, driver.CapitalYear]:
         living_expenses=case.living_expenses,
         brokerage_basis=case.brokerage_basis,
         autofill=case.autofill,
+        prior_lt_carryover=case.prior_lt_carryover,
     )
     return {yr.year: yr for yr in years}
 

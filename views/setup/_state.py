@@ -340,6 +340,7 @@ def _clear_session_for_reseed() -> None:
         # Setup › Assumptions) was missing from this list, so a
         # personal value survived "Reset to demo" and kept inflating NIIT.
         "net_inv_income",
+        "prior_year_lt_loss_carryover",
         # audit-0823 models-views/M4: every key below survived "Reset to demo"
         # and re-infected the demo household. Grouped by the page that writes it.
         #

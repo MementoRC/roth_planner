@@ -215,6 +215,26 @@ Feature: Income Harvest bugs, red until fixed
     Then the 2026 brokerage sale realizes a gain between $5,990 and $6,010
     And the 2026 MAGI is $218,000, the first IRMAA tier
 
+  # I137a (issue #137): a prior-year capital loss carryover has no input; the base year starts it at 0. IRC §1212(b)(1), §1211(b), §1222.
+  Scenario: I137a: A prior-year long-term capital loss carryover is netted in the base year
+    Given a married-filing-jointly household, both under 65, whose brokerage account turns over 20% a year
+    And a 2026 conversion of $100,000 is planned
+    And a $10,000 long-term capital loss carryover from the 2025 return
+    And the brokerage rises 10% in 2027
+    When the forecast years 2026 and 2027 are projected
+    Then the 2026 MAGI comes to $97,000
+    And the 2026 taxable income comes to $64,800
+    And the 2027 MAGI comes to $13,000
+
+  # I137b (issue #137): base-year auto-fill with actuals ignores a prior-year carryover when there is no forced sale. IRC §1212(b)(1), §1211(b).
+  Scenario: I137b: Auto-fill nets a prior-year carryover with the actuals in the base year
+    Given a married-filing-jointly household, both under 65, whose brokerage account turns over 20% a year
+    And actuals so far in 2026 of $0 of wages and a $1,000 net long-term capital loss
+    And a $10,000 long-term capital loss carryover from the 2025 return
+    When the conversion plan is auto-filled to stay under the first IRMAA tier
+    And the forecast years 2026 and 2027 are projected
+    Then the 2026 MAGI is $218,000, the first IRMAA tier
+
   # C8h: guard: consequence of C8g; room_lines netting; not red-first. The 0% LTCG harvest sizes against ONE base-year
   # net: YTD short-term + (YTD long-term + this year's realized sale gain), the same single figure the scenario nets
   # (IRC §1222, §1211(b)). Synthetic MFJ, both under 65: a $60,000 conversion is the only ordinary income, a $10,000 net
